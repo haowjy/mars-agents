@@ -283,6 +283,7 @@ fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
     let HookOutput::Merge(output) = def
         .plugin_output(
             mars_schema::hooks::targets::target(".claude").unwrap(),
+            Some(&mars_schema::hooks::targets::PLUGIN_CLAUDE_TREE),
             Some(fragment),
             Origin::Local,
             &Tokens {

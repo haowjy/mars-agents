@@ -13,9 +13,28 @@ pub struct Event {
     /// The input field the matcher tests (`tool_name`, `source`, …). `None` means no field is
     /// recorded for this event; only the events a generated adapter renders need one.
     pub matcher: Option<&'static str>,
+    /// Claude Code's default `timeout` for a `command` handler on this event, in
+    /// milliseconds. A generated TypeScript hook applies the Claude row's value so it times
+    /// out as it would on Claude; the other targets' rows carry the common default unread.
+    pub default_timeout_ms: u32,
 }
 
+/// The default of every event but the two below. Claude Code docs, "Hook handler fields",
+/// `timeout`: https://code.claude.com/docs/en/hooks (read 2026-10-28).
+const DEFAULT_TIMEOUT_MS: u32 = 600_000;
+
 impl Event {
+    /// The row with a shorter Claude default. The docs lower it to 30 s on
+    /// `UserPromptSubmit` (and on the `PreModelSwitch`/`PostModelSwitch`, 10 s on
+    /// `MessageDisplay`, which the Claude table below does not list) and give `SessionEnd`
+    /// a 1.5 s budget.
+    const fn timeout_ms(self, default_timeout_ms: u32) -> Self {
+        Self {
+            default_timeout_ms,
+            ..self
+        }
+    }
+
     /// A tool event: its handlers can carry Claude's `if` filter.
     pub fn is_tool_event(&self) -> bool {
         self.matcher == Some("tool_name")
@@ -26,6 +45,7 @@ const fn event(name: &'static str) -> Event {
     Event {
         name,
         matcher: None,
+        default_timeout_ms: DEFAULT_TIMEOUT_MS,
     }
 }
 
@@ -33,6 +53,7 @@ const fn matched(name: &'static str, field: &'static str) -> Event {
     Event {
         name,
         matcher: Some(field),
+        default_timeout_ms: DEFAULT_TIMEOUT_MS,
     }
 }
 
@@ -162,7 +183,7 @@ impl Target {
 const CLAUDE_EVENTS: &[Event] = &[
     matched("SessionStart", "source"),
     event("Setup"),
-    event("UserPromptSubmit"),
+    event("UserPromptSubmit").timeout_ms(30_000),
     event("UserPromptExpansion"),
     matched("PreToolUse", "tool_name"),
     matched("PermissionRequest", "tool_name"),
@@ -188,7 +209,7 @@ const CLAUDE_EVENTS: &[Event] = &[
     event("FileChanged"),
     event("WorktreeCreate"),
     event("WorktreeRemove"),
-    matched("SessionEnd", "reason"),
+    matched("SessionEnd", "reason").timeout_ms(1_500),
 ];
 
 // codex-cli 0.164.0: `HookEventsToml` (codex-rs/config/src/hook_config.rs L39-69) names

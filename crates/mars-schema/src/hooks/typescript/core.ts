@@ -8,7 +8,6 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 // Imports no harness package, so it loads on any version.
 
 const LABEL = `mars hook ${HOOK.name} (${HOOK.harness})`;
-const DEFAULT_TIMEOUT_SECONDS = 600;
 // Events whose answer can block the action: only these honour `onFailure = "block"`.
 const BLOCKING = new Set(["PreToolUse", "UserPromptSubmit", "Stop", "PreCompact", "PermissionRequest"]);
 const CONTEXT = new Set(["PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "SessionStart"]);
@@ -144,14 +143,22 @@ function runCommand(handler: any, stdin: string, cwd: string): Promise<Run> {
     child.on("close", (status: number | null, signal: string | null) =>
       finish({ ok: status !== null, status, stdout, stderr, why: signal ? `killed by ${signal}` : `exit ${status}` }),
     );
-    const seconds = handler.timeout ?? DEFAULT_TIMEOUT_SECONDS;
-    timer = setTimeout(() => {
-      try {
-        if (windows) child.kill();
-        else process.kill(-child.pid, "SIGKILL");
-      } catch {}
-      fail(`timed out after ${seconds}s`, stdout, stderr);
-    }, seconds * 1000);
+    // Claude never times out a handler marked `async`.
+    if (!handler.async) {
+      const seconds = handler.timeout;
+      timer = setTimeout(() => {
+        try {
+          // bash has already exited when only a background job still holds the pipes: its pid
+          // may be gone or reused, so leave taskkill alone (a Windows grandchild then leaks).
+          if (windows) {
+            if (child.exitCode === null && child.signalCode === null) {
+              spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => {});
+            }
+          } else process.kill(-child.pid, "SIGKILL");
+        } catch {}
+        fail(`timed out after ${seconds}s`, stdout, stderr);
+      }, seconds * 1000);
+    }
     child.stdin.end(stdin);
   });
 }

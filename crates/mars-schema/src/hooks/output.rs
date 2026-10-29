@@ -79,7 +79,7 @@ impl MergeOutput {
     /// Hold every event Claude lists to Codex's handler rules, reporting what that leaves
     /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
     /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.
-    fn conform_to_codex(&mut self) -> Result<(), FragmentError> {
+    fn conform_to_codex(&mut self, profile: &targets::Profile) -> Result<(), FragmentError> {
         let checked: BTreeMap<_, _> = self
             .events
             .iter()
@@ -106,7 +106,7 @@ impl MergeOutput {
                 reason: format!("`null` at `{path}` dropped: Codex cannot parse it"),
             });
         }
-        let rendered = table.render(&targets::PLUGIN_CLAUDE_TREE, &Tokens::default());
+        let rendered = table.render(profile, &Tokens::default());
         self.skips.extend(rendered.skips.iter().cloned());
         for event in checked.keys() {
             self.events.remove(event);
@@ -183,29 +183,25 @@ impl HookDef {
         output
     }
 
-    /// What this hook puts in a plugin build's tree for `target`. The Claude tree's
-    /// `hooks/hooks.json` is also read by Codex, which rejects the whole file over one
-    /// handler it cannot parse, so everything that reaches it, `[hooks]` and fragment alike,
-    /// is conformed to Codex's rules while keeping Claude's events (D21). Other trees take
-    /// what [`Self::output`] gives.
+    /// What this hook puts in a plugin build's tree for `target`. A tree whose hook file
+    /// another harness also reads passes `shared` (the Claude tree: [`targets::PLUGIN_CLAUDE_TREE`]):
+    /// Codex rejects the whole `hooks/hooks.json` over one handler it cannot parse, so
+    /// everything that reaches the file, `[hooks]` and fragment alike, is rendered under
+    /// `shared` and conformed to Codex's rules while keeping its events (D21). Any other
+    /// tree passes `None` and takes what [`Self::output`] gives.
     pub fn plugin_output(
         &self,
         target: &Target,
+        shared: Option<&targets::Profile>,
         fragment_text: Option<&str>,
         origin: Origin,
         tokens: &Tokens<'_>,
     ) -> Result<HookOutput, FragmentError> {
-        if target.root != ".claude" {
+        let Some(profile) = shared else {
             return self.output(target, fragment_text, origin, tokens);
-        }
-        let mut output = self.merge_output(
-            target,
-            &targets::PLUGIN_CLAUDE_TREE,
-            fragment_text,
-            origin,
-            tokens,
-        )?;
-        output.conform_to_codex()?;
+        };
+        let mut output = self.merge_output(target, profile, fragment_text, origin, tokens)?;
+        output.conform_to_codex(profile)?;
         Ok(HookOutput::Merge(output))
     }
 

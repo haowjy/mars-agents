@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use mars_schema::diagnostic::Severity;
-use mars_schema::hooks::targets::Target;
+use mars_schema::hooks::targets::{Profile, Target};
 use mars_schema::hooks::{self, Fragment, HookDef, HookOutput, Origin, Tokens};
 
 use crate::diagnostic::DiagnosticCollector;
@@ -383,11 +383,12 @@ pub fn load_output(
 pub fn load_plugin_output(
     item: &ParsedHookItem,
     target: &Target,
+    shared: Option<&Profile>,
     tokens: &Tokens<'_>,
 ) -> Result<HookOutput, MarsError> {
     load(item, target, |fragment| {
         item.def
-            .plugin_output(target, fragment, item.origin, tokens)
+            .plugin_output(target, shared, fragment, item.origin, tokens)
     })
 }
 

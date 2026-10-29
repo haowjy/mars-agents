@@ -32,6 +32,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     agents: Some(keep_plugin_agent_fields),
     native_model_aliases: &[],
     plugin_root: PluginRoot::RuntimeResolved,
+    shared_hook_profile: None,
     check_hook,
     write_config: write_config_entries,
     finish: Finish::Custom(write_package),
@@ -43,7 +44,7 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
         return;
     };
     let target = mars_schema::hooks::targets::target(TARGET_ROOT).expect("OpenCode takes hooks");
-    match load_plugin_output(hook, target, &Tokens::default()) {
+    match load_plugin_output(hook, target, None, &Tokens::default()) {
         Ok(HookOutput::File(FileOutput {
             fragment_problem: Some(problem),
             ..

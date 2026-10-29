@@ -10,7 +10,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": "auto"
@@ -40,7 +40,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": null
@@ -55,7 +55,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": null
@@ -85,7 +85,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 1.5
           }
         ],
         "matcher": "clear|other"
@@ -100,7 +100,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": "startup"
@@ -115,7 +115,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 600
           }
         ],
         "matcher": null
@@ -130,7 +130,7 @@ const HOOK: any = {
             "commandWindows": null,
             "if": null,
             "onFailure": null,
-            "timeout": null
+            "timeout": 30
           }
         ],
         "matcher": null

@@ -25,6 +25,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     agents: None,
     native_model_aliases: &[],
     plugin_root: PluginRoot::Token("${CURSOR_PLUGIN_ROOT}"),
+    shared_hook_profile: None,
     check_hook,
     write_config: write_config_entries,
     finish: Finish::StandardManifest {

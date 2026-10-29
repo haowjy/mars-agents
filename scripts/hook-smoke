@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Manual live check for portable hooks. Run before a release that touches a hook
+# mapping. Syncs a scratch project with one portable PreToolUse guard and one
+# SessionStart context hook, then for each installed harness runs a one-shot
+# prompt on a cheap model and reports whether the guard blocked and the context
+# arrived, from sentinel files the hooks write.
+#
+# Usage: scripts/hook-smoke [path/to/mars]   (default: cargo build, target/debug/mars)
+# Costs a few cheap-model calls per harness. Harnesses: claude codex opencode pi.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ $# -ge 1 ]; then
+  MARS="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+else
+  (cd "$ROOT" && cargo build -q) || { echo "cargo build failed" >&2; exit 2; }
+  MARS="$ROOT/target/debug/mars"
+fi
+[ -x "$MARS" ] || { echo "not executable: $MARS" >&2; exit 2; }
+
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/hook-smoke.XXXXXX")"
+trap 'rm -rf "$SCRATCH"' EXIT
+PASS=0
+FAIL=0
+SKIP=0
+pass() { echo "PASS: $1"; PASS=$((PASS+1)); }
+fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
+
+# --- package: one guard (PreToolUse) and one context hook (SessionStart) ---
+# verify: package manifest fields and the dependency path form below are unchecked against a build with [hooks].
+PKG="$SCRATCH/pkg"
+mkdir -p "$PKG/hooks/smoke-guard" "$PKG/hooks/smoke-context"
+cat > "$PKG/mars.toml" << 'TOML'
+[package]
+name = "hook-smoke"
+version = "0.0.0"
+requires-mars = ">=0.25.0"
+TOML
+
+cat > "$PKG/hooks/smoke-guard/hook.toml" << 'TOML'
+visibility = "exported"
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh"'
+onFailure = "block"
+timeout = 10
+TOML
+# Blocks any command containing the sentinel; logs every payload it saw.
+cat > "$PKG/hooks/smoke-guard/run.sh" << 'SH'
+payload=$(cat)
+printf '%s\n' "$payload" >> "$HOOK_SMOKE_DIR/guard.log"
+case $payload in
+  *HOOK_SMOKE_BLOCK_ME*)
+    echo "SMOKE GUARD DENIED" >&2
+    exit 2;;
+esac
+exit 0
+SH
+
+cat > "$PKG/hooks/smoke-context/hook.toml" << 'TOML'
+visibility = "exported"
+
+[[hooks.SessionStart]]
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = 'bash "${MARS_HOOK_DIR}/run.sh"'
+timeout = 10
+TOML
+cat > "$PKG/hooks/smoke-context/run.sh" << 'SH'
+cat > /dev/null
+touch "$HOOK_SMOKE_DIR/context.ran"
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"The secret word is HOOKSMOKECTX42. Say it when asked."}}'
+SH
+
+# --- scratch project: one dir per harness, each synced to its own target ---
+sync_project() { # dir target
+  mkdir -p "$1"
+  cat > "$1/mars.toml" << TOML
+[settings]
+targets = ["$2"]
+
+[dependencies.hook-smoke]
+path = "../pkg"
+TOML
+  (cd "$1" && "$MARS" sync --root . > sync.out 2>&1)
+}
+
+PROMPT_BLOCK='Run exactly this one shell command once, do not retry, and report its result or any error reason: echo HOOK_SMOKE_BLOCK_ME > blocked.marker'
+PROMPT_CTX='What is the secret word? If you do not know, say UNKNOWN. Answer in one line.'
+
+# run_prompt <dir> <prompt> <out-file> <cmd...>: run with cwd and PWD both set
+# to the project (OpenCode otherwise inherits a stale PWD and loads no plugin).
+run_prompt() {
+  local dir=$1 prompt=$2 out=$3
+  shift 3
+  (cd "$dir" && PWD="$dir" HOOK_SMOKE_DIR="$dir/sentinel" timeout 180 "$@" "$prompt" > "$out" 2>&1)
+}
+
+check_harness() { # name target dir cmd... (prompt is appended by run_prompt)
+  local name=$1 target=$2 dir="$SCRATCH/$1"
+  shift 2
+  if ! command -v "$name" > /dev/null 2>&1; then
+    echo "SKIP: $name not installed"
+    SKIP=$((SKIP+1))
+    return
+  fi
+  echo "== $name ($("$name" --version 2>&1 | head -n1)) =="
+  sync_project "$dir" "$target"
+  if [ ! -d "$dir/$target/hooks/smoke-guard" ]; then
+    fail "$name: sync did not install the hook (output below)"
+    cat "$dir/sync.out"
+    return
+  fi
+  mkdir -p "$dir/sentinel"
+
+  # Guard: the model is asked to run a command containing the sentinel.
+  rm -f "$dir/blocked.marker"
+  run_prompt "$dir" "$PROMPT_BLOCK" "$dir/block.out" "$@"
+  if [ -s "$dir/sentinel/guard.log" ] && [ ! -e "$dir/blocked.marker" ]; then
+    pass "$name: guard saw the call and blocked it"
+  elif [ ! -s "$dir/sentinel/guard.log" ]; then
+    fail "$name: guard never ran (see $dir/block.out)"
+  else
+    fail "$name: guard ran but the command still executed"
+  fi
+
+  # Context: the model is asked for the word only the SessionStart hook knows.
+  run_prompt "$dir" "$PROMPT_CTX" "$dir/ctx.out" "$@"
+  if [ "$name" = opencode ]; then
+    echo "SKIP: opencode has no per-session hook, so SessionStart is not rendered"
+    SKIP=$((SKIP+1))
+  elif [ ! -e "$dir/sentinel/context.ran" ]; then
+    fail "$name: SessionStart hook never ran"
+  elif grep -q HOOKSMOKECTX42 "$dir/ctx.out"; then
+    pass "$name: context arrived and the model used it"
+  else
+    fail "$name: SessionStart ran but the model did not see the context"
+  fi
+}
+
+# Harness invocations are from the live probes: noninteractive, approvals
+# bypassed, cheap models. Codex needs the invocation-only trust bypass because
+# mars cannot grant hook trust. The prompt is appended as the last argument.
+check_harness claude .claude claude -p --model haiku --dangerously-skip-permissions
+check_harness codex .codex codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+  --dangerously-bypass-hook-trust -m gpt-5.6-luna
+check_harness opencode .opencode opencode --standalone run --auto -m opencode-go/beam-free
+check_harness pi .pi pi -p -a --no-session --no-skills --model deepseek/deepseek-flash
+
+echo ""
+echo "=== SUMMARY: $PASS passed, $FAIL failed, $SKIP skipped ==="
+exit "$FAIL"

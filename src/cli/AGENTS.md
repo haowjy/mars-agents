@@ -70,6 +70,10 @@ at emission time when mode is `Hidden`.
 | `mars check` | Direct preview | `Surface` | Yes |
 | `mars init` | Direct preview | `Surface` | Yes |
 
+The human sync report (`print_sync_report`) hides `Info` diagnostics unless `mars sync` or
+`mars upgrade` ran with `--verbose`; JSON keeps them all. `print_diagnostics` (`check`, `init`,
+`build`, `unlink`) does not filter.
+
 `mars check` and `mars init` prepare the tree once (`PublishLens::load`) and call
 `lossiness_preview::collect_prepared_source_lossiness_diagnostics` with `LossinessMode::Surface` (bypassing the sync pipeline).
 

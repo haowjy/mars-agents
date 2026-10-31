@@ -141,7 +141,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             print_dependency_messages(&report.dependency_changes);
         }
 
-        output::print_sync_report(&report, json, true);
+        output::print_sync_report(&report, json, true, false);
         return Ok(0);
     }
 
@@ -164,7 +164,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         print_dependency_messages(&report.dependency_changes);
     }
 
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, false);
     Ok(0)
 }
 

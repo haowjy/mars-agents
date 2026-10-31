@@ -588,11 +588,11 @@ How native hooks combine with `[hooks]`:
   entries only for the events it declares; the other events still render from
   `[hooks]`. A native hook that declares an event as an empty array
   (`"PreToolUse": []`) turns that event off on that target. Sync reports
-  `hook-native-overrides`.
+  `hook-native-overrides` with `--verbose`.
 - **OpenCode and Pi (file targets).** Mars cannot read events out of a
   TypeScript file, so the native hook installs beside the generated file
   (`mars-<name>.ts` next to `mars-<name>.hooks.ts`) and sync reports
-  `hook-native-beside-generated`. To replace the generated hook there, put
+  `hook-native-beside-generated` with `--verbose`. To replace the generated hook there, put
   that target in `skip-targets`. Hook names may not end in `.hooks`.
 - When a hook has `[hooks]`, every target table must name `native-hook`
   explicitly; an empty table is an error, because it would pick up a leftover
@@ -983,7 +983,10 @@ reorder its file-mode artifact.
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-native-hook-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 
-With `--json`, these appear in `diagnostics[]`. A hook whose directory was not
+`mars sync` and `mars upgrade` print `info` lines only with `--verbose`; warnings
+and errors always print. Other commands that run a sync (`add`, `remove`, `rename`,
+`repair`, `override`, `adopt`) print no `info` lines. With `--json`, every diagnostic
+appears in `diagnostics[]`. A hook whose directory was not
 installed gets no entries (`hook-not-installed`).
 
 ### Plugin builds

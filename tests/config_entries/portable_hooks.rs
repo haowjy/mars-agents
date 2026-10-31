@@ -143,7 +143,7 @@ fn a_native_hook_replaces_only_its_events_and_an_empty_array_turns_one_off() {
         r#"{"PreToolUse":[],"Stop":[{"hooks":[{"type":"command","command":"printf stop"}]}]}"#,
     );
 
-    sync(&project)
+    sync_verbose(&project)
         .success()
         .stderr(
             predicate::str::contains("hook-native-overrides").or(predicate::str::contains(
@@ -245,6 +245,34 @@ fn a_dependency_hook_with_an_unknown_event_installs_its_other_events() {
     assert_eq!(commands(&claude, "PreToolUse").len(), 1);
     assert!(claude["hooks"].get("FutureEvent").is_none());
     assert_eq!(lock_keys(&project, ".codex"), ["hook:PreToolUse:guard"]);
+}
+
+#[test]
+fn a_dependency_hook_left_out_of_a_target_is_reported_only_with_verbose() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.child("source");
+    source.create_dir_all().unwrap();
+    let project = project(&dir, "\".claude\", \".opencode\"");
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\", \".opencode\"]\n[dependencies]\ntool = {{ path = \"{}\" }}\n",
+            portable_path(source.path())
+        ))
+        .unwrap();
+    write_hook(
+        &source,
+        "guard",
+        &format!("visibility = \"exported\"\n{GUARD}"),
+    );
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("no counterpart on a managed target").not());
+    sync_verbose(&project)
+        .success()
+        .stderr(predicate::str::contains(
+            "tool/guard on `.opencode` (1 left out)",
+        ));
 }
 
 #[test]
@@ -449,9 +477,11 @@ fn a_file_target_keeps_the_generated_file_beside_the_native_hook_and_removes_bot
     let generated = project.child(".opencode/plugins/mars-guard.hooks.ts");
     let native_hook = project.child(".opencode/plugins/mars-guard.ts");
 
-    sync(&project).success().stderr(predicate::str::contains(
-        "is installed next to the file generated from `[hooks]`",
-    ));
+    sync_verbose(&project)
+        .success()
+        .stderr(predicate::str::contains(
+            "is installed next to the file generated from `[hooks]`",
+        ));
     let first = fs::read_to_string(generated.path()).unwrap();
     assert!(first.contains("\"name\": \"guard\"") && first.contains("PreToolUse"));
     assert!(native_hook.path().exists());

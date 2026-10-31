@@ -166,7 +166,7 @@ preflight reads, validates and renders every selected hook once (`RenderedHooks`
 that result, and `lower_merge_native_hooks` orders each hook's merge output, kept hooks' recorded entries included (a kept hook carries its `HookRank` from the sync that found it invalid: merge order is the only source of order in a target's file) (`lower_hook_entries` is
 the same for a plugin build, which has no preflight; there `${MARS_HOOK_TARGET}` is `plugin`, and the Claude tree's output goes through `HookDef::plugin_output`, which holds it to what Codex parses because Codex reads that file too, D21).
 Preflight also says what `[hooks]` leaves out on every managed target, for every accepted hook even when no target takes it (`hook-event-skipped`:
-a warning per skip for the project's own hooks, one info line per sync for dependencies) and
+a warning per skip for the project's own hooks, one info line per sync for dependencies, shown in the human report only with `--verbose`) and
 a native hook replacing generated events (`hook-native-overrides`), a file-target native hook beside the generated `mars-<name>.hooks.ts` (`hook-native-beside-generated`) and answers a TypeScript target cannot carry (`hook-answer-unsupported`, info). After the writes, compile
 compares a trust-gated target's (event, group, handler) positions with those before the sync and
 warns `codex-hooks-need-trust` for any new or moved one. `config_entries/file_hooks.rs` owns file-placement

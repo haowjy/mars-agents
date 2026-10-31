@@ -138,7 +138,7 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             "adopted {} `{}`: {} -> {}",
             plan.kind, plan.name, plan.source_display, plan.dest_display
         ));
-        output::print_sync_report(&report, false, true);
+        output::print_sync_report(&report, false, true, false);
     }
 
     Ok(0)

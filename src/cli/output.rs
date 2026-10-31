@@ -144,11 +144,11 @@ pub fn print_catalog(
 }
 
 /// Print sync report as human-readable text or JSON.
-pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool) {
+pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool, show_info: bool) {
     if json {
         print_sync_report_json(report);
     } else {
-        print_sync_report_human(report, no_upgrade_hint);
+        print_sync_report_human(report, no_upgrade_hint, show_info);
     }
 }
 
@@ -238,7 +238,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
-fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
+/// Info diagnostics print only when `show_info` is set; JSON output keeps them all.
+fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info: bool) {
     if let Some(halt) = &report.recovery_halt {
         let mut stderr = stderr_stream();
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
@@ -260,6 +261,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         }
         let _ = writeln!(stderr, "  {}", halt.next_step);
         for diagnostic in &report.diagnostics {
+            if !show_info && diagnostic.level == crate::diagnostic::DiagnosticLevel::Info {
+                continue;
+            }
             let _ = writeln!(stderr, "  {diagnostic}");
         }
         return;
@@ -375,6 +379,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
     // Print diagnostics to stderr so machine-readable stdout remains stable.
     let mut stderr = stderr_stream();
     for diag in &report.diagnostics {
+        if !show_info && diag.level == crate::diagnostic::DiagnosticLevel::Info {
+            continue;
+        }
         let color = match diag.level {
             crate::diagnostic::DiagnosticLevel::Error => Color::Red,
             crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,

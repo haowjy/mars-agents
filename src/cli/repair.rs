@@ -43,7 +43,7 @@ pub fn run(args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     // Force sync: overwrites everything, rebuilds from dependencies.
     let report = crate::sync::execute(ctx, &request)?;
 
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, false);
 
     Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

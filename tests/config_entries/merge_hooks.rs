@@ -389,7 +389,7 @@ fn stale_hook_diagnostics_distinguish_planned_and_unconfirmed_removals() {
 
     let target_dir = project.child(".claude");
     fs::set_permissions(target_dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
-    let assertion = sync(&project);
+    let assertion = sync_verbose(&project);
     fs::set_permissions(target_dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
     assertion
         .success()

@@ -32,7 +32,7 @@ pub struct SyncArgs {
     #[arg(long)]
     pub no_upgrade_hint: bool,
 
-    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    /// Show info-level diagnostics and per-item detail for launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 
@@ -71,7 +71,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
 
     let report = crate::sync::execute(ctx, &request)?;
 
-    output::print_sync_report(&report, json, no_upgrade_hint);
+    output::print_sync_report(&report, json, no_upgrade_hint, args.verbose);
 
     Ok(0)
 }

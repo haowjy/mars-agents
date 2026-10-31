@@ -42,13 +42,13 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
 
     project.to_path_buf()
 }
 
 #[test]
-fn sync_surfaces_lossiness_warnings() {
+fn sync_hides_lossiness_summary_without_verbose() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
@@ -56,7 +56,29 @@ fn sync_surfaces_lossiness_warnings() {
         .args(["sync", "--root", project.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+}
+
+#[test]
+fn sync_json_keeps_the_info_summary() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_lossy_synced_project(&dir);
+
+    let output = mars()
+        .args(["sync", "--json", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        json["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .any(|d| d["code"] == "launch-time-field-summary" && d["level"] == "info"),
+        "sync --json must keep the info summary: {stdout}"
+    );
 }
 
 #[test]

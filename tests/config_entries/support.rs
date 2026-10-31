@@ -40,6 +40,20 @@ pub fn sync(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Asse
     assertion
 }
 
+pub fn sync_verbose(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Assert {
+    let assertion = mars()
+        .args([
+            "sync",
+            "--verbose",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr);
+    assert_config_entry_consistency_with_diagnostics(project, &stderr);
+    assertion
+}
+
 pub fn sync_force(project: &assert_fs::fixture::ChildPath) -> assert_cmd::assert::Assert {
     let assertion = mars()
         .args([

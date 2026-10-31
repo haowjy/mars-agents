@@ -16,7 +16,7 @@ pub struct UpgradeArgs {
     #[arg(long)]
     pub bump: bool,
 
-    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    /// Show info-level diagnostics and per-item detail for launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 
@@ -59,7 +59,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     if args.bump && !json {
         print_bump_messages(&report.dependency_changes);
     }
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, args.verbose);
 
     Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

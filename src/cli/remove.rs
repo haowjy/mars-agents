@@ -30,7 +30,7 @@ pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         output::print_info(&format!("removed dependency `{}`", args.source));
     }
 
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, false);
 
     Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

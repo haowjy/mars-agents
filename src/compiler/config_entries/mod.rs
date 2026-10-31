@@ -438,7 +438,7 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
         diag.warn(
             "codex-hooks-need-trust",
             format!(
-                "`{file}` has {} new or moved hook handler(s) ({}); `{root}` skips them until you review them in its `/hooks` screen",
+                "`{file}` has {} new or moved hook handler(s) ({}); open Codex and run `/hooks` to review and trust them. Codex skips them until then",
                 changed.len(),
                 changed.join(", ")
             ),

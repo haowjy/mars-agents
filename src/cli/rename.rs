@@ -67,7 +67,7 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         output::print_info(&format!("renamed {} → {}", args.from, args.to));
     }
 
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, false);
 
     Ok(0)
 }

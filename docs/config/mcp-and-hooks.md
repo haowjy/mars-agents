@@ -783,7 +783,7 @@ $ mars sync
   installed   4 new items
   wrote       2 generated hook files
   warning: hook `protect-tmux-server`: `.opencode` does not run `SessionStart`: OpenCode has no per-session start hook (a plugin's setup runs once per project)
-  warning: `.codex/hooks.json` has 2 new or moved hook handler(s) (PreToolUse[0][0], SessionStart[0][0]); `.codex` skips them until you review them in its `/hooks` screen
+  warning: `.codex/hooks.json` has 2 new or moved hook handler(s) (PreToolUse[0][0], SessionStart[0][0]); open Codex and run `/hooks` to review and trust them. Codex skips them until then
 ```
 
 One item per target, plus the two generated files. Claude's

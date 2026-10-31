@@ -196,12 +196,12 @@ fn codex_trust_is_reported_when_handler_positions_change_and_not_otherwise() {
     write_hook(&project, "guard", GUARD);
     sync(&project).success().stderr(
         predicate::str::contains("codex-hooks-need-trust")
-            .or(predicate::str::contains("skips them until you review them")),
+            .or(predicate::str::contains("open Codex and run `/hooks`")),
     );
     // Nothing changed: nothing to review again.
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("skips them until you review them").not());
+        .stderr(predicate::str::contains("open Codex and run `/hooks`").not());
 
     // A second hook that sorts ahead moves the first hook's position? It lands after it
     // within the event, so only the new handler is new.
@@ -212,7 +212,7 @@ fn codex_trust_is_reported_when_handler_positions_change_and_not_otherwise() {
     );
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("skips them until you review them"));
+        .stderr(predicate::str::contains("open Codex and run `/hooks`"));
     let codex = json(&project, ".codex/hooks.json");
     assert_eq!(commands(&codex, "PreToolUse").len(), 2);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mars-schema"
-version = "0.26.1"
+version = "0.26.2"
 edition = "2024"
 description = "Pure schema reader and editor for Mars agent packages"
 license = "MIT"

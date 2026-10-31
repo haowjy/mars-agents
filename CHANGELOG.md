@@ -7,6 +7,12 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.26.2] - 2026-10-31
+
+### Changed
+- `mars sync` and `mars upgrade` print `info` diagnostics only with `--verbose`. The default human report keeps warnings and errors; `--json` still carries every diagnostic.
+- The `codex-hooks-need-trust` warning now says what to do: open Codex and run `/hooks` to review and trust the named handlers, which Codex skips until then.
+
 ## [0.26.1] - 2026-10-29
 
 ### Fixed

@@ -101,7 +101,7 @@ fn dependency_hook_setting_the_removed_fragment_key_warns_and_keeps_its_install(
     );
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("`fragment` was removed in 0.27"))
+        .stderr(predicate::str::contains("`fragment` was removed in 0.28"))
         .stderr(predicate::str::contains(
             "keeping what the last sync installed",
         ));

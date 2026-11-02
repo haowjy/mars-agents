@@ -92,7 +92,7 @@ fn is_removed_schema(value: &toml::Value) -> bool {
 }
 
 /// The first target table that still sets `fragment`, the alias of `native-hook` removed in
-/// 0.27, and whether that table also sets `native-hook`. Checked on the parsed value for both
+/// 0.28, and whether that table also sets `native-hook`. Checked on the parsed value for both
 /// origins: a dependency's unknown keys are otherwise dropped with a warning, and serde's own
 /// error would not say what to write.
 fn removed_fragment_target(value: &toml::Value) -> Option<(&str, bool)> {
@@ -134,7 +134,7 @@ pub fn read(text: &str, dir_name: &str, origin: Origin) -> HookRead {
         };
         return failed(
             "field.removed",
-            format!("target `{root}`: `fragment` was removed in 0.27; {fix}"),
+            format!("target `{root}`: `fragment` was removed in 0.28; {fix}"),
         );
     }
     let mut diagnostics = Vec::new();

@@ -482,7 +482,7 @@ fn fragment_was_removed_for_both_origins() {
             assert_eq!(got.diagnostics[0].severity, Severity::Error);
             assert_eq!(
                 message(&got),
-                format!("target `.codex`: `fragment` was removed in 0.27; {fix}")
+                format!("target `.codex`: `fragment` was removed in 0.28; {fix}")
             );
         }
     }

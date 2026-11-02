@@ -574,7 +574,7 @@ native-hook = "claude.json"    # default filename when the hook has no [hooks]
 native-hook = "codex.json"
 ```
 
-`fragment`, the earlier name of `native-hook`, was removed in 0.27. A target table that
+`fragment`, the earlier name of `native-hook`, was removed in 0.28. A target table that
 sets it is invalid, whether or not `native-hook` is also set. Your own hook fails the sync
 with `field.removed`; rename the key to `native-hook`, or delete the `fragment` line when
 `native-hook` is already set. A dependency's hook is kept as the last sync installed it, with
@@ -972,7 +972,7 @@ reorder its file-mode artifact.
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
 | `hook-native-contract` | warning | an OpenCode or Pi native hook lacks the expected default export; it installs anyway |
 | `hook-native-hook` | warning or error | a native hook could not be read or rendered in a plugin build (an error for the project's own hook, a warning for a dependency's) |
-| `field.removed` | error | your own hook's target table sets `fragment`, removed in 0.27; use `native-hook`, or delete `fragment` when `native-hook` is set. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
+| `field.removed` | error | your own hook's target table sets `fragment`, removed in 0.28; use `native-hook`, or delete `fragment` when `native-hook` is set. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
 | `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
 | `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |

@@ -690,7 +690,7 @@ fn fragment_key_fails_with_the_removal_message_and_native_hook_still_installs() 
     new.child(".claude/settings.local.json")
         .assert(predicate::str::contains("PreToolUse"));
     sync(&old).failure().stderr(
-        predicate::str::contains("`fragment` was removed in 0.27")
+        predicate::str::contains("`fragment` was removed in 0.28")
             .and(predicate::str::contains("use `native-hook`")),
     );
     old.child(".claude/settings.local.json")

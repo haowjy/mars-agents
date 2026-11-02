@@ -67,7 +67,6 @@ pub struct ExecutionNetworkPolicy {
 pub struct PromptSurface {
     pub system_instruction: String,
     pub supplemental_documents: Vec<SupplementalDoc>,
-    pub inventory_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

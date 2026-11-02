@@ -216,6 +216,35 @@ Default view shows name + description from frontmatter (the YAML metadata block 
 
 ---
 
+## `mars agents` and `mars skills`
+
+Inspect the installed agents or skills, after variants and overrides are applied.
+
+```bash
+mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars agents show NAME
+mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars skills show NAME
+```
+
+| Flag | Description |
+|---|---|
+| `--mode MODE` | Agents only: `primary` or `subagent` |
+| `--type TYPE` | Skills only: match `metadata.type` exactly |
+| `--model-invocable` | Only items a model may pick for itself |
+| `--source NAME` | Filter by dependency name |
+| `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
+
+The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
+
+- `native-harnesses`: the harnesses the last `mars sync` installed the agent into natively.
+- `fanout`: `true` when `[settings.meridian.fanout].agents` names it, so Meridian launches it even where it is native.
+- `subagents`: the profile's list of agents it may spawn.
+
+`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+
+---
+
 ## `mars why`
 
 Explain why an item is installed.
@@ -490,7 +519,7 @@ Model guide for coder:
 - model-glob `gpt-*`: for small edits
 ```
 
-Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. The Agent inventory in a launch bundle marks Agents that have a guide with `mars models prompting @name`. See [`when`](../config/schema-v1.md#model-policies).
+Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. See [`when`](../config/schema-v1.md#model-policies).
 
 ### `mars models resolve`
 

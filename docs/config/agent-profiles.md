@@ -361,7 +361,7 @@ it does not produce a lossiness warning. See
 | Required | no |
 | Default | empty |
 
-The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and uses it during prompt assembly to filter the spawnable-agent **inventory** injected into the system prompt — only listed agents are advertised as spawn options. Meridian reads the same list at spawn time to scope the agent's spawnable roster.
+The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and reports it in `mars agents --json`. Meridian reads that list to scope the agent's spawnable roster.
 
 Like `model-policies`, `subagents` is Meridian-oriented metadata — preserved in `.mars/` for runtime consumers, with no harness-native field equivalent.
 
@@ -513,8 +513,7 @@ not merged because they resolve to the same model. Overlay/global rules provide
 settings, not additional profile fallback candidates. Empty overrides stay valid, and a
 rule with no `override` is a candidate-only entry.
 
-Inventory labels these rules as declared backups, with `(model ID)` marking literal
-selectors. They describe automatic fallback, not equivalent explicit overrides:
+These rules describe automatic fallback, not equivalent explicit overrides:
 `--model TOKEN` resolves an alias named `TOKEN` before treating it as a model ID.
 
 **Guide.** `mars models prompting @agent` lists each rule that has a `when`, in declaration order, ahead of the model alias's own `prompting` text.

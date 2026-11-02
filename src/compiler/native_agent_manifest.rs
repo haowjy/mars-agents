@@ -24,10 +24,10 @@ enum NativeAgentManifestRead {
     Unreadable,
 }
 
-/// Agent identity for manifest keys — must match inventory partition keys.
+/// Agent identity for manifest keys.
 ///
 /// Native compile writes to `agents/{logical_name}.{ext}` where logical name is
-/// `profile.name` (falling back to the canonical file stem). Inventory lookup
+/// `profile.name` (falling back to the canonical file stem). `mars agents` lookup
 /// uses the same identity, so the manifest must derive from the native dest
 /// path, not the canonical `.mars` owner path (which follows on-disk filename).
 fn agent_name_from_native_dest(path: &str) -> Option<String> {
@@ -164,23 +164,12 @@ pub fn persist_lock_then_native_agent_manifest(
     }
 }
 
-/// Read `.mars/native-agents.json` for inventory rendering and diagnostics.
+/// Read `.mars/native-agents.json` for `mars agents` and diagnostics.
 pub fn read_native_agent_manifest(mars_dir: &Path) -> BTreeMap<String, Vec<String>> {
     match read_native_agent_manifest_state(mars_dir) {
         NativeAgentManifestRead::Found(agents) => agents,
         NativeAgentManifestRead::Missing | NativeAgentManifestRead::Unreadable => BTreeMap::new(),
     }
-}
-
-/// Whether `agent_name` is materialized natively for `harness` (HarnessId snake_case string).
-pub fn agent_is_native_for_harness(
-    manifest: &BTreeMap<String, Vec<String>>,
-    agent_name: &str,
-    harness: &str,
-) -> bool {
-    manifest
-        .get(agent_name)
-        .is_some_and(|harnesses| harnesses.iter().any(|entry| entry == harness))
 }
 
 #[cfg(test)]
@@ -342,17 +331,6 @@ mod tests {
             !manifest.contains_key("my-file"),
             "manifest must not key by canonical filename when native dest uses profile name"
         );
-    }
-
-    #[test]
-    fn agent_is_native_for_harness_matches_manifest_membership() {
-        let mut manifest = BTreeMap::new();
-        manifest.insert("coder".to_string(), vec!["claude".to_string()]);
-        assert!(agent_is_native_for_harness(&manifest, "coder", "claude"));
-        assert!(!agent_is_native_for_harness(&manifest, "coder", "codex"));
-        assert!(!agent_is_native_for_harness(
-            &manifest, "explorer", "claude"
-        ));
     }
 
     #[test]

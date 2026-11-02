@@ -260,7 +260,7 @@ LaunchBundleRequest {agent, model, harness, effort, approval, sandbox, network, 
            └─ runnable::resolve_routing()              (populate Routing with aggregate report)
        │
        ├─ resolve_effective_skills()  (profile skills filtered by harness kind)
-       ├─ compile_prompt_surface()    (system instruction + supplemental docs + inventory)
+       ├─ compile_prompt_surface()    (system instruction + supplemental docs)
        └─ resolve_bundle_tools()      (profile rules + platform capability natives per harness)
            │
            └─ LaunchBundle {routing, execution_policy, prompt_surface, tools, skills_metadata, provenance, warnings}

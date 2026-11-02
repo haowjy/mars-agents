@@ -7,6 +7,19 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-02
+
+### Added
+- `mars agents list --json` rows report `subagents`, `model-invocable`, `native-harnesses` (the harnesses the last sync installed the agent into natively) and `fanout` (named in `[settings.meridian.fanout].agents`). `mars agents show` reports the same, plus `user-invocable`.
+- `mars agents --model-invocable` lists only agents a model may pick, and the table gains the `M-INV` column, as in `mars skills`.
+
+### Changed
+- An agent without `mode` reports `subagent` instead of `""`, and `--mode subagent` now matches it.
+- `mars agents` fails when the effective config can't be read, as `mars build launch-bundle` does.
+
+### Removed
+- The launch bundle no longer carries the agent inventory: `prompt_surface.inventory_prompt` and the `# Meridian Agents` block in `system_instruction` are gone. Meridian lists agents itself with `meridian spawn subagents`.
+
 ## [0.26.2] - 2026-10-31
 
 ### Changed

@@ -4,7 +4,6 @@ use std::path::Path;
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
-use crate::error::MarsError;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
@@ -51,7 +50,7 @@ pub(crate) fn compile_prompt_surface(
     harness_id: &str,
     selected_model_token: &str,
     canonical_model_id: &str,
-) -> Result<PromptCompilation, MarsError> {
+) -> PromptCompilation {
     let _ = (selected_model_token, canonical_model_id);
 
     let requested_load_skills = requested_skill_order(&profile_skills.load, extra_skills);
@@ -130,14 +129,14 @@ pub(crate) fn compile_prompt_surface(
         REPORT_INSTRUCTION,
     );
 
-    Ok(PromptCompilation {
+    PromptCompilation {
         system_instruction,
         supplemental_documents,
         loaded_skills,
         available_skills,
         missing_skills,
         warnings,
-    })
+    }
 }
 
 fn requested_skill_order(profile_skills: &[String], extra_skills: &[String]) -> Vec<String> {

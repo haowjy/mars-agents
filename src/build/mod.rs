@@ -131,14 +131,6 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(policy.warnings);
-    let with_selection_report = |err: MarsError| match err {
-        MarsError::Config(_) => MarsError::Selection {
-            code: "invalid_config",
-            message: err.to_string(),
-            report: Box::new(policy.routing.route_trace.clone()),
-        },
-        _ => err,
-    };
 
     let prompt = compile_prompt_surface(
         &content_roots,
@@ -148,12 +140,10 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
-    )
-    .map_err(with_selection_report)?;
+    );
 
     warnings.extend(prompt.warnings);
-    let resolved_tools =
-        resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
+    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,

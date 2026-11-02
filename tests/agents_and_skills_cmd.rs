@@ -3,8 +3,8 @@
 //! Pins the `--json` output contract:
 //!
 //! - List envelope shapes: `{"agents":[...]}` and `{"skills":[...]}`
-//! - Kebab-case `model-invocable` on both skills list and skills show.
-//!   Regression guard: list previously emitted `model_invocable` (snake)
+//! - Kebab-case `model-invocable` on list and show, for agents and skills alike.
+//!   Regression guard: skills list previously emitted `model_invocable` (snake)
 //!   while show emitted `model-invocable` (kebab).
 //! - `subagents` array present in agent show output
 //! - Not-found exits non-zero
@@ -164,6 +164,38 @@ fn agents_list_json_reports_routing_fields() {
         "{stdout}"
     );
     assert_eq!(orchestrator["fanout"], false, "{stdout}");
+
+    // `--model-invocable` and the M-INV column mirror `mars skills`.
+    let root = project.to_str().unwrap();
+    let filtered = mars()
+        .args(["--json", "agents", "--model-invocable", "--root", root])
+        .output()
+        .unwrap();
+    let filtered: serde_json::Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    let names: Vec<&str> = filtered["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["orchestrator", "worker"]);
+
+    let text = mars().args(["agents", "--root", root]).output().unwrap();
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.lines().next().unwrap().contains("M-INV"), "{text}");
+    let manual_row = text.lines().find(|l| l.starts_with("manual")).unwrap();
+    assert!(manual_row.contains(" no "), "{text}");
+
+    // `show` carries the same facts as the list entry.
+    let show = mars()
+        .args(["--json", "agents", "show", "worker", "--root", root])
+        .output()
+        .unwrap();
+    let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show["model-invocable"], true);
+    assert_eq!(show["user-invocable"], true);
+    assert_eq!(show["native-harnesses"], serde_json::json!(["claude"]));
+    assert_eq!(show["fanout"], true);
 }
 
 #[test]

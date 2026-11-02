@@ -235,12 +235,13 @@ mars skills show NAME
 | `--source NAME` | Filter by dependency name |
 | `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
 
-The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `""` when the profile omits it) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add two routing fields:
+The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
 
 - `native-harnesses`: the harnesses the last `mars sync` installed the agent into natively.
 - `fanout`: `true` when `[settings.meridian.fanout].agents` names it, so Meridian launches it even where it is native.
+- `subagents`: the profile's list of agents it may spawn.
 
-`show` prints the same fields for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
 
 ---
 
@@ -518,7 +519,7 @@ Model guide for coder:
 - model-glob `gpt-*`: for small edits
 ```
 
-Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. The Agent inventory in a launch bundle marks Agents that have a guide with `mars models prompting @name`. See [`when`](../config/schema-v1.md#model-policies).
+Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. See [`when`](../config/schema-v1.md#model-policies).
 
 ### `mars models resolve`
 

@@ -24,10 +24,10 @@ enum NativeAgentManifestRead {
     Unreadable,
 }
 
-/// Agent identity for manifest keys — must match inventory partition keys.
+/// Agent identity for manifest keys.
 ///
 /// Native compile writes to `agents/{logical_name}.{ext}` where logical name is
-/// `profile.name` (falling back to the canonical file stem). Inventory lookup
+/// `profile.name` (falling back to the canonical file stem). `mars agents` lookup
 /// uses the same identity, so the manifest must derive from the native dest
 /// path, not the canonical `.mars` owner path (which follows on-disk filename).
 fn agent_name_from_native_dest(path: &str) -> Option<String> {
@@ -164,45 +164,11 @@ pub fn persist_lock_then_native_agent_manifest(
     }
 }
 
-/// Read `.mars/native-agents.json` for inventory rendering and diagnostics.
+/// Read `.mars/native-agents.json` for `mars agents` and diagnostics.
 pub fn read_native_agent_manifest(mars_dir: &Path) -> BTreeMap<String, Vec<String>> {
     match read_native_agent_manifest_state(mars_dir) {
         NativeAgentManifestRead::Found(agents) => agents,
         NativeAgentManifestRead::Missing | NativeAgentManifestRead::Unreadable => BTreeMap::new(),
-    }
-}
-
-/// How a caller reaches each agent: the harnesses the last sync installed it into natively,
-/// and the `[settings.meridian.fanout]` agents that stay on Meridian even where native.
-/// The launch-bundle inventory and `mars agents` both route through this, so they agree.
-pub struct AgentRouting {
-    native: BTreeMap<String, Vec<String>>,
-    fanout: Vec<String>,
-}
-
-impl AgentRouting {
-    pub fn new(mars_dir: &Path, fanout: &[String]) -> Self {
-        Self {
-            native: read_native_agent_manifest(mars_dir),
-            fanout: fanout.to_vec(),
-        }
-    }
-
-    /// Harnesses (HarnessId snake_case strings) `agent_name` is materialized into natively.
-    pub fn native_harnesses(&self, agent_name: &str) -> &[String] {
-        self.native.get(agent_name).map_or(&[], Vec::as_slice)
-    }
-
-    pub fn is_native_for(&self, agent_name: &str, harness: &str) -> bool {
-        self.native_harnesses(agent_name)
-            .iter()
-            .any(|entry| entry == harness)
-    }
-
-    pub fn is_fanout(&self, agent_name: &str) -> bool {
-        self.fanout
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(agent_name))
     }
 }
 
@@ -365,23 +331,6 @@ mod tests {
             !manifest.contains_key("my-file"),
             "manifest must not key by canonical filename when native dest uses profile name"
         );
-    }
-
-    #[test]
-    fn agent_routing_matches_manifest_membership_and_fanout() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("native-agents.json"),
-            r#"{"version": 1, "agents": {"coder": ["claude"]}}"#,
-        )
-        .unwrap();
-        let routing = AgentRouting::new(dir.path(), &["Coder".to_string()]);
-        assert!(routing.is_native_for("coder", "claude"));
-        assert!(!routing.is_native_for("coder", "codex"));
-        assert!(!routing.is_native_for("explorer", "claude"));
-        assert_eq!(routing.native_harnesses("explorer"), [] as [String; 0]);
-        assert!(routing.is_fanout("coder"));
-        assert!(!routing.is_fanout("explorer"));
     }
 
     #[test]

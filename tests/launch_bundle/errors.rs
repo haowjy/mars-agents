@@ -1,7 +1,4 @@
-use super::common::{
-    install_fake_harnesses, replace_path_with, setup_bundle_project,
-    setup_bundle_project_with_agents,
-};
+use super::common::{install_fake_harnesses, replace_path_with, setup_bundle_project};
 use crate::test_common::{API_PATH, mars_cmd};
 use assert_fs::TempDir;
 
@@ -82,47 +79,6 @@ Review code changes."#;
         bundle["execution_policy"]["native_config"]["model-invocable"].as_bool(),
         Some(false)
     );
-}
-
-#[test]
-fn build_launch_bundle_fails_when_inventory_agent_has_fatal_frontmatter_diagnostic() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
-    let reviewer_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-    let malformed_inventory_content = r#"---
-name: malformed
-model: claude-opus-4-6
-model-invocable: true
----
-Broken inventory entry."#;
-
-    let (server, project_root) = setup_bundle_project_with_agents(
-        &temp,
-        "bundle-source",
-        &[
-            ("reviewer", reviewer_content),
-            ("malformed", malformed_inventory_content),
-        ],
-        &[],
-        "",
-    );
-
-    std::fs::write(
-        project_root.join(".mars/agents/malformed.md"),
-        malformed_inventory_content.replace("model-invocable: true", "model-invocable: nope"),
-    )
-    .unwrap();
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("inventory file"));
 }
 
 #[test]

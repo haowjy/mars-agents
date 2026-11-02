@@ -1,5 +1,4 @@
 pub mod bundle;
-pub mod inventory;
 pub mod plugin;
 pub mod policy;
 pub mod prompt;
@@ -149,8 +148,6 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
-        &profile.subagents,
-        effective_project_config.settings.meridian_fanout_agents(),
     )
     .map_err(with_selection_report)?;
 
@@ -168,7 +165,6 @@ pub fn build_launch_bundle(
         prompt_surface: bundle::PromptSurface {
             system_instruction: prompt.system_instruction,
             supplemental_documents: prompt.supplemental_documents,
-            inventory_prompt: prompt.inventory_prompt,
         },
         scaffold_slots: ScaffoldSlots::placeholders(),
         tools: resolved_tools,

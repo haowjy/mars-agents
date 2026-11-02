@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
-use crate::build::inventory::build_inventory_prompt;
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
@@ -13,7 +12,6 @@ const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant
 pub struct PromptCompilation {
     pub system_instruction: String,
     pub supplemental_documents: Vec<SupplementalDoc>,
-    pub inventory_prompt: String,
     pub loaded_skills: Vec<LoadedSkill>,
     pub available_skills: Vec<AvailableSkill>,
     pub missing_skills: Vec<String>,
@@ -45,7 +43,6 @@ enum AvailableSkillOutcome {
     Missing,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_prompt_surface(
     content_roots: &ContentRoots,
     agent_body: &str,
@@ -54,8 +51,6 @@ pub(crate) fn compile_prompt_surface(
     harness_id: &str,
     selected_model_token: &str,
     canonical_model_id: &str,
-    subagents_filter: &[String],
-    fanout_agents: &[String],
 ) -> Result<PromptCompilation, MarsError> {
     let _ = (selected_model_token, canonical_model_id);
 
@@ -128,25 +123,16 @@ pub(crate) fn compile_prompt_surface(
         }
     }
 
-    let inventory_prompt = build_inventory_prompt(
-        content_roots,
-        subagents_filter,
-        harness_id,
-        fanout_agents,
-        &mut warnings,
-    )?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
         &available_skills,
-        &inventory_prompt,
         REPORT_INSTRUCTION,
     );
 
     Ok(PromptCompilation {
         system_instruction,
         supplemental_documents,
-        inventory_prompt,
         loaded_skills,
         available_skills,
         missing_skills,
@@ -334,7 +320,6 @@ fn compose_system_instruction(
     agent_body: &str,
     supplemental_documents: &[SupplementalDoc],
     available_skills: &[AvailableSkill],
-    inventory_prompt: &str,
     report_instruction: &str,
 ) -> String {
     let mut blocks: Vec<String> = Vec::new();
@@ -355,8 +340,8 @@ fn compose_system_instruction(
         }
     }
 
-    // Available skills: names only, grouped by type. Meridian composes its own
-    // inventory and renders descriptions, so the two formats are independent.
+    // Available skills: names only, grouped by type. Meridian renders descriptions
+    // itself, so the two formats are independent.
     if !available_skills.is_empty() {
         let mut avail_block = String::from(
             "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",
@@ -427,11 +412,6 @@ fn compose_system_instruction(
             }
         }
         blocks.push(avail_block);
-    }
-
-    let inventory = inventory_prompt.trim();
-    if !inventory.is_empty() {
-        blocks.push(inventory.to_string());
     }
 
     blocks.push(report_instruction.to_string());

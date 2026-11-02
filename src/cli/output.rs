@@ -20,6 +20,41 @@ pub fn print_warnings(warnings: &[String]) {
     }
 }
 
+/// One row of the `mars agents` / `mars skills` list table.
+pub struct CatalogRow<'a> {
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub model_invocable: bool,
+    pub scope: &'a str,
+    pub description: &'a str,
+}
+
+/// Print the `NAME <kind> M-INV SCOPE DESCRIPTION` table shared by `mars agents` and
+/// `mars skills`; `kind_header` is `MODE` or `TYPE`.
+pub fn print_catalog_table(rows: &[CatalogRow<'_>], kind_header: &str, empty: &str) {
+    if rows.is_empty() {
+        println!("  {empty}");
+        return;
+    }
+    let width = |header: &str, f: fn(&CatalogRow<'_>) -> usize| {
+        rows.iter().map(f).max().unwrap_or(0).max(header.len())
+    };
+    let name_w = width("NAME", |r| r.name.len());
+    let kind_w = width(kind_header, |r| r.kind.len());
+    let scope_w = width("SCOPE", |r| r.scope.len());
+    println!(
+        "{:<name_w$}  {:<kind_w$}  {:<5}  {:<scope_w$}  DESCRIPTION",
+        "NAME", kind_header, "M-INV", "SCOPE"
+    );
+    for r in rows {
+        let inv = if r.model_invocable { "yes" } else { "no" };
+        println!(
+            "{:<name_w$}  {:<kind_w$}  {:<5}  {:<scope_w$}  {}",
+            r.name, r.kind, inv, r.scope, r.description
+        );
+    }
+}
+
 /// Color only a terminal: `ColorChoice::Auto` checks `TERM` and `NO_COLOR` but not whether the
 /// stream is a terminal, so piped output carried raw escape codes.
 ///

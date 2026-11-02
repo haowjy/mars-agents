@@ -450,14 +450,14 @@ model = "opus"
 
 Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
-`[settings.meridian.fanout]` names agents that get the `include_fanout` treatment one by one, and that the Agent inventory lists in the Meridian section as well as the native one:
+`[settings.meridian.fanout]` names agents that get the `include_fanout` treatment one by one, and that `mars agents` reports with `fanout: true`, so Meridian launches them even where they are native:
 
 ```toml
 [settings.meridian.fanout]
 agents = ["reviewer", "prober"]
 ```
 
-An agent that has a native copy is otherwise listed only in the native section. The earlier per-agent `fanout:` frontmatter key is gone from schema 1; this list is where that choice lives now, because it is consumer configuration. If a [rename](#renaming) leaves a listed name pointing at no installed agent, sync warns (`config-rename-dangle`).
+The earlier per-agent `fanout:` frontmatter key is gone from schema 1; this list is where that choice lives now, because it is consumer configuration. If a [rename](#renaming) leaves a listed name pointing at no installed agent, sync warns (`config-rename-dangle`).
 
 ### `[agents.<name>]` (overlay)
 

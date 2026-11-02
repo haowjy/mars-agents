@@ -169,7 +169,7 @@ model-policies:
 
 - **`match`** holds exactly one of `alias` (the alias the model was chosen through), `model` (the concrete model ID) or `model-glob` (a glob over the concrete model ID).
 - **`override`** may set `effort`, `sandbox`, `approval` and `network`. Any other key, such as `harness`, is an error, and so are the host sets `network-allow` and `network-deny`: a rule picks the mode, and the hosts come from the Agent, the consumer and the command line.
-- **`when`** is one non-empty line saying when this model is a good choice for this Agent. It is guidance for the caller, not a condition Mars evaluates. `mars models prompting @agent` prints each rule's `when`, and the Agent inventory in the system prompt marks an Agent that has a guide. `mars check` warns when a rule's `alias` is not defined.
+- **`when`** is one non-empty line saying when this model is a good choice for this Agent. It is guidance for the caller, not a condition Mars evaluates. `mars models prompting @agent` prints each rule's `when`. `mars check` warns when a rule's `alias` is not defined.
 - **`no-fallback`** keeps a rule from being a launch backup. See [Agent profiles](agent-profiles.md#model-policies).
 
 **First match wins; there is no merging.** Mars looks for the first rule that matches the chosen model: the consumer's `[agents.<name>]` rules first, then the Agent's own, then `[[settings.model-policies]]`. Only that rule's `override` applies. A field the rule does not set falls through to the next layer below.

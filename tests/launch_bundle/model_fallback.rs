@@ -122,7 +122,7 @@ fn flagged_entry_does_not_ban_an_unflagged_entry_for_the_same_alias() {
 }
 
 #[test]
-fn inventory_distinguishes_automatic_literal_backups_from_explicit_aliases() {
+fn alias_backup_rules_resolve_differently_from_explicit_model_token() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["codex"]);
     let (server, project_root) = setup_bundle_project(
@@ -184,15 +184,5 @@ model = "gpt-5.4-mini"
         let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(bundle["routing"]["model"], expected_model);
         assert_eq!(bundle["execution_policy"]["effort"], expected_effort);
-        let inventory = bundle["prompt_surface"]["inventory_prompt"]
-            .as_str()
-            .unwrap();
-        assert!(
-            inventory.contains("Declared backups: primary, gpt-5 (model ID), gpt-5"),
-            "{inventory}"
-        );
-        assert!(inventory.contains("automatic fallback candidates, not native fanout"));
-        assert!(inventory.contains("`--model` resolves aliases first"));
-        assert!(!inventory.contains("Fan-out:"));
     }
 }

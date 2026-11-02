@@ -432,7 +432,7 @@ pub struct AgentCopyConfig {
     pub deprecated_fanout_agents: Vec<String>,
 }
 
-/// Fanout agent list for native emission qualification and dual inventory listing.
+/// Fanout agent list for native emission qualification and `mars agents` routing output.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FanoutConfig {

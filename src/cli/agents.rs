@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::compiler::native_agent_manifest::read_native_agent_manifest;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use mars_schema::item::ItemKind;
@@ -16,6 +17,14 @@ struct AgentEntry {
     mode: String,
     scope: String,
     source_path: PathBuf,
+    #[serde(rename = "model-invocable")]
+    model_invocable: bool,
+    /// Harnesses the last sync installed this agent into natively (`.mars/native-agents.json`).
+    #[serde(rename = "native-harnesses")]
+    native_harnesses: Vec<String>,
+    /// Named in `[settings.meridian.fanout].agents`: spawned through Meridian even where it
+    /// is also native.
+    fanout: bool,
 }
 
 /// Arguments for `mars agents`.
@@ -67,6 +76,16 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
     let visible = roots.visible_locked_items(ItemKind::Agent)?;
     output::print_warnings(&visible.warnings);
+    let native = read_native_agent_manifest(&roots.primary_mars_dir());
+    // A config the list cannot read costs only the fanout flag, never the listing.
+    let fanout_agents: Vec<String> =
+        match crate::build::load_effective_project_config_or_default(&ctx.project_root) {
+            Ok(config) => config.settings.meridian_fanout_agents().to_vec(),
+            Err(err) => {
+                eprintln!("warning: fanout settings unavailable: {err}");
+                Vec::new()
+            }
+        };
 
     for (scope, item, disk_path) in visible.items {
         // Filtering never reveals a shadowed fallback item.
@@ -108,7 +127,14 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .unwrap_or_else(|| path_stem(&disk_path));
         let description = profile.description.clone().unwrap_or_default();
 
+        let native_harnesses = native.get(&name).cloned().unwrap_or_default();
+        let fanout = fanout_agents
+            .iter()
+            .any(|agent| agent.eq_ignore_ascii_case(&name));
         entries.push(AgentEntry {
+            model_invocable: profile.model_invocable,
+            native_harnesses,
+            fanout,
             name,
             description,
             mode: mode_str,

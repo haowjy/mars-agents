@@ -207,7 +207,7 @@ fn empty_agent_profile() -> AgentProfile {
     }
 }
 
-fn load_effective_project_config_or_default(
+pub(crate) fn load_effective_project_config_or_default(
     project_root: &std::path::Path,
 ) -> Result<EffectiveProjectConfig, MarsError> {
     match crate::config::load_effective_project_config(project_root) {

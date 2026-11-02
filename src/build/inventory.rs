@@ -3,9 +3,7 @@ use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::native_agent_manifest::{
-    agent_is_native_for_harness, read_native_agent_manifest,
-};
+use crate::compiler::native_agent_manifest::AgentRouting;
 use crate::content::ContentRoots;
 use crate::error::{ConfigError, MarsError};
 use mars_schema::agent::AgentMode;
@@ -97,20 +95,14 @@ pub(crate) fn build_inventory_prompt(
     primary_agents.sort_by(|left, right| left.name.cmp(&right.name));
     subagent_agents.sort_by(|left, right| left.name.cmp(&right.name));
 
-    let manifest = read_native_agent_manifest(&content_roots.primary_mars_dir());
-    let is_native_for_harness = |agent: &ParsedAgentInventory| -> bool {
-        agent_is_native_for_harness(&manifest, &agent.name, harness)
-    };
+    let routing = AgentRouting::new(&content_roots.primary_mars_dir(), fanout_agents);
+    let is_native_for_harness =
+        |agent: &ParsedAgentInventory| -> bool { routing.is_native_for(&agent.name, harness) };
+    let is_fanout_agent = |agent: &ParsedAgentInventory| -> bool { routing.is_fanout(&agent.name) };
 
     let mut meridian_primary = Vec::new();
     let mut meridian_subagent = Vec::new();
     let mut native_agents = Vec::new();
-
-    let is_fanout_agent = |agent: &ParsedAgentInventory| -> bool {
-        fanout_agents
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&agent.name))
-    };
 
     for agent in primary_agents {
         if is_native_for_harness(&agent) {

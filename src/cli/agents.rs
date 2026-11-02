@@ -1,9 +1,8 @@
 //! `mars agents` — list and inspect agents from the .mars/ canonical store.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::compiler::native_agent_manifest::read_native_agent_manifest;
+use crate::compiler::native_agent_manifest::AgentRouting;
 use crate::content::ContentRoots;
 use crate::error::MarsError;
 use mars_schema::item::ItemKind;
@@ -76,39 +75,14 @@ pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 }
 
-/// How a caller should route to each agent: the harnesses the last sync installed it into
-/// natively, and whether `[settings.meridian.fanout]` keeps it on Meridian anyway.
-struct Routing {
-    native: BTreeMap<String, Vec<String>>,
-    fanout: Vec<String>,
-}
-
-impl Routing {
-    fn load(roots: &ContentRoots, ctx: &super::MarsContext) -> Self {
-        // A config this cannot read costs only the fanout flag, never the command.
-        let fanout = match crate::build::load_effective_project_config_or_default(&ctx.project_root)
-        {
-            Ok(config) => config.settings.meridian_fanout_agents().to_vec(),
-            Err(err) => {
-                eprintln!("warning: fanout settings unavailable: {err}");
-                Vec::new()
-            }
-        };
-        Self {
-            native: read_native_agent_manifest(&roots.primary_mars_dir()),
-            fanout,
-        }
-    }
-
-    fn native_harnesses(&self, name: &str) -> Vec<String> {
-        self.native.get(name).cloned().unwrap_or_default()
-    }
-
-    fn fanout(&self, name: &str) -> bool {
-        self.fanout
-            .iter()
-            .any(|agent| agent.eq_ignore_ascii_case(name))
-    }
+/// Routing as the launch bundle sees it. A config the bundle cannot read fails here too:
+/// guessing "not fanout" would send fanout agents to the harness's own tool.
+fn load_routing(roots: &ContentRoots, ctx: &super::MarsContext) -> Result<AgentRouting, MarsError> {
+    let config = crate::build::load_effective_project_config_or_default(&ctx.project_root)?;
+    Ok(AgentRouting::new(
+        &roots.primary_mars_dir(),
+        config.settings.meridian_fanout_agents(),
+    ))
 }
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
@@ -116,7 +90,7 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
     let visible = roots.visible_locked_items(ItemKind::Agent)?;
     output::print_warnings(&visible.warnings);
-    let routing = Routing::load(&roots, ctx);
+    let routing = load_routing(&roots, ctx)?;
 
     for (scope, item, disk_path) in visible.items {
         // Filtering never reveals a shadowed fallback item.
@@ -162,8 +136,8 @@ fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let description = profile.description.clone().unwrap_or_default();
 
         entries.push(AgentEntry {
-            native_harnesses: routing.native_harnesses(&name),
-            fanout: routing.fanout(&name),
+            native_harnesses: routing.native_harnesses(&name).to_vec(),
+            fanout: routing.is_fanout(&name),
             name,
             description,
             mode: mode_str,
@@ -276,7 +250,7 @@ fn run_show(
             .unwrap_or_default();
         let description_str = profile.description.as_deref().unwrap_or("");
         let scope = scope.as_str();
-        let routing = Routing::load(&roots, ctx);
+        let routing = load_routing(&roots, ctx)?;
 
         if json {
             output::print_json(&serde_json::json!({
@@ -286,7 +260,7 @@ fn run_show(
                 "model-invocable": profile.model_invocable,
                 "user-invocable": profile.user_invocable,
                 "native-harnesses": routing.native_harnesses(agent_name),
-                "fanout": routing.fanout(agent_name),
+                "fanout": routing.is_fanout(agent_name),
                 "harness": harness_str,
                 "model": model_str,
                 "skills": profile.skills.all(),
@@ -309,8 +283,8 @@ fn run_show(
             println!("mode:        {mode_str}");
             println!("model-invocable: {}", profile.model_invocable);
             println!("user-invocable:  {}", profile.user_invocable);
-            print_str_list("native-harnesses", &routing.native_harnesses(agent_name));
-            println!("fanout:      {}", routing.fanout(agent_name));
+            print_str_list("native-harnesses", routing.native_harnesses(agent_name));
+            println!("fanout:      {}", routing.is_fanout(agent_name));
             println!("harness:     {harness_str}");
             println!("model:       {model_str}");
             println!("approval:    {approval_str}");

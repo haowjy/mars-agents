@@ -172,15 +172,38 @@ pub fn read_native_agent_manifest(mars_dir: &Path) -> BTreeMap<String, Vec<Strin
     }
 }
 
-/// Whether `agent_name` is materialized natively for `harness` (HarnessId snake_case string).
-pub fn agent_is_native_for_harness(
-    manifest: &BTreeMap<String, Vec<String>>,
-    agent_name: &str,
-    harness: &str,
-) -> bool {
-    manifest
-        .get(agent_name)
-        .is_some_and(|harnesses| harnesses.iter().any(|entry| entry == harness))
+/// How a caller reaches each agent: the harnesses the last sync installed it into natively,
+/// and the `[settings.meridian.fanout]` agents that stay on Meridian even where native.
+/// The launch-bundle inventory and `mars agents` both route through this, so they agree.
+pub struct AgentRouting {
+    native: BTreeMap<String, Vec<String>>,
+    fanout: Vec<String>,
+}
+
+impl AgentRouting {
+    pub fn new(mars_dir: &Path, fanout: &[String]) -> Self {
+        Self {
+            native: read_native_agent_manifest(mars_dir),
+            fanout: fanout.to_vec(),
+        }
+    }
+
+    /// Harnesses (HarnessId snake_case strings) `agent_name` is materialized into natively.
+    pub fn native_harnesses(&self, agent_name: &str) -> &[String] {
+        self.native.get(agent_name).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn is_native_for(&self, agent_name: &str, harness: &str) -> bool {
+        self.native_harnesses(agent_name)
+            .iter()
+            .any(|entry| entry == harness)
+    }
+
+    pub fn is_fanout(&self, agent_name: &str) -> bool {
+        self.fanout
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(agent_name))
+    }
 }
 
 #[cfg(test)]
@@ -345,14 +368,20 @@ mod tests {
     }
 
     #[test]
-    fn agent_is_native_for_harness_matches_manifest_membership() {
-        let mut manifest = BTreeMap::new();
-        manifest.insert("coder".to_string(), vec!["claude".to_string()]);
-        assert!(agent_is_native_for_harness(&manifest, "coder", "claude"));
-        assert!(!agent_is_native_for_harness(&manifest, "coder", "codex"));
-        assert!(!agent_is_native_for_harness(
-            &manifest, "explorer", "claude"
-        ));
+    fn agent_routing_matches_manifest_membership_and_fanout() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("native-agents.json"),
+            r#"{"version": 1, "agents": {"coder": ["claude"]}}"#,
+        )
+        .unwrap();
+        let routing = AgentRouting::new(dir.path(), &["Coder".to_string()]);
+        assert!(routing.is_native_for("coder", "claude"));
+        assert!(!routing.is_native_for("coder", "codex"));
+        assert!(!routing.is_native_for("explorer", "claude"));
+        assert_eq!(routing.native_harnesses("explorer"), [] as [String; 0]);
+        assert!(routing.is_fanout("coder"));
+        assert!(!routing.is_fanout("explorer"));
     }
 
     #[test]

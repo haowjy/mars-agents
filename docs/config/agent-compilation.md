@@ -495,51 +495,51 @@ Every field lowering is classified as one of four categories:
 | **dropped** | No native equivalent; value is discarded in the native artifact (preserved in `.mars/`) |
 | **meridian-only** | Consumed exclusively by Meridian; never lowered to any harness-native format |
 
-Mars warns only when you can act on a loss or it changes behaviour that matters. Everything
-else is quiet and appears under `--verbose`. A plain `mars sync`, `mars upgrade`, `mars add`,
-`mars check`, `mars init` or `mars build plugin` prints one line per agent and target for a
-**dropped** field:
+A lost restriction that changes what an agent can do is shown by default. Every other lost
+field is available under `--verbose`. Nothing is dropped without a record.
 
-- a `harness-overrides.<harness>` key that can carry policy (`disallowed-tools`, `permission`,
-  `sandbox_mode`, …) which Mars discards because it lowers that key itself, or a scalar OpenCode
-  `permission` that replaces the whole map: remove or move the override;
-- `model-invocable: false`, which no target file carries, so another model can pick the agent.
+A plain `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` or `mars build plugin`
+prints one line for the project (code `agent-restriction-dropped`) when a target cannot carry a
+restriction the agent declares. The line names the kind lost, so you can tell a shell restriction
+from a missing edit deny:
 
 ```
-warning: agent `reviewer`: 1 field dropped for .codex (harness-overrides.codex.sandbox_mode)
+warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose a shell restriction on .codex, .opencode and .pi: it does not apply there; run again with --verbose for the rules per agent and target
 ```
 
-Everything else is quiet, and a quiet site carries its reason:
+What counts:
 
-| Quiet class | Why it is quiet |
+| Kind | Lost when |
 |---|---|
-| Tool, MCP and network rules a native file cannot carry (a tool deny, `ask`, an allow list, an MCP deny or `ask`, `network` limits on Codex, scoped denies on OpenCode) | You cannot fix it in the profile. Meridian enforces what the harness supports at launch, and `meridian spawn --dry-run` reports each gap (owner ruling: gaps are reported there, not warned about) |
-| Launch-time fields (`model-policies`, `sandbox`, `approval`, `mode`, `fanout`, and the network fields on targets that do not lower them) | Meridian applies them at spawn |
+| shell restriction | a scoped `bash(git reset --hard *)` deny, or an allow list (`'*': deny`), or a capability whose only allows are scoped (`bash(rg *)` with no plain `bash`), on a target whose file has no tool field |
+| tool restriction | any other tool deny or `ask` the file cannot carry, such as `workflow: deny` or `edit: deny` |
+| MCP restriction | an MCP `ask`, or a deny the target does not write |
+| network restriction | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting |
+| setting | a value you wrote that no file carries: a `harness-overrides.<harness>` policy key Mars discards (`disallowed-tools`, `permission`, `sandbox_mode`, …), a scalar OpenCode `permission`, `model-invocable: false` |
+
+Names past the third are counted (`and 2 more`). When the agents do not all lose something on
+every target the line says `on some of .codex and .pi`. It prints on every sync, because a lock
+change does not prove you saw it.
+
+Quiet by default, listed with its reason under `--verbose`:
+
+| Quiet class | Why |
+|---|---|
+| Launch-time fields: `model-policies`, `sandbox`, `approval`, `mode`, `fanout`, and the network fields on targets that do not lower them | Meridian applies them at spawn |
+| `network: allow` on Codex | A grant, not a restriction |
+| A deny of `edit`, `write` or `notebook` on a Codex agent with `sandbox: read-only` | The Codex file carries that sandbox, which already blocks file writes. Mars checks the agent's sandbox; any other sandbox, and every other target (whose files carry none), keep the line |
+| A plain grant, `user-invocable: false`, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, every skill field | Nothing the author withheld is lost |
 | Approximate mappings | The closest native equivalent; the semantics differ slightly |
-| A plain grant, `user-invocable: false`, `network: allow` on Codex, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, every skill field | Nothing the author withheld is lost |
-
-The tool rule is the same on every target, because what the native file lacks is the same
-question each time:
-
-- **Codex** has no carrier for tools or network in its agent TOML.
-- **OpenCode** keeps plain `deny` rules as `permission`; Meridian enforces scoped rules and
-  allow lists on the selected config agent at launch.
-- **Pi**'s native file carries none; Meridian's `meridian-permissions` extension enforces them at
-  launch.
-- **Cursor** has no tool rules and Meridian cannot enforce them there either. That is a real gap,
-  and the dry-run report is where it is named.
 
 `--verbose` (on `sync`, `upgrade`, `check` and `build plugin`) prints one warning per agent and
-target for every lossy field: dropped, quiet with its reason, approximate and launch-time, with
-the field names you wrote, for example `tools (deny edit, deny bash)`. `mars sync --verbose` also notes once
-that project `[settings]` network keys reach no Codex file.
+target for every lossy field, with the field names you wrote, for example
+`tools (deny edit, deny bash)`, and the reason for each quiet one:
 
 ```
 warning: agent `reviewer`: 1 field approximately mapped for .opencode (effort: effort maps to --variant on subprocess only)
 ```
 
-`sandbox` and `approval` are meridian-only on every target, Cursor included: Meridian applies
-them at spawn, so the native file's silence loses nothing.
+`meridian spawn --dry-run` also reports what Meridian itself cannot enforce at launch.
 
 Expected body-guided skill channels are documented mappings and do not emit warnings.
 

@@ -233,7 +233,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "model-invocable"
                 && f.target == "Claude"
-                && matches!(f.classification, Lossiness::Dropped)
+                && matches!(f.classification, Lossiness::Dropped(_))
         }));
     }
 
@@ -270,8 +270,8 @@ mod tests {
         for field in ["network", "network-allow", "network-deny"] {
             assert!(
                 out.lossy_fields.iter().any(|lossy| lossy.field == field
-                    && matches!(lossy.classification, Lossiness::Quiet { .. })),
-                "{field} not reported as a quiet loss: {:?}",
+                    && matches!(lossy.classification, Lossiness::Dropped(_))),
+                "{field} not reported as a lost restriction: {:?}",
                 out.lossy_fields
             );
         }

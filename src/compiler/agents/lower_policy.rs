@@ -13,22 +13,22 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
 /// Launch-time fields (approval, sandbox, mode where not emitted, model-policies, …) are
-/// classified [`Lossiness::MeridianOnly`]: Meridian applies them at spawn. A tool, MCP or network
-/// rule the native file cannot carry is [`Lossiness::Quiet`] with [`NO_NATIVE_CARRIER`] as its
-/// reason: the user cannot fix it in the profile, and `meridian spawn --dry-run` reports the gap.
-/// The classes are decided by that, not per harness: Codex has no carrier at all; OpenCode keeps
-/// plain denies as `permission` and meridian enforces the scoped and allow-list rules at launch;
-/// Pi's extension enforces them at launch; Cursor has neither, and the dry-run report says so.
-/// [`Lossiness::Dropped`] is for what the user wrote and can act on (a `harness-overrides` key
-/// Mars discards, `model-invocable: false`), and it prints by default. An unclassified site is
-/// loud: quiet needs a reason.
-pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
+/// classified [`Lossiness::MeridianOnly`]: Meridian applies them at spawn. A restriction the
+/// native file cannot carry (a tool deny, `ask`, an allow list, a capability's scoped allows, an
+/// MCP deny, a network limit, an overridden policy key) is [`Lossiness::Dropped`] with the kind it
+/// costs, and prints by default: the target runs the agent with what the author withheld. Quiet
+/// needs a reason ([`Lossiness::Quiet`]): a `deny` of file writes on Codex when the agent's
+/// `sandbox: read-only` is written to the same file, a plain grant, a network grant. An
+/// unclassified site is loud. Codex lowers `network` as dropped, because its native artifact
+/// carries `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
+pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::tool_names::Capability;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
-use mars_schema::tool_policy::ToolAction;
+use mars_schema::tool_policy::{ToolAction, ToolRule};
 
 // ---------------------------------------------------------------------------
 // Effective field access for target lowering
@@ -76,14 +76,39 @@ impl<'a> Effective<'a> {
         &self.profile.skills
     }
 
-    /// The allow side a target with no tool field cannot carry. Only an allow list or an `ask`
-    /// withholds tools from the agent; a plain grant loses nothing, so it records nothing.
+    /// Capabilities whose only allows are scoped (`bash(rg *)` with no plain `bash` rule): the
+    /// agent may run only those, which no target without a tool field can say.
+    fn scoped_allow_only(&self) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = Vec::new();
+        for rule in &self.tools.rules {
+            let Capability::Builtin(name) = rule.capability else {
+                continue;
+            };
+            if rule.action == ToolAction::Allow
+                && rule.pattern.is_some()
+                && !names.contains(&name)
+                && !self
+                    .tools
+                    .rules
+                    .iter()
+                    .any(|other| other.capability == rule.capability && other.pattern.is_none())
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// The allow side a target with no tool field cannot carry. An allow list, an `ask`, or a
+    /// capability with only scoped allows withholds tools from the agent; a plain grant loses
+    /// nothing, so it records nothing.
     fn allow_side_loss(&self, target: &str) -> Option<LossyField> {
         let builtin_ask = self
             .tools
             .with_action(ToolAction::Ask)
             .any(|rule| !rule.is_mcp());
-        if !(self.tools.is_allowlist() || builtin_ask) {
+        let scoped_only = self.scoped_allow_only();
+        if !(self.tools.is_allowlist() || builtin_ask || !scoped_only.is_empty()) {
             return None;
         }
         let rules: Vec<String> = self
@@ -94,18 +119,52 @@ impl<'a> Effective<'a> {
             .filter(|rule| rule.is_wildcard() || rule.action != ToolAction::Deny)
             .map(|rule| format!("{} {}", rule.action.as_str(), rule.render()))
             .collect();
-        Some(restriction_lost(tools_label(&rules), target))
+        let shell = self.tools.is_allowlist() || scoped_only.contains(&"bash") || self.asks_shell();
+        let lost = if shell { Lost::Shell } else { Lost::Tool };
+        Some(restriction_lost(tools_label(&rules), target, lost))
     }
 
-    /// Deny rules a target with no tool field cannot carry.
-    fn deny_side_loss(&self, target: &str) -> Option<LossyField> {
-        let rules: Vec<String> = self
+    fn asks_shell(&self) -> bool {
+        self.tools
+            .with_action(ToolAction::Ask)
+            .any(|rule| rule.capability == Capability::Builtin("bash"))
+    }
+
+    /// Deny rules a target with no tool field cannot carry. With `sandbox_covers_writes`, a deny
+    /// of file writes is recorded as quiet instead: the same file's read-only sandbox blocks them.
+    fn deny_side_loss(&self, target: &str, sandbox_covers_writes: bool) -> Vec<LossyField> {
+        let (covered, lost): (Vec<_>, Vec<_>) = self
             .tools
             .with_action(ToolAction::Deny)
             .filter(|rule| !rule.is_mcp() && !rule.is_wildcard())
-            .map(|rule| format!("deny {}", rule.render()))
-            .collect();
-        (!rules.is_empty()).then(|| restriction_lost(tools_label(&rules), target))
+            .partition(|rule| sandbox_covers_writes && is_file_write(&rule.capability));
+        let field = |rules: &[&ToolRule], classification| {
+            let rendered: Vec<String> = rules
+                .iter()
+                .map(|rule| format!("deny {}", rule.render()))
+                .collect();
+            (!rules.is_empty()).then(|| LossyField {
+                field: tools_label(&rendered),
+                target: target.into(),
+                classification,
+            })
+        };
+        let shell = lost
+            .iter()
+            .any(|rule| rule.capability == Capability::Builtin("bash"));
+        let lost_kind = if shell { Lost::Shell } else { Lost::Tool };
+        [
+            field(&lost, Lossiness::Dropped(lost_kind)),
+            field(
+                &covered,
+                Lossiness::Quiet {
+                    why: "the read-only sandbox written to this file already blocks file writes",
+                },
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     /// The one classifier for MCP rules on a target that cannot gate MCP tools itself. A deny
@@ -139,6 +198,7 @@ impl<'a> Effective<'a> {
             return Some(restriction_lost(
                 format!("mcp ({})", lost.join(", ")),
                 target,
+                Lost::Mcp,
             ));
         }
         Some(LossyField {
@@ -153,24 +213,24 @@ impl<'a> Effective<'a> {
     }
 }
 
+fn is_file_write(capability: &Capability) -> bool {
+    matches!(
+        capability,
+        Capability::Builtin("write" | "edit" | "notebook")
+    )
+}
+
 /// `tools` is the authored key (`disallowed-tools` is a removed spelling); the rules say which
 /// restriction was lost.
 fn tools_label(rules: &[String]) -> String {
     format!("tools ({})", rules.join(", "))
 }
 
-/// Why a tool or network rule the native file cannot carry is quiet. The user cannot fix it by
-/// editing the profile, and meridian enforces what the harness supports at launch.
-const NO_NATIVE_CARRIER: Lossiness = Lossiness::Quiet {
-    why: "the native file has no carrier for this rule; meridian enforces it at launch where the \
-          harness supports it, and `meridian spawn --dry-run` reports the gap",
-};
-
-fn restriction_lost(field: String, target: &str) -> LossyField {
+fn restriction_lost(field: String, target: &str, lost: Lost) -> LossyField {
     LossyField {
         field,
         target: target.into(),
-        classification: NO_NATIVE_CARRIER,
+        classification: Lossiness::Dropped(lost),
     }
 }
 
@@ -192,6 +252,7 @@ fn native_tools_for_action(
             _ => restriction_lost(
                 format!("tools ({} rule left out: {note})", action.as_str()),
                 target,
+                Lost::Tool,
             ),
         });
     }
@@ -213,7 +274,7 @@ fn record_agent_invocation_lossiness(
             // No target file carries it, so another model can pick the agent on its own.
             field: "model-invocable".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::Dropped(Lost::Setting),
         });
     }
     if profile.had_user_invocable_field && !profile.user_invocable {
@@ -447,7 +508,7 @@ fn native_overrides<'a>(
                         why: "not a restriction: an identity, model or skill-list key",
                     }
                 } else {
-                    Lossiness::Dropped
+                    Lossiness::Dropped(Lost::Setting)
                 },
             });
         } else {
@@ -477,7 +538,7 @@ fn opencode_permission(
             // A scalar throws away the author's whole permission policy.
             lossy.push(lost(
                 "harness-overrides.opencode.permission".into(),
-                Lossiness::Dropped,
+                Lossiness::Dropped(Lost::Setting),
             ));
             serde_yaml::Mapping::new()
         }
@@ -618,10 +679,10 @@ impl<'a> AgentLoweringCtx<'a> {
         // omitted `tools:` inherits every tool). A map-form grant is not lossy: omitting
         // `tools:` already leaves the granted tool available.
         if self.eff.has_ask() {
-            self.record_if_present("tools (ask)", true, NO_NATIVE_CARRIER);
+            self.record_if_present("tools (ask)", true, Lossiness::Dropped(Lost::Tool));
         }
         if allowlist && allowed.is_empty() {
-            self.record_if_present("tools (allowlist)", true, NO_NATIVE_CARRIER);
+            self.record_if_present("tools (allowlist)", true, Lossiness::Dropped(Lost::Shell));
         }
         if !overlaps.is_empty() {
             self.lossy.push(LossyField {
@@ -674,7 +735,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.lossy.extend(loss);
             }
             AgentLossinessStep::DisallowedToolsDropped => {
-                let loss = self.eff.deny_side_loss(self.target_name());
+                let loss = self.eff.deny_side_loss(self.target_name(), false);
                 self.lossy.extend(loss);
             }
             AgentLossinessStep::DisallowedToolsAsPermission => self.collect_denied_as_permission(),
@@ -720,7 +781,13 @@ impl<'a> AgentLoweringCtx<'a> {
             self.lossy.push(LossyField {
                 field: format!("tools (deny {} is scoped)", scoped.join(", ")),
                 target: target.into(),
-                classification: NO_NATIVE_CARRIER,
+                classification: Lossiness::Dropped(
+                    if scoped.iter().any(|n| n.starts_with("bash(")) {
+                        Lost::Shell
+                    } else {
+                        Lost::Tool
+                    },
+                ),
             });
         }
         self.denied = unscoped;
@@ -1018,7 +1085,9 @@ pub fn lower_to_codex(
 
     // Dropped fields
     lossy.extend(eff.allow_side_loss(target));
-    lossy.extend(eff.deny_side_loss(target));
+    // The Codex file writes `sandbox_mode`, so a read-only sandbox there covers write denies.
+    let sandbox_covers_writes = eff.sandbox() == Some(&mars_schema::agent::SandboxMode::ReadOnly);
+    lossy.extend(eff.deny_side_loss(target, sandbox_covers_writes));
     lossy.extend(eff.mcp_loss(
         target,
         false,
@@ -1043,7 +1112,7 @@ pub fn lower_to_codex(
                 field: field.into(),
                 target: target.into(),
                 classification: if restriction {
-                    NO_NATIVE_CARRIER
+                    Lossiness::Dropped(Lost::Network)
                 } else {
                     Lossiness::Quiet {
                         why: "a grant, not a restriction; Codex keeps its own network setting",

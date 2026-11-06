@@ -4,10 +4,10 @@
 //! `DiagnosticCollector::record_lossy_fields`, which buffers one [`LossRecord`] each, and
 //! `drain` calls [`render`] once. Nothing else turns a loss into a line.
 //!
-//! **Warn only when the user can act on it or it changes behaviour that matters; everything
-//! else is `--verbose`.** `Dropped` is the one class that prints by default, one line per item
-//! and target: the user wrote something Mars discards and can fix it. A site that cannot meet
-//! that is `Quiet { why }` (the native file has no carrier for it, or it loses nothing),
+//! **A lost restriction that changes what an agent can do is shown by default. Every other lost
+//! field is available under `--verbose`. Nothing is dropped without a record.** `Dropped` is the
+//! one class that prints by default, as one line for the project ([`Lost`] names the kind). A site
+//! goes quiet only as `Quiet { why }` (it loses nothing, or something else already covers it),
 //! `Approximate`, or `MeridianOnly` (a launch-time field); those print per item under
 //! `--verbose`. Quiet needs a reason, so an unclassified site is loud.
 
@@ -31,17 +31,42 @@ pub enum Lossiness {
     Approximate {
         note: &'static str,
     },
-    /// A field the native artifact does not carry that the user wrote and can act on, or whose
-    /// loss changes behaviour that matters. Printed by default.
-    Dropped,
-    /// A field the native artifact does not carry and nothing the user can fix: `why` says why
-    /// it loses nothing, or that no native carrier exists and meridian reports or enforces it
-    /// at launch. Shown only under `--verbose`.
+    /// A field the native artifact does not carry whose loss changes what the agent can do (a
+    /// restriction) or that the user wrote and can fix (a setting). Printed by default.
+    Dropped(Lost),
+    /// A field the native artifact does not carry that loses nothing, or whose loss something
+    /// else already covers; `why` says what. Shown only under `--verbose`.
     Quiet {
         why: &'static str,
     },
     /// A launch-time field meridian applies at spawn. Shown only under `--verbose`.
     MeridianOnly,
+}
+
+/// What a [`Lossiness::Dropped`] field costs, so the default line can say it plainly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Lost {
+    /// A shell restriction: a scoped `bash(...)` deny, or an allow list that also bounds the shell.
+    Shell,
+    /// A tool deny or `ask` other than the shell's.
+    Tool,
+    Mcp,
+    Network,
+    /// A value the user wrote that no target file carries (an override Mars discards,
+    /// `model-invocable: false`).
+    Setting,
+}
+
+impl Lost {
+    fn label(self) -> &'static str {
+        match self {
+            Lost::Shell => "a shell restriction",
+            Lost::Tool => "a tool restriction",
+            Lost::Mcp => "an MCP restriction",
+            Lost::Network => "a network restriction",
+            Lost::Setting => "a setting",
+        }
+    }
 }
 
 /// A secondary artifact emitted alongside the primary lowered file (e.g. Codex `openai.yaml`).
@@ -66,17 +91,13 @@ pub(crate) fn target_label(target: &str) -> String {
     format!(".{}", target.to_lowercase())
 }
 
-/// Under `--verbose`, note once per target that project `[settings]` keys reach no native file
-/// of it: the settings belong to the project, so the per-Agent lines do not carry them. Quiet
-/// by default: the target has no carrier, and `meridian spawn --dry-run` reports the gap.
+/// Warn once per target that project `[settings]` keys reach no native file of it: the
+/// settings belong to the project, so the per-Agent summaries do not carry them.
 pub fn emit_project_settings_dropped_warning(
     keys: &[&str],
     target: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    if !diag.lossiness_verbose() {
-        return;
-    }
     let (list, verb) = match keys {
         [] => return,
         [one] => ((*one).to_string(), "is"),
@@ -101,6 +122,9 @@ pub(crate) struct LossRecord {
     pub field: LossyField,
 }
 
+/// How many item names the default line lists before it counts the rest.
+const ROLLUP_NAME_CAP: usize = 3;
+
 fn diagnostic(level: DiagnosticLevel, code: &'static str, message: String) -> Diagnostic {
     Diagnostic {
         level,
@@ -113,13 +137,15 @@ fn diagnostic(level: DiagnosticLevel, code: &'static str, message: String) -> Di
 
 /// Render the buffered records for `mode`. This is the only place lossiness becomes lines.
 ///
-/// `Surface` prints `Dropped` fields per item and target. `Verbose` adds quiet, approximate and
-/// launch-time fields.
+/// `Surface` prints one line for the project covering every `Dropped` field. `Verbose` prints one
+/// line per item and target for every lossy field: dropped, quiet, approximate and launch-time.
 pub(crate) fn render(records: &[LossRecord], mode: LossinessMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    render_per_item(records, mode.verbose(), &mut out);
     if mode.verbose() {
+        render_per_item(records, &mut out);
         render_meridian_only(records, &mut out);
+    } else {
+        render_dropped_rollup(records, &mut out);
     }
     out
 }
@@ -130,7 +156,7 @@ struct ItemTargetFields<'a> {
     approximate: Vec<(String, &'static str)>,
 }
 
-fn render_per_item(records: &[LossRecord], verbose: bool, out: &mut Vec<Diagnostic>) {
+fn render_per_item(records: &[LossRecord], out: &mut Vec<Diagnostic>) {
     let mut grouped: BTreeMap<(&str, &str, &str), ItemTargetFields> = BTreeMap::new();
     for record in records {
         let key = (
@@ -139,18 +165,15 @@ fn render_per_item(records: &[LossRecord], verbose: bool, out: &mut Vec<Diagnost
             record.field.target.as_str(),
         );
         match record.field.classification {
-            Lossiness::Dropped => {
+            Lossiness::Dropped(_) | Lossiness::Quiet { .. } => {
                 grouped.entry(key).or_default().dropped.push(&record.field);
             }
-            Lossiness::Quiet { .. } if verbose => {
-                grouped.entry(key).or_default().dropped.push(&record.field);
-            }
-            Lossiness::Approximate { note } if verbose => grouped
+            Lossiness::Approximate { note } => grouped
                 .entry(key)
                 .or_default()
                 .approximate
                 .push((record.field.field.clone(), note)),
-            Lossiness::Quiet { .. } | Lossiness::Approximate { .. } | Lossiness::MeridianOnly => {}
+            Lossiness::MeridianOnly => {}
         }
     }
     for ((kind, name, target), mut fields) in grouped {
@@ -209,6 +232,78 @@ fn counted(count: usize) -> (usize, &'static str) {
     (count, if count == 1 { "field" } else { "fields" })
 }
 
+/// One line for the whole project: which items lose what on which targets. The per-item,
+/// per-target, per-field detail is `--verbose`.
+fn render_dropped_rollup(records: &[LossRecord], out: &mut Vec<Diagnostic>) {
+    let lost: BTreeSet<(&str, &str, &str)> = records
+        .iter()
+        .filter(|r| matches!(r.field.classification, Lossiness::Dropped(_)))
+        .map(|r| (r.item_kind, r.item_name.as_str(), r.field.target.as_str()))
+        .collect();
+    if lost.is_empty() {
+        return;
+    }
+    let kinds_lost: BTreeSet<Lost> = records
+        .iter()
+        .filter_map(|r| match r.field.classification {
+            Lossiness::Dropped(kind) => Some(kind),
+            _ => None,
+        })
+        .collect();
+    let items: BTreeSet<(&str, &str)> = lost.iter().map(|(k, n, _)| (*k, *n)).collect();
+    let targets: BTreeSet<&str> = lost.iter().map(|(_, _, t)| *t).collect();
+    let item_kinds: BTreeSet<&str> = items.iter().map(|(k, _)| *k).collect();
+    let noun = match item_kinds.iter().next() {
+        Some(kind) if item_kinds.len() == 1 => *kind,
+        _ => "item",
+    };
+    let count = items.len();
+    let listed = items
+        .iter()
+        .take(ROLLUP_NAME_CAP)
+        .map(|(_, name)| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = match count.saturating_sub(ROLLUP_NAME_CAP) {
+        0 => String::new(),
+        rest => format!(" and {rest} more"),
+    };
+    let (plural, verb) = if count == 1 {
+        ("", "loses")
+    } else {
+        ("s", "lose")
+    };
+    // "some of" unless every listed item loses on every listed target.
+    let on = if lost.len() == items.len() * targets.len() || targets.len() == 1 {
+        "on"
+    } else {
+        "on some of"
+    };
+    let what = join_and(
+        &kinds_lost
+            .iter()
+            .map(|k| k.label().to_string())
+            .collect::<Vec<_>>(),
+    );
+    let labels: Vec<String> = targets.iter().map(|t| target_label(t)).collect();
+    out.push(diagnostic(
+        DiagnosticLevel::Warning,
+        "agent-restriction-dropped",
+        format!(
+            "{count} {noun}{plural} ({listed}{more}) {verb} {what} {on} {}: it does not apply there; run again with --verbose for the rules per {noun} and target",
+            join_and(&labels)
+        ),
+    ));
+}
+
+fn join_and(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 fn render_meridian_only(records: &[LossRecord], out: &mut Vec<Diagnostic>) {
     let mut grouped: BTreeMap<(&str, &str, &str), BTreeSet<&str>> = BTreeMap::new();
     for record in records {
@@ -263,42 +358,67 @@ mod tests {
     }
 
     #[test]
-    fn surface_prints_only_dropped_fields_and_verbose_prints_all() {
+    fn surface_prints_one_project_line_for_dropped_fields_and_verbose_prints_all() {
         let record = |d: &mut DiagnosticCollector| {
-            let lossy = vec![
-                field(
-                    "harness-overrides.codex.sandbox_mode",
-                    "Codex",
-                    Lossiness::Dropped,
-                ),
-                field("tools (deny edit)", "Codex", Lossiness::Quiet { why: "w" }),
-                field("effort", "Codex", Lossiness::Approximate { note: "n" }),
-                field("approval", "Codex", Lossiness::MeridianOnly),
-            ];
-            d.record_lossy_fields("agent", "coder", &lossy);
-            // Recording twice must not repeat the line.
-            d.record_lossy_fields("agent", "coder", &lossy[..1]);
+            for target in ["Codex", "Pi"] {
+                let lossy = vec![
+                    field(
+                        "tools (deny bash(git reset --hard *))",
+                        target,
+                        Lossiness::Dropped(Lost::Shell),
+                    ),
+                    field("user-invocable", target, Lossiness::Quiet { why: "w" }),
+                    field("effort", target, Lossiness::Approximate { note: "n" }),
+                    field("approval", target, Lossiness::MeridianOnly),
+                ];
+                for name in ["a", "b", "c", "d", "e"] {
+                    d.record_lossy_fields("agent", name, &lossy);
+                }
+            }
         };
         let surface = run(LossinessMode::Surface, record);
-        assert_eq!(surface.len(), 1);
-        assert_eq!(surface[0].code, "agent-field-dropped");
+        assert_eq!(surface.len(), 1, "quiet fields print nothing by default");
+        assert_eq!(surface[0].code, "agent-restriction-dropped");
         assert_eq!(
             surface[0].message,
-            "agent `coder`: 1 field dropped for .codex (harness-overrides.codex.sandbox_mode)"
+            "5 agents (`a`, `b`, `c` and 2 more) lose a shell restriction on .codex and .pi: it does \
+             not apply there; run again with --verbose for the rules per agent and target"
         );
-
         let verbose = run(LossinessMode::Verbose, record);
-        let codes: Vec<_> = verbose.iter().map(|d| d.code.as_ref()).collect();
         assert_eq!(
-            codes,
-            [
-                "agent-field-dropped",
-                "agent-field-approximate",
-                "agent-field-meridian-only"
-            ]
+            verbose.len(),
+            30,
+            "dropped+quiet, approximate and launch-time line per agent and target"
         );
-        assert!(verbose[0].message.contains("tools (deny edit) — w"));
+        assert!(verbose[0].message.contains("user-invocable — w"));
         assert!(run(LossinessMode::Hidden, record).is_empty());
+    }
+
+    #[test]
+    fn line_names_each_kind_lost_and_says_some_of_when_targets_differ() {
+        let out = run(LossinessMode::Surface, |d| {
+            d.record_lossy_fields(
+                "agent",
+                "a",
+                &[
+                    field(
+                        "tools (deny bash(x))",
+                        "Codex",
+                        Lossiness::Dropped(Lost::Shell),
+                    ),
+                    field("network", "Codex", Lossiness::Dropped(Lost::Network)),
+                ],
+            );
+            d.record_lossy_fields(
+                "agent",
+                "b",
+                &[field("x", "Pi", Lossiness::Dropped(Lost::Setting))],
+            );
+        });
+        assert_eq!(out.len(), 1);
+        assert!(out[0].message.contains(
+            "lose a shell restriction, a network restriction and a setting on some of .codex and .pi"
+        ));
     }
 
     #[test]
@@ -317,10 +437,18 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_skill_field_prints_by_default() {
+    fn a_dropped_skill_field_reaches_the_line() {
         let out = run(LossinessMode::Surface, |d| {
-            d.record_lossy_fields("skill", "s", &[field("x", "Codex", Lossiness::Dropped)])
+            d.record_lossy_fields(
+                "skill",
+                "s",
+                &[field("x", "Codex", Lossiness::Dropped(Lost::Tool))],
+            )
         });
-        assert_eq!(out[0].code, "skill-field-dropped");
+        assert!(
+            out[0]
+                .message
+                .starts_with("1 skill (`s`) loses a tool restriction on .codex")
+        );
     }
 }

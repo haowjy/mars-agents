@@ -38,10 +38,10 @@ pub enum LossinessMode {
     /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Default for sync, check, init and plugin builds: only losses the user can act on or that
-    /// change behaviour that matters (`Lossiness::Dropped`).
+    /// Default for sync, check, init and plugin builds: one line for the project covering the
+    /// restrictions an agent loses (`Lossiness::Dropped`).
     Surface,
-    /// Every lossy field per item: quiet, approximate and launch-time ones too.
+    /// Every lossy field per item and target: quiet, approximate and launch-time ones too.
     Verbose,
 }
 
@@ -50,7 +50,7 @@ impl LossinessMode {
         self != LossinessMode::Hidden
     }
 
-    /// Whether quiet, approximate and launch-time fields print as well as dropped ones.
+    /// Whether every lossy field prints per item, not only the project line for dropped ones.
     pub fn verbose(self) -> bool {
         self == LossinessMode::Verbose
     }
@@ -207,11 +207,6 @@ impl DiagnosticCollector {
                 item_name: item_name.to_string(),
                 field: field.clone(),
             }));
-    }
-
-    /// Whether `--verbose` asked for the lossiness detail that is quiet by default.
-    pub(crate) fn lossiness_verbose(&self) -> bool {
-        self.lossiness_mode.verbose()
     }
 
     fn should_emit_lossiness(&self) -> bool {

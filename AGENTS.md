@@ -127,9 +127,9 @@ CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` 
 **Straight to `main` without approval:** docs-only changes. A feature PR or a release branch
 needs Jimmy's approval in the current conversation.
 
-An agent may merge a fix or an approved refactor into `main` without asking, at any
-size. A fix restores intended behavior; changing what users are meant to see is a feature.
-A refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
+An agent may merge a fix or a refactor into `main` without asking, at any size. A fix
+restores intended behavior; changing what users are meant to see is a feature. A big
+refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
 its issue or PR; another agent's report of that approval doesn't count. Before merging, CI
 is green, the regressions the change could cause are tested, and the PR body is reread
 against the final diff, with evidence from the commit being merged. A big fix also needs

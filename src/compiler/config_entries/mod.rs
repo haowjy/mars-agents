@@ -193,7 +193,7 @@ pub(crate) fn compile_config_entries(
                         ));
                         kept_records.insert(key.clone(), record.clone());
                     }
-                    Err(error) => diag.warn(
+                    Err(error) => diag.warn_unreached(
                         "hook-invalid-kept",
                         format!("cannot keep `{key}` for `{target_root}`: its record is unreadable ({error})"),
                     ),
@@ -281,7 +281,8 @@ pub(crate) fn compile_config_entries(
             })
             .collect();
         // Preview the MCP files a real sync would write. The warnings of this pass are the
-        // real sync's to show, so they go to a collector nobody reads.
+        // real sync's to show, so they go to a scratch collector; only its verdict carries over.
+        let mut preview_diag = DiagnosticCollector::new();
         let mcp_files_changed = reconcile_all_mcp(
             &registry,
             &ctx.project_root,
@@ -289,9 +290,10 @@ pub(crate) fn compile_config_entries(
             &desired_mcp,
             force,
             true,
-            &mut DiagnosticCollector::new(),
+            &mut preview_diag,
         )
         .files_changed;
+        diag.absorb_state_unreached(&preview_diag);
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
@@ -363,7 +365,7 @@ pub(crate) fn compile_config_entries(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     removed_outputs.push(pair)
                 }
-                Err(error) => diag.warn(
+                Err(error) => diag.warn_unreached(
                     "config-entry-remove",
                     format!("failed to remove `{}`: {error}", path.display()),
                 ),
@@ -581,7 +583,7 @@ pub(crate) fn reconcile_mcp(
             .map(|(key, record)| (key.clone(), record.clone()))
             .collect();
         if !retained.is_empty() {
-            diag.warn(
+            diag.warn_unreached(
                 "config-entry-remove",
                 format!(
                     "failed to remove stale config entries from `{target_root}`: no adapter registered for `{target_root}`"
@@ -649,7 +651,7 @@ fn apply_replacement_writes(
         if let Err(error) =
             crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
         {
-            diag.warn(
+            diag.warn_unreached(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),
             );

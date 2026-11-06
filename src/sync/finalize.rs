@@ -84,7 +84,7 @@ pub(crate) fn finalize(
         if let Some(warning) =
             crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
         {
-            diag.warn("native-agent-manifest-write", warning);
+            diag.warn_unreached("native-agent-manifest-write", warning);
         }
         recovery::complete(project_root)?;
 
@@ -141,6 +141,7 @@ pub(crate) fn finalize(
         .dependency_changes;
     let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
 
+    let state_unreached = diag.state_unreached();
     let diagnostics = diag.drain();
 
     Ok(SyncReport {
@@ -156,6 +157,7 @@ pub(crate) fn finalize(
         mcp_files_changed: state.mcp_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
+        state_unreached,
     })
 }
 
@@ -236,7 +238,7 @@ fn retry_tombstone_removals(
                     output.target_root.clone(),
                     output.dest_path.as_str().to_string(),
                 )),
-                Err(error) => diag.warn(
+                Err(error) => diag.warn_unreached(
                     "tombstone-remove",
                     format!(
                         "could not remove tombstoned output `{}`: {error}",

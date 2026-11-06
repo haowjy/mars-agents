@@ -67,6 +67,16 @@ pub struct SyncReport {
     pub recovery_halt: Option<RecoveryHalt>,
     /// Version fallbacks caused by package engine requirements.
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
+    /// A config write or removal failed, or an edit was left in place, so the sync stopped
+    /// short of the state it wanted. Target copy failures are in `target_outcomes[].errors`.
+    pub state_unreached: bool,
+}
+
+impl SyncReport {
+    /// Whether the sync brought every file it manages to the wanted state.
+    pub fn reached_wanted_state(&self) -> bool {
+        !self.state_unreached && self.target_outcomes.iter().all(|o| o.errors.is_empty())
+    }
 }
 
 /// What a CLI command requests from the sync pipeline.
@@ -206,6 +216,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             applied: ApplyResult {
                 outcomes: Vec::new(),
             },
+            state_unreached: diag.state_unreached(),
             diagnostics: diag.drain(),
             dependency_changes: ir.resolved.loaded.dependency_changes,
             upgrades_available: ir.resolved.upgrades_available,
@@ -573,7 +584,7 @@ pub(crate) fn build_target(
         &built.target,
         request.options.force,
     ) {
-        diag.warn(
+        diag.warn_unreached(
             "unmanaged-collision",
             format!(
                 "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
@@ -641,7 +652,7 @@ pub(crate) fn create_plan(
     if !request.options.force {
         for entry in &sync_diff.items {
             if let diff::DiffEntry::LocalModified { target, .. } = entry {
-                diag.warn(
+                diag.warn_unreached(
                     "disk-lock-divergent",
                     format!(
                         "{} diverged from mars.lock checksum; preserving local content (run `{cmd1}` or `{cmd2}` to reset)",

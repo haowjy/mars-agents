@@ -81,7 +81,7 @@ impl RemovalPlan {
             let outcome = match remove(operation, diag) {
                 RemovalReport::Confirmed => RemovalOutcome::Confirmed,
                 RemovalReport::Unconfirmed { message, retained } => {
-                    diag.warn("config-entry-remove", message);
+                    diag.warn_unreached("config-entry-remove", message);
                     RemovalOutcome::Unconfirmed { retained }
                 }
             };

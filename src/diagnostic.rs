@@ -78,6 +78,9 @@ pub struct DiagnosticCollector {
     meridian_only_records: Vec<MeridianOnlyRecord>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
+    /// Set by `warn_unreached`: some write, removal or kept edit left the sync short of the
+    /// state it wanted.
+    state_unreached: bool,
 }
 
 impl DiagnosticCollector {
@@ -92,6 +95,7 @@ impl DiagnosticCollector {
             lossiness_mode,
             meridian_only_records: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
+            state_unreached: false,
         }
     }
 
@@ -251,6 +255,27 @@ impl DiagnosticCollector {
             context: None,
             category: None,
         });
+    }
+
+    /// A warning that also says the sync did not reach the state it wanted (a failed write or
+    /// removal, or an edit left in place), so the run is not reported as "already up to date".
+    /// A warning about anything else uses `warn`.
+    pub fn warn_unreached(
+        &mut self,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        self.state_unreached = true;
+        self.warn(code, message);
+    }
+
+    pub fn state_unreached(&self) -> bool {
+        self.state_unreached
+    }
+
+    /// Carry the verdict of a scratch collector (a preview pass) into this one.
+    pub fn absorb_state_unreached(&mut self, other: &Self) {
+        self.state_unreached |= other.state_unreached;
     }
 
     pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {

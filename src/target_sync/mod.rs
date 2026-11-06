@@ -344,7 +344,7 @@ fn sync_one_target(
                                 dest_hash.expect("a present destination has a checksum result");
                             match hash {
                                 Ok(actual) if &actual != expected_checksum => {
-                                    diag.warn(
+                                    diag.warn_unreached(
                                         "target-divergent",
                                         format!(
                                             "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",

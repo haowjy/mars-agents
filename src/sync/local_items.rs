@@ -92,7 +92,7 @@ impl LocalMerge<'_> {
             target_state.select_hook(&target_name, &target_item, hook.clone());
             let disk_path = dest_path.resolve(&self.managed_root);
             if !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok() {
-                diag.warn(
+                diag.warn_unreached(
                     "unmanaged-collision",
                     format!(
                         "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",

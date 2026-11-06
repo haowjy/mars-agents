@@ -275,24 +275,6 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
-/// Diagnostics that say a config file was not brought to the state the sync wanted: a failed
-/// write or removal, or an edit Mars left in place. A run with one is not "already up to date".
-const UNREACHED_STATE_CODES: &[&str] = &[
-    "config-entry-write",
-    "config-entry-remove",
-    "mcp-divergent",
-    "mcp-unmanaged-collision",
-    "target-divergent",
-    "target-unmanaged-collision",
-    "unmanaged-collision",
-];
-
-fn target_state_unreached(diagnostics: &[Diagnostic]) -> bool {
-    diagnostics
-        .iter()
-        .any(|d| UNREACHED_STATE_CODES.contains(&d.code.as_ref()))
-}
-
 /// Info diagnostics print only when `show_info` is set; JSON output keeps them all.
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info: bool) {
     if let Some(halt) = &report.recovery_halt {
@@ -442,7 +424,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         && native_removed == 0
         && hook_files == 0
         && mcp_files == 0
-        && !target_state_unreached(&report.diagnostics)
+        && report.reached_wanted_state()
     {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  already up to date");
@@ -701,6 +683,7 @@ mod tests {
             mcp_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
+            state_unreached: false,
         }
     }
 

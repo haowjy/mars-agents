@@ -191,7 +191,7 @@ pub(crate) fn reconcile(
     ) {
         Ok(reconciled) => reconciled,
         Err(error) => {
-            diag.warn(
+            diag.warn_unreached(
                 "config-entry-write",
                 format!("failed to reconcile MCP servers in `{target}`: {error}"),
             );
@@ -233,7 +233,7 @@ fn try_reconcile(
         match ownership(Some(record), &current) {
             Ownership::Owned => open.remove(name),
             _ => {
-                diag.warn(
+                diag.warn_unreached(
                     "mcp-divergent",
                     format!(
                         "target `{target}` MCP server `{name}` in `{}` was edited after mars wrote it (left in place; delete it by hand if unwanted)",
@@ -256,7 +256,7 @@ fn try_reconcile(
                 Ownership::Owned => true,
                 Ownership::Edited if force => true,
                 Ownership::Edited => {
-                    diag.warn(
+                    diag.warn_unreached(
                         "mcp-divergent",
                         format!(
                             "target `{target}` MCP server `{name}` in `{}` was edited after mars wrote it (preserved; run `{}` to take it over)",
@@ -277,7 +277,7 @@ fn try_reconcile(
                     true
                 }
                 Ownership::Unowned => {
-                    diag.warn(
+                    diag.warn_unreached(
                         "mcp-unmanaged-collision",
                         format!(
                             "target `{target}` MCP server `{name}` in `{}` exists but mars does not own it (preserved; run `{}` to take it over)",

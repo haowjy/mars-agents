@@ -185,8 +185,10 @@ prints per-item meridian-only detail too). `LossinessMode::per_item` is the spli
 
 `Surface` reports `Lossiness::Dropped`, the default class: a field the native file does not
 carry may be a restriction the target then runs without. Emission calls
-`DiagnosticCollector::record_restriction_lost`; `drain` prints one line per target naming the
-agents (`agent-restriction-dropped`), like `launch-time-field-summary`. A lowering site is quiet
+`DiagnosticCollector::record_lossy_fields`, which buffers every field; `drain` hands the buffer to
+`compiler::lossiness::render`, the one place a loss becomes a line. `Surface` renders one line for
+the whole project naming the agents and the targets (`agent-restriction-dropped`), like
+`launch-time-field-summary`; the per-item modes render per agent and target. A lowering site is quiet
 only by saying why: `Harmless { why }` (shown per item with `--verbose`/`Preview`), `Approximate`
 or `MeridianOnly`. Quiet needs a reason, so an unclassified or misfiled site costs one extra line,
 not a silent loss. The line prints on every sync and `add`: there is deliberately no "once" gate,

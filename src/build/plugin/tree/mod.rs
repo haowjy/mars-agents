@@ -489,11 +489,14 @@ fn lower_agent(
             .iter()
             .cloned()
             .map(|mut field| {
-                if matches!(
-                    field.classification,
-                    crate::compiler::lossiness::Lossiness::Approximate { .. }
-                ) {
-                    field.classification = crate::compiler::lossiness::Lossiness::Dropped;
+                if let crate::compiler::lossiness::Lossiness::Approximate { note } =
+                    field.classification
+                {
+                    // The plugin tree has no launch-time projection to approximate with, but
+                    // an approximate field is not a lost restriction: keep it quiet and keep
+                    // its note.
+                    field.classification =
+                        crate::compiler::lossiness::Lossiness::Harmless { why: note };
                 }
                 field
             })
@@ -502,11 +505,7 @@ fn lower_agent(
     } else {
         lowered.lossy_fields.as_slice()
     };
-    crate::compiler::lossiness::emit_agent_lossiness_warnings(
-        item.id.name.as_str(),
-        lossy_fields,
-        diag,
-    );
+    diag.record_lossy_fields("agent", item.id.name.as_str(), lossy_fields);
 
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(

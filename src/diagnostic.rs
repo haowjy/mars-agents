@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use serde::Serialize;
 
+use crate::compiler::lossiness::{LossRecord, LossyField};
+
 /// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
@@ -36,7 +38,7 @@ pub enum LossinessMode {
     /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Surface one line per target for lost restrictions plus one meridian-only summary line.
+    /// Surface one line per project for lost restrictions plus one meridian-only summary line.
     Surface,
     /// Surface per-item detail for every dropped and approximate field, and per-item meridian-only detail.
     Verbose,
@@ -53,19 +55,12 @@ impl LossinessMode {
     pub fn per_item(self) -> bool {
         matches!(self, LossinessMode::Verbose | LossinessMode::Preview)
     }
-}
 
-/// One launch-time field omitted from a native artifact but enforced by Meridian at spawn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MeridianOnlyRecord {
-    item_kind: String,
-    item_name: String,
-    target: String,
-    field: String,
+    /// Whether launch-time (meridian-only) fields print per item rather than as one summary.
+    pub fn meridian_detail(self) -> bool {
+        self == LossinessMode::Verbose
+    }
 }
-
-/// How many agent names a restriction roll-up line lists before it counts the rest.
-const ROLLUP_NAME_CAP: usize = 3;
 
 /// Broad category for a diagnostic — used in structured output and validation gates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -84,10 +79,8 @@ pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
-    /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
-    meridian_only_records: Vec<MeridianOnlyRecord>,
-    /// Agents that lost a restriction, by target, for the one-line-per-target report.
-    restrictions_lost: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
+    lossy_records: Vec<LossRecord>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
@@ -102,8 +95,7 @@ impl DiagnosticCollector {
             diagnostics: Vec::new(),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
-            meridian_only_records: Vec::new(),
-            restrictions_lost: std::collections::BTreeMap::new(),
+            lossy_records: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
     }
@@ -205,38 +197,22 @@ impl DiagnosticCollector {
         std::mem::take(&mut self.engine_fallbacks)
     }
 
-    /// Record a launch-time field mapping for meridian-only summary or verbose detail.
-    pub fn record_meridian_only_field(
+    /// Buffer one lowered item's lossy fields; `drain` renders them by mode.
+    pub fn record_lossy_fields(
         &mut self,
-        item_kind: &str,
+        item_kind: &'static str,
         item_name: &str,
-        target: &str,
-        field: &str,
+        fields: &[LossyField],
     ) {
         if !self.lossiness_mode.surfaces_lossiness() {
             return;
         }
-        self.meridian_only_records.push(MeridianOnlyRecord {
-            item_kind: item_kind.to_string(),
-            item_name: item_name.to_string(),
-            target: target.to_string(),
-            field: field.to_string(),
-        });
-    }
-
-    /// Record that an agent lost a restriction on a target.
-    pub fn record_restriction_lost(&mut self, agent: &str, target: &str) {
-        if self.lossiness_mode.surfaces_lossiness() {
-            self.restrictions_lost
-                .entry(target.to_string())
-                .or_default()
-                .insert(agent.to_string());
-        }
-    }
-
-    /// Whether lossy fields print per item (`--verbose`, previews) instead of rolling up.
-    pub fn lossiness_per_item(&self) -> bool {
-        self.lossiness_mode.per_item()
+        self.lossy_records
+            .extend(fields.iter().map(|field| LossRecord {
+                item_kind,
+                item_name: item_name.to_string(),
+                field: field.clone(),
+            }));
     }
 
     fn should_emit_lossiness(&self) -> bool {
@@ -389,96 +365,12 @@ impl DiagnosticCollector {
     }
 
     pub fn drain(&mut self) -> Vec<Diagnostic> {
-        self.flush_meridian_only_lossiness();
-        self.flush_restriction_lossiness();
+        let records = std::mem::take(&mut self.lossy_records);
+        self.diagnostics.extend(crate::compiler::lossiness::render(
+            &records,
+            self.lossiness_mode,
+        ));
         std::mem::take(&mut self.diagnostics)
-    }
-
-    /// One line per target naming the agents that lost a restriction there.
-    fn flush_restriction_lossiness(&mut self) {
-        let verbose_cmd = crate::types::managed_cmd("mars sync --verbose");
-        for (target, agents) in std::mem::take(&mut self.restrictions_lost) {
-            let count = agents.len();
-            let listed = agents
-                .iter()
-                .take(ROLLUP_NAME_CAP)
-                .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let more = match count.saturating_sub(ROLLUP_NAME_CAP) {
-                0 => String::new(),
-                rest => format!(" and {rest} more"),
-            };
-            let (plural, verb) = if count == 1 {
-                ("", "loses")
-            } else {
-                ("s", "lose")
-            };
-            self.warn_with_category(
-                "agent-restriction-dropped",
-                format!(
-                    "{count} agent{plural} ({listed}{more}) {verb} a restriction on {}: it does not apply there; run `{verbose_cmd}` for the rules",
-                    crate::compiler::lossiness::target_label(&target)
-                ),
-                DiagnosticCategory::Lossiness,
-            );
-        }
-    }
-
-    fn flush_meridian_only_lossiness(&mut self) {
-        if self.meridian_only_records.is_empty() || !self.lossiness_mode.surfaces_lossiness() {
-            return;
-        }
-        match self.lossiness_mode {
-            LossinessMode::Surface | LossinessMode::Preview => {
-                let count = self.meridian_only_records.len();
-                let noun = if count == 1 { "mapping" } else { "mappings" };
-                self.info_with_category(
-                    "launch-time-field-summary",
-                    format!(
-                        "{count} launch-time field {noun} handled by meridian at spawn — run with --verbose for detail"
-                    ),
-                    DiagnosticCategory::Lossiness,
-                );
-            }
-            LossinessMode::Verbose => {
-                use std::collections::BTreeMap;
-                let mut grouped: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
-                for record in &self.meridian_only_records {
-                    grouped
-                        .entry((
-                            record.item_kind.clone(),
-                            record.item_name.clone(),
-                            record.target.clone(),
-                        ))
-                        .or_default()
-                        .push(record.field.clone());
-                }
-                for ((item_kind, item_name, target), mut fields) in grouped {
-                    fields.sort();
-                    fields.dedup();
-                    let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
-                    let count = field_refs.len();
-                    let noun = if count == 1 { "field" } else { "fields" };
-                    let target_label = format!(".{}", target.to_lowercase());
-                    let code = if item_kind == "skill" {
-                        "skill-field-meridian-only"
-                    } else {
-                        "agent-field-meridian-only"
-                    };
-                    self.warn_with_category(
-                        code,
-                        format!(
-                            "{item_kind} `{item_name}`: {count} {noun} not lowered (meridian-only) for {target_label} ({})",
-                            field_refs.join(", ")
-                        ),
-                        DiagnosticCategory::Lossiness,
-                    );
-                }
-            }
-            LossinessMode::Hidden => {}
-        }
-        self.meridian_only_records.clear();
     }
 }
 
@@ -721,10 +613,18 @@ mod tests {
         assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
     }
 
+    fn meridian_only(field: &str) -> LossyField {
+        LossyField {
+            field: field.into(),
+            target: "Claude".into(),
+            classification: crate::compiler::lossiness::Lossiness::MeridianOnly,
+        }
+    }
+
     #[test]
     fn collector_verbose_surfaces_meridian_only_detail() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
         let diags = coll.drain();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "agent-field-meridian-only");
@@ -733,7 +633,7 @@ mod tests {
     #[test]
     fn collector_surface_emits_meridian_only_summary() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
         let diags = coll.drain();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "launch-time-field-summary");

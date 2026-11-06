@@ -155,11 +155,7 @@ fn collect_agent_content_lossiness(
         model_router,
     ) {
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
-        crate::compiler::lossiness::emit_agent_lossiness_warnings(
-            agent_name,
-            &lowered.lossy_fields,
-            diag,
-        );
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields);
     }
 }
 

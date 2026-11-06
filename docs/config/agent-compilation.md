@@ -375,8 +375,8 @@ YAML frontmatter + markdown body.
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `mode` | `mode:` | exact |
 | body | body | exact |
-| `approval` | runtime-only (meridian projects `--force`/`--yolo`) | approximate |
-| `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | approximate |
+| `approval` | runtime-only (meridian projects `--force`/`--yolo`) | meridian-only |
+| `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | meridian-only |
 | `network` | dropped | meridian-only |
 | `network-allow`, `network-deny` | dropped | meridian-only |
 | `tools` (every rule) | dropped | dropped |
@@ -499,14 +499,16 @@ A plain `mars sync`, `mars upgrade` or `mars add` reports one fact: a restrictio
 target cannot carry a tool deny, an `ask`, an allow list such as `{"*": deny, read: allow}`, an MCP
 deny or `ask` it does not write, or a network limit (`network: deny`, `network-allow`,
 `network-deny` on Codex), the target runs the agent with tools or network access you withheld.
-Mars prints one line per target naming the agents (code `agent-restriction-dropped`), on every
-sync and on `add`, until the restriction is gone from the agent:
+Mars prints one line for the whole project, however many targets and agents are affected (code
+`agent-restriction-dropped`), on every sync and on `add`, until the restriction is gone from the
+agent:
 
 ```
-warning: 3 agents (`allowlist`, `mixed`, `reviewer`) lose a restriction on .codex: it does not apply there; run `mars sync --verbose` for the rules
+warning: 3 agents (`allowlist`, `mixed`, `reviewer`) lose a restriction on .codex and .pi: it does not apply there; run `mars sync --verbose` for the rules per agent and target
 ```
 
-Names past the third are counted (`and 2 more`). A field Mars does not write is reported by
+Names past the third are counted (`and 2 more`). When the agents do not all lose a restriction on
+every target the line says `on some of .codex and .pi`; `--verbose` has the exact pairs. A field Mars does not write is reported by
 default, so this also covers an override Mars discards: a `harness-overrides.<harness>` key that
 can carry policy (`disallowed-tools`, `permission`, `sandbox_mode`, …) or a scalar OpenCode
 `permission` that replaces the whole map. A site is quiet only when it says why it loses nothing

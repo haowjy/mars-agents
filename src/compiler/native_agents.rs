@@ -997,11 +997,7 @@ fn emit_lowered_native_agent(
     }
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report.
-    crate::compiler::lossiness::emit_agent_lossiness_warnings(
-        agent.agent_name,
-        &lowered.lossy_fields,
-        diag,
-    );
+    diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
 
     if ctx.options.dry_run {
         return;

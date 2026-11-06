@@ -212,7 +212,7 @@ fn record_agent_invocation_lossiness(
             field: "user-invocable".into(),
             target: target.into(),
             classification: Lossiness::Harmless {
-                why: "only the user can no longer invoke it; no tool or network access changes",
+                why: "the user can still invoke it here; no tool or network access changes",
             },
         });
     }
@@ -260,8 +260,6 @@ impl NativeModel {
 
 #[derive(Debug, Clone, Copy)]
 enum AgentLossinessStep {
-    Approval,
-    Sandbox,
     ModeDropped,
     ToolsDropped,
     DisallowedToolsDropped,
@@ -324,8 +322,6 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         LoweredField::Effort,
     ],
     lossiness: &[
-        AgentLossinessStep::Approval,
-        AgentLossinessStep::Sandbox,
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::MeridianOnlyFields,
         AgentLossinessStep::InvocationAxes,
@@ -342,8 +338,6 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         LoweredField::Mode,
     ],
     lossiness: &[
-        AgentLossinessStep::Approval,
-        AgentLossinessStep::Sandbox,
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsAsPermission,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
@@ -369,8 +363,6 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         LoweredField::Mode,
     ],
     lossiness: &[
-        AgentLossinessStep::Approval,
-        AgentLossinessStep::Sandbox,
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsDropped,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
@@ -395,8 +387,6 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         LoweredField::Mode,
     ],
     lossiness: &[
-        AgentLossinessStep::Approval,
-        AgentLossinessStep::Sandbox,
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsDropped,
         AgentLossinessStep::EffortApproximate("Pi effort semantics unverified"),
@@ -667,8 +657,6 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn apply_lossiness(&mut self, step: AgentLossinessStep) {
         match step {
-            AgentLossinessStep::Approval => self.record_approval(),
-            AgentLossinessStep::Sandbox => self.record_sandbox(),
             AgentLossinessStep::ModeDropped => {
                 self.record_if_present("mode", self.profile.mode.is_some(), Lossiness::MeridianOnly)
             }
@@ -729,32 +717,6 @@ impl<'a> AgentLoweringCtx<'a> {
         self.denied = unscoped;
     }
 
-    fn record_approval(&mut self) {
-        let Some(_) = self.eff.approval() else {
-            return;
-        };
-        // Launch-time: Meridian applies it at spawn via harness projection (Cursor included).
-        let classification = Lossiness::MeridianOnly;
-        self.lossy.push(LossyField {
-            field: "approval".into(),
-            target: self.target_name().into(),
-            classification,
-        });
-    }
-
-    fn record_sandbox(&mut self) {
-        let Some(_) = self.eff.sandbox() else {
-            return;
-        };
-        // Launch-time: Meridian applies it at spawn via harness projection (Cursor included).
-        let classification = Lossiness::MeridianOnly;
-        self.lossy.push(LossyField {
-            field: "sandbox".into(),
-            target: self.target_name().into(),
-            classification,
-        });
-    }
-
     fn record_if_present(&mut self, field: &str, present: bool, classification: Lossiness) {
         if present {
             self.lossy.push(LossyField {
@@ -765,7 +727,18 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
+    /// Launch-time fields no native file carries; Meridian applies them at spawn.
     fn record_meridian_only_fields(&mut self) {
+        self.record_if_present(
+            "approval",
+            self.eff.approval().is_some(),
+            Lossiness::MeridianOnly,
+        );
+        self.record_if_present(
+            "sandbox",
+            self.eff.sandbox().is_some(),
+            Lossiness::MeridianOnly,
+        );
         self.record_if_present(
             "network",
             self.eff.network().is_some(),

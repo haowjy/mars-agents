@@ -445,11 +445,7 @@ fn lower_skill_content_for_harness(
     };
     let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
 
-    crate::compiler::lossiness::emit_skill_lossiness_warnings(
-        skill_name,
-        &lowered.lossy_fields,
-        diag,
-    );
+    diag.record_lossy_fields("skill", skill_name, &lowered.lossy_fields);
 
     Ok(Some(lowered))
 }

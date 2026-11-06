@@ -284,6 +284,7 @@ const UNREACHED_STATE_CODES: &[&str] = &[
     "mcp-unmanaged-collision",
     "target-divergent",
     "target-unmanaged-collision",
+    "unmanaged-collision",
 ];
 
 fn target_state_unreached(diagnostics: &[Diagnostic]) -> bool {

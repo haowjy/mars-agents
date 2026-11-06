@@ -256,11 +256,12 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
 struct TargetDivergence {
     /// Present, but different from the installed checksum: hand-edited.
     modified: usize,
-    /// Absent from the target, including a symlink whose target is gone.
+    /// Absent from the target.
     missing: usize,
     /// Present, but Mars could not read it to compare (permissions, I/O).
     unchecked: usize,
-    /// A file where a directory belongs, or the reverse: neither sync nor `--force` replaces it.
+    /// A file where a directory belongs, the reverse, or a symlink to nothing: remove it and
+    /// sync reinstalls (`--force` cannot replace a directory with a file).
     wrong_kind: usize,
 }
 
@@ -326,12 +327,24 @@ fn check_target_divergence(
                     ));
                     divergence.modified += 1;
                 }
-                Err(error) => match io_error_kind(&error) {
-                    Some(std::io::ErrorKind::NotFound) => {
+                // The error kind alone says nothing about the item's own path (a tree walk can
+                // fail on something inside it), so look at the item itself.
+                Err(error) => match target_path.symlink_metadata() {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                         warnings.push(format!("missing in target: {shown}"));
                         divergence.missing += 1;
                     }
-                    Some(std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory) => {
+                    Ok(_) if !target_path.exists() => {
+                        warnings.push(format!(
+                            "wrong kind of file in target: {shown} (a symlink to nothing)"
+                        ));
+                        divergence.wrong_kind += 1;
+                    }
+                    _ if matches!(
+                        io_error_kind(&error),
+                        Some(std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory)
+                    ) =>
+                    {
                         warnings.push(format!("wrong kind of file in target: {shown} ({error})"));
                         divergence.wrong_kind += 1;
                     }

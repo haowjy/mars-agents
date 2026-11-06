@@ -45,16 +45,28 @@ residue in the primary checkout is how drift starts.
 - `.cursor` is unmaintained: existing support stays, but it isn't tested or extended.
 - `.pi` is under active design/development.
 
-## Critical Invariants
+## Invariants
 
-- **Mars never deletes files it didn't create.** Per-target lock ownership gates all removals.
-- **Atomic writes** — tmp+rename for config, lock, and installed files.
-- **Resolve first, then act** — zero mutations if any error during resolution.
-- **Builtin model aliases are fallback-only** — `opus`, `sonnet`, `haiku`,
-  `codex`, `gpt`, and `gemini` appear only when packages and consumer config
-  both provide no aliases.
-- **Windows is first-class** — no POSIX-only assumptions.
-- **No VCS dependency** — walk to filesystem root via `Path::parent()`, not `.git`.
+These hold however the work is done. Change one only as its own visible step, never to get a task passing. Everything else in this file is a current choice, open to rewriting when evidence shows something better.
+
+| Invariant | Check |
+|---|---|
+| User content is never overwritten or deleted without authorization. Anything Mars owns is authorized, so source wins on a file Mars manages. | `tests/self_conflicts.rs`, `tests/config_entries/ownership.rs` |
+| Mars never acts beyond what was authorized: nothing outside the package or the destination is read or written | Partial: archive and bootstrap escape tests |
+| Private content never reaches the wrong recipient: exported metadata carries no agent or skill bodies, and imported servers get no credentials Claude would withhold | Partial: `tests/validate_and_export.rs` |
+| A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
+
+## Contracts
+
+- **Atomic writes:** tmp+rename for config, lock, and installed files.
+- **Resolve first, then act:** zero mutations if any error during resolution.
+- **Builtin model aliases are fallback-only:** `opus`, `sonnet`, `haiku`, `codex`, `gpt`, and `gemini` appear only when packages and consumer config both provide no aliases.
+- **Windows is first-class:** no POSIX-only assumptions.
+- **No VCS dependency:** walk to filesystem root via `Path::parent()`, not `.git`.
+
+## Comments
+
+Few. Write one only for what the code can't show and a wrong edit would break silently, at the line it guards. No decision ids.
 
 ## Architecture
 

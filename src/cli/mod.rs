@@ -279,7 +279,12 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                 }
                 Err(err) => return Err(err),
             };
-            dispatch_with_root(cmd, &ctx, cli.root.as_deref(), cli.json)
+            dispatch_with_root(
+                cmd,
+                &ctx,
+                cli.root.is_some().then_some(ctx.project_root.as_path()),
+                cli.json,
+            )
         }
     }
 }
@@ -347,7 +352,8 @@ fn dispatch_with_root(
 
 /// Absolute form of a path typed on the command line. A relative path resolves against the
 /// working directory when it exists there, since that is where the user typed it. Otherwise,
-/// with an explicit `--root` (`explicit_root`), it resolves against that root. A host such as
+/// with an explicit `--root`, it resolves against the project root that `--root` led to
+/// (`explicit_root`; `--root` is a walk-up start, so it can name a subdirectory). A host such as
 /// `meridian mars` always appends `--root`, so the working directory must win when it can.
 pub(crate) fn resolve_cli_path(
     path: &Path,
@@ -358,9 +364,7 @@ pub(crate) fn resolve_cli_path(
     }
     let from_cwd = std::env::current_dir()?.join(path);
     match explicit_root {
-        Some(root) if from_cwd.symlink_metadata().is_err() => {
-            Ok(std::path::absolute(root)?.join(path))
-        }
+        Some(root) if from_cwd.symlink_metadata().is_err() => Ok(root.join(path)),
         _ => Ok(from_cwd),
     }
 }

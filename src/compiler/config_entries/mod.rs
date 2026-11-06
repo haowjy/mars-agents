@@ -280,11 +280,23 @@ pub(crate) fn compile_config_entries(
                 })
             })
             .collect();
+        // Preview the MCP files a real sync would write. The warnings of this pass are the
+        // real sync's to show, so they go to a collector nobody reads.
+        let mcp_files_changed = reconcile_all_mcp(
+            &registry,
+            &ctx.project_root,
+            previous_records,
+            &desired_mcp,
+            force,
+            true,
+            &mut DiagnosticCollector::new(),
+        )
+        .files_changed;
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
             rewritten_outputs,
-            mcp_files_changed: Vec::new(),
+            mcp_files_changed,
             removed_outputs,
         };
     }
@@ -359,35 +371,19 @@ pub(crate) fn compile_config_entries(
         }
     }
 
-    // MCP servers are reconciled per target file: a target no longer managed
-    // still gets its stale servers removed.
-    let mut mcp_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
-    let mut mcp_removed: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut mcp_files_changed = Vec::new();
-    for target_root in previous_records
-        .keys()
-        .chain(desired_mcp.keys())
-        .collect::<BTreeSet<_>>()
-    {
-        let reconciled = reconcile_mcp(
-            &registry,
-            &ctx.project_root,
-            target_root,
-            previous_records.get(target_root),
-            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
-            force,
-            diag,
-        );
-        if !reconciled.records.is_empty() {
-            mcp_records.insert(target_root.clone(), reconciled.records);
-        }
-        mcp_removed.insert(target_root.clone(), reconciled.removed);
-        if reconciled.changed
-            && let Some(file) = registry.get(target_root).and_then(|a| a.mcp_file())
-        {
-            mcp_files_changed.push((target_root.clone(), file.at.path.to_string()));
-        }
-    }
+    let McpReconciliation {
+        records: mcp_records,
+        removed: mcp_removed,
+        files_changed: mcp_files_changed,
+    } = reconcile_all_mcp(
+        &registry,
+        &ctx.project_root,
+        previous_records,
+        &desired_mcp,
+        force,
+        false,
+        diag,
+    );
     report_removed(retention.removed_keys(), &mcp_removed, diag);
 
     let mut compiled = apply_replacement_writes(
@@ -511,8 +507,61 @@ pub(crate) fn report_removed(
     }
 }
 
+struct McpReconciliation {
+    records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    removed: BTreeMap<String, Vec<String>>,
+    /// `(target_root, file path)` of each file written or deleted (or, in a dry run, to be).
+    files_changed: Vec<(String, String)>,
+}
+
+/// MCP servers are reconciled per target file: a target no longer managed still gets its
+/// stale servers removed.
+fn reconcile_all_mcp(
+    registry: &TargetRegistry,
+    project_root: &Path,
+    previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    desired_mcp: &BTreeMap<String, Vec<mcp_file::Rendered>>,
+    force: bool,
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) -> McpReconciliation {
+    let mut out = McpReconciliation {
+        records: BTreeMap::new(),
+        removed: BTreeMap::new(),
+        files_changed: Vec::new(),
+    };
+    for target_root in previous_records
+        .keys()
+        .chain(desired_mcp.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let reconciled = reconcile_mcp(
+            registry,
+            project_root,
+            target_root,
+            previous_records.get(target_root),
+            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
+            force,
+            dry_run,
+            diag,
+        );
+        if !reconciled.records.is_empty() {
+            out.records.insert(target_root.clone(), reconciled.records);
+        }
+        out.removed.insert(target_root.clone(), reconciled.removed);
+        if reconciled.changed
+            && let Some(file) = registry.get(target_root).and_then(|a| a.mcp_file())
+        {
+            out.files_changed
+                .push((target_root.clone(), file.at.path.to_string()));
+        }
+    }
+    out
+}
+
 /// Reconcile `target_root`'s MCP file with `desired`. Shared by sync and
 /// `mars unlink` (`desired` empty).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile_mcp(
     registry: &TargetRegistry,
     project_root: &Path,
@@ -520,6 +569,7 @@ pub(crate) fn reconcile_mcp(
     previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
     desired: &[mcp_file::Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> mcp_file::Reconciled {
     let no_records = BTreeMap::new();
@@ -559,6 +609,7 @@ pub(crate) fn reconcile_mcp(
         previous,
         desired,
         force,
+        dry_run,
         diag,
     )
 }

@@ -136,7 +136,7 @@ This is the core operation. It runs the full [sync pipeline](../internals/sync-p
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
-The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)` and counts them as `updated N MCP config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the count as `mcp_files_changed`. `--diff` does not preview these writes yet.
+The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)` and counts them as `updated N MCP config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the count as `mcp_files_changed`. `--diff` previews them as `would update N MCP config files`. The summary never says "already up to date" when a failed write or removal, or an entry Mars left in place because it was edited by hand, leaves a config short of the state the sync wanted.
 
 ---
 
@@ -308,7 +308,7 @@ mars adopt <path> [--dry-run]
 - Runs `mars sync` so the item is immediately installed back through the normal pipeline
 - Same-filesystem only in MVP; the target directory must be on the same filesystem as the project root
 
-A relative `path` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against that root.
+A relative `path` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects.
 
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 

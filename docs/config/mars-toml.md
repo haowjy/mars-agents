@@ -747,7 +747,7 @@ every other command, so an older Mars accepts a newer config, and Mars keeps the
 the file. `mars validate` warns about each one (`unknown-settings-key`), because a typo does nothing
 and validate is where someone asks whether the config is right. A network-looking key warns as
 `unknown-network-key` everywhere and is not repeated. `mars validate --strict` turns the warning
-into an error, like any other warning.
+into an error, like any other warning. Keys in the user config's `[settings]` (`config.toml`) are not checked: one typo there would otherwise fail `validate --strict` in every project.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

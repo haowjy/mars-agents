@@ -275,6 +275,23 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
+/// Diagnostics that say a config file was not brought to the state the sync wanted: a failed
+/// write or removal, or an edit Mars left in place. A run with one is not "already up to date".
+const UNREACHED_STATE_CODES: &[&str] = &[
+    "config-entry-write",
+    "config-entry-remove",
+    "mcp-divergent",
+    "mcp-unmanaged-collision",
+    "target-divergent",
+    "target-unmanaged-collision",
+];
+
+fn target_state_unreached(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|d| UNREACHED_STATE_CODES.contains(&d.code.as_ref()))
+}
+
 /// Info diagnostics print only when `show_info` is set; JSON output keeps them all.
 fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info: bool) {
     if let Some(halt) = &report.recovery_halt {
@@ -406,7 +423,11 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
     }
     if mcp_files > 0 {
         let noun = if mcp_files == 1 { "file" } else { "files" };
-        let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+        if dry {
+            let _ = writeln!(stdout, "  would update {mcp_files} MCP config {noun}");
+        } else {
+            let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+        }
     }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
@@ -420,6 +441,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         && native_removed == 0
         && hook_files == 0
         && mcp_files == 0
+        && !target_state_unreached(&report.diagnostics)
     {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  already up to date");

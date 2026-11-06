@@ -70,7 +70,8 @@ list from the raw project/local config; empty lists and replacement tables are s
   project scalar the local entry must retain.
 - Unknown project and local settings and agent-overlay keys remain forward-compatible: silent in
   sync, kept on save. Only `mars validate` reports unknown `[settings]` keys
-  (`unknown-settings-key`, `config::unknown_settings_diagnostics`).
+  (`unknown-settings-key`, `config::unknown_settings_diagnostics`), in the project and local files
+  only: the user config's keys are unchecked, since `--strict` would fail every project on one bad user file.
   Network-looking unknowns are retained and warned (`unknown-network-key`) because silently
   dropping a deny would fail open.
 - Removed `[settings.model_visibility]` is an error only for the consumer's

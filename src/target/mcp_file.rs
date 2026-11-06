@@ -146,7 +146,7 @@ impl Open {
 pub(crate) struct Reconciled {
     pub records: BTreeMap<String, ConfigEntryRecord>,
     pub removed: Vec<String>,
-    /// Whether this reconcile wrote or deleted the file.
+    /// Whether this reconcile wrote or deleted the file (or, in a dry run, would).
     pub changed: bool,
 }
 
@@ -162,6 +162,9 @@ pub(crate) struct Reconciled {
 ///
 /// On failure nothing is retired: the result is `previous`'s MCP records, so
 /// the next sync retries.
+///
+/// A `dry_run` computes the same result and `changed` without saving or deleting the file.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile(
     file: &McpFile,
     project_root: &Path,
@@ -169,13 +172,23 @@ pub(crate) fn reconcile(
     previous: &BTreeMap<String, ConfigEntryRecord>,
     desired: &[Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> Reconciled {
     let prior: BTreeMap<&str, &ConfigEntryRecord> = previous
         .iter()
         .filter_map(|(key, record)| Some((key.strip_prefix(MCP_KEY_PREFIX)?, record)))
         .collect();
-    match try_reconcile(file, project_root, target, &prior, desired, force, diag) {
+    match try_reconcile(
+        file,
+        project_root,
+        target,
+        &prior,
+        desired,
+        force,
+        dry_run,
+        diag,
+    ) {
         Ok(reconciled) => reconciled,
         Err(error) => {
             diag.warn(
@@ -194,6 +207,7 @@ pub(crate) fn reconcile(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_reconcile(
     file: &McpFile,
     project_root: &Path,
@@ -201,6 +215,7 @@ fn try_reconcile(
     prior: &BTreeMap<&str, &ConfigEntryRecord>,
     desired: &[Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<Reconciled, MarsError> {
     let mut open = Open::load(project_root, file.at)?;
@@ -289,7 +304,7 @@ fn try_reconcile(
     // Only a file this reconcile changed can be deleted: one mars never touched
     // may be the user's, empty on purpose.
     let changed = open.changed;
-    if changed {
+    if changed && !dry_run {
         if open.existed && open.doc.is_empty() {
             std::fs::remove_file(&open.path)?;
         } else {
@@ -347,7 +362,10 @@ mod tests {
         let file = registry.get(target).unwrap().mcp_file().unwrap();
         let mut diag = DiagnosticCollector::new();
         let rendered = render_all(&file, desired, &mut diag);
-        let records = reconcile(&file, root, target, previous, &rendered, force, &mut diag).records;
+        let records = reconcile(
+            &file, root, target, previous, &rendered, force, false, &mut diag,
+        )
+        .records;
         (
             records,
             diag.drain()

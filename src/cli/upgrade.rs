@@ -16,7 +16,7 @@ pub struct UpgradeArgs {
     #[arg(long)]
     pub bump: bool,
 
-    /// Show per-agent detail for every dropped and approximate field, plus launch-time fields handled by meridian at spawn.
+    /// Show per-item detail for every lossy field: dropped restrictions, approximate mappings, quiet ones, and launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 

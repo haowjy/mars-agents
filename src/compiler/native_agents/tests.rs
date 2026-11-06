@@ -384,6 +384,7 @@ fn emit_selective_fanout_agents_match_case_insensitively() {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &fanout_agents,
     };
@@ -490,6 +491,7 @@ fn compile_emit_all_agents(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -537,6 +539,7 @@ fn compile_emit_all_opencode(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -783,6 +786,7 @@ fn compile_emit_all_with_overlays(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -830,6 +834,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
                 force: false,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: false,
+                preview_warnings: false,
             },
             fanout_agents: &[],
         },
@@ -1233,6 +1238,7 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };

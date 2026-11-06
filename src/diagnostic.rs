@@ -89,6 +89,8 @@ pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
+    /// The command that re-runs this one with `--verbose`, named in the default lossiness line.
+    rerun_verbose: &'static str,
     /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
     lossy_records: Vec<LossRecord>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
@@ -100,11 +102,19 @@ impl DiagnosticCollector {
         Self::with_lossiness_mode(LossinessMode::default())
     }
 
+    /// Name the command whose `--verbose` shows the detail behind the default lossiness line,
+    /// for a caller that is not `mars sync`.
+    pub fn rerun_verbose_with(mut self, command: &'static str) -> Self {
+        self.rerun_verbose = command;
+        self
+    }
+
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
+            rerun_verbose: "mars sync --verbose",
             lossy_records: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
@@ -225,10 +235,6 @@ impl DiagnosticCollector {
             }));
     }
 
-    fn should_emit_lossiness(&self) -> bool {
-        self.lossiness_mode.surfaces_lossiness()
-    }
-
     pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
@@ -245,9 +251,6 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
             code: code.into(),
@@ -304,9 +307,6 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
             code: code.into(),
@@ -337,24 +337,6 @@ impl DiagnosticCollector {
             return;
         }
         self.info(code, message);
-    }
-
-    pub fn info_with_category(
-        &mut self,
-        code: impl Into<Cow<'static, str>>,
-        message: impl Into<String>,
-        category: DiagnosticCategory,
-    ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
-        self.diagnostics.push(Diagnostic {
-            level: DiagnosticLevel::Info,
-            code: code.into(),
-            message: message.into(),
-            context: None,
-            category: Some(category),
-        });
     }
 
     pub fn warn_with_context(
@@ -398,6 +380,7 @@ impl DiagnosticCollector {
         self.diagnostics.extend(crate::compiler::lossiness::render(
             &records,
             self.lossiness_mode,
+            self.rerun_verbose,
         ));
         std::mem::take(&mut self.diagnostics)
     }
@@ -547,25 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn collector_suppresses_lossiness_when_hidden() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
-        coll.warn_with_category(
-            "agent-field-dropped",
-            "agent `x`: dropped",
-            DiagnosticCategory::Lossiness,
-        );
-        assert!(coll.drain().is_empty());
-
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.warn_with_category(
-            "agent-field-dropped",
-            "agent `x`: dropped",
-            DiagnosticCategory::Lossiness,
-        );
-        assert_eq!(coll.drain().len(), 1);
-    }
-
-    #[test]
     fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
         use crate::resolve::{
             EngineFallback, EngineFallbackRequirement, EngineFallbackSkippedVersion,
@@ -618,28 +582,6 @@ mod tests {
         );
         assert_eq!(fallbacks[0].skipped[0].requirements[0].requirement, ">=4");
         assert_eq!(fallbacks[0].engines, vec!["mars", "meridian"]);
-    }
-
-    #[test]
-    fn collector_suppresses_info_lossiness_when_hidden() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        assert!(coll.drain().is_empty());
-
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].level, DiagnosticLevel::Info);
-        assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
     }
 
     fn meridian_only(field: &str) -> LossyField {

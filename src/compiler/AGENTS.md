@@ -33,7 +33,8 @@ The compiler is the second half of the sync pipeline. It consumes `ReaderIr` and
 - `native_agent_manifest.rs` — lock-then-native-agent-manifest persistence
 - `agent_copy.rs` — validates `settings.meridian.agent_copy` into an emission allowlist
 - `tool_policy.rs` — runtime projection, overlay merging and specificity over schema-owned tool rules. Authored parsing, vocabulary, aliases and native tables live in `mars-schema`.
-- `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `LoweredOutput`) and `render`, which turns the collector's buffered `LossRecord`s into lines by `LossinessMode`: `Surface` prints one line for the `Dropped(Lost)` fields (restrictions the agent loses), `Verbose` prints every record per item. Quiet needs a reason: `Quiet { why }`, `Approximate`, `MeridianOnly` (see `src/sync/AGENTS.md`)
+- `agents/tool_loss.rs` — the one tool-rule loss classifier: `rule_loss(rule)` names the kind a rule costs, a target's `Carries` says what its file writes, `losses()` joins them for every target (Claude included).
+- `lossiness.rs` — lossiness classification types (`LossyField`, `Lossiness`, `Lost`, `LoweredOutput`) and `render`, which turns the collector's buffered `LossRecord`s into lines by `LossinessMode`: `Surface` prints one line for the `Dropped(Lost)` fields (restrictions the agent loses), `Verbose` prints every record per item. Quiet needs a reason: `Quiet { why }`, `Approximate`, `MeridianOnly` (see `src/sync/AGENTS.md`)
 - `lossiness_preview.rs` — preview lossiness diagnostics without running sync (`collect_prepared_source_lossiness_diagnostics`). Called by `mars check` and `mars init` (`Surface`; `check --verbose` uses `Verbose`).
 - `mars-schema::invocability` — shared `model-invocable` / `user-invocable` axis parsing for both agents and skills
 - `mars-schema::tool_names` — the capability vocabulary, aliases and `tool(pattern)` grammar

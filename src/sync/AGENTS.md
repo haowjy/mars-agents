@@ -174,9 +174,8 @@ the authored source tree remains untouched and the install layer applies the in-
 
 ## Lossiness Gating
 
-`SyncRequest.lossiness_mode` (mod.rs) selects `LossinessMode::Surface` or `Hidden` when
-`execute()` creates the pipeline `DiagnosticCollector`. Lossiness-category diagnostics are
-suppressed at emission (`warn_with_category` / `error_with_category`) when mode is `Hidden`.
+`SyncRequest.lossiness_mode` (mod.rs) selects `LossinessMode::Surface`, `Verbose` or `Hidden` when
+`execute()` creates the pipeline `DiagnosticCollector`. `Hidden` makes `record_lossy_fields` buffer nothing.
 
 `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin` set
 `Surface`; `--verbose` (sync, upgrade, check, build plugin) sets `Verbose`; validate, export,
@@ -185,7 +184,7 @@ repair, link, etc. set `Hidden`.
 The invariant (owner): a lost restriction that changes what an agent can do is shown by default;
 every other lost field is available under `--verbose`; nothing is dropped without a record.
 `Surface` therefore renders one project line (`agent-restriction-dropped`) for `Lossiness::Dropped(Lost)`,
-naming the kinds (`Lost`: shell, tool, MCP, network, setting). Emission calls
+naming the kinds (`Lost`: shell, tool, MCP, network, permission). The line lists agents, targets and kinds as separate sets and pairs none. `Lost` comes from `agents/tool_loss.rs`: `rule_loss(rule)` classifies a tool rule, and each target's `Carries` says what its file can write. Project `[settings]` network keys are records of item kind `project`, so `sync` and `check` agree. Emission calls
 `DiagnosticCollector::record_lossy_fields`, which buffers every field; `drain` hands the buffer to
 `compiler::lossiness::render`, the one place a loss becomes a line; `Verbose` renders every record
 per item and target. A lowering site is quiet only by saying why: `Quiet { why }`, `Approximate`

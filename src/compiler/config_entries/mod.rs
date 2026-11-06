@@ -69,7 +69,7 @@ pub(crate) fn compile_config_entries(
     rendered_hooks: &RenderedHooks,
     dry_run: bool,
     force: bool,
-    validation_only: bool,
+    preview_warnings: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
     use crate::compiler::mcp::check_env_refs;
@@ -306,12 +306,12 @@ pub(crate) fn compile_config_entries(
             })
             .collect();
         // Preview the MCP files a real sync would write. A dry run has no real pass after
-        // this one, so its warnings are the ones `--diff` shows; `mars validate` drops them.
+        // this one, so its warnings are the ones `--diff` shows; other dry runs drop them.
         let mut scratch = DiagnosticCollector::new();
-        let preview_diag = if validation_only {
-            &mut scratch
-        } else {
+        let preview_diag = if preview_warnings {
             &mut *diag
+        } else {
+            &mut scratch
         };
         let mcp_files_changed = reconcile_all_mcp(
             &registry,

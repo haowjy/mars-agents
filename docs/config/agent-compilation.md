@@ -80,7 +80,7 @@ Mars does not merge `harness-overrides.<target>` into top-level profile values. 
 
 Each harness's own block is written into its native file: `harness-overrides.claude` into `.claude/agents/*.md` and the Claude plugin tree, `harness-overrides.codex` into the Codex TOML, and so on. A block never reaches another harness's file. Mars validates the outer shape and serializability, then leaves nested keys and values alone.
 
-A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped. A key that can carry policy (`disallowed-tools`, a scalar OpenCode `permission`, `sandbox_mode`, `approval_policy`, and any key not listed next) counts as a lost restriction, and every sync reports it. Dropping `name`, `description`, `model`, `effort`, `skills` or `model_reasoning_effort` loses no restriction, so only `mars sync --verbose` shows it: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
+A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped. A key that carries permissions (`tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`) counts as a lost restriction, and every sync reports it. Any other dropped key (`name`, `model`, `developer_instructions`, an unknown key) is not known to restrict, so only `mars sync --verbose` shows it: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
 
 For launch bundles, Mars also selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`.
 
@@ -140,7 +140,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
 | `tools` denials | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
-| `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them; Mars records each as dropped lossiness |
+| `tools` `ask` rules, an allowlist with nothing allowed, `bash(rg *)` allowed with no plain `bash` | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
 | `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
@@ -500,26 +500,30 @@ field is available under `--verbose`. Nothing is dropped without a record.
 
 A plain `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` or `mars build plugin`
 prints one line for the project (code `agent-restriction-dropped`) when a target cannot carry a
-restriction the agent declares. The line names the kind lost, so you can tell a shell restriction
-from a missing edit deny:
+restriction the agent declares. The line lists the agents, the targets and the kinds lost as three
+separate sets, so it stays true for any mix: each listed agent loses at least one of the listed kinds
+on at least one of the listed targets. `--verbose` pairs them.
 
 ```
-warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose a shell restriction on .codex, .opencode and .pi: it does not apply there; run again with --verbose for the rules per agent and target
+warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose restrictions across .codex, .opencode and .pi (shell, tool) that the target does not apply; run `mars sync --verbose` for the rules per item and target
 ```
+
+The command in the line is the one you ran: `mars check --verbose` for `check` and `init`,
+`mars build plugin --verbose` for a plugin build, `mars sync --verbose` otherwise.
 
 What counts:
 
 | Kind | Lost when |
 |---|---|
-| shell restriction | a scoped `bash(git reset --hard *)` deny, or an allow list (`'*': deny`), or a capability whose only allows are scoped (`bash(rg *)` with no plain `bash`), on a target whose file has no tool field |
-| tool restriction | any other tool deny or `ask` the file cannot carry, such as `workflow: deny` or `edit: deny` |
-| MCP restriction | an MCP `ask`, or a deny the target does not write |
-| network restriction | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting |
-| setting | a value you wrote that no file carries: a `harness-overrides.<harness>` policy key Mars discards (`disallowed-tools`, `permission`, `sandbox_mode`, …), a scalar OpenCode `permission`, `model-invocable: false` |
+| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, an allow list that does not grant `bash`, or `bash(rg *)` allowed with no plain `bash` rule (on every target, Claude included) |
+| tool | any other tool deny, `ask` or allow list the file cannot carry, such as `workflow: deny` or `edit: deny` |
+| MCP | an MCP `ask`, or a deny the target does not write |
+| network | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting; the project's `default_network` (anything but `allow`), `network-allow` and `network-deny` in `[settings]` once a Codex agent is written, listed as `project setting` |
+| permission | a `harness-overrides.<harness>` key that carries permissions and Mars discards: `tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`; a scalar OpenCode `permission` |
 
-Names past the third are counted (`and 2 more`). When the agents do not all lose something on
-every target the line says `on some of .codex and .pi`. It prints on every sync, because a lock
-change does not prove you saw it.
+The kind of a rule follows the rule, not the target: a `bash: ask` is a shell loss on Claude as on
+Codex, an `mcp(...)` `ask` an MCP loss. Names past the third are counted (`and 2 more`). The line
+prints on every sync, because a lock change does not prove you saw it.
 
 Quiet by default, listed with its reason under `--verbose`:
 
@@ -528,7 +532,8 @@ Quiet by default, listed with its reason under `--verbose`:
 | Launch-time fields: `model-policies`, `sandbox`, `approval`, `mode`, `fanout`, and the network fields on targets that do not lower them | Meridian applies them at spawn |
 | `network: allow` on Codex | A grant, not a restriction |
 | A deny of `edit`, `write` or `notebook` on a Codex agent with `sandbox: read-only` | The Codex file carries that sandbox, which already blocks file writes. Mars checks the agent's sandbox; any other sandbox, and every other target (whose files carry none), keep the line |
-| A plain grant, `user-invocable: false`, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, every skill field | Nothing the author withheld is lost |
+| `network: allow` or `default_network = "allow"`, a plain grant, `user-invocable: false`, `model-invocable: false`, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, every skill field | Nothing the author withheld is lost, or the field restricts nothing |
+| A `harness-overrides` key that is not a known permission key (`name`, `model`, `developer_instructions`, `mode`, an unknown key, …) | Not a known restriction; recorded, shown by `--verbose` |
 | Approximate mappings | The closest native equivalent; the semantics differ slightly |
 
 `--verbose` (on `sync`, `upgrade`, `check` and `build plugin`) prints one warning per agent and
@@ -545,7 +550,7 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check` and `mars init`.
+`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 
 ## Lossiness Matrix
 

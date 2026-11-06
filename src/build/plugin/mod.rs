@@ -178,7 +178,8 @@ pub(crate) fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildRe
 }
 
 pub(crate) fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, MarsError> {
-    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode)
+        .rerun_verbose_with("mars build plugin --verbose");
     match stage_plugin_inner(request, &mut diag) {
         Ok(staged) => Ok(staged),
         Err(source) => {

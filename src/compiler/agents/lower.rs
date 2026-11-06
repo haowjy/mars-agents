@@ -233,7 +233,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "model-invocable"
                 && f.target == "Claude"
-                && matches!(f.classification, Lossiness::Dropped(_))
+                && matches!(f.classification, Lossiness::Quiet { .. })
         }));
     }
 

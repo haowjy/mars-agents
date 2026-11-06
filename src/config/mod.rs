@@ -505,15 +505,27 @@ impl Settings {
         self.meridian.agent_copy.as_ref()
     }
 
-    /// The network keys a project sets in `[settings]` (or inherits from the user config).
-    pub fn network_keys(&self) -> Vec<&'static str> {
+    /// The network keys a project sets in `[settings]` (or inherits from the user config), each
+    /// with whether it restricts: `default_network = "allow"` is a grant.
+    pub fn network_keys(&self) -> Vec<(&'static str, bool)> {
         [
-            ("default-network", self.default_network.is_some()),
-            ("network-allow", !self.network_allow.entries().is_empty()),
-            ("network-deny", !self.network_deny.entries().is_empty()),
+            (
+                "default-network",
+                self.default_network
+                    .as_ref()
+                    .map(|policy| *policy != mars_schema::network::NetworkPolicy::Allow),
+            ),
+            (
+                "network-allow",
+                (!self.network_allow.entries().is_empty()).then_some(true),
+            ),
+            (
+                "network-deny",
+                (!self.network_deny.entries().is_empty()).then_some(true),
+            ),
         ]
         .into_iter()
-        .filter_map(|(key, set)| set.then_some(key))
+        .filter_map(|(key, restricts)| restricts.map(|restricts| (key, restricts)))
         .collect()
     }
 

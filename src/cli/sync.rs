@@ -32,7 +32,7 @@ pub struct SyncArgs {
     #[arg(long)]
     pub no_upgrade_hint: bool,
 
-    /// Show per-agent detail for every dropped and approximate field, plus launch-time fields handled by meridian at spawn.
+    /// Show per-item detail for every lossy field: dropped restrictions, approximate mappings, quiet ones, and launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 
@@ -59,7 +59,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             no_refresh_models: args.no_refresh_models,
             check_upgrades: !no_upgrade_hint,
             ignore_requires_mars: args.ignore_requires_mars,
-            validation_only: false,
+            preview_warnings: args.diff,
             ignore_requires_meridian: args.ignore_requires_meridian,
         },
         recovery: Default::default(),

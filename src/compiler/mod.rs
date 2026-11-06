@@ -189,7 +189,7 @@ fn compile_inner(
         &rendered_hooks,
         request.options.dry_run,
         request.options.force,
-        request.options.validation_only,
+        request.options.preview_warnings,
         diag,
     );
     synced.config_entries = config_entry_compilation.records;
@@ -223,6 +223,7 @@ fn compile_inner(
                 force: request.options.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: request.options.dry_run,
+                preview_warnings: request.options.preview_warnings,
             },
             fanout_agents,
         })

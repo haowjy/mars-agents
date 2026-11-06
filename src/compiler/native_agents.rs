@@ -32,6 +32,9 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
     pub force: bool,
     pub collision_hint: crate::surface_ownership::CollisionAdoptHint,
     pub dry_run: bool,
+    /// `sync --diff`: a dry run that reports what a real sync would change, such as a diverged
+    /// native agent it would repair. Every other dry run stays quiet about it.
+    pub preview_warnings: bool,
 }
 
 /// Shared inputs for native agent compilation.
@@ -155,10 +158,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         });
         Self::with_session(aliases, cache, routing_settings, session)
-    }
-
-    pub(crate) fn project_network_keys(&self) -> Vec<&'static str> {
-        self.settings.network_keys()
     }
 
     /// Settings model policies join the native precedence chain, as in the bundle.
@@ -800,10 +799,10 @@ pub(crate) fn compile_native_agents<'a>(
     }
 
     // Native Codex files carry no network setting, and a project default is not any one
-    // Agent's, so it is reported once for the target.
+    // Agent's, so it is recorded once for the target.
     if codex_emitted {
-        crate::compiler::lossiness::emit_project_settings_dropped_warning(
-            &model_router.project_network_keys(),
+        crate::compiler::lossiness::record_project_network_loss(
+            &model_router.settings.network_keys(),
             "Codex",
             diag,
         );
@@ -1018,7 +1017,8 @@ fn emit_lowered_native_agent(
     }
 
     // `--diff` reports an edit a real sync would overwrite, as the real sync does.
-    if !ctx.options.force
+    if (!ctx.options.dry_run || ctx.options.preview_warnings)
+        && !ctx.options.force
         && let Some(existing_bytes) = existing_bytes
         && let Some(recorded_checksum) = ctx
             .old_lock
@@ -1258,6 +1258,7 @@ pub(crate) fn materialize_native_agents_after_link(
                 force: input.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
                 dry_run: false,
+                preview_warnings: false,
             },
             fanout_agents,
         })

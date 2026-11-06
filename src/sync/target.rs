@@ -33,6 +33,9 @@ pub struct TargetState {
     accepted_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
     // Dependency hooks standing on what the last lock installed (see `kept_hooks`).
     pub(super) kept_hooks: Vec<KeptHook>,
+    // A dependency's MCP scan failed, so its servers are unknown: MCP records of the last
+    // sync stay installed instead of being read as "wants no servers".
+    pub(super) mcp_scan_failed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +76,10 @@ impl TargetState {
 
     pub(crate) fn kept_hooks(&self) -> &[KeptHook] {
         &self.kept_hooks
+    }
+
+    pub(crate) fn mcp_scan_failed(&self) -> bool {
+        self.mcp_scan_failed
     }
 
     pub(crate) fn kept_dirs(&self) -> impl Iterator<Item = &PackageDir> {
@@ -236,6 +243,7 @@ impl TargetState {
             selected_mcp: Vec::new(),
             accepted_hooks: Vec::new(),
             kept_hooks: Vec::new(),
+            mcp_scan_failed: false,
         }
     }
 }
@@ -324,6 +332,7 @@ pub(crate) fn build_with_collisions_and_diag(
         selected_mcp: Vec::new(),
         accepted_hooks: Vec::new(),
         kept_hooks: Vec::new(),
+        mcp_scan_failed: false,
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
@@ -427,10 +436,16 @@ pub(crate) fn build_with_collisions_and_diag(
                     }
                 }
             }
-            Err(error) => diag.warn(
-                "mcp-discover",
-                format!("failed to scan MCP items in `{source_name}`: {error}"),
-            ),
+            Err(error) => {
+                target.mcp_scan_failed = true;
+                diag.warn(
+                    "mcp-discover",
+                    format!(
+                        "failed to scan MCP items in `{source_name}`: {error}; \
+                         MCP servers installed by the last sync stay as they are"
+                    ),
+                );
+            }
         }
 
         let filtered = discovered.iter().filter(|item| {
@@ -650,7 +665,7 @@ fn rename_destination_collisions(
                 suffixed_collision_dest_path(&item.dest_path, kind, &item.source_name)?;
             let new_name = ItemName::from(new_dest_path.item_name(kind.item_kind()));
 
-            diag.warn(
+            diag.warn_advisory(
                 "auto-rename-collision",
                 format!(
                     "auto-renamed {} `{}` from source `{}` → `{}`",

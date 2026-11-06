@@ -34,7 +34,7 @@ pub(crate) fn warn_unknown_visibility(
     source_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    diag.warn(
+    diag.warn_advisory(
         "unknown-visibility",
         format!(
             "{item_kind} `{item_name}` from source `{source_name}` has unknown \
@@ -189,11 +189,13 @@ fn compile_inner(
         &rendered_hooks,
         request.options.dry_run,
         request.options.force,
+        request.options.validation_only,
         diag,
     );
     synced.config_entries = config_entry_compilation.records;
     synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
     synced.rewritten_hook_files = config_entry_compilation.rewritten_outputs;
+    synced.mcp_files_changed = config_entry_compilation.mcp_files_changed;
     synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
 
     let loaded = &synced.applied.planned.targeted.resolved.loaded;

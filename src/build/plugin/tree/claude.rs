@@ -71,7 +71,7 @@ fn write_plugin_mcp_json(
         let rendered = render(&server.transport, Flavor::Plugin);
         if harnesses.iter().any(|harness| harness.key == "codex") {
             for lost in rendered.lossy {
-                diag.warn("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
+                diag.warn_advisory("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
             }
         }
         mcp_servers.insert(server.name.clone(), rendered.value);

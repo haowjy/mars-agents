@@ -238,6 +238,7 @@ fn export_diagnostic(d: &crate::diagnostic::Diagnostic) -> ExportDiagnostic {
             DiagnosticCategory::Compatibility => "compatibility",
             DiagnosticCategory::Lossiness => "lossiness",
             DiagnosticCategory::Validation => "validation",
+            DiagnosticCategory::Advisory => "advisory",
         }),
     }
 }

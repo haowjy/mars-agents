@@ -72,7 +72,7 @@ fn resolve_mcp_group<'a>(
     }
 
     for loser in group.iter().skip(1) {
-        diag.warn(
+        diag.warn_advisory(
             "config-entry-collision",
             format!(
                 "MCP server `{}` collision in target `{target_root}`: `{}` wins over `{}`",

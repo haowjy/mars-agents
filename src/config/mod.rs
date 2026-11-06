@@ -858,6 +858,32 @@ fn network_key_warnings(
         .collect()
 }
 
+/// Unknown `[settings]` keys in the project's `mars.toml` and `mars.local.toml`, one warning
+/// each. Only `mars validate` asks for these: sync stays silent so an older Mars accepts a newer
+/// config. A network-looking key already warns as `unknown-network-key`, so it is skipped here.
+pub(crate) fn unknown_settings_diagnostics(loaded: &LoadedProjectConfig) -> Vec<Diagnostic> {
+    [
+        ("mars.toml", &loaded.config.settings.unknown),
+        ("mars.local.toml", &loaded.local.settings.unknown),
+    ]
+    .into_iter()
+    .flat_map(|(file, unknown)| {
+        unknown
+            .keys()
+            .filter(|key| !looks_like_network_key(key))
+            .map(move |key| Diagnostic {
+                level: DiagnosticLevel::Warning,
+                code: "unknown-settings-key".into(),
+                message: format!(
+                    "{file} [settings]: unknown key `{key}` is ignored by this Mars version (a typo, or a setting only a newer Mars reads)"
+                ),
+                context: None,
+                category: Some(DiagnosticCategory::Validation),
+            })
+    })
+    .collect()
+}
+
 fn stale_overlay_warnings(
     file: &str,
     agents: &IndexMap<String, AgentOverlay>,

@@ -28,6 +28,8 @@ pub(crate) struct ConfigEntryCompilation {
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     /// Generated hook files whose bytes this run wrote, as `(target_root, dest_path)`.
     pub rewritten_outputs: Vec<(String, String)>,
+    /// MCP config files this run wrote or deleted, as `(target_root, file path)`.
+    pub mcp_files_changed: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -67,6 +69,7 @@ pub(crate) fn compile_config_entries(
     rendered_hooks: &RenderedHooks,
     dry_run: bool,
     force: bool,
+    validation_only: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
     use crate::compiler::mcp::check_env_refs;
@@ -89,7 +92,7 @@ pub(crate) fn compile_config_entries(
         .cloned()
         .collect::<Vec<_>>();
     if let Err(e) = check_env_refs(&selected_mcp, false, diag) {
-        diag.warn("mcp-env", format!("MCP env check failed: {e}"));
+        diag.warn_advisory("mcp-env", format!("MCP env check failed: {e}"));
     }
 
     // Get the target registry.
@@ -207,6 +210,29 @@ pub(crate) fn compile_config_entries(
             .mcp_file()
             .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
             .unwrap_or_default();
+        let mut rendered = rendered;
+        if applied.planned.targeted.target.mcp_scan_failed() {
+            // Which source a recorded server came from is not recorded, so every server the
+            // last sync installed and this one did not select stays.
+            for (key, record) in old_lock
+                .config_entries
+                .get(target_root)
+                .into_iter()
+                .flatten()
+            {
+                let Some(name) = key.strip_prefix(MCP_KEY_PREFIX) else {
+                    continue;
+                };
+                if rendered.iter().all(|server| server.key() != *key)
+                    && let Ok(value) = serde_json::from_str(&record.emitted_json)
+                {
+                    rendered.push(mcp_file::Rendered {
+                        name: name.to_string(),
+                        value,
+                    });
+                }
+            }
+        }
         let target_records: BTreeMap<_, _> = rendered
             .iter()
             .map(|server| (server.key(), server.record()))
@@ -256,7 +282,7 @@ pub(crate) fn compile_config_entries(
                 .map(String::as_str)
                 .collect();
             if !stale.is_empty() {
-                diag.warn(
+                diag.warn_advisory(
                     "stale-config-entry",
                     format!(
                         "target `{target_root}` has stale config entries: {} — run `{}` to remove them",
@@ -279,10 +305,29 @@ pub(crate) fn compile_config_entries(
                 })
             })
             .collect();
+        // Preview the MCP files a real sync would write. A dry run has no real pass after
+        // this one, so its warnings are the ones `--diff` shows; `mars validate` drops them.
+        let mut scratch = DiagnosticCollector::new();
+        let preview_diag = if validation_only {
+            &mut scratch
+        } else {
+            &mut *diag
+        };
+        let mcp_files_changed = reconcile_all_mcp(
+            &registry,
+            &ctx.project_root,
+            previous_records,
+            &desired_mcp,
+            force,
+            true,
+            preview_diag,
+        )
+        .files_changed;
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
             rewritten_outputs,
+            mcp_files_changed,
             removed_outputs,
         };
     }
@@ -357,29 +402,19 @@ pub(crate) fn compile_config_entries(
         }
     }
 
-    // MCP servers are reconciled per target file: a target no longer managed
-    // still gets its stale servers removed.
-    let mut mcp_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
-    let mut mcp_removed: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for target_root in previous_records
-        .keys()
-        .chain(desired_mcp.keys())
-        .collect::<BTreeSet<_>>()
-    {
-        let reconciled = reconcile_mcp(
-            &registry,
-            &ctx.project_root,
-            target_root,
-            previous_records.get(target_root),
-            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
-            force,
-            diag,
-        );
-        if !reconciled.records.is_empty() {
-            mcp_records.insert(target_root.clone(), reconciled.records);
-        }
-        mcp_removed.insert(target_root.clone(), reconciled.removed);
-    }
+    let McpReconciliation {
+        records: mcp_records,
+        removed: mcp_removed,
+        files_changed: mcp_files_changed,
+    } = reconcile_all_mcp(
+        &registry,
+        &ctx.project_root,
+        previous_records,
+        &desired_mcp,
+        force,
+        false,
+        diag,
+    );
     report_removed(retention.removed_keys(), &mcp_removed, diag);
 
     let mut compiled = apply_replacement_writes(
@@ -396,6 +431,7 @@ pub(crate) fn compile_config_entries(
         emitted_outputs,
         removed_outputs,
     );
+    compiled.mcp_files_changed = mcp_files_changed;
     for (target_root, records) in mcp_records {
         compiled
             .records
@@ -436,7 +472,7 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
         if changed.is_empty() {
             continue;
         }
-        diag.warn(
+        diag.warn_advisory(
             "codex-hooks-need-trust",
             format!(
                 "`{file}` has {} new or moved hook handler(s) ({}); open Codex and run `/hooks` to review and trust them. Codex skips them until then",
@@ -502,8 +538,61 @@ pub(crate) fn report_removed(
     }
 }
 
+struct McpReconciliation {
+    records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    removed: BTreeMap<String, Vec<String>>,
+    /// `(target_root, file path)` of each file written or deleted (or, in a dry run, to be).
+    files_changed: Vec<(String, String)>,
+}
+
+/// MCP servers are reconciled per target file: a target no longer managed still gets its
+/// stale servers removed.
+fn reconcile_all_mcp(
+    registry: &TargetRegistry,
+    project_root: &Path,
+    previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    desired_mcp: &BTreeMap<String, Vec<mcp_file::Rendered>>,
+    force: bool,
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) -> McpReconciliation {
+    let mut out = McpReconciliation {
+        records: BTreeMap::new(),
+        removed: BTreeMap::new(),
+        files_changed: Vec::new(),
+    };
+    for target_root in previous_records
+        .keys()
+        .chain(desired_mcp.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let reconciled = reconcile_mcp(
+            registry,
+            project_root,
+            target_root,
+            previous_records.get(target_root),
+            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
+            force,
+            dry_run,
+            diag,
+        );
+        if !reconciled.records.is_empty() {
+            out.records.insert(target_root.clone(), reconciled.records);
+        }
+        out.removed.insert(target_root.clone(), reconciled.removed);
+        if reconciled.changed
+            && let Some(file) = registry.get(target_root).and_then(|a| a.mcp_file())
+        {
+            out.files_changed
+                .push((target_root.clone(), file.at.path.to_string()));
+        }
+    }
+    out
+}
+
 /// Reconcile `target_root`'s MCP file with `desired`. Shared by sync and
 /// `mars unlink` (`desired` empty).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile_mcp(
     registry: &TargetRegistry,
     project_root: &Path,
@@ -511,6 +600,7 @@ pub(crate) fn reconcile_mcp(
     previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
     desired: &[mcp_file::Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> mcp_file::Reconciled {
     let no_records = BTreeMap::new();
@@ -532,6 +622,7 @@ pub(crate) fn reconcile_mcp(
         return mcp_file::Reconciled {
             records: retained,
             removed: Vec::new(),
+            changed: false,
         };
     };
     // A target that takes no MCP servers has no file to hold a record.
@@ -539,6 +630,7 @@ pub(crate) fn reconcile_mcp(
         return mcp_file::Reconciled {
             records: BTreeMap::new(),
             removed: Vec::new(),
+            changed: false,
         };
     };
     mcp_file::reconcile(
@@ -548,6 +640,7 @@ pub(crate) fn reconcile_mcp(
         previous,
         desired,
         force,
+        dry_run,
         diag,
     )
 }
@@ -639,6 +732,7 @@ fn apply_replacement_writes(
         records,
         emitted_outputs,
         rewritten_outputs,
+        mcp_files_changed: Vec::new(),
         removed_outputs,
     }
 }

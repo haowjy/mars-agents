@@ -48,7 +48,7 @@ fn check_hook(hook: &ParsedHookItem, diag: &mut DiagnosticCollector) {
         Ok(HookOutput::File(FileOutput {
             native_hook_problem: Some(problem),
             ..
-        })) => diag.warn(
+        })) => diag.warn_advisory(
             "hook-native-contract",
             format!(
                 "hook `{}` from `{}`: OpenCode native hook `{native_hook}` {problem}; the hook will still be shipped and isolated at runtime",
@@ -279,7 +279,7 @@ fn write_generated_hook(
         return Ok(None);
     };
     for skip in &skips {
-        diag.warn(
+        diag.warn_advisory(
             "hook-event-skipped",
             format!(
                 "hook `{}` from `{}`: the `opencode` plugin tree {}",

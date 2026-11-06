@@ -218,6 +218,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: usize,
         native_removed: usize,
         hook_files_rewritten: usize,
+        mcp_files_changed: usize,
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
@@ -264,6 +265,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
+        mcp_files_changed: report.mcp_files_changed.len(),
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
@@ -349,6 +351,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         let _ = writeln!(stdout, "{target_root}/{dest_path} (generated hook file)");
     }
 
+    let mcp_files = report.mcp_files_changed.len();
+    for (target_root, file) in &report.mcp_files_changed {
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+        let _ = write!(stdout, "  ~ ");
+        let _ = stdout.reset();
+        let _ = writeln!(stdout, "{file} (MCP servers, {target_root})");
+    }
+
     // Summary line — use "would ..." wording for dry runs
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
@@ -394,6 +404,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
             let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
         }
     }
+    if mcp_files > 0 {
+        let noun = if mcp_files == 1 { "file" } else { "files" };
+        if dry {
+            let _ = writeln!(stdout, "  would update {mcp_files} MCP config {noun}");
+        } else {
+            let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+        }
+    }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
@@ -405,9 +423,18 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
+        && mcp_files == 0
+        && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
+        // `--diff` compares the items and the config entries it previews, not every file a
+        // real sync rewrites, so it cannot promise the project is up to date.
+        let line = if dry {
+            "no pending changes found"
+        } else {
+            "already up to date"
+        };
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-        let _ = writeln!(stdout, "  already up to date");
+        let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
     }
 
@@ -660,6 +687,7 @@ mod tests {
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
+            mcp_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
         }

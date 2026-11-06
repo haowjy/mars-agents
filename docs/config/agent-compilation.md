@@ -467,7 +467,7 @@ the agent tool list. Tool-list `mcp(...)` refs record lossiness; whole-server en
 governed by the `mcp/<name>/mcp.toml` server lane (see
 [mcp-and-hooks.md](mcp-and-hooks.md#tool-policy-mcp-references-vs-server-definitions)).
 
-**Pi** — no MCP tool surface; all `mcp(...)` refs are dropped with lossiness.
+**Pi** — Mars writes no per-tool MCP gating; all `mcp(...)` refs are dropped with lossiness (a deny or `ask` is reported).
 
 **Emission surfaces:**
 
@@ -509,11 +509,10 @@ Names past the third are counted (`and 2 more`). A field Mars does not write is 
 default, so this also covers an override Mars discards: a `harness-overrides.<harness>` key that
 can carry policy (`disallowed-tools`, `permission`, `sandbox_mode`, …) or a scalar OpenCode
 `permission` that replaces the whole map. A site is quiet only when it says why it loses nothing
-the author withheld: a plain grant (`tools: {read: allow}`), `user-invocable` and
-`model-invocable`, `network: allow` on Codex, an OpenCode `permission` entry that loses to a
-stricter Mars deny, an MCP grant on Pi, an override of an identity or model key, and every skill
-field. Approximate mappings, including Cursor's `sandbox` and `approval`, and meridian-only fields
-are quiet too.
+the author withheld: a plain grant (`tools: {read: allow}`), `user-invocable: false` (`model-invocable: false`
+is reported, since it stops another model choosing the agent), `network: allow` on Codex, an OpenCode `permission` entry that loses to a
+stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, and every skill
+field. Approximate mappings and meridian-only fields are quiet too.
 
 `mars sync --verbose` (and `mars upgrade --verbose`) print one warning per agent and target for
 every dropped and approximate field, with the field names you wrote, for example
@@ -521,11 +520,11 @@ every dropped and approximate field, with the field names you wrote, for example
 everything per agent:
 
 ```
-warning: agent `reviewer`: 1 field approximately mapped for .cursor (sandbox: Cursor only supports enabled/disabled)
+warning: agent `reviewer`: 1 field approximately mapped for .opencode (effort: effort maps to --variant on subprocess only)
 ```
 
-Cursor's `sandbox` and `approval` are approximate (a coarse mapping, not a lost setting), so they
-show only in those detailed views.
+`sandbox` and `approval` are meridian-only on every target, Cursor included: Meridian applies
+them at spawn, so the native file's silence loses nothing.
 
 Expected body-guided skill channels are documented mappings and do not emit warnings.
 

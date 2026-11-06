@@ -201,11 +201,10 @@ fn record_agent_invocation_lossiness(
 ) {
     if profile.had_model_invocable_field && !profile.model_invocable {
         lossy.push(LossyField {
+            // No target file carries it, so another model can pick the agent on its own.
             field: "model-invocable".into(),
             target: target.into(),
-            classification: Lossiness::Harmless {
-                why: "an invocation flag, not a tool or network restriction",
-            },
+            classification: Lossiness::Dropped,
         });
     }
     if profile.had_user_invocable_field && !profile.user_invocable {
@@ -213,7 +212,7 @@ fn record_agent_invocation_lossiness(
             field: "user-invocable".into(),
             target: target.into(),
             classification: Lossiness::Harmless {
-                why: "an invocation flag, not a tool or network restriction",
+                why: "only the user can no longer invoke it; no tool or network access changes",
             },
         });
     }
@@ -404,7 +403,7 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::Mcp {
             carries_denies: false,
             remainder: Lossiness::Harmless {
-                why: "an MCP grant restricts nothing, and Pi has no MCP tool surface",
+                why: "an MCP grant restricts nothing",
             },
         },
         AgentLossinessStep::MeridianOnlyFields,
@@ -420,7 +419,6 @@ const NON_POLICY_OVERRIDE_KEYS: &[&str] = &[
     "effort",
     "skills",
     "model_reasoning_effort",
-    "developer_instructions",
 ];
 
 /// Entries of the profile's `harness-overrides.<harness>` block that may be written to the
@@ -447,7 +445,7 @@ fn native_overrides<'a>(
                 // `sandbox_mode`, …): its override is a restriction the target never gets.
                 classification: if NON_POLICY_OVERRIDE_KEYS.contains(&key.as_str()) {
                     Lossiness::Harmless {
-                        why: "an identity or model key, not a restriction",
+                        why: "not a restriction: an identity, model or skill-list key",
                     }
                 } else {
                     Lossiness::Dropped
@@ -735,15 +733,8 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.approval() else {
             return;
         };
-        let classification = if self.harness == HarnessId::Cursor {
-            // Cursor maps approval to CLI flags — approximate, target-enforced gap.
-            Lossiness::Approximate {
-                note: "auto maps to --force, never to --yolo; confirm has no Cursor equivalent and falls back to default",
-            }
-        } else {
-            // Launch-time: Meridian applies approval at spawn via harness projection.
-            Lossiness::MeridianOnly
-        };
+        // Launch-time: Meridian applies it at spawn via harness projection (Cursor included).
+        let classification = Lossiness::MeridianOnly;
         self.lossy.push(LossyField {
             field: "approval".into(),
             target: self.target_name().into(),
@@ -755,15 +746,8 @@ impl<'a> AgentLoweringCtx<'a> {
         let Some(_) = self.eff.sandbox() else {
             return;
         };
-        let classification = if self.harness == HarnessId::Cursor {
-            // Cursor sandbox is a coarse enabled/disabled mapping — target-enforced gap.
-            Lossiness::Approximate {
-                note: "Cursor only supports enabled/disabled; workspace-write and danger-full-access both map to disabled",
-            }
-        } else {
-            // Launch-time: Meridian applies sandbox at spawn via harness projection.
-            Lossiness::MeridianOnly
-        };
+        // Launch-time: Meridian applies it at spawn via harness projection (Cursor included).
+        let classification = Lossiness::MeridianOnly;
         self.lossy.push(LossyField {
             field: "sandbox".into(),
             target: self.target_name().into(),
@@ -1080,7 +1064,7 @@ pub fn lower_to_codex(
                     Lossiness::Dropped
                 } else {
                     Lossiness::Harmless {
-                        why: "network: allow is Codex's own default",
+                        why: "a grant, not a restriction; Codex keeps its own network setting",
                     }
                 },
             });

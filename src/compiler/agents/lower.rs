@@ -233,7 +233,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "model-invocable"
                 && f.target == "Claude"
-                && matches!(f.classification, Lossiness::Harmless { .. })
+                && matches!(f.classification, Lossiness::Dropped)
         }));
     }
 
@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_sandbox_is_approximate_not_dropped() {
+    fn cursor_sandbox_is_meridian_only() {
         let content = "---\nname: r\nharness: cursor\nsandbox: read-only\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
@@ -480,28 +480,18 @@ mod tests {
             "sandbox leaked into artifact: {text}"
         );
 
-        // lossiness must be Approximate, not Dropped
+        // Meridian applies it at spawn, like every other target
         let field = out
             .lossy_fields
             .iter()
             .find(|f| f.field == "sandbox")
             .expect("sandbox should appear in lossy_fields");
         assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
-            assert!(
-                note.contains("workspace-write") && note.contains("disabled"),
-                "note should document workspace-write mapping: {note}"
-            );
-        }
+        assert_eq!(field.classification, Lossiness::MeridianOnly);
     }
 
     #[test]
-    fn cursor_approval_is_approximate_not_dropped() {
+    fn cursor_approval_is_meridian_only() {
         let content = "---\nname: r\nharness: cursor\napproval: auto\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
@@ -513,27 +503,15 @@ mod tests {
             "approval leaked into artifact: {text}"
         );
 
-        // lossiness must be Approximate, not Dropped
+        // Meridian applies it at spawn, like every other target
         let field = out
             .lossy_fields
             .iter()
             .find(|f| f.field == "approval")
             .expect("approval should appear in lossy_fields");
         assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
-            assert!(
-                note.contains("--force") && note.contains("--yolo"),
-                "note should document --force/--yolo mapping: {note}"
-            );
-        }
+        assert_eq!(field.classification, Lossiness::MeridianOnly);
     }
-
-    // --- 3.3: Pi lowering ---
 
     #[test]
     fn pi_lowering_preserves_name_description_model() {

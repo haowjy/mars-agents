@@ -7,6 +7,26 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-06
+
+### Fixed
+- `mars sync`, `add`, `upgrade`, `check`, `init` and `build plugin` print one line for the project when an agent loses a restriction. It lists the agents, the targets and the kinds lost as three separate sets, so it stays true for any mix. For example:
+  ```
+  warning: 5 agents (`asker`, `net`, `sbx` and 2 more) and project setting `default-network` lose restrictions across .claude, .codex and .pi (shell, MCP, network, permission) that the target does not apply; run `mars sync --verbose` for the rules per item and target
+  ```
+  The command in the line is the one you ran (`mars check --verbose`, `mars build plugin --verbose`). Closes #318.
+- The kind follows the rule on every target, Claude included: a `bash: ask` is a shell loss, an `mcp(...)` `ask` an MCP loss, an `edit: deny` beside a `bash(rm *)` deny reports both, and an allow list that grants `bash` is a tool loss only.
+- A capability with only scoped allows (`bash(rg *)` and no plain `bash`) is recorded as a lost shell restriction on every target, Claude included. It was never reported. Closes #329.
+- Only a restriction prints by default. `model-invocable: false`, a `harness-overrides` key that carries no permission (`mode`, `developer_instructions`, an unknown key) and `default_network = "allow"` are listed under `--verbose`. A `harness-overrides` key that carries permissions (`sandbox_mode`, `approval_policy`, `permission`, `permissions`, `permission-mode`, `tools`, `disallowed-tools`) prints by default as a permission loss. `build plugin` gains `--verbose`.
+- A project `[settings]` network key (`default_network`, `network-allow`, `network-deny`) is part of the same line, and `mars check` reports it as `sync` does. It replaces the separate `project-setting-dropped` warning.
+- Contains #323:
+  - `mars add` of an MCP-only package, a project-root `mcp/` entry, and any sync that edits or removes an MCP server list each MCP config file Mars wrote and no longer print `already up to date`; `sync --diff` previews them as `would update N MCP config files`. `sync --json` gains `mcp_files_changed`.
+  - `already up to date` prints only when the sync wrote nothing and raised no warning other than advisory ones (lossiness notes, unset env vars, unknown hook events, package format notices). A failed write or a hand-edited file left in place withholds it. `sync --diff` prints `no pending changes found` instead.
+  - `sync --diff` shows the MCP warnings a real sync would, and reports a hand-edited native agent as `would repair diverged native agent`. `mars validate` and `validate --strict` stay quiet about both.
+  - A dependency whose `mcp.toml` fails to scan no longer deletes the MCP servers the last sync installed.
+  - `mars validate` warns about each unknown key in `[settings]` (`unknown-settings-key`) and prints `validate: no errors, N warning(s)` when it has warnings.
+  - `mars adopt PATH --root ROOT` and `mars build plugin PATH --root ROOT` resolve a relative `PATH` against the `--root` project when it does not exist in the working directory.
+
 ## [0.27.1] - 2026-11-06
 
 ### Fixed

@@ -308,7 +308,7 @@ mars adopt <path> [--dry-run]
 - Runs `mars sync` so the item is immediately installed back through the normal pipeline
 - Same-filesystem only in MVP; the target directory must be on the same filesystem as the project root
 
-A relative `path` resolves against an explicit `--root`; without `--root` it resolves against the working directory.
+A relative `path` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against that root.
 
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 
@@ -777,7 +777,7 @@ installs in that package's own checkout: its items plus dependencies under its o
 mars build plugin [PATH] [--out <dir>]
 ```
 
-`PATH` defaults to the detected project root. A relative `PATH` resolves against an explicit `--root`, otherwise against the working directory. With an explicit path the command can run outside
+`PATH` defaults to the detected project root. A relative `PATH` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against that root. With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
 the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or installed harness
 model catalogs.

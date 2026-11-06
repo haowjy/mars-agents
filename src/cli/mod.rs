@@ -345,10 +345,10 @@ fn dispatch_with_root(
     }
 }
 
-/// Absolute form of a path typed on the command line. A relative path resolves against an
-/// explicit `--root` (`explicit_root`), otherwise against the working directory: with no
-/// `--root` the project root is found by walking up, so the user typed the path from where they
-/// stand.
+/// Absolute form of a path typed on the command line. A relative path resolves against the
+/// working directory when it exists there, since that is where the user typed it. Otherwise,
+/// with an explicit `--root` (`explicit_root`), it resolves against that root. A host such as
+/// `meridian mars` always appends `--root`, so the working directory must win when it can.
 pub(crate) fn resolve_cli_path(
     path: &Path,
     explicit_root: Option<&Path>,
@@ -356,11 +356,13 @@ pub(crate) fn resolve_cli_path(
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    let base = match explicit_root {
-        Some(root) => std::path::absolute(root)?,
-        None => std::env::current_dir()?,
-    };
-    Ok(base.join(path))
+    let from_cwd = std::env::current_dir()?.join(path);
+    match explicit_root {
+        Some(root) if from_cwd.symlink_metadata().is_err() => {
+            Ok(std::path::absolute(root)?.join(path))
+        }
+        _ => Ok(from_cwd),
+    }
 }
 
 /// Check if a path is a symlink (uses symlink_metadata, doesn't follow).

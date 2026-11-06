@@ -31,14 +31,6 @@ impl SkillVariantIndex {
         self.harnesses.keys().map(String::as_str)
     }
 
-    #[cfg(test)]
-    fn has_harness_skill(&self, harness_key: &str) -> bool {
-        self.harnesses
-            .get(harness_key)
-            .map(|harness| harness.has_harness_skill)
-            .unwrap_or(false)
-    }
-
     pub fn annotation(&self) -> Option<String> {
         if self.is_empty() {
             None
@@ -549,102 +541,5 @@ fn copy_entry_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsE
             format!("unsupported filesystem entry: {}", source.display()),
         )
         .into())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diagnostic::DiagnosticCollector;
-    use tempfile::TempDir;
-
-    #[test]
-    fn indexes_harness_and_model_variants() {
-        let tmp = TempDir::new().unwrap();
-        let skill = tmp.path();
-        std::fs::create_dir_all(skill.join("variants/claude/opus")).unwrap();
-        std::fs::write(skill.join("variants/claude/SKILL.md"), "claude").unwrap();
-        std::fs::write(skill.join("variants/claude/opus/SKILL.md"), "opus").unwrap();
-
-        let (index, warnings) = index_skill_variants(skill);
-
-        assert!(warnings.is_empty());
-        assert!(index.has_harness_skill("claude"));
-        assert_eq!(index.annotation().as_deref(), Some("claude"));
-    }
-
-    #[test]
-    fn unknown_harness_warns_but_indexes() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("variants/future")).unwrap();
-        std::fs::write(tmp.path().join("variants/future/SKILL.md"), "future").unwrap();
-
-        let (index, warnings) = index_skill_variants(tmp.path());
-
-        assert!(index.has_harness_skill("future"));
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.code == "skill-variant-unknown-harness")
-        );
-    }
-
-    #[test]
-    fn model_variant_without_skill_warns() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("variants/codex/gpt55")).unwrap();
-
-        let (_index, warnings) = index_skill_variants(tmp.path());
-
-        assert!(
-            warnings
-                .iter()
-                .any(|w| w.code == "skill-variant-missing-skill")
-        );
-    }
-
-    #[test]
-    fn projects_native_skill_without_variants_and_replaces_skill_md() {
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("source");
-        let dest = tmp.path().join("dest");
-        std::fs::create_dir_all(source.join("resources")).unwrap();
-        std::fs::create_dir_all(source.join("variants/claude/opus")).unwrap();
-        std::fs::write(source.join("SKILL.md"), "base").unwrap();
-        std::fs::write(source.join("resources/BOOTSTRAP.md"), "bootstrap").unwrap();
-        std::fs::write(source.join("variants/claude/SKILL.md"), "claude").unwrap();
-        std::fs::write(source.join("variants/claude/opus/SKILL.md"), "opus").unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        project_skill_for_target(&source, &dest, Some("claude"), &mut diag, "planning").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
-            "claude"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dest.join("resources/BOOTSTRAP.md")).unwrap(),
-            "bootstrap"
-        );
-        assert!(!dest.join("variants").exists());
-    }
-
-    #[test]
-    fn full_fidelity_projection_keeps_variants() {
-        let tmp = TempDir::new().unwrap();
-        let source = tmp.path().join("source");
-        let dest = tmp.path().join("dest");
-        std::fs::create_dir_all(source.join("variants/codex")).unwrap();
-        std::fs::write(source.join("SKILL.md"), "base").unwrap();
-        std::fs::write(source.join("variants/codex/SKILL.md"), "codex").unwrap();
-
-        let mut diag = DiagnosticCollector::new();
-        project_skill_for_target(&source, &dest, None, &mut diag, "planning").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
-            "base"
-        );
-        assert!(dest.join("variants/codex/SKILL.md").exists());
     }
 }

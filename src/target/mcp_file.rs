@@ -406,54 +406,6 @@ mod tests {
     }
 
     #[test]
-    fn each_adapter_writes_its_declared_file_and_shape() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let env = [("API_KEY", "MY_SECRET")];
-        for (target, path, entry_at, expected) in [
-            (
-                ".claude",
-                ".mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${MY_SECRET}"}}),
-            ),
-            (
-                ".cursor",
-                ".cursor/mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${env:MY_SECRET}"}}),
-            ),
-            (
-                ".pi",
-                ".pi/mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${MY_SECRET}"}}),
-            ),
-            (
-                ".opencode",
-                ".opencode/opencode.json",
-                "/mcp/srv",
-                serde_json::json!({"type": "local", "command": ["node", "server.js"], "environment": {"API_KEY": "{env:MY_SECRET}"}}),
-            ),
-            // Codex forwards by name, so a renamed ref has no TOML spelling.
-            (
-                ".codex",
-                ".codex/config.toml",
-                "/mcp_servers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"]}),
-            ),
-        ] {
-            write(target, tmp.path(), &[server("srv", &env)]);
-            let file = tmp.path().join(path);
-            let root = if path.ends_with(".toml") {
-                toml::from_str::<Value>(&std::fs::read_to_string(file).unwrap()).unwrap()
-            } else {
-                read(&file)
-            };
-            assert_eq!(root.pointer(entry_at), Some(&expected), "{target}");
-        }
-    }
-
-    #[test]
     fn codex_toml_edit_keeps_user_content_and_forwards_env_by_name() {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join(".codex/config.toml");

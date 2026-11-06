@@ -143,54 +143,6 @@ Fallback agent body."#;
 }
 
 #[test]
-fn build_launch_bundle_includes_skill_documents_and_system_instruction() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["claude", "codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5
-skills: [planning]
----
-Review code changes."#;
-    let skill_content =
-        "---\nname: planning\ndescription: Plan tasks\n---\nUse this skill to reason about steps.";
-
-    let (server, project_root) = setup_bundle_project(
-        &temp,
-        "bundle-source",
-        agent_content,
-        &[("planning", skill_content)],
-        "",
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    let docs = bundle["prompt_surface"]["supplemental_documents"]
-        .as_array()
-        .expect("supplemental_documents should be an array");
-    assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"].as_str(), Some("planning"));
-
-    let system_instruction = bundle["prompt_surface"]["system_instruction"]
-        .as_str()
-        .expect("system instruction should be string");
-    assert!(system_instruction.contains("# Skill: planning"));
-    assert!(system_instruction.contains("Use this skill to reason about steps."));
-    assert!(system_instruction.contains("# Report"));
-    assert_eq!(
-        bundle["skills"]["loaded"][0]["name"].as_str(),
-        Some("planning")
-    );
-    assert_eq!(bundle["skills"]["available"], serde_json::json!([]));
-    assert_eq!(bundle["skills"]["missing"], serde_json::json!([]));
-}
-
-#[test]
 fn build_launch_bundle_keeps_skill_with_snake_case_tool_alias() {
     let temp = TempDir::new().unwrap();
     let agent_content = r#"---

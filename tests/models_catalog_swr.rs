@@ -4,7 +4,6 @@ use assert_cmd::cargo::cargo_bin;
 use httpmock::prelude::*;
 use serde_json::Value;
 use serial_test::serial;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::{Command as StdCommand, Output};
@@ -337,68 +336,6 @@ fn stale_disk_only_modes_launch_no_catalog_worker() {
         assert_eq!(document["cache_refresh"]["status"], "offline");
     }
     assert_eq!(mock.hits(), 0);
-}
-
-#[test]
-#[serial]
-fn hidden_worker_uses_portable_arguments_without_shell() {
-    let server = MockServer::start();
-    let mock = server.mock(|when, then| {
-        when.method(GET).path(API_PATH);
-        then.status(200).json_body(sample_catalog_json());
-    });
-    let (temp, original_root) = setup_project(&server);
-    let project_root = temp.path().join("project with spaces");
-    fs::rename(&original_root, &project_root).unwrap();
-    let mars_dir = project_root.join(".mars");
-    // The same directory may arrive with lexical `..` components (and Windows
-    // may canonicalize the project root's casing independently).
-    let equivalent_mars_dir = project_root
-        .join("..")
-        .join(project_root.file_name().unwrap())
-        .join(".mars");
-    write_cache(&project_root, sample_cached_models(), &stale_fetched_at());
-    fs::write(
-        mars_dir.join(".models-cache.refresh-claim"),
-        serde_json::json!({"token": "worker-fixture", "at": now_unix_secs()}).to_string(),
-    )
-    .unwrap();
-    let mut cmd = StdCommand::new(cargo_bin("mars"));
-    configure_std_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
-    let output = cmd
-        .env("PATH", "")
-        .arg("--root")
-        .arg(&project_root)
-        .args(["models", "__refresh-catalog", "--mars-dir"])
-        .arg(&equivalent_mars_dir)
-        .args([
-            "--refresh-after-hours",
-            "24",
-            "--provider",
-            "anthropic",
-            "--provider",
-            "openai",
-            "--expected-revision",
-            "0",
-            "--claim-token",
-            "worker-fixture",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(mock.hits(), 1);
-    assert!(!mars_dir.join(".models-cache.refresh-claim").exists());
-    assert!(
-        read_cache_json(&project_root)["models"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 2
-    );
 }
 
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {

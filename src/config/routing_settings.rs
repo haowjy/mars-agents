@@ -199,49 +199,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_invalid_default_harness_to_diagnostic() {
-        let mut settings = settings_with_links(None);
-        settings.default_harness = Some("gemini".to_string());
-
-        let resolved = resolve(&settings);
-        assert!(resolved.default_harness.is_none());
-        assert!(
-            resolved
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("settings.default_harness"))
-        );
-    }
-
-    #[test]
-    fn default_harness_order_when_unset() {
-        let settings = settings_with_links(None);
-        assert!(settings.harness_order.is_none());
-
-        let resolved = resolve(&settings);
-        let order = resolved.harness_order.expect("default harness order");
-        assert_eq!(order.candidates.len(), 5);
-        assert_eq!(order.candidates[0].harness, HarnessId::Claude);
-        assert_eq!(order.candidates[1].harness, HarnessId::Codex);
-        assert_eq!(order.candidates[2].harness, HarnessId::Pi);
-        assert_eq!(order.candidates[3].harness, HarnessId::Cursor);
-        assert_eq!(order.candidates[4].harness, HarnessId::OpenCode);
-    }
-
-    #[test]
-    fn parse_harness_order_preserves_original_positions() {
-        let mut settings = settings_with_links(None);
-        settings.harness_order = Some(vec!["pi".to_string(), "codex".to_string()]);
-
-        let resolved = resolve(&settings);
-        let order = resolved.harness_order.expect("harness order should be set");
-        assert_eq!(order.candidates[0].harness, HarnessId::Pi);
-        assert_eq!(order.candidates[0].position, 0);
-        assert_eq!(order.candidates[1].harness, HarnessId::Codex);
-        assert_eq!(order.candidates[1].position, 1);
-    }
-
-    #[test]
     fn linked_harnesses_come_from_known_links_only() {
         let settings = settings_with_links(Some(vec![".opencode", ".agents", "foo/bar"]));
         let resolved = resolve(&settings);

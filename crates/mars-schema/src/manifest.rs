@@ -107,6 +107,15 @@ fn read_package(
                 child_path("package", "visibility"),
                 "`package.visibility` was removed; remove it",
             ));
+        } else if key == "bootstrap" {
+            // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
+            diagnostics.push(SchemaDiagnostic::new(
+                "field.unknown",
+                Severity::Warning,
+                child_path("package", "bootstrap"),
+                "`package.bootstrap` is not read; Mars finds bootstrap docs in \
+                 `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
+            ));
         } else if !known.contains(&key.as_str()) {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.unknown",

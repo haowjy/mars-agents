@@ -19,16 +19,19 @@ use mars_schema::item::ItemKind;
 /// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
-        ItemKind::Agent => {
-            let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
-            Ok(hash_bytes(&content))
-        }
+        ItemKind::Agent => hash_file(path),
         ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
         ItemKind::BootstrapDoc => {
             let is_doc_file = path.file_name().is_some_and(|name| name == "BOOTSTRAP.md");
             compute_dir_hash(path.parent().filter(|_| is_doc_file).unwrap_or(path))
         }
     }
+}
+
+/// SHA-256 of one file's content; what the lock records for an agent or a generated hook file.
+pub(crate) fn hash_file(path: &Path) -> Result<String, MarsError> {
+    let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
+    Ok(hash_bytes(&content))
 }
 
 /// Compute hash for a skill directory while excluding selected top-level entries.

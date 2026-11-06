@@ -7,6 +7,18 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-11-06
+
+### Fixed
+- An empty `.agents/` directory is no longer reported. One with content says Mars does not touch it and to check that nothing in it is yours or tracked by git before removing it.
+- `target ... has stale config entries` says to run `mars sync`.
+- `source X collides with unmanaged path` leads with moving your copy out of `.mars/` (`.mars-src/` for an agent, skill or bootstrap doc you want to keep) and then warns that `mars sync --force` replaces every colliding path in the project and discards local edits, with `mars sync --force --diff` to preview. The `--force` clause is dropped where it cannot work.
+- A local hook collision says to move the path.
+- `mars doctor` in a project that has `mars.toml` but no `.mars/` says there is no compiled store yet and to run `mars sync` (same error, same exit code 3).
+- `package.bootstrap` in a package's `mars.toml` says Mars does not read it and finds bootstrap docs in `bootstrap/<name>/BOOTSTRAP.md`. Part of #317.
+- `mars doctor` no longer reports generated hook files (`.pi/extensions/mars-<name>.hooks.ts`, `.opencode/plugins/mars-<name>.hooks.ts`) as "divergent in target ... failed to hash ... Not a directory" on a clean install. Closes #128.
+- `mars doctor` no longer calls an item it could not read a local modification: it says "could not check target item" or "wrong kind of file" with the reason. Its closing line follows what plain `sync` does per kind: an edited native agent or skill is overwritten by the next `mars sync` (copy the edit into its source first), an edited hook needs `mars sync --force` (project-wide, which the text says), a missing item needs `mars sync`, and nothing else is overwritten.
+
 ## [0.27.0] - 2026-11-02
 
 ### Added

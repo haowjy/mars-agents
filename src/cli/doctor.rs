@@ -182,18 +182,14 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     // Check explicitly managed native targets against lock checksums.
     if let Some(project_config) = &project_config {
-        let target_divergence_count = check_target_divergence(
+        let divergence = check_target_divergence(
             &ctx.project_root,
             &lock,
             &project_config.effective.settings.managed_targets(),
             &mut warnings,
         );
-        if target_divergence_count > 0 {
-            warnings.push(format!(
-                "target divergence detected; run `{cmd1}` to reset modified files or `{cmd2}` to restore missing files",
-                cmd1 = managed_cmd("mars sync --force"),
-                cmd2 = managed_cmd("mars repair"),
-            ));
+        if let Some(summary) = divergence.summary() {
+            warnings.push(summary);
         }
     }
 
@@ -221,9 +217,15 @@ fn check_legacy_agents_directory(
             .any(|target| target == ".agents")
     });
 
-    if !is_explicit_target {
+    // An empty directory is harmless; only content is worth a word.
+    let has_content = std::fs::read_dir(&agents_dir)
+        .map(|mut entries| entries.next().is_some())
+        // A directory we cannot read may hold content; a file or dangling link holds none.
+        .unwrap_or_else(|err| err.kind() == std::io::ErrorKind::PermissionDenied);
+
+    if !is_explicit_target && has_content {
         warnings.push(
-            "legacy `.agents/` directory exists but is not an explicit target — `.mars/` is the canonical store; remove `.agents/` after confirming no local-only content remains"
+            "`.agents/` has content, but Mars no longer reads it (`.mars/` is the canonical store) and will not touch it. Before removing it, check that nothing in it is yours or tracked by git"
                 .to_string(),
         );
     }
@@ -234,7 +236,7 @@ fn check_legacy_agents_directory(
 /// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
 fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
     let mars_dir = project_root.join(".mars");
-    if !mars_dir.exists() {
+    if mars_dir.symlink_metadata().is_err() {
         return;
     }
 
@@ -255,56 +257,142 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
     }
 }
 
+/// How many target items differ from the lock, by what a reader should do about each.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TargetDivergence {
+    /// Hand-edited native agents and skills: the next plain sync overwrites the edit.
+    overwritten: usize,
+    /// Any other hand-edited item (hooks): sync keeps the edit until `--force`.
+    kept: usize,
+    /// Absent from the target.
+    missing: usize,
+    /// Present, but Mars could not read it to compare (permissions, I/O).
+    unchecked: usize,
+    /// A file where a directory belongs, the reverse, or a symlink to nothing: remove it and
+    /// sync reinstalls (`--force` cannot replace a directory with a file).
+    wrong_kind: usize,
+}
+
+impl TargetDivergence {
+    /// The closing line: one next step per kind, each one that works for that kind.
+    /// Plain sync overwrites an edited native agent or skill, so that step is a warning, not a
+    /// command; only an edited hook needs `--force` (which is project-wide). A plain sync also
+    /// restores a missing item, and an unreadable or wrong-kind one needs its cause removed
+    /// first, not an overwrite.
+    fn summary(&self) -> Option<String> {
+        let mut steps = Vec::new();
+        if self.overwritten > 0 {
+            steps.push(format!(
+                "`{}` overwrites edited agents and skills, so copy any edit you want to keep into its source first",
+                managed_cmd("mars sync")
+            ));
+        }
+        if self.kept > 0 {
+            steps.push(format!(
+                "run `{}` to reset edited hooks (it resets every diverged item in the project)",
+                managed_cmd("mars sync --force")
+            ));
+        }
+        if self.missing > 0 {
+            steps.push(format!(
+                "run `{}` to restore missing files",
+                managed_cmd("mars sync")
+            ));
+        }
+        if self.wrong_kind > 0 {
+            steps.push(format!(
+                "move or delete the items of the wrong kind, then run `{}`",
+                managed_cmd("mars sync")
+            ));
+        }
+        if self.unchecked > 0 {
+            steps.push(format!(
+                "fix the cause reported above for the items Mars could not check, then run `{}` again",
+                managed_cmd("mars doctor")
+            ));
+        }
+        (!steps.is_empty()).then(|| format!("target divergence detected; {}", steps.join("; ")))
+    }
+}
+
 /// Check managed target directories against lockfile-installed checksums.
-///
-/// Returns the number of divergent or missing target items found.
 fn check_target_divergence(
     project_root: &std::path::Path,
     lock: &crate::lock::LockFile,
     targets: &[String],
     warnings: &mut Vec<String>,
-) -> usize {
-    let mut divergence_count = 0;
+) -> TargetDivergence {
+    let mut divergence = TargetDivergence::default();
 
     for target_name in targets {
         for (dest_path, item) in lock.flat_items_for_target(target_name) {
-            let relative_path = std::path::Path::new(target_name).join(dest_path.as_str());
-            let target_path = project_root.join(&relative_path);
+            let target_path = project_root.join(target_name).join(dest_path.as_str());
+            let shown = format!("{target_name}/{}", dest_path.as_str());
 
-            if !target_path.exists() && target_path.symlink_metadata().is_err() {
-                warnings.push(format!(
-                    "missing in target: {}/{}",
-                    target_name,
-                    dest_path.as_str()
-                ));
-                divergence_count += 1;
-                continue;
-            }
-
-            match hash::compute_hash(&target_path, item.kind) {
-                Ok(target_hash) => {
-                    if target_hash != item.installed_checksum {
+            // A generated hook file is one file; the lock records its plain content hash.
+            let hashed = if crate::lock::is_generated_hook_file(item.kind, dest_path.as_str()) {
+                hash::hash_file(&target_path)
+            } else {
+                hash::compute_hash(&target_path, item.kind)
+            };
+            match hashed {
+                Ok(target_hash) if target_hash == item.installed_checksum => {}
+                Ok(_) => {
+                    // What plain sync does with the edit, by kind (see `target_sync` for
+                    // skills, `compiler::native_agents` for agents, `file_hooks` for hooks).
+                    if matches!(
+                        item.kind,
+                        mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
+                    ) {
                         warnings.push(format!(
-                            "divergent in target: {}/{} (local modifications)",
-                            target_name,
-                            dest_path.as_str()
+                            "divergent in target: {shown} (local modifications; the next sync overwrites them)"
                         ));
-                        divergence_count += 1;
+                        divergence.overwritten += 1;
+                    } else {
+                        warnings.push(format!(
+                            "divergent in target: {shown} (local modifications; sync keeps them)"
+                        ));
+                        divergence.kept += 1;
                     }
                 }
-                Err(e) => {
-                    warnings.push(format!(
-                        "divergent in target: {}/{} (local modifications; failed to hash: {e})",
-                        target_name,
-                        dest_path.as_str()
-                    ));
-                    divergence_count += 1;
-                }
+                // The error kind alone says nothing about the item's own path (a tree walk can
+                // fail on something inside it), so look at the item itself.
+                Err(error) => match target_path.symlink_metadata() {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        warnings.push(format!("missing in target: {shown}"));
+                        divergence.missing += 1;
+                    }
+                    Ok(_) if !target_path.exists() => {
+                        warnings.push(format!(
+                            "wrong kind of file in target: {shown} (a symlink to nothing)"
+                        ));
+                        divergence.wrong_kind += 1;
+                    }
+                    _ if matches!(
+                        io_error_kind(&error),
+                        Some(std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory)
+                    ) =>
+                    {
+                        warnings.push(format!("wrong kind of file in target: {shown} ({error})"));
+                        divergence.wrong_kind += 1;
+                    }
+                    _ => {
+                        warnings.push(format!("could not check target item: {shown} ({error})"));
+                        divergence.unchecked += 1;
+                    }
+                },
             }
         }
     }
 
-    divergence_count
+    divergence
+}
+
+fn io_error_kind(error: &MarsError) -> Option<std::io::ErrorKind> {
+    match error {
+        MarsError::Io { source, .. } => Some(source.kind()),
+        _ => None,
+    }
 }
 
 struct InstalledItem {
@@ -321,6 +409,21 @@ struct InstalledItems {
 /// The Agents and skills installed under the managed root, selected by the same preparation as
 /// any package, so user-created local ones count too.
 fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsError> {
+    // A project with `mars.toml` and no `.mars/` has not synced yet. Say so here; the generic
+    // IO error from the package reader is right for its other callers.
+    if mars_dir.symlink_metadata().is_err() {
+        return Err(MarsError::Io {
+            operation: "read compiled store".to_string(),
+            path: mars_dir.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "no compiled store yet — run `{}` to create it",
+                    managed_cmd("mars sync")
+                ),
+            ),
+        });
+    }
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let prepared = crate::package_prepare::prepare_authored(
         mars_dir,
@@ -415,10 +518,10 @@ mod tests {
             .expect("write modified file");
 
         let mut warnings = Vec::new();
-        let divergences =
+        let divergence =
             check_target_divergence(root, &lock, &[".agents".to_string()], &mut warnings);
 
-        assert_eq!(divergences, 2);
+        assert_eq!((divergence.overwritten, divergence.missing), (1, 1));
         assert!(
             warnings
                 .iter()
@@ -428,7 +531,7 @@ mod tests {
             warnings
                 .iter()
                 .any(|w| w
-                    == "divergent in target: .agents/agents/modified.md (local modifications)")
+                    == "divergent in target: .agents/agents/modified.md (local modifications; the next sync overwrites them)")
         );
     }
 
@@ -451,14 +554,14 @@ mod tests {
             .expect("write matching file");
 
         let mut warnings = Vec::new();
-        let divergences = check_target_divergence(
+        let divergence = check_target_divergence(
             root,
             &lock,
             &[".agents".to_string(), ".claude".to_string()],
             &mut warnings,
         );
 
-        assert_eq!(divergences, 1);
+        assert_eq!((divergence.overwritten, divergence.missing), (0, 1));
         assert!(
             warnings
                 .iter()
@@ -477,11 +580,22 @@ mod tests {
             Some(&crate::config::Settings::default()),
             &mut warnings,
         );
+        assert!(
+            warnings.is_empty(),
+            "an empty `.agents/` is not worth a warning"
+        );
+
+        fs::write(temp.path().join(".agents/notes.md"), "mine").expect("write content");
+        check_legacy_agents_directory(
+            temp.path(),
+            Some(&crate::config::Settings::default()),
+            &mut warnings,
+        );
 
         assert!(
             warnings
                 .iter()
-                .any(|w| w.contains("legacy `.agents/` directory exists"))
+                .any(|w| w.contains("`.agents/` has content"))
         );
     }
 

@@ -352,6 +352,13 @@ pub enum OutputState {
     PendingDeletion,
 }
 
+/// Whether a lock output is a generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts`
+/// on a file target) rather than the hook's directory copy under `hooks/`. The lock records
+/// the file's plain content hash, not a directory hash.
+pub fn is_generated_hook_file(kind: ItemKind, dest_path: &str) -> bool {
+    kind == ItemKind::Hook && !dest_path.starts_with("hooks/")
+}
+
 impl OutputRecord {
     pub fn installed(
         target_root: String,

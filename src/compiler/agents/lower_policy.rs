@@ -14,10 +14,12 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Launch-time fields (approval, sandbox, network, mode where not emitted, …) are
 /// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
-/// them from native artifacts is not a behavioral loss. Target-enforced gaps stay
-/// [`Lossiness::Dropped`] or [`Lossiness::Approximate`] and warn loudly. One exception:
-/// Codex lowers `network` as [`Lossiness::Dropped`], because its native artifact carries
-/// `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
+/// them from native artifacts is not a behavioral loss. Every other field the native file does
+/// not carry is [`Lossiness::Dropped`] and is reported by default, unless the site says why
+/// nothing the author withheld is lost ([`Lossiness::Harmless`]) or the mapping is merely
+/// coarse ([`Lossiness::Approximate`]). Quiet needs a reason: an unclassified site must be
+/// loud. Codex lowers `network` as dropped, because its native artifact carries `sandbox_mode`,
+/// so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
@@ -72,59 +74,119 @@ impl<'a> Effective<'a> {
         &self.profile.skills
     }
 
-    /// Whether the policy grants or asks about built-in tools, which only an allowlist
-    /// or a native `tools:` field can carry.
-    fn has_tool_allowance(&self) -> bool {
-        self.tools.is_allowlist()
-            || self.tools.has_rule(ToolAction::Allow, RuleKind::Builtin)
-            || self.has_ask()
+    /// The allow side a target with no tool field cannot carry. Only an allow list or an `ask`
+    /// withholds tools from the agent; a plain grant loses nothing, so it records nothing.
+    fn allow_side_loss(&self, target: &str) -> Option<LossyField> {
+        let builtin_ask = self
+            .tools
+            .with_action(ToolAction::Ask)
+            .any(|rule| !rule.is_mcp());
+        if !(self.tools.is_allowlist() || builtin_ask) {
+            return None;
+        }
+        let rules: Vec<String> = self
+            .tools
+            .rules
+            .iter()
+            .filter(|rule| !rule.is_mcp())
+            .filter(|rule| rule.is_wildcard() || rule.action != ToolAction::Deny)
+            .map(|rule| format!("{} {}", rule.action.as_str(), rule.render()))
+            .collect();
+        Some(restriction_lost(tools_label(&rules), target))
     }
 
-    fn has_tool_denial(&self) -> bool {
-        self.tools.has_rule(ToolAction::Deny, RuleKind::Builtin)
+    /// Deny rules a target with no tool field cannot carry.
+    fn deny_side_loss(&self, target: &str) -> Option<LossyField> {
+        let rules: Vec<String> = self
+            .tools
+            .with_action(ToolAction::Deny)
+            .filter(|rule| !rule.is_mcp() && !rule.is_wildcard())
+            .map(|rule| format!("deny {}", rule.render()))
+            .collect();
+        (!rules.is_empty()).then(|| restriction_lost(tools_label(&rules), target))
+    }
+
+    /// The one classifier for MCP rules on a target that cannot gate MCP tools itself. A deny
+    /// the target does not carry (`carries_denies`) and any `ask` are lost restrictions; what
+    /// remains is a grant, or a carried deny, classed as `remainder`.
+    fn mcp_loss(
+        &self,
+        target: &str,
+        carries_denies: bool,
+        remainder: Lossiness,
+    ) -> Option<LossyField> {
+        let mcp: Vec<_> = self
+            .tools
+            .rules
+            .iter()
+            .filter(|rule| rule.is_mcp())
+            .collect();
+        if mcp.is_empty() {
+            return None;
+        }
+        let lost: Vec<String> = mcp
+            .iter()
+            .filter(|rule| match rule.action {
+                ToolAction::Allow => false,
+                ToolAction::Deny => !carries_denies,
+                ToolAction::Ask => true,
+            })
+            .map(|rule| format!("{} {}", rule.action.as_str(), rule.render()))
+            .collect();
+        if !lost.is_empty() {
+            return Some(restriction_lost(
+                format!("mcp ({})", lost.join(", ")),
+                target,
+            ));
+        }
+        Some(LossyField {
+            field: "mcp".into(),
+            target: target.into(),
+            classification: remainder,
+        })
     }
 
     fn has_ask(&self) -> bool {
         self.tools.with_action(ToolAction::Ask).next().is_some()
     }
+}
 
-    fn has_mcp_policy(&self) -> bool {
-        self.tools.rules.iter().any(|rule| rule.is_mcp())
+/// `tools` is the authored key (`disallowed-tools` is a removed spelling); the rules say which
+/// restriction was lost.
+fn tools_label(rules: &[String]) -> String {
+    format!("tools ({})", rules.join(", "))
+}
+
+fn restriction_lost(field: String, target: &str) -> LossyField {
+    LossyField {
+        field,
+        target: target.into(),
+        classification: Lossiness::Dropped,
     }
 }
 
 /// Native spellings of every `action` rule, recording a lossiness entry for each rule the
-/// harness cannot name.
+/// harness cannot name: a deny left out is a lost restriction, an allow left out is not.
 fn native_tools_for_action(
     projection: &PolicyProjection<'_>,
     action: ToolAction,
-    field: &'static str,
     target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> Vec<String> {
     for note in projection.gaps(action, RuleKind::All) {
-        lossy.push(LossyField {
-            field: field.into(),
-            target: target.into(),
-            classification: Lossiness::Approximate { note },
+        lossy.push(match action {
+            ToolAction::Allow => LossyField {
+                field: "tools".into(),
+                target: target.into(),
+                classification: Lossiness::Approximate { note },
+            },
+            _ => restriction_lost(
+                format!("tools ({} rule left out: {note})", action.as_str()),
+                target,
+            ),
         });
     }
     projection.natives(action, RuleKind::All)
-}
-
-fn record_native_mcp_lossiness(
-    eff: &Effective<'_>,
-    target: &str,
-    note: &'static str,
-    lossy: &mut Vec<LossyField>,
-) {
-    if eff.has_mcp_policy() {
-        lossy.push(LossyField {
-            field: "mcp".into(),
-            target: target.into(),
-            classification: Lossiness::Approximate { note },
-        });
-    }
 }
 
 /// Record invocation-axis lossiness for agent lowering.
@@ -141,14 +203,18 @@ fn record_agent_invocation_lossiness(
         lossy.push(LossyField {
             field: "model-invocable".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::Harmless {
+                why: "an invocation flag, not a tool or network restriction",
+            },
         });
     }
     if profile.had_user_invocable_field && !profile.user_invocable {
         lossy.push(LossyField {
             field: "user-invocable".into(),
             target: target.into(),
-            classification: Lossiness::Dropped,
+            classification: Lossiness::Harmless {
+                why: "an invocation flag, not a tool or network restriction",
+            },
         });
     }
 }
@@ -204,8 +270,12 @@ enum AgentLossinessStep {
     /// has (`tools` booleans are deprecated); what cannot be written is reported as dropped.
     DisallowedToolsAsPermission,
     EffortApproximate(&'static str),
-    McpApproximate(&'static str),
-    McpDropped,
+    /// MCP rules the target cannot gate: `carries_denies` when its file holds MCP denies;
+    /// `remainder` classifies the rest.
+    Mcp {
+        carries_denies: bool,
+        remainder: Lossiness,
+    },
     MeridianOnlyFields,
     InvocationAxes,
 }
@@ -278,9 +348,12 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsAsPermission,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
-        AgentLossinessStep::McpApproximate(
-            "MCP grants on subprocess errors; streaming uses session payload",
-        ),
+        AgentLossinessStep::Mcp {
+            carries_denies: true,
+            remainder: Lossiness::Approximate {
+                note: "MCP grants on subprocess errors; streaming uses session payload",
+            },
+        },
         AgentLossinessStep::MeridianOnlyFields,
         AgentLossinessStep::InvocationAxes,
     ],
@@ -302,9 +375,12 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsDropped,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
-        AgentLossinessStep::McpApproximate(
-            "MCP grants on subprocess errors; streaming uses session payload",
-        ),
+        AgentLossinessStep::Mcp {
+            carries_denies: false,
+            remainder: Lossiness::Approximate {
+                note: "MCP grants on subprocess errors; streaming uses session payload",
+            },
+        },
         AgentLossinessStep::MeridianOnlyFields,
         AgentLossinessStep::InvocationAxes,
     ],
@@ -325,11 +401,27 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::ToolsDropped,
         AgentLossinessStep::DisallowedToolsDropped,
         AgentLossinessStep::EffortApproximate("Pi effort semantics unverified"),
-        AgentLossinessStep::McpDropped,
+        AgentLossinessStep::Mcp {
+            carries_denies: false,
+            remainder: Lossiness::Harmless {
+                why: "an MCP grant restricts nothing, and Pi has no MCP tool surface",
+            },
+        },
         AgentLossinessStep::MeridianOnlyFields,
         AgentLossinessStep::InvocationAxes,
     ],
 };
+
+/// Override keys that plainly carry no policy; a dropped override of any other key is reported.
+const NON_POLICY_OVERRIDE_KEYS: &[&str] = &[
+    "name",
+    "description",
+    "model",
+    "effort",
+    "skills",
+    "model_reasoning_effort",
+    "developer_instructions",
+];
 
 /// Entries of the profile's `harness-overrides.<harness>` block that may be written to the
 /// harness's native file: a key Mars lowers itself keeps Mars's value (`reserved`, or already
@@ -351,7 +443,15 @@ fn native_overrides<'a>(
             lossy.push(LossyField {
                 field: format!("harness-overrides.{harness}.{key}"),
                 target: target.into(),
-                classification: Lossiness::Dropped,
+                // Any other key may carry policy (`disallowed-tools`, `permission`,
+                // `sandbox_mode`, …): its override is a restriction the target never gets.
+                classification: if NON_POLICY_OVERRIDE_KEYS.contains(&key.as_str()) {
+                    Lossiness::Harmless {
+                        why: "an identity or model key, not a restriction",
+                    }
+                } else {
+                    Lossiness::Dropped
+                },
             });
         } else {
             allowed.push((key.as_str(), value.to_json()));
@@ -369,15 +469,19 @@ fn opencode_permission(
     target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> serde_yaml::Mapping {
-    let dropped = |field: String| LossyField {
+    let lost = |field: String, classification| LossyField {
         field,
         target: target.into(),
-        classification: Lossiness::Dropped,
+        classification,
     };
     let mut permission = match author.map(serde_yaml::to_value) {
         Some(Ok(serde_yaml::Value::Mapping(map))) => map,
         Some(_) => {
-            lossy.push(dropped("harness-overrides.opencode.permission".into()));
+            // A scalar throws away the author's whole permission policy.
+            lossy.push(lost(
+                "harness-overrides.opencode.permission".into(),
+                Lossiness::Dropped,
+            ));
             serde_yaml::Mapping::new()
         }
         None => serde_yaml::Mapping::new(),
@@ -386,9 +490,12 @@ fn opencode_permission(
         if let Some(existing) = permission.insert(yk(name), yv("deny"))
             && existing != yv("deny")
         {
-            lossy.push(dropped(format!(
-                "harness-overrides.opencode.permission.{name}"
-            )));
+            lossy.push(lost(
+                format!("harness-overrides.opencode.permission.{name}"),
+                Lossiness::Harmless {
+                    why: "Mars's deny wins, the stricter entry",
+                },
+            ));
         }
     }
     permission
@@ -486,20 +593,10 @@ impl<'a> AgentLoweringCtx<'a> {
     fn insert_claude_tools(&mut self) {
         let target = self.target_name();
         let projection = self.eff.tools.project(self.harness);
-        let allowed = native_tools_for_action(
-            &projection,
-            ToolAction::Allow,
-            "tools",
-            target,
-            &mut self.lossy,
-        );
-        let disallowed = native_tools_for_action(
-            &projection,
-            ToolAction::Deny,
-            "disallowed-tools",
-            target,
-            &mut self.lossy,
-        );
+        let allowed =
+            native_tools_for_action(&projection, ToolAction::Allow, target, &mut self.lossy);
+        let disallowed =
+            native_tools_for_action(&projection, ToolAction::Deny, target, &mut self.lossy);
         let overlaps = projection.overlaps();
 
         // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
@@ -578,13 +675,13 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.record_if_present("mode", self.profile.mode.is_some(), Lossiness::MeridianOnly)
             }
             AgentLossinessStep::ToolsDropped => {
-                self.record_if_present("tools", self.eff.has_tool_allowance(), Lossiness::Dropped)
+                let loss = self.eff.allow_side_loss(self.target_name());
+                self.lossy.extend(loss);
             }
-            AgentLossinessStep::DisallowedToolsDropped => self.record_if_present(
-                "disallowed-tools",
-                self.eff.has_tool_denial(),
-                Lossiness::Dropped,
-            ),
+            AgentLossinessStep::DisallowedToolsDropped => {
+                let loss = self.eff.deny_side_loss(self.target_name());
+                self.lossy.extend(loss);
+            }
             AgentLossinessStep::DisallowedToolsAsPermission => self.collect_denied_as_permission(),
             AgentLossinessStep::EffortApproximate(note) => {
                 // `none` writes nothing for these harnesses, so there is nothing to approximate.
@@ -600,17 +697,14 @@ impl<'a> AgentLoweringCtx<'a> {
                     });
                 }
             }
-            AgentLossinessStep::McpApproximate(note) => {
-                record_native_mcp_lossiness(&self.eff, self.target_name(), note, &mut self.lossy)
-            }
-            AgentLossinessStep::McpDropped => {
-                if self.eff.has_mcp_policy() {
-                    self.lossy.push(LossyField {
-                        field: "mcp".into(),
-                        target: self.target_name().into(),
-                        classification: Lossiness::Dropped,
-                    });
-                }
+            AgentLossinessStep::Mcp {
+                carries_denies,
+                remainder,
+            } => {
+                let loss = self
+                    .eff
+                    .mcp_loss(self.target_name(), carries_denies, remainder);
+                self.lossy.extend(loss);
             }
             AgentLossinessStep::MeridianOnlyFields => self.record_meridian_only_fields(),
             AgentLossinessStep::InvocationAxes => {
@@ -623,18 +717,13 @@ impl<'a> AgentLoweringCtx<'a> {
     fn collect_denied_as_permission(&mut self) {
         let target = self.target_name();
         let projection = self.eff.tools.project(self.harness);
-        let denied = native_tools_for_action(
-            &projection,
-            ToolAction::Deny,
-            "disallowed-tools",
-            target,
-            &mut self.lossy,
-        );
+        let denied =
+            native_tools_for_action(&projection, ToolAction::Deny, target, &mut self.lossy);
         let (scoped, unscoped): (Vec<_>, Vec<_>) =
             denied.into_iter().partition(|name| name.contains('('));
         if !scoped.is_empty() {
             self.lossy.push(LossyField {
-                field: format!("disallowed-tools ({} is scoped)", scoped.join(", ")),
+                field: format!("tools (deny {} is scoped)", scoped.join(", ")),
                 target: target.into(),
                 classification: Lossiness::Dropped,
             });
@@ -962,36 +1051,38 @@ pub fn lower_to_codex(
     });
 
     // Dropped fields
-    if eff.has_tool_allowance() {
-        lossy.push(LossyField {
-            field: "tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    if eff.has_tool_denial() {
-        lossy.push(LossyField {
-            field: "disallowed-tools".into(),
-            target: target.into(),
-            classification: Lossiness::Dropped,
-        });
-    }
-    record_native_mcp_lossiness(
-        &eff,
+    lossy.extend(eff.allow_side_loss(target));
+    lossy.extend(eff.deny_side_loss(target));
+    lossy.extend(eff.mcp_loss(
         target,
-        "Codex per-tool MCP gating lives in server config, not the tool list",
-        &mut lossy,
-    );
-    for (field, present) in [
-        ("network", eff.network().is_some()),
-        ("network-allow", eff.has_network_allow_hosts()),
-        ("network-deny", eff.has_network_deny_hosts()),
+        false,
+        Lossiness::Approximate {
+            note: "Codex per-tool MCP gating lives in server config, not the tool list",
+        },
+    ));
+    // The native file carries no network setting, so Codex keeps its own default: anything but
+    // `network: allow` is a restriction that does not apply.
+    use mars_schema::network::NetworkPolicy;
+    for (field, present, restriction) in [
+        (
+            "network",
+            eff.network().is_some(),
+            eff.network() != Some(&NetworkPolicy::Allow),
+        ),
+        ("network-allow", eff.has_network_allow_hosts(), true),
+        ("network-deny", eff.has_network_deny_hosts(), true),
     ] {
         if present {
             lossy.push(LossyField {
                 field: field.into(),
                 target: target.into(),
-                classification: Lossiness::Dropped,
+                classification: if restriction {
+                    Lossiness::Dropped
+                } else {
+                    Lossiness::Harmless {
+                        why: "network: allow is Codex's own default",
+                    }
+                },
             });
         }
     }

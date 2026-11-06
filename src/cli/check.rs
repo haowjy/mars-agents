@@ -247,7 +247,7 @@ fn lossiness_diagnostics_for_check(
     let mode = if verbose {
         LossinessMode::Verbose
     } else {
-        LossinessMode::Surface
+        LossinessMode::Preview
     };
     crate::compiler::lossiness_preview::collect_prepared_source_lossiness_diagnostics(
         lens,

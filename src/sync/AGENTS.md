@@ -178,9 +178,20 @@ the authored source tree remains untouched and the install layer applies the in-
 `execute()` creates the pipeline `DiagnosticCollector`. Lossiness-category diagnostics are
 suppressed at emission (`warn_with_category` / `error_with_category`) when mode is `Hidden`.
 
-Only `mars sync` and `mars upgrade` set `Surface`; validate, export, add, repair, etc. set
-`Hidden`. `mars check` / `mars init` surface lossiness via the preview path with the same
-`LossinessMode::Surface`.
+`mars sync`, `mars upgrade` and `mars add` set `Surface` (`--verbose` on sync and upgrade sets
+`Verbose`); validate, export, repair, link, etc. set `Hidden`. `mars check` / `mars init` use
+`Preview`: per-item dropped and approximate fields with one meridian-only summary (`Verbose`
+prints per-item meridian-only detail too). `LossinessMode::per_item` is the split.
+
+`Surface` reports `Lossiness::Dropped`, the default class: a field the native file does not
+carry may be a restriction the target then runs without. Emission calls
+`DiagnosticCollector::record_restriction_lost`; `drain` prints one line per target naming the
+agents (`agent-restriction-dropped`), like `launch-time-field-summary`. A lowering site is quiet
+only by saying why: `Harmless { why }` (shown per item with `--verbose`/`Preview`), `Approximate`
+or `MeridianOnly`. Quiet needs a reason, so an unclassified or misfiled site costs one extra line,
+not a silent loss. The line prints on every sync and `add`: there is deliberately no "once" gate,
+because a lock change does not prove the user saw the warning (Hidden commands, overlays and fresh
+clones all advance or skip it).
 
 ### Frozen Gate
 

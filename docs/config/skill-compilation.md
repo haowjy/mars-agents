@@ -181,7 +181,7 @@ Mars compiles universal frontmatter fields to each target's native field names d
 
 ² Cursor rules have no invocation flag. A rule without a description is a Manual rule that Cursor's agent won't select by itself; a rule with one is selected when the description fits.
 
-`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation. They are returned by lowering functions for tooling such as `mars validate --verbose`, but are not guaranteed to surface as user-visible warnings. The variant projection caller currently silences `Dropped` entries; only `Approximate` entries produce warnings.
+`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation, but skills lose no restriction, so a plain `mars sync`, `mars upgrade` or `mars add` prints none of them. `mars sync --verbose`, `mars check` and `mars init` list each dropped field per skill, and `Approximate` entries too.
 
 ---
 
@@ -272,9 +272,9 @@ against the project's configured managed targets.
 | `skill.claude-keys-conflict` | warning | A Claude-only key was dropped because `harness-overrides.claude` already sets it; the override's value wins |
 | `skill.claude-keys-unmoved` | warning | Claude-only keys stayed in place because `harness-overrides` or `harness-overrides.claude` is not a mapping |
 | `skill.no-frontmatter` | warning | A body-only skill |
-| `skill-field-dropped` | metadata | Internal lossiness metadata for fields with no native equivalent; used by verbose tooling, not a guaranteed user-visible warning |
+| `skill-field-dropped` | warning | A field with no native equivalent was dropped from the native skill |
 | `skill-variant-unknown-harness` | warning | Unknown harness key under `variants/` |
 | `skill-variant-missing-skill` | warning | Model variant directory has no `SKILL.md` |
 | `skill-schema-error` | error | A selected variant's frontmatter is malformed |
 
-A skill with an error fails `mars sync`, `mars check` and `mars validate` for its package before any content is written. `skill-field-dropped` entries with `Dropped` lossiness are currently suppressed in normal projection output; only `Approximate` entries produce user-visible warnings.
+A skill with an error fails `mars sync`, `mars check` and `mars validate` for its package before any content is written. `skill-field-dropped` and `skill-field-approximate` are warnings, not errors.

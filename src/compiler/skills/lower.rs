@@ -86,7 +86,9 @@ mod tests {
 
     fn has_dropped(lossy_fields: &[LossyField], field: &str, target: &str) -> bool {
         lossy_fields.iter().any(|f| {
-            f.field == field && f.target == target && f.classification == Lossiness::Dropped
+            f.field == field
+                && f.target == target
+                && matches!(f.classification, Lossiness::Harmless { .. })
         })
     }
 

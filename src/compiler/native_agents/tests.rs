@@ -1253,16 +1253,10 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         "agents have no native user-invocable key: {native}"
     );
 
-    let dropped: Vec<_> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "agent-field-dropped")
-        .collect();
-    assert_eq!(dropped.len(), 1, "overlay false must warn-drop on emit");
+    let lines = diag.drain();
     assert!(
-        dropped[0].message.contains("user-invocable"),
-        "expected user-invocable in lossiness summary: {}",
-        dropped[0].message
+        !lines.iter().any(|d| d.code.starts_with("agent-")),
+        "a plain drop is quiet by default: {lines:?}"
     );
 }
 

@@ -233,7 +233,6 @@ fn project_builtin_capability(
 
 pub(crate) trait ToolPolicyRuntime {
     fn project(&self, harness: HarnessId) -> PolicyProjection<'_>;
-    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool;
     fn apply_overlay(&mut self, overlay: &AgentOverlayTools);
 }
 
@@ -246,9 +245,6 @@ impl ToolPolicyRuntime for EffectiveToolPolicy {
             .collect();
         resolve_by_specificity(&mut rules, harness);
         PolicyProjection { rules }
-    }
-    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool {
-        self.with_action(action).any(|rule| kind.covers(rule))
     }
     fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
         if let Some(layer) = &overlay.allowed {

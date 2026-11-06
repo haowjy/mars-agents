@@ -286,8 +286,8 @@ TOML format. Codex reads this for native agent invocation.
 | body | `developer_instructions` | exact |
 | `skills.load` | end-of-body `/name` guidance | approximate |
 | `skills.available` | end-of-body `/name` guidance | approximate |
-| `tools` allow and `ask` rules | dropped (reported as `tools`) | dropped |
-| `tools` deny rules | dropped (reported as `disallowed-tools`) | dropped |
+| `tools` allow list (`{"*": deny, read: allow}`) and `ask` rules | dropped (reported as `tools (…)`); a plain grant is not a loss | dropped |
+| `tools` deny rules | dropped (reported as `tools (deny …)`) | dropped |
 | `mcp(...)` in `tools` | dropped (lossiness); enable servers via `mcp/<name>/mcp.toml` | approximate |
 | `mode` | dropped | dropped |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
@@ -340,9 +340,9 @@ YAML frontmatter + markdown body.
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
 | `network-allow`, `network-deny` | dropped | meridian-only |
-| `tools` allow and `ask` rules | dropped (reported as `tools`) | dropped |
+| `tools` allow list (`{"*": deny, read: allow}`) and `ask` rules | dropped (reported as `tools (…)`); a plain grant is not a loss | dropped |
 | `tools` deny rules (`tools: {write: deny}`, `mcp(...)` refs included) | `permission: {<tool>: deny}` | exact |
-| a scoped deny rule (`bash(git *)`) | dropped (reported as `disallowed-tools`) | dropped |
+| a scoped deny rule (`bash(git *)`) | dropped (reported as `tools (deny …)`) | dropped |
 | `effort` | dropped from frontmatter (any value, `none` included) | approximate |
 | `mcp(...)` in `tools` | a deny is written as above; the rest is dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
@@ -494,17 +494,44 @@ Every field lowering is classified as one of four categories:
 | **dropped** | No native equivalent; value is discarded in the native artifact (preserved in `.mars/`) |
 | **meridian-only** | Consumed exclusively by Meridian; never lowered to any harness-native format |
 
-Mars emits grouped diagnostics for actionable dropped and approximate fields during `mars sync`.
-Expected body-guided skill channels are documented mappings and do not emit warnings:
+A plain `mars sync`, `mars upgrade` or `mars add` reports one fact: a restriction was lost. When a
+target cannot carry a tool deny, an `ask`, an allow list such as `{"*": deny, read: allow}`, an MCP
+deny or `ask` it does not write, or a network limit (`network: deny`, `network-allow`,
+`network-deny` on Codex), the target runs the agent with tools or network access you withheld.
+Mars prints one line per target naming the agents (code `agent-restriction-dropped`), on every
+sync and on `add`, until the restriction is gone from the agent:
 
 ```
-warning: agent `coder`: 2 fields dropped for .codex (disallowed-tools, tools)
+warning: 3 agents (`allowlist`, `mixed`, `reviewer`) lose a restriction on .codex: it does not apply there; run `mars sync --verbose` for the rules
+```
+
+Names past the third are counted (`and 2 more`). A field Mars does not write is reported by
+default, so this also covers an override Mars discards: a `harness-overrides.<harness>` key that
+can carry policy (`disallowed-tools`, `permission`, `sandbox_mode`, …) or a scalar OpenCode
+`permission` that replaces the whole map. A site is quiet only when it says why it loses nothing
+the author withheld: a plain grant (`tools: {read: allow}`), `user-invocable` and
+`model-invocable`, `network: allow` on Codex, an OpenCode `permission` entry that loses to a
+stricter Mars deny, an MCP grant on Pi, an override of an identity or model key, and every skill
+field. Approximate mappings, including Cursor's `sandbox` and `approval`, and meridian-only fields
+are quiet too.
+
+`mars sync --verbose` (and `mars upgrade --verbose`) print one warning per agent and target for
+every dropped and approximate field, with the field names you wrote, for example
+`tools (deny edit, deny bash)`, plus meridian-only fields. `mars check` and `mars init` always list
+everything per agent:
+
+```
 warning: agent `reviewer`: 1 field approximately mapped for .cursor (sandbox: Cursor only supports enabled/disabled)
 ```
 
+Cursor's `sandbox` and `approval` are approximate (a coarse mapping, not a lost setting), so they
+show only in those detailed views.
+
+Expected body-guided skill channels are documented mappings and do not emit warnings.
+
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars check` and `mars init`.
+`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check` and `mars init`.
 
 ## Lossiness Matrix
 

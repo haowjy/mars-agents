@@ -32,7 +32,7 @@ pub struct SyncArgs {
     #[arg(long)]
     pub no_upgrade_hint: bool,
 
-    /// Show info-level diagnostics and per-item detail for launch-time fields handled by meridian at spawn.
+    /// Show per-agent detail for every dropped and approximate field, plus launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 

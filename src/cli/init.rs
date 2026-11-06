@@ -138,7 +138,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
                 &lens,
                 &prepared,
                 &project_root,
-                crate::diagnostic::LossinessMode::Surface,
+                crate::diagnostic::LossinessMode::Preview,
             )?,
         );
         if !json && !diagnostics.is_empty() {

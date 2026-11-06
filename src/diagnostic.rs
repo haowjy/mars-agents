@@ -33,18 +33,25 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LossinessMode {
-    /// Suppress lossiness warnings (validate, export, add, repair, …).
+    /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Surface consequential lossiness warnings plus one meridian-only summary line.
+    /// Surface one line per target for lost restrictions plus one meridian-only summary line.
     Surface,
-    /// Surface all lossiness warnings, including per-item meridian-only detail.
+    /// Surface per-item detail for every dropped and approximate field, and per-item meridian-only detail.
     Verbose,
+    /// The `check` / `init` preview: per-item dropped and approximate fields, one meridian-only summary.
+    Preview,
 }
 
 impl LossinessMode {
     pub fn surfaces_lossiness(self) -> bool {
-        matches!(self, LossinessMode::Surface | LossinessMode::Verbose)
+        self != LossinessMode::Hidden
+    }
+
+    /// Whether dropped and approximate fields print per item rather than rolling up.
+    pub fn per_item(self) -> bool {
+        matches!(self, LossinessMode::Verbose | LossinessMode::Preview)
     }
 }
 
@@ -56,6 +63,9 @@ struct MeridianOnlyRecord {
     target: String,
     field: String,
 }
+
+/// How many agent names a restriction roll-up line lists before it counts the rest.
+const ROLLUP_NAME_CAP: usize = 3;
 
 /// Broad category for a diagnostic — used in structured output and validation gates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -76,6 +86,8 @@ pub struct DiagnosticCollector {
     lossiness_mode: LossinessMode,
     /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
     meridian_only_records: Vec<MeridianOnlyRecord>,
+    /// Agents that lost a restriction, by target, for the one-line-per-target report.
+    restrictions_lost: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
@@ -91,6 +103,7 @@ impl DiagnosticCollector {
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             meridian_only_records: Vec::new(),
+            restrictions_lost: std::collections::BTreeMap::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
     }
@@ -209,6 +222,21 @@ impl DiagnosticCollector {
             target: target.to_string(),
             field: field.to_string(),
         });
+    }
+
+    /// Record that an agent lost a restriction on a target.
+    pub fn record_restriction_lost(&mut self, agent: &str, target: &str) {
+        if self.lossiness_mode.surfaces_lossiness() {
+            self.restrictions_lost
+                .entry(target.to_string())
+                .or_default()
+                .insert(agent.to_string());
+        }
+    }
+
+    /// Whether lossy fields print per item (`--verbose`, previews) instead of rolling up.
+    pub fn lossiness_per_item(&self) -> bool {
+        self.lossiness_mode.per_item()
     }
 
     fn should_emit_lossiness(&self) -> bool {
@@ -362,7 +390,39 @@ impl DiagnosticCollector {
 
     pub fn drain(&mut self) -> Vec<Diagnostic> {
         self.flush_meridian_only_lossiness();
+        self.flush_restriction_lossiness();
         std::mem::take(&mut self.diagnostics)
+    }
+
+    /// One line per target naming the agents that lost a restriction there.
+    fn flush_restriction_lossiness(&mut self) {
+        let verbose_cmd = crate::types::managed_cmd("mars sync --verbose");
+        for (target, agents) in std::mem::take(&mut self.restrictions_lost) {
+            let count = agents.len();
+            let listed = agents
+                .iter()
+                .take(ROLLUP_NAME_CAP)
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = match count.saturating_sub(ROLLUP_NAME_CAP) {
+                0 => String::new(),
+                rest => format!(" and {rest} more"),
+            };
+            let (plural, verb) = if count == 1 {
+                ("", "loses")
+            } else {
+                ("s", "lose")
+            };
+            self.warn_with_category(
+                "agent-restriction-dropped",
+                format!(
+                    "{count} agent{plural} ({listed}{more}) {verb} a restriction on {}: it does not apply there; run `{verbose_cmd}` for the rules",
+                    crate::compiler::lossiness::target_label(&target)
+                ),
+                DiagnosticCategory::Lossiness,
+            );
+        }
     }
 
     fn flush_meridian_only_lossiness(&mut self) {
@@ -370,7 +430,7 @@ impl DiagnosticCollector {
             return;
         }
         match self.lossiness_mode {
-            LossinessMode::Surface => {
+            LossinessMode::Surface | LossinessMode::Preview => {
                 let count = self.meridian_only_records.len();
                 let noun = if count == 1 { "mapping" } else { "mappings" };
                 self.info_with_category(

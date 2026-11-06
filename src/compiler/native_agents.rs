@@ -950,12 +950,6 @@ fn emit_lowered_native_agent(
     let lowered =
         lower_for_harness_with_model(agent.harness, agent.profile, agent.body, agent.model);
 
-    crate::compiler::lossiness::emit_agent_lossiness_warnings(
-        agent.agent_name,
-        &lowered.lossy_fields,
-        diag,
-    );
-
     let harness_dir = ctx
         .project_root
         .join(crate::harness::registry::descriptor(*agent.harness).default_target);
@@ -1001,6 +995,13 @@ fn emit_lowered_native_agent(
             }
         }
     }
+
+    // Reported only for a file Mars writes: a preserved user file has no loss to report.
+    crate::compiler::lossiness::emit_agent_lossiness_warnings(
+        agent.agent_name,
+        &lowered.lossy_fields,
+        diag,
+    );
 
     if ctx.options.dry_run {
         return;

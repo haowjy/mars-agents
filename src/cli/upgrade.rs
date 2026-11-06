@@ -16,7 +16,7 @@ pub struct UpgradeArgs {
     #[arg(long)]
     pub bump: bool,
 
-    /// Show info-level diagnostics and per-item detail for launch-time fields handled by meridian at spawn.
+    /// Show per-agent detail for every dropped and approximate field, plus launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 

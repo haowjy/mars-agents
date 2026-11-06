@@ -30,7 +30,9 @@ fn dropped(field: &str, target: &str) -> LossyField {
     LossyField {
         field: field.to_string(),
         target: target.to_string(),
-        classification: Lossiness::Dropped,
+        classification: Lossiness::Harmless {
+            why: "skills carry no tool or network restriction",
+        },
     }
 }
 

@@ -200,7 +200,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         assert!(diags.is_empty());
     }
 
@@ -219,7 +219,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         assert!(
             diags.iter().any(|d| {
                 d.code == "launch-time-field-summary"
@@ -276,7 +276,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         assert!(
             diags
                 .iter()
@@ -301,7 +301,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         assert!(
             diags
                 .iter()
@@ -326,11 +326,11 @@ mod tests {
         )
         .unwrap();
 
-        let before = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let before = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
 
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
 
-        let after = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let after = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         let before_msgs: Vec<_> = before.iter().map(|d| d.message.clone()).collect();
         let after_msgs: Vec<_> = after.iter().map(|d| d.message.clone()).collect();
         assert_eq!(
@@ -383,7 +383,7 @@ mod tests {
         )
         .unwrap();
 
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
+        let diags = collect_lossiness(dir.path(), LossinessMode::Preview).unwrap();
         assert!(
             diags
                 .iter()

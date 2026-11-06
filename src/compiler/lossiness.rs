@@ -3,9 +3,13 @@
 //! Lowerers record per-field [`LossyField`] entries; callers aggregate by
 //! `(item, target)` before emitting so re-sync does not spam one line per field.
 //!
-//! **Consequence tiers:** target-enforced losses (`Dropped`, `Approximate`) warn loudly
-//! in default `Surface` mode. Launch-time fields enforced by Meridian at spawn
-//! (`MeridianOnly`) roll into one summary line unless `--verbose` is set.
+//! **Consequence tiers:** `Dropped` is the default and is reported: a field the native file
+//! does not carry may be a restriction (a tool deny, ask or allow list, an MCP deny, a network
+//! limit, an overridden policy key), and then the target runs the agent with what the author
+//! withheld. Default sync output names the agents once per target (`DiagnosticCollector`).
+//! A site goes quiet only as `Harmless { why }` (or `Approximate`, `MeridianOnly`): those
+//! appear per item under `--verbose` and in the `check` / `init` previews
+//! ([`LossinessMode::per_item`]); meridian-only fields otherwise roll into one summary line.
 
 use std::collections::BTreeMap;
 
@@ -20,10 +24,21 @@ pub struct LossyField {
 }
 
 /// Lossiness classification for a single field in a target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lossiness {
-    Approximate { note: &'static str },
+    Approximate {
+        note: &'static str,
+    },
+    /// A field the native artifact does not carry, reported by default: a site is `Dropped`
+    /// unless it can say why nothing the author withheld reaches the target
+    /// ([`Lossiness::Harmless`]). A restriction (a tool deny, ask or allow list, an MCP deny, a
+    /// network limit, an overridden policy key) the target never receives is always `Dropped`.
     Dropped,
+    /// A field the native artifact does not carry that loses no restriction; `why` says so.
+    /// Shown only per item (`--verbose`, previews).
+    Harmless {
+        why: &'static str,
+    },
     MeridianOnly,
 }
 
@@ -45,7 +60,7 @@ pub struct LoweredOutput {
     pub siblings: Vec<LoweredSibling>,
 }
 
-fn target_label(target: &str) -> String {
+pub(crate) fn target_label(target: &str) -> String {
     format!(".{}", target.to_lowercase())
 }
 
@@ -85,7 +100,6 @@ pub fn emit_agent_lossiness_warnings(
         "agent",
         agent_name,
         "agent-field-dropped",
-        "agent-field-meridian-only",
         "agent-field-approximate",
         lossy_fields,
         diag,
@@ -102,7 +116,6 @@ pub fn emit_skill_lossiness_warnings(
         "skill",
         skill_name,
         "skill-field-dropped",
-        "skill-field-meridian-only",
         "skill-field-approximate",
         lossy_fields,
         diag,
@@ -113,22 +126,21 @@ fn emit_item_lossiness_warnings(
     item_kind: &str,
     item_name: &str,
     dropped_code: &'static str,
-    _meridian_code: &'static str,
     approximate_code: &'static str,
     lossy_fields: &[LossyField],
     diag: &mut DiagnosticCollector,
 ) {
-    let mut dropped_by_target: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut dropped_by_target: BTreeMap<String, Vec<&LossyField>> = BTreeMap::new();
     let mut approximate_by_target: BTreeMap<String, Vec<(String, &'static str)>> = BTreeMap::new();
     let mut meridian_by_target: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for lf in lossy_fields {
         match &lf.classification {
-            Lossiness::Dropped => {
+            Lossiness::Dropped | Lossiness::Harmless { .. } => {
                 dropped_by_target
                     .entry(lf.target.clone())
                     .or_default()
-                    .push(lf.field.clone());
+                    .push(lf);
             }
             Lossiness::MeridianOnly => {
                 meridian_by_target
@@ -145,21 +157,25 @@ fn emit_item_lossiness_warnings(
         }
     }
 
-    emit_grouped_warnings(
-        item_kind,
-        item_name,
-        dropped_code,
-        "dropped",
-        dropped_by_target,
-        diag,
-    );
-    emit_grouped_approximate_warnings(
-        item_kind,
-        item_name,
-        approximate_code,
-        approximate_by_target,
-        diag,
-    );
+    if diag.lossiness_per_item() {
+        emit_grouped_warnings(item_kind, item_name, dropped_code, dropped_by_target, diag);
+        emit_grouped_approximate_warnings(
+            item_kind,
+            item_name,
+            approximate_code,
+            approximate_by_target,
+            diag,
+        );
+    } else {
+        for (target, fields) in &dropped_by_target {
+            if fields
+                .iter()
+                .any(|f| f.classification == Lossiness::Dropped)
+            {
+                diag.record_restriction_lost(item_name, target);
+            }
+        }
+    }
     for (target, fields) in meridian_by_target {
         for field in fields {
             diag.record_meridian_only_field(item_kind, item_name, &target, &field);
@@ -199,22 +215,38 @@ fn emit_grouped_warnings(
     item_kind: &str,
     item_name: &str,
     code: &'static str,
-    classification_label: &str,
-    grouped: BTreeMap<String, Vec<String>>,
+    grouped: BTreeMap<String, Vec<&LossyField>>,
     diag: &mut DiagnosticCollector,
 ) {
-    for (target, mut fields) in grouped {
-        fields.sort();
-        fields.dedup();
-        let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
-        let count = field_refs.len();
+    for (target, fields) in grouped {
+        let restriction = fields
+            .iter()
+            .any(|f| f.classification == Lossiness::Dropped);
+        let mut names: Vec<String> = fields
+            .iter()
+            .map(|f| match f.classification {
+                Lossiness::Harmless { why } => format!("{} — {why}", f.field),
+                _ => f.field.clone(),
+            })
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        let count = names.len();
         let noun = if count == 1 { "field" } else { "fields" };
+        let tool_loss = if restriction {
+            format!(
+                "; a restriction does not apply on {}",
+                target_label(&target)
+            )
+        } else {
+            String::new()
+        };
         diag.warn_with_category(
             code,
             format!(
-                "{item_kind} `{item_name}`: {count} {noun} {classification_label} for {} ({})",
+                "{item_kind} `{item_name}`: {count} {noun} dropped for {} ({}){tool_loss}",
                 target_label(&target),
-                summarize_fields(&field_refs)
+                summarize_fields(&names.iter().map(String::as_str).collect::<Vec<_>>())
             ),
             DiagnosticCategory::Lossiness,
         );
@@ -240,7 +272,7 @@ mod tests {
                 classification: Lossiness::Dropped,
             },
         ];
-        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Preview);
         emit_skill_lossiness_warnings("planning", &lossy, &mut diag);
         let warnings: Vec<_> = diag
             .drain()
@@ -274,7 +306,7 @@ mod tests {
                 classification: Lossiness::Dropped,
             },
         ];
-        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Preview);
         for _ in 0..2 {
             emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
         }
@@ -309,7 +341,7 @@ mod tests {
                 },
             },
         ];
-        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
+        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Preview);
         emit_agent_lossiness_warnings("coder", &lossy, &mut diag);
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
@@ -378,16 +410,41 @@ mod tests {
     }
 
     #[test]
-    fn dropped_warnings_stay_loud_in_surface_mode() {
-        let lossy = vec![LossyField {
-            field: "user-invocable".into(),
-            target: "Claude".into(),
-            classification: Lossiness::Dropped,
-        }];
-        let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        emit_skill_lossiness_warnings("planning", &lossy, &mut diag);
-        let warnings = diag.drain();
-        assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].code, "skill-field-dropped");
+    fn surface_reports_only_lost_restrictions_one_line_per_target() {
+        let field = |field: &str, target: &str, classification| LossyField {
+            field: field.into(),
+            target: target.into(),
+            classification,
+        };
+        let lossy = vec![
+            field("tools (deny edit)", "Codex", Lossiness::Dropped),
+            field("user-invocable", "Codex", Lossiness::Harmless { why: "w" }),
+            field("effort", "Codex", Lossiness::Approximate { note: "n" }),
+        ];
+        let run = |mode| {
+            let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
+            for name in ["a", "b", "c", "d", "e"] {
+                emit_agent_lossiness_warnings(name, &lossy, &mut diag);
+            }
+            emit_skill_lossiness_warnings("s", &lossy[1..], &mut diag);
+            diag.drain()
+        };
+        let surface = run(LossinessMode::Surface);
+        assert_eq!(
+            surface.len(),
+            1,
+            "plain drops and approximations stay quiet"
+        );
+        assert_eq!(surface[0].code, "agent-restriction-dropped");
+        assert!(
+            surface[0]
+                .message
+                .contains("5 agents (`a`, `b`, `c` and 2 more)")
+        );
+        assert!(surface[0].message.contains("lose a restriction on .codex"));
+        let verbose = run(LossinessMode::Verbose);
+        assert_eq!(verbose.len(), 12, "dropped and approximate line per item");
+        assert!(verbose[0].message.contains("tools (deny edit)"));
+        assert!(run(LossinessMode::Hidden).is_empty());
     }
 }

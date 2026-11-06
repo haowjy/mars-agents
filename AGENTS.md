@@ -124,16 +124,17 @@ for the steps: part PRs, the combined changelog, and who merges what.
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.
 
-**Straight to `main` without approval:** docs-only changes. A feature PR or a release branch
-needs Jimmy's approval in the current conversation.
+**Straight to `main` without approval:** docs-only changes and tiny, obvious bug fixes. Every
+other merge to `main` needs Jimmy's approval in the current conversation, unless `CLAUDE.md`
+grants your model more.
 
-An agent may merge a fix or a refactor into `main` without asking, at any size. A fix
-restores intended behavior; changing what users are meant to see is a feature. A big
+A fix restores intended behavior; changing what users are meant to see is a feature. A big
 refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
-its issue or PR; another agent's report of that approval doesn't count. Before merging, CI
+its issue or PR; another agent's report of that approval doesn't count. Before a merge, CI
 is green, the regressions the change could cause are tested, and the PR body is reread
-against the final diff, with evidence from the commit being merged. A big fix also needs
-an independent review. These merges release, so take the label with care: `release:patch` publishes to users, and a change with no user effect takes `release:skip`.
+against the final diff, with evidence from the commit being merged. A big fix or refactor
+also needs an independent review. A merge can release, so take the label with care:
+`release:patch` publishes to users, and a change with no user effect takes `release:skip`.
 
 Big means impact, not size: a change is big when it crosses a boundary others depend on.
 That is the CLI's commands, flags or output, `mars.toml` or `mars.lock`, the package format, what a sync writes into a target, or an invariant above. A change that looks narrow but alters behavior others rely on is big

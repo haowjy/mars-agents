@@ -19,4 +19,7 @@ pub struct SyncOptions {
     pub ignore_requires_mars: bool,
     /// Skip package `requires-meridian` compatibility checks.
     pub ignore_requires_meridian: bool,
+    /// `mars validate`: a dry run whose config-file preview stays quiet, so a hand-edited
+    /// entry is `sync --diff`'s to report, not validate's.
+    pub validation_only: bool,
 }

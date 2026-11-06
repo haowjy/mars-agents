@@ -34,7 +34,7 @@ pub(crate) fn warn_unknown_visibility(
     source_name: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    diag.warn(
+    diag.warn_advisory(
         "unknown-visibility",
         format!(
             "{item_kind} `{item_name}` from source `{source_name}` has unknown \
@@ -189,6 +189,7 @@ fn compile_inner(
         &rendered_hooks,
         request.options.dry_run,
         request.options.force,
+        request.options.validation_only,
         diag,
     );
     synced.config_entries = config_entry_compilation.records;

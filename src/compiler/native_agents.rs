@@ -1002,10 +1002,6 @@ fn emit_lowered_native_agent(
         }
     }
 
-    if ctx.options.dry_run {
-        return;
-    }
-
     let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
     let existing_bytes = native_path
         .symlink_metadata()
@@ -1013,15 +1009,18 @@ fn emit_lowered_native_agent(
         .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
         .and_then(|_| std::fs::read(&native_path).ok());
     if existing_bytes.as_deref() == Some(lowered.bytes.as_slice()) {
-        records.push(CompiledNativeOutput {
-            owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
-            target_root: target_dir.to_string(),
-            dest_path: dest_rel,
-            installed_checksum: checksum,
-        });
+        if !ctx.options.dry_run {
+            records.push(CompiledNativeOutput {
+                owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
+                target_root: target_dir.to_string(),
+                dest_path: dest_rel,
+                installed_checksum: checksum,
+            });
+        }
         return;
     }
 
+    // `--diff` reports an edit a real sync would overwrite, as the real sync does.
     if !ctx.options.force
         && let Some(existing_bytes) = existing_bytes
         && let Some(recorded_checksum) = ctx
@@ -1031,8 +1030,19 @@ fn emit_lowered_native_agent(
     {
         diag.warn(
             "native-agent-projection-repaired",
-            format!("repaired diverged native agent: {target_dir}/{dest_rel}"),
+            format!(
+                "{} diverged native agent: {target_dir}/{dest_rel}",
+                if ctx.options.dry_run {
+                    "would repair"
+                } else {
+                    "repaired"
+                }
+            ),
         );
+    }
+
+    if ctx.options.dry_run {
+        return;
     }
 
     if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {

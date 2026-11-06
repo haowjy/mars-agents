@@ -72,6 +72,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         mutation: None,
         options: SyncOptions {
             dry_run: true,
+            validation_only: true,
             ..SyncOptions::default()
         },
         recovery: Default::default(),
@@ -186,6 +187,7 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
         DiagnosticCategory::Compatibility => "compatibility",
         DiagnosticCategory::Lossiness => "lossiness",
         DiagnosticCategory::Validation => "validation",
+        DiagnosticCategory::Advisory => "advisory",
     }
 }
 

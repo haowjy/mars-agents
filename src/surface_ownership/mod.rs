@@ -107,7 +107,7 @@ pub fn warn_no_installed_claim_collision(
             managed_cmd(&inner).into_owned()
         }
     };
-    diag.warn_unreached(
+    diag.warn(
         "target-unmanaged-collision",
         format!(
             "target `{target_name}` item `{dest_rel}` exists locally but has no installed-content claim \

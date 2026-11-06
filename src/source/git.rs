@@ -66,7 +66,7 @@ fn resolve_version(
         });
     }
 
-    diag.warn(
+    diag.warn_advisory(
         "no-releases",
         format!("no releases found for {url}, using latest commit from default branch"),
     );

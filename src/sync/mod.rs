@@ -67,16 +67,6 @@ pub struct SyncReport {
     pub recovery_halt: Option<RecoveryHalt>,
     /// Version fallbacks caused by package engine requirements.
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
-    /// A config write or removal failed, or an edit was left in place, so the sync stopped
-    /// short of the state it wanted. Target copy failures are in `target_outcomes[].errors`.
-    pub state_unreached: bool,
-}
-
-impl SyncReport {
-    /// Whether the sync brought every file it manages to the wanted state.
-    pub fn reached_wanted_state(&self) -> bool {
-        !self.state_unreached && self.target_outcomes.iter().all(|o| o.errors.is_empty())
-    }
 }
 
 /// What a CLI command requests from the sync pipeline.
@@ -216,7 +206,6 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             applied: ApplyResult {
                 outcomes: Vec::new(),
             },
-            state_unreached: diag.state_unreached(),
             diagnostics: diag.drain(),
             dependency_changes: ir.resolved.loaded.dependency_changes,
             upgrades_available: ir.resolved.upgrades_available,
@@ -316,13 +305,13 @@ pub(crate) fn load_config(
     diag.extend(config_diagnostics);
 
     if request.options.ignore_requires_mars {
-        diag.warn(
+        diag.warn_advisory(
             "requires-mars-disabled",
             "`requires-mars` compatibility checks are disabled by --ignore-requires-mars",
         );
     }
     if request.options.ignore_requires_meridian {
-        diag.warn(
+        diag.warn_advisory(
             "requires-meridian-disabled",
             "`requires-meridian` compatibility checks are disabled by --ignore-requires-meridian",
         );
@@ -411,7 +400,7 @@ pub(crate) fn resolve_graph(
     }
     for override_name in loaded.local.overrides.keys() {
         if !graph.nodes.contains_key(override_name) {
-            diag.warn(
+            diag.warn_advisory(
                 "override-missing-dep",
                 format!(
                     "override `{override_name}` references a dependency not in the resolved project graph"
@@ -527,7 +516,7 @@ pub(crate) fn apply_target_renames(
     let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
     if !rename_index.is_empty() {
         for warning in rewrite::apply_renames(&mut target, &rename_index, graph, &dep_precedence)? {
-            diag.warn("rewrite-warning", warning);
+            diag.warn_advisory("rewrite-warning", warning);
         }
     }
 
@@ -584,7 +573,7 @@ pub(crate) fn build_target(
         &built.target,
         request.options.force,
     ) {
-        diag.warn_unreached(
+        diag.warn(
             "unmanaged-collision",
             format!(
                 "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
@@ -652,7 +641,7 @@ pub(crate) fn create_plan(
     if !request.options.force {
         for entry in &sync_diff.items {
             if let diff::DiffEntry::LocalModified { target, .. } = entry {
-                diag.warn_unreached(
+                diag.warn(
                     "disk-lock-divergent",
                     format!(
                         "{} diverged from mars.lock checksum; preserving local content (run `{cmd1}` or `{cmd2}` to reset)",

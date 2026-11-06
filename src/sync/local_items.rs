@@ -81,7 +81,7 @@ impl LocalMerge<'_> {
             if let Some(existing) = target_state.items.shift_remove(&dest_path)
                 && existing.source_hash != target_item.source_hash
             {
-                diag.warn(
+                diag.warn_advisory(
                     "local-shadow",
                     format!(
                         "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
@@ -92,7 +92,7 @@ impl LocalMerge<'_> {
             target_state.select_hook(&target_name, &target_item, hook.clone());
             let disk_path = dest_path.resolve(&self.managed_root);
             if !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok() {
-                diag.warn_unreached(
+                diag.warn(
                     "unmanaged-collision",
                     format!(
                         "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
@@ -169,7 +169,7 @@ impl LocalMerge<'_> {
         if let Some(existing) = target_state.items.shift_remove(&dest_path)
             && existing.source_hash != source_hash
         {
-            diag.warn(
+            diag.warn_advisory(
                 "local-shadow",
                 format!(
                     "local {} `{}` shadows dependency `{}` {} `{}`",

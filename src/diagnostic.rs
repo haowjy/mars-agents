@@ -19,6 +19,19 @@ pub struct Diagnostic {
     pub category: Option<DiagnosticCategory>,
 }
 
+impl Diagnostic {
+    /// Whether this diagnostic means the sync may have fallen short of the state it wanted
+    /// (a failed write, an edit left in place), so `already up to date` is not printed.
+    /// Every warning counts unless it is advisory or lossiness.
+    pub fn blocks_up_to_date(&self) -> bool {
+        self.level == DiagnosticLevel::Warning
+            && !matches!(
+                self.category,
+                Some(DiagnosticCategory::Advisory | DiagnosticCategory::Lossiness)
+            )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticLevel {
@@ -67,6 +80,9 @@ pub enum DiagnosticCategory {
     Lossiness,
     /// Schema validation and structural checks.
     Validation,
+    /// A warning that says nothing about whether the sync reached the state it wanted
+    /// (an unset env var, a skipped unknown event). It does not stop `already up to date`.
+    Advisory,
 }
 
 /// Collects diagnostics during pipeline execution.
@@ -78,9 +94,6 @@ pub struct DiagnosticCollector {
     meridian_only_records: Vec<MeridianOnlyRecord>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
-    /// Set by `warn_unreached`: some write, removal or kept edit left the sync short of the
-    /// state it wanted.
-    state_unreached: bool,
 }
 
 impl DiagnosticCollector {
@@ -95,7 +108,6 @@ impl DiagnosticCollector {
             lossiness_mode,
             meridian_only_records: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
-            state_unreached: false,
         }
     }
 
@@ -123,7 +135,7 @@ impl DiagnosticCollector {
         } else if diagnostic.code == "field.unknown" {
             self.warn_unknown_field(code, &diagnostic.message, context);
         } else {
-            self.warn(code, message);
+            self.warn_advisory(code, message);
         }
     }
 
@@ -136,7 +148,7 @@ impl DiagnosticCollector {
         }
         sites.push(context.to_owned());
         if sites.len() == 1 {
-            self.warn(code.clone(), format!("{context}: {text}"));
+            self.warn_advisory(code.clone(), format!("{context}: {text}"));
             return;
         }
         let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
@@ -257,37 +269,35 @@ impl DiagnosticCollector {
         });
     }
 
-    /// A warning that also says the sync did not reach the state it wanted (a failed write or
-    /// removal, or an edit left in place), so the run is not reported as "already up to date".
-    /// A warning about anything else uses `warn`.
-    pub fn warn_unreached(
+    /// A warning that does not imply the sync fell short of the state it wanted. Every other
+    /// warning does: `already up to date` is withheld while one is present, so an unmarked
+    /// site costs a reassuring line, never a false one.
+    pub fn warn_advisory(
         &mut self,
         code: impl Into<Cow<'static, str>>,
         message: impl Into<String>,
     ) {
-        self.state_unreached = true;
-        self.warn(code, message);
-    }
-
-    pub fn state_unreached(&self) -> bool {
-        self.state_unreached
-    }
-
-    /// Carry the verdict of a scratch collector (a preview pass) into this one.
-    pub fn absorb_state_unreached(&mut self, other: &Self) {
-        self.state_unreached |= other.state_unreached;
+        self.warn_with_category(code, message, DiagnosticCategory::Advisory);
     }
 
     pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {
         let message = message.into();
-        if self
-            .diagnostics
+        if !self.has(code, &message) {
+            self.warn(code, message);
+        }
+    }
+
+    pub(crate) fn warn_advisory_once(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
+        if !self.has(code, &message) {
+            self.warn_advisory(code, message);
+        }
+    }
+
+    fn has(&self, code: &str, message: &str) -> bool {
+        self.diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
-        {
-            return;
-        }
-        self.warn(code, message);
     }
 
     pub fn warn_with_category(

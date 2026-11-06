@@ -123,7 +123,7 @@ pub(super) fn settle(
         } else {
             "no installed copy of it was found, so nothing is installed"
         };
-        diag.warn_unreached(
+        diag.warn(
             "hook-invalid-kept",
             format!("{}; {outcome}", invalid.message),
         );

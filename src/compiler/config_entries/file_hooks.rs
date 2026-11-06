@@ -151,7 +151,7 @@ pub(super) fn write_file_hook_outputs(
                     })
             });
             if diverged {
-                diag.warn_unreached(
+                diag.warn(
                     "target-divergent",
                     format!(
                         "target `{target_root}` item `{relative}` was edited after Mars installed it \
@@ -174,7 +174,7 @@ pub(super) fn write_file_hook_outputs(
             ownership_lock,
             std::slice::from_ref(&output),
         ) {
-            diag.warn_unreached(
+            diag.warn(
                 "config-entry-write",
                 format!(
                     "not writing file hook `{}` because its ownership cannot be recorded: {error}",
@@ -195,7 +195,7 @@ pub(super) fn write_file_hook_outputs(
             crate::fs::atomic_write(&path, content.as_bytes())
         })();
         if let Err(error) = result {
-            diag.warn_unreached(
+            diag.warn(
                 "config-entry-write",
                 format!("failed to write file hook `{}`: {error}", path.display()),
             );

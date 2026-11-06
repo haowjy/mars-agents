@@ -69,6 +69,7 @@ pub(crate) fn compile_config_entries(
     rendered_hooks: &RenderedHooks,
     dry_run: bool,
     force: bool,
+    validation_only: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
     use crate::compiler::mcp::check_env_refs;
@@ -91,7 +92,7 @@ pub(crate) fn compile_config_entries(
         .cloned()
         .collect::<Vec<_>>();
     if let Err(e) = check_env_refs(&selected_mcp, false, diag) {
-        diag.warn("mcp-env", format!("MCP env check failed: {e}"));
+        diag.warn_advisory("mcp-env", format!("MCP env check failed: {e}"));
     }
 
     // Get the target registry.
@@ -193,7 +194,7 @@ pub(crate) fn compile_config_entries(
                         ));
                         kept_records.insert(key.clone(), record.clone());
                     }
-                    Err(error) => diag.warn_unreached(
+                    Err(error) => diag.warn(
                         "hook-invalid-kept",
                         format!("cannot keep `{key}` for `{target_root}`: its record is unreadable ({error})"),
                     ),
@@ -209,6 +210,29 @@ pub(crate) fn compile_config_entries(
             .mcp_file()
             .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
             .unwrap_or_default();
+        let mut rendered = rendered;
+        if applied.planned.targeted.target.mcp_scan_failed() {
+            // Which source a recorded server came from is not recorded, so every server the
+            // last sync installed and this one did not select stays.
+            for (key, record) in old_lock
+                .config_entries
+                .get(target_root)
+                .into_iter()
+                .flatten()
+            {
+                let Some(name) = key.strip_prefix(MCP_KEY_PREFIX) else {
+                    continue;
+                };
+                if rendered.iter().all(|server| server.key() != *key)
+                    && let Ok(value) = serde_json::from_str(&record.emitted_json)
+                {
+                    rendered.push(mcp_file::Rendered {
+                        name: name.to_string(),
+                        value,
+                    });
+                }
+            }
+        }
         let target_records: BTreeMap<_, _> = rendered
             .iter()
             .map(|server| (server.key(), server.record()))
@@ -258,7 +282,7 @@ pub(crate) fn compile_config_entries(
                 .map(String::as_str)
                 .collect();
             if !stale.is_empty() {
-                diag.warn(
+                diag.warn_advisory(
                     "stale-config-entry",
                     format!(
                         "target `{target_root}` has stale config entries: {}",
@@ -280,9 +304,14 @@ pub(crate) fn compile_config_entries(
                 })
             })
             .collect();
-        // Preview the MCP files a real sync would write. The warnings of this pass are the
-        // real sync's to show, so they go to a scratch collector; only its verdict carries over.
-        let mut preview_diag = DiagnosticCollector::new();
+        // Preview the MCP files a real sync would write. A dry run has no real pass after
+        // this one, so its warnings are the ones `--diff` shows; `mars validate` drops them.
+        let mut scratch = DiagnosticCollector::new();
+        let preview_diag = if validation_only {
+            &mut scratch
+        } else {
+            &mut *diag
+        };
         let mcp_files_changed = reconcile_all_mcp(
             &registry,
             &ctx.project_root,
@@ -290,10 +319,9 @@ pub(crate) fn compile_config_entries(
             &desired_mcp,
             force,
             true,
-            &mut preview_diag,
+            preview_diag,
         )
         .files_changed;
-        diag.absorb_state_unreached(&preview_diag);
         return ConfigEntryCompilation {
             records: desired_records,
             emitted_outputs,
@@ -365,7 +393,7 @@ pub(crate) fn compile_config_entries(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     removed_outputs.push(pair)
                 }
-                Err(error) => diag.warn_unreached(
+                Err(error) => diag.warn(
                     "config-entry-remove",
                     format!("failed to remove `{}`: {error}", path.display()),
                 ),
@@ -443,7 +471,7 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
         if changed.is_empty() {
             continue;
         }
-        diag.warn(
+        diag.warn_advisory(
             "codex-hooks-need-trust",
             format!(
                 "`{file}` has {} new or moved hook handler(s) ({}); open Codex and run `/hooks` to review and trust them. Codex skips them until then",
@@ -583,7 +611,7 @@ pub(crate) fn reconcile_mcp(
             .map(|(key, record)| (key.clone(), record.clone()))
             .collect();
         if !retained.is_empty() {
-            diag.warn_unreached(
+            diag.warn(
                 "config-entry-remove",
                 format!(
                     "failed to remove stale config entries from `{target_root}`: no adapter registered for `{target_root}`"
@@ -651,7 +679,7 @@ fn apply_replacement_writes(
         if let Err(error) =
             crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
         {
-            diag.warn_unreached(
+            diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),
             );

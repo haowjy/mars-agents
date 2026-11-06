@@ -424,10 +424,17 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         && native_removed == 0
         && hook_files == 0
         && mcp_files == 0
-        && report.reached_wanted_state()
+        && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
+        // `--diff` compares the items and the config entries it previews, not every file a
+        // real sync rewrites, so it cannot promise the project is up to date.
+        let line = if dry {
+            "no pending changes found"
+        } else {
+            "already up to date"
+        };
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-        let _ = writeln!(stdout, "  already up to date");
+        let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
     }
 
@@ -683,7 +690,6 @@ mod tests {
             mcp_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
-            state_unreached: false,
         }
     }
 

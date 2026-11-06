@@ -669,5 +669,4 @@ mod tests {
         assert!(!dest.join("mars.curated.local.toml").exists());
         assert!(!dest.join(".gitignore").exists());
     }
-
 }

@@ -294,5 +294,4 @@ mod tests {
         assert!(out.path().join("agents/coder.md").exists());
         assert!(!out.path().join("agents/link.md").exists());
     }
-
 }

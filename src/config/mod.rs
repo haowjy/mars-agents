@@ -2021,10 +2021,6 @@ allowed = { replace = ["Bash"] }
         );
     }
 
-
-
-
-
     #[test]
     fn merge_override_retains_subpath_coordinate() {
         let temp = TempDir::new().unwrap();
@@ -2082,7 +2078,6 @@ allowed = { replace = ["Bash"] }
             } if canonical == &canonical_override && sp.as_str() == "plugins/foo"
         ));
     }
-
 
     #[test]
     fn self_dependency_name_rejected() {
@@ -2354,16 +2349,7 @@ only_skills = true
         }
     }
 
-
-
-
-
-
-
-
-
     // === local-dependencies tests ===
-
 
     #[test]
     fn error_on_duplicate_name_across_sections() {
@@ -2413,6 +2399,4 @@ skills = ["prompt-helper"]
             Some(&["prompt-helper".into()][..])
         );
     }
-
-
 }

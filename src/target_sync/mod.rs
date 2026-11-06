@@ -774,9 +774,6 @@ mod tests {
         );
     }
 
-
-
-
     #[test]
     fn cleanup_orphans_uses_forward_slash_keys_for_expected_paths() {
         let dir = TempDir::new().unwrap();
@@ -1060,5 +1057,4 @@ mod tests {
                 .any(|d| d.code == "target-unmanaged-adopted")
         );
     }
-
 }

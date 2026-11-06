@@ -100,7 +100,6 @@ impl MockProvider {
             .insert((name.to_string(), version_tag.to_string()), tree_path);
     }
 
-
     fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
         self.unreachable_preferred_commits
             .insert(commit.to_string());
@@ -109,7 +108,6 @@ impl MockProvider {
     fn seen_preferred_commits(&self) -> Vec<Option<String>> {
         self.seen_preferred_commits.borrow().clone()
     }
-
 
     fn list_versions_count(&self, url: &str) -> usize {
         self.list_versions_counts
@@ -418,7 +416,6 @@ fn resolve_with_diagnostics(
     let result = super::resolve(config, provider, locked, options, &mut diag);
     (result, diag.drain())
 }
-
 
 /// The tree's `mars.toml`, as a package author would write it.
 fn write_manifest(tree: &Path, manifest: &Manifest) {

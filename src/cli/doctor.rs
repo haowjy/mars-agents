@@ -221,9 +221,15 @@ fn check_legacy_agents_directory(
             .any(|target| target == ".agents")
     });
 
-    if !is_explicit_target {
+    // An empty directory is harmless; only content is worth a word.
+    let has_content = std::fs::read_dir(&agents_dir)
+        .map(|mut entries| entries.next().is_some())
+        // A directory we cannot read may hold content; a file or dangling link holds none.
+        .unwrap_or_else(|err| err.kind() == std::io::ErrorKind::PermissionDenied);
+
+    if !is_explicit_target && has_content {
         warnings.push(
-            "legacy `.agents/` directory exists but is not an explicit target — `.mars/` is the canonical store; remove `.agents/` after confirming no local-only content remains"
+            "`.agents/` has content, but Mars no longer reads it (`.mars/` is the canonical store) and will not touch it. Before removing it, check that nothing in it is yours or tracked by git"
                 .to_string(),
         );
     }
@@ -234,7 +240,7 @@ fn check_legacy_agents_directory(
 /// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
 fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
     let mars_dir = project_root.join(".mars");
-    if !mars_dir.exists() {
+    if mars_dir.symlink_metadata().is_err() {
         return;
     }
 
@@ -321,6 +327,21 @@ struct InstalledItems {
 /// The Agents and skills installed under the managed root, selected by the same preparation as
 /// any package, so user-created local ones count too.
 fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsError> {
+    // A project with `mars.toml` and no `.mars/` has not synced yet. Say so here; the generic
+    // IO error from the package reader is right for its other callers.
+    if mars_dir.symlink_metadata().is_err() {
+        return Err(MarsError::Io {
+            operation: "read compiled store".to_string(),
+            path: mars_dir.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "no compiled store yet — run `{}` to create it",
+                    managed_cmd("mars sync")
+                ),
+            ),
+        });
+    }
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let prepared = crate::package_prepare::prepare_authored(
         mars_dir,
@@ -477,11 +498,22 @@ mod tests {
             Some(&crate::config::Settings::default()),
             &mut warnings,
         );
+        assert!(
+            warnings.is_empty(),
+            "an empty `.agents/` is not worth a warning"
+        );
+
+        fs::write(temp.path().join(".agents/notes.md"), "mine").expect("write content");
+        check_legacy_agents_directory(
+            temp.path(),
+            Some(&crate::config::Settings::default()),
+            &mut warnings,
+        );
 
         assert!(
             warnings
                 .iter()
-                .any(|w| w.contains("legacy `.agents/` directory exists"))
+                .any(|w| w.contains("`.agents/` has content"))
         );
     }
 

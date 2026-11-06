@@ -259,8 +259,9 @@ pub(crate) fn compile_config_entries(
                 diag.warn(
                     "stale-config-entry",
                     format!(
-                        "target `{target_root}` has stale config entries: {}",
-                        stale.join(", ")
+                        "target `{target_root}` has stale config entries: {} — run `{}` to remove them",
+                        stale.join(", "),
+                        crate::types::managed_cmd("mars sync"),
                     ),
                 );
             }

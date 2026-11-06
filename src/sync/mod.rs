@@ -573,11 +573,35 @@ pub(crate) fn build_target(
         &built.target,
         request.options.force,
     ) {
+        // `--force` cannot replace a wrong-shaped destination (a directory where an agent file
+        // goes), so name it only where it works.
+        let force_works = built.target.items.get(&collision.path).is_none_or(|item| {
+            !matches!(
+                item.id.kind,
+                mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
+            ) || local_items::force_adoptable_self_destination(
+                &collision.path.resolve(managed_root),
+                managed_root,
+                item.id.kind,
+            )
+        });
+        let force_hint = if force_works {
+            format!(
+                ". `{}` instead replaces every colliding path in the project and discards local \
+                 edits to managed items; preview it with `{}`",
+                crate::types::managed_cmd("mars sync --force"),
+                crate::types::managed_cmd("mars sync --force --diff"),
+            )
+        } else {
+            String::new()
+        };
         diag.warn(
             "unmanaged-collision",
             format!(
-                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                collision.source_name, collision.path
+                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched. \
+                 Move your copy out of `.mars/` and sync again (an agent, skill or bootstrap doc you \
+                 want to keep belongs in `.mars-src/`){force_hint}",
+                collision.source_name, collision.path,
             ),
         );
         built.target.items.shift_remove(&collision.path);

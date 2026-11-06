@@ -1074,7 +1074,7 @@ remove them:
 
 ```
 warning[stale-config-entry]: target `.claude` has stale config entries:
-  mcp:context7, hook:tool.pre:audit
+  mcp:context7, hook:tool.pre:audit — run `mars sync` to remove them
 ```
 
 On a normal `mars sync`, successful removal emits an info diagnostic:

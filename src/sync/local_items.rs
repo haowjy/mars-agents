@@ -95,8 +95,9 @@ impl LocalMerge<'_> {
                 diag.warn(
                     "unmanaged-collision",
                     format!(
-                        "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
-                        hook.def.name
+                        "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched. \
+                         Move it out of `.mars/` and sync again to install the local hook (`--force` does not replace it)",
+                        hook.def.name,
                     ),
                 );
                 continue;
@@ -242,7 +243,11 @@ impl LocalMerge<'_> {
     }
 }
 
-fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
+pub(super) fn force_adoptable_self_destination(
+    path: &Path,
+    managed_root: &Path,
+    kind: ItemKind,
+) -> bool {
     let Some(relative) = path.strip_prefix(managed_root).ok() else {
         return false;
     };

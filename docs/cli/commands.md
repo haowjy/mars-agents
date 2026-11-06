@@ -639,7 +639,7 @@ Checks:
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
 - Target health: each managed target has the expected files with correct content
-- Target divergence: detects missing and locally modified files in targets, suggests `mars sync --force` or `mars repair`
+- Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
 Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](../dev/troubleshooting.md).
 

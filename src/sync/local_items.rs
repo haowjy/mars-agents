@@ -243,7 +243,11 @@ impl LocalMerge<'_> {
     }
 }
 
-fn force_adoptable_self_destination(path: &Path, managed_root: &Path, kind: ItemKind) -> bool {
+pub(super) fn force_adoptable_self_destination(
+    path: &Path,
+    managed_root: &Path,
+    kind: ItemKind,
+) -> bool {
     let Some(relative) = path.strip_prefix(managed_root).ok() else {
         return false;
     };

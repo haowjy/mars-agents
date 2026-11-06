@@ -71,7 +71,7 @@ provided skill's directory on every machine.
 For dependency items, an unmanaged canonical destination with different bytes is skipped with a warning (unless `--force` is used):
 
 ```
-warning: source `base` collides with unmanaged path `agents/custom.md` — leaving existing content untouched. Run `mars sync --force` to replace it with the package's version, or move your copy out of `.mars/` (an agent or skill you want to keep belongs in `.mars-src/`) and sync again
+warning: source `base` collides with unmanaged path `agents/custom.md` — leaving existing content untouched. Move your copy out of `.mars/` and sync again (an agent, skill or bootstrap doc you want to keep belongs in `.mars-src/`). `mars sync --force` instead replaces every colliding path in the project and discards local edits to managed items; preview it with `mars sync --force --diff`
 ```
 
 The item is removed from the target state, so the unmanaged file is preserved. This protects user-created local agents and skills from being overwritten.

@@ -224,8 +224,8 @@ fn check_legacy_agents_directory(
     // An empty directory is harmless; only content is worth a word.
     let has_content = std::fs::read_dir(&agents_dir)
         .map(|mut entries| entries.next().is_some())
-        // Not a readable directory (a file, a dangling link): nothing to warn about.
-        .unwrap_or(false);
+        // A directory we cannot read may hold content; a file or dangling link holds none.
+        .unwrap_or_else(|err| err.kind() == std::io::ErrorKind::PermissionDenied);
 
     if !is_explicit_target && has_content {
         warnings.push(
@@ -240,7 +240,7 @@ fn check_legacy_agents_directory(
 /// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
 fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
     let mars_dir = project_root.join(".mars");
-    if !mars_dir.exists() {
+    if mars_dir.symlink_metadata().is_err() {
         return;
     }
 
@@ -329,7 +329,7 @@ struct InstalledItems {
 fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsError> {
     // A project with `mars.toml` and no `.mars/` has not synced yet. Say so here; the generic
     // IO error from the package reader is right for its other callers.
-    if !mars_dir.exists() {
+    if mars_dir.symlink_metadata().is_err() {
         return Err(MarsError::Io {
             operation: "read compiled store".to_string(),
             path: mars_dir.to_path_buf(),

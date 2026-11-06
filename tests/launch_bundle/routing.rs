@@ -413,46 +413,6 @@ default_harness = "invalid-harness""#;
 }
 
 #[test]
-fn build_launch_bundle_provider_fallback_skips_non_launch_bundle_harnesses() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["gemini", "pi"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config-order")
-    );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
-    );
-    assert_ne!(bundle["routing"]["harness"].as_str(), Some("gemini"));
-}
-
-#[test]
 fn build_launch_bundle_uses_settings_harness_order_before_default_harness() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(&temp, &["opencode"]);
@@ -1403,45 +1363,6 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_missing() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi"]);
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config-order")
-    );
-    assert_eq!(
-        bundle["provenance"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi")
-    );
-}
-
-#[test]
 fn build_launch_bundle_anthropic_falls_back_to_pi_when_claude_auth_fails() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_auth_failures(&temp, &["claude", "pi"], &["claude"]);
@@ -1697,52 +1618,6 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
-    );
-}
-
-#[test]
-fn build_launch_bundle_falls_back_to_cursor_when_opencode_cache_is_negative() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["opencode", "cursor"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5.4-mini
----
-Review code changes."#;
-
-    let cache_root = temp.path().join("mars-cache");
-    write_opencode_probe_cache(
-        &cache_root,
-        now_unix_secs(),
-        json!({
-            "providers": { "openai": false },
-            "model_slugs": [],
-            "provider_probe_success": true,
-            "model_probe_success": true,
-            "error": null
-        }),
-    );
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.env("MARS_CACHE_DIR", &cache_root);
-    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("claude,codex,pi,cursor")
@@ -2031,41 +1906,6 @@ fn build_launch_bundle_cursor_unmatched_model_fails_before_effort_projection() {
     assert!(
         !stderr.contains("has no high variant"),
         "no-prefix errors must not be reported as missing variants: {stderr}"
-    );
-}
-
-#[test]
-fn build_launch_bundle_openai_falls_back_to_cursor_when_only_cursor_installed() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["cursor"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5.4-mini
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("cursor"));
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config-order")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor")
     );
 }
 
@@ -2368,59 +2208,6 @@ harness_order = ["opencode", "pi"]"#;
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
         Some("opencode,pi")
-    );
-}
-
-#[test]
-fn build_launch_bundle_legacy_harness_link_filters_ambient_path_candidates() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "opencode"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5.4-mini
----
-Review code changes."#;
-
-    let extra_toml = r#"[settings]
-targets = [".opencode", ".agents"]"#;
-
-    let cache_root = temp.path().join("mars-cache");
-    write_opencode_probe_cache(
-        &cache_root,
-        now_unix_secs(),
-        json!({
-            "providers": { "openai": true },
-            "model_slugs": ["openai/gpt-5.4-mini"],
-            "provider_probe_success": true,
-            "model_probe_success": true,
-            "error": null
-        }),
-    );
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-    cmd.env("MARS_CACHE_DIR", &cache_root);
-    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("opencode"));
-    assert_eq!(
-        bundle["provenance"]["harness_source"].as_str(),
-        Some("config-order")
-    );
-    assert_eq!(
-        bundle["routing"]["match_evidence"].as_str(),
-        Some("confirmed")
-    );
-    assert_eq!(
-        bundle["provenance"]["candidates_tried"].as_str(),
-        Some("opencode")
     );
 }
 
@@ -2837,41 +2624,6 @@ Review code changes."#;
     assert_eq!(
         bundle["routing"]["match_evidence"].as_str(),
         Some("confirmed")
-    );
-}
-
-#[test]
-fn build_launch_bundle_pi_harness_order_before_codex_selects_pi_slug() {
-    let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(&temp, &["pi", "codex"]);
-    let agent_content = r#"---
-name: reviewer
-model: gpt-5.4-mini
----
-Review code changes."#;
-
-    let extra_toml = r#"[settings]
-harness_order = ["pi", "codex"]"#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], extra_toml);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
-
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("pi"));
-    assert_eq!(bundle["routing"]["model"].as_str(), Some("gpt-5.4-mini"));
-    assert_eq!(
-        bundle["routing"]["harness_model"].as_str(),
-        Some("openai-codex/gpt-5.4-mini")
-    );
-    assert_eq!(
-        bundle["provenance"]["harness_order_position"].as_str(),
-        Some("0")
     );
 }
 

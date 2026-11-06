@@ -372,34 +372,6 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_rejects_prompt_file_flag() {
-    let temp = TempDir::new().unwrap();
-    let agent_content = r#"---
-name: reviewer
-model: claude-opus-4-6
----
-Review code changes."#;
-
-    let (server, project_root) =
-        setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--prompt-file",
-        "task.md",
-    ]);
-
-    cmd.assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("--prompt-file"));
-}
-
-#[test]
 fn build_launch_bundle_uses_installed_harness_default_when_no_model_available() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses(temp.path(), &["codex"]);

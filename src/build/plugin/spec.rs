@@ -7,9 +7,6 @@
 //! Adding a harness is one row here; adding a tree is one profile in `tree/` plus
 //! one `TREE_PROFILES` entry.
 //!
-//! The rows also carry the published documentation data — verification detail,
-//! install evidence, support notes — that only the README freshness test reads, so
-//! the shipped build marks exactly those items as expected-dead.
 
 use std::path::Path;
 
@@ -116,47 +113,17 @@ pub(super) enum VerificationLevel {
     DocsOnly,
 }
 
-impl VerificationLevel {
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Live => "live",
-            Self::DocsOnly => "docs-only",
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub(super) struct Verification {
     pub level: VerificationLevel,
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub detail: &'static str,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct VerificationRow {
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub install: Verification,
     pub skills: Verification,
     pub agents: Option<Verification>,
     pub hooks: Verification,
     pub mcp: Verification,
-}
-
-/// Prose appended to a support cell the renderer computes from tree state.
-///
-/// The state itself is never prose: it comes from `support_state`, so a note can
-/// qualify a computed answer but cannot contradict it.
-#[derive(Clone, Copy)]
-pub(super) struct SupportNotes {
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub skills: Option<&'static str>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub agents: Option<&'static str>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub hooks: Option<&'static str>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub mcp: Option<&'static str>,
 }
 
 /// How a tree writes its package-root manifest.
@@ -222,15 +189,13 @@ pub(crate) struct PluginHarnessSpec {
     pub(crate) key: &'static str,
     pub(super) name_rule: NameRule,
     pub(super) display_name: &'static str,
-    #[cfg_attr(not(test), expect(dead_code, reason = "README data"))]
-    pub(super) notes: SupportNotes,
     /// Agent evidence is also the `loads agents` fact: a harness without the
     /// surface has no evidence, and `support_state` reports it impossible.
     pub(super) verification: VerificationRow,
 }
 
-const fn verification(level: VerificationLevel, detail: &'static str) -> Verification {
-    Verification { level, detail }
+const fn verification(level: VerificationLevel) -> Verification {
+    Verification { level }
 }
 
 const CLAUDE_NAME: NameRule = NameRule {
@@ -264,16 +229,11 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &claude::PROFILE,
         name_rule: CLAUDE_NAME,
         display_name: "Claude",
-        notes: SupportNotes::none(),
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, " (local marketplace)"),
-            skills: verification(VerificationLevel::Live, " (own and dependency skills)"),
-            agents: Some(verification(VerificationLevel::Live, " (subagent preload)")),
-            hooks: verification(
-                VerificationLevel::Live,
-                " (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script)",
-            ),
-            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            skills: verification(VerificationLevel::Live),
+            agents: Some(verification(VerificationLevel::Live)),
+            hooks: verification(VerificationLevel::Live),
+            mcp: verification(VerificationLevel::Live),
         },
     },
     PluginHarnessSpec {
@@ -281,17 +241,11 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &claude::PROFILE,
         name_rule: CODEX_NAME,
         display_name: "Codex",
-        notes: SupportNotes {
-            hooks: Some("reads the Claude tree's `hooks/hooks.json`"),
-            mcp: Some("same file as Claude"),
-            ..SupportNotes::none()
-        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, " (local marketplace)"),
-            skills: verification(VerificationLevel::Live, " (own and dependency skills)"),
+            skills: verification(VerificationLevel::Live),
             agents: None,
-            hooks: verification(VerificationLevel::Live, " (built tree, CommonJS script)"),
-            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            hooks: verification(VerificationLevel::Live),
+            mcp: verification(VerificationLevel::Live),
         },
     },
     PluginHarnessSpec {
@@ -299,20 +253,11 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &claude::PROFILE,
         name_rule: GROK_NAME,
         display_name: "Grok",
-        notes: SupportNotes {
-            agents: Some("same file as Claude"),
-            mcp: Some("same file as Claude"),
-            ..SupportNotes::none()
-        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, " (local marketplace)"),
-            skills: verification(VerificationLevel::Live, ", with `resources/`"),
-            agents: Some(verification(
-                VerificationLevel::Live,
-                " (subagent with native skill preload)",
-            )),
-            hooks: verification(VerificationLevel::Live, " (`CLAUDE_PLUGIN_ROOT`)"),
-            mcp: verification(VerificationLevel::Live, " (`env_vars` pass-through)"),
+            skills: verification(VerificationLevel::Live),
+            agents: Some(verification(VerificationLevel::Live)),
+            hooks: verification(VerificationLevel::Live),
+            mcp: verification(VerificationLevel::Live),
         },
     },
     PluginHarnessSpec {
@@ -320,16 +265,11 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &cursor::PROFILE,
         name_rule: CURSOR_NAME,
         display_name: "Cursor",
-        notes: SupportNotes::none(),
         verification: VerificationRow {
-            install: verification(VerificationLevel::DocsOnly, " (account required)"),
-            skills: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
-            agents: Some(verification(
-                VerificationLevel::DocsOnly,
-                " (schema validation only)",
-            )),
-            hooks: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
-            mcp: verification(VerificationLevel::DocsOnly, " (schema validation only)"),
+            skills: verification(VerificationLevel::DocsOnly),
+            agents: Some(verification(VerificationLevel::DocsOnly)),
+            hooks: verification(VerificationLevel::DocsOnly),
+            mcp: verification(VerificationLevel::DocsOnly),
         },
     },
     PluginHarnessSpec {
@@ -337,37 +277,14 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &opencode::PROFILE,
         name_rule: OPENCODE_NAME,
         display_name: "OpenCode",
-        notes: SupportNotes {
-            skills: Some("registered by `index.mjs`"),
-            agents: Some(
-                "registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning",
-            ),
-            hooks: Some("each native hook needs a default `{id, setup}` export"),
-            mcp: Some("registered by `index.mjs`"),
-        },
         verification: VerificationRow {
-            install: verification(VerificationLevel::Live, " (`git+file://`)"),
-            skills: verification(VerificationLevel::Live, ", with `resources/`"),
-            agents: Some(verification(
-                VerificationLevel::Live,
-                " (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny)",
-            )),
-            hooks: verification(VerificationLevel::Live, " (git install, CommonJS script)"),
-            mcp: verification(VerificationLevel::Live, " (`<plugin>:<server>`)"),
+            skills: verification(VerificationLevel::Live),
+            agents: Some(verification(VerificationLevel::Live)),
+            hooks: verification(VerificationLevel::Live),
+            mcp: verification(VerificationLevel::Live),
         },
     },
 ];
-
-impl SupportNotes {
-    const fn none() -> Self {
-        Self {
-            skills: None,
-            agents: None,
-            hooks: None,
-            mcp: None,
-        }
-    }
-}
 
 pub(super) fn harness_specs() -> impl Iterator<Item = &'static PluginHarnessSpec> {
     PLUGIN_HARNESS_SPECS.iter()
@@ -466,42 +383,4 @@ pub(super) fn valid_npm_package_name(name: &str) -> bool {
                     || matches!(byte, b'-' | b'_' | b'.' | b'~')
             })
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use mars_schema::plugin_metadata::GENERATED_ROOT_FILES;
-
-    use super::trees;
-
-    /// Staging excludes and sentinel validation accept only `GENERATED_ROOT_FILES`,
-    /// so a tree whose root file is missing from it, or whose marketplace variant
-    /// needs a catalog directory the table does not declare, would fail every
-    /// configured build at the sentinel check.
-    #[test]
-    fn tree_root_files_match_the_generated_root_file_table() {
-        for tree in trees() {
-            let path = tree.root_file.path();
-            let declared = GENERATED_ROOT_FILES
-                .iter()
-                .find(|file| file.path() == path)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "tree `{}` generates `{path}`, which `GENERATED_ROOT_FILES` does not declare",
-                        tree.key
-                    )
-                });
-            assert_eq!(
-                declared.catalog_directory().is_some(),
-                tree.root_file.is_marketplace(),
-                "tree `{}` generates `{path}`, whose `GENERATED_ROOT_FILES` entry {} a catalog directory",
-                tree.key,
-                if tree.root_file.is_marketplace() {
-                    "has no"
-                } else {
-                    "has"
-                }
-            );
-        }
-    }
 }

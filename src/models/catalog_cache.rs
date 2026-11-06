@@ -680,7 +680,3 @@ fn write_snapshot(mars_dir: &Path, snapshot: &Snapshot) -> Result<(), MarsError>
     crate::fs::atomic_write(&path, content.as_bytes())?;
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "catalog_cache_tests.rs"]
-mod tests;

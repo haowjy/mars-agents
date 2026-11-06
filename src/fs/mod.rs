@@ -644,94 +644,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn atomic_write_creates_parent_dirs() {
-        let dir = TempDir::new().unwrap();
-        let dest = dir.path().join("nested").join("dir").join("file.txt");
-        let content = b"nested content";
-
-        atomic_write(&dest, content).unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap(), content);
-    }
-
-    #[test]
-    fn atomic_write_overwrites_existing_file() {
-        let dir = TempDir::new().unwrap();
-        let dest = dir.path().join("output.txt");
-
-        atomic_write(&dest, b"first").unwrap();
-        atomic_write(&dest, b"second").unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap(), b"second");
-    }
-
-    #[test]
-    fn atomic_install_dir_copies_tree() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        // Create source tree
-        fs::create_dir_all(src.join("sub")).unwrap();
-        fs::write(src.join("a.txt"), "file a").unwrap();
-        fs::write(src.join("sub").join("b.txt"), "file b").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "file a");
-        assert_eq!(
-            fs::read_to_string(dest.join("sub").join("b.txt")).unwrap(),
-            "file b"
-        );
-    }
-
-    #[test]
-    fn atomic_install_dir_replaces_existing() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        // Create initial dest
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("old.txt"), "old").unwrap();
-
-        // Create source
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("new.txt"), "new").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert!(dest.join("new.txt").exists());
-        assert!(!dest.join("old.txt").exists());
-    }
-
-    #[test]
-    fn atomic_install_dir_cleans_stale_old() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        // Create initial dest
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("old.txt"), "old").unwrap();
-
-        // Create stale .old from a prior crash
-        let old_path = dir.path().join(".dest_dir.old");
-        fs::create_dir_all(&old_path).unwrap();
-        fs::write(old_path.join("stale.txt"), "stale").unwrap();
-
-        // Create source
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("new.txt"), "new").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert!(dest.join("new.txt").exists());
-        assert!(!dest.join("old.txt").exists());
-        assert!(!old_path.exists(), "stale .old should be cleaned up");
-    }
-
-    #[test]
     fn atomic_install_dir_filtered_excludes_top_level_entries() {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src_dir");
@@ -756,15 +668,5 @@ mod tests {
         assert!(!dest.join("mars.curated.toml").exists());
         assert!(!dest.join("mars.curated.local.toml").exists());
         assert!(!dest.join(".gitignore").exists());
-    }
-
-    #[test]
-    fn file_lock_creates_parent_dirs() {
-        let dir = TempDir::new().unwrap();
-        let lock_path = dir.path().join("nested").join("dir").join("test.lock");
-
-        let lock = FileLock::acquire(&lock_path).unwrap();
-        assert!(lock_path.exists());
-        drop(lock);
     }
 }

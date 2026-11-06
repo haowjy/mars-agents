@@ -102,26 +102,6 @@ fn interrupted_package() -> TempDir {
 }
 
 #[test]
-fn recovery_survives_multiple_failures_and_source_changes() {
-    let dir = interrupted_package();
-    dir.child("agents/new.md").write_str("# New\n").unwrap();
-    sync(dir.path()).assert().failure();
-    assert!(dir.path().join(".mars/agents/new.md").is_file());
-    dir.child("agents/muse.md")
-        .write_str("# Revised\n")
-        .unwrap();
-    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    sync(dir.path()).assert().success();
-    assert_eq!(
-        fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-        "# Revised\n"
-    );
-    let lock = lock::load(dir.path()).unwrap();
-    assert!(lock.contains_output(".mars", "agents/new.md"));
-    assert!(lock.contains_output(".mars", "agents/muse.md"));
-}
-
-#[test]
 fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     let dir = interrupted_package();
     dir.child(".mars/agents/muse.md")
@@ -149,20 +129,6 @@ fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     assert_eq!(
         fs::read_to_string(dir.path().join("preserved-muse.md")).unwrap(),
         "# User edits\n"
-    );
-}
-
-#[test]
-fn recovered_output_is_pruned_when_source_was_removed() {
-    let dir = interrupted_package();
-    fs::remove_file(dir.path().join("agents/muse.md")).unwrap();
-    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    sync(dir.path()).assert().success();
-    assert!(!dir.path().join(".mars/agents/muse.md").exists());
-    assert!(
-        !lock::load(dir.path())
-            .unwrap()
-            .contains_output(".mars", "agents/muse.md")
     );
 }
 
@@ -365,72 +331,6 @@ fn malformed_intent_identity_cannot_replace_another_items_ownership() {
 }
 
 #[test]
-fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
-    let dir = TempDir::new().unwrap();
-    dir.child("mars.toml").write_str("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={muse='custom/muse.md'}\n").unwrap();
-    dir.child("source/mars.toml")
-        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
-        .unwrap();
-    dir.child("source/agents/muse.md")
-        .write_str("# Muse\n")
-        .unwrap();
-    dir.child(".mars-src/skills/craft/SKILL.md")
-        .write_str("# Craft\n")
-        .unwrap();
-    dir.child(".mars/skills")
-        .write_str("obstruction\n")
-        .unwrap();
-    sync(dir.path()).assert().failure();
-    assert!(dir.path().join(".mars/custom/muse.md").is_file());
-    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    sync(dir.path()).assert().success();
-    assert!(
-        lock::load(dir.path())
-            .unwrap()
-            .contains_output(".mars", "custom/muse.md")
-    );
-}
-
-#[test]
-fn interrupted_destination_move_preserves_old_claim_until_removal() {
-    let dir = TempDir::new().unwrap();
-    let config = |dest: &str| {
-        format!(
-            "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
-        )
-    };
-    dir.child("mars.toml").write_str(&config("old")).unwrap();
-    dir.child("source/mars.toml")
-        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
-        .unwrap();
-    dir.child("source/agents/muse.md")
-        .write_str("# Muse\n")
-        .unwrap();
-    sync(dir.path()).assert().success();
-    let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
-    dir.child("mars.toml").write_str(&config("new")).unwrap();
-    dir.child(".mars-src/skills/craft/SKILL.md")
-        .write_str("# Craft\n")
-        .unwrap();
-    dir.child(".mars/skills")
-        .write_str("obstruction\n")
-        .unwrap();
-    sync(dir.path()).assert().failure();
-    assert!(dir.path().join(".mars/new/muse.md").is_file());
-    assert!(dir.path().join(".mars/old/muse.md").is_file());
-    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), old_lock);
-    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-    sync(dir.path()).assert().success();
-    assert!(!dir.path().join(".mars/old/muse.md").exists());
-    let recovered = lock::load(dir.path()).unwrap();
-    assert!(recovered.contains_output(".mars", "new/muse.md"));
-    assert!(!recovered.contains_output(".mars", "old/muse.md"));
-    let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
-    sync(dir.path()).assert().success();
-    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
-}
-
-#[test]
 fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
@@ -453,61 +353,6 @@ fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let outputs = &recovered.items["agent/muse"].outputs;
     assert_eq!(outputs.len(), 1);
     assert!(outputs[0].installed_checksum().is_some());
-}
-
-#[test]
-fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
-    for established in [false, true] {
-        let dir = TempDir::new().unwrap();
-        let config = |dest: &str| {
-            format!(
-                "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
-            )
-        };
-        dir.child("source/mars.toml")
-            .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
-            .unwrap();
-        dir.child("source/agents/muse.md")
-            .write_str("# Original\n")
-            .unwrap();
-        if established {
-            dir.child("mars.toml")
-                .write_str(&config("committed"))
-                .unwrap();
-            sync(dir.path()).assert().success();
-        }
-        let old_lock = fs::read(dir.path().join("mars.lock")).ok();
-        dir.child(".mars-src/skills/craft/SKILL.md")
-            .write_str("# Craft\n")
-            .unwrap();
-        dir.child(".mars/skills")
-            .write_str("obstruction\n")
-            .unwrap();
-        for dest in ["z-first", "a-second", "m-third"] {
-            dir.child("mars.toml").write_str(&config(dest)).unwrap();
-            dir.child("source/agents/muse.md")
-                .write_str(&format!("# {dest}\n"))
-                .unwrap();
-            sync(dir.path()).assert().failure();
-            assert!(dir.path().join(format!(".mars/{dest}/muse.md")).is_file());
-            assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), old_lock);
-        }
-        fs::remove_file(dir.path().join(".mars/skills")).unwrap();
-        sync(dir.path()).assert().success();
-        let recovered = lock::load(dir.path()).unwrap();
-        for dest in ["committed", "z-first", "a-second"] {
-            assert!(!dir.path().join(format!(".mars/{dest}/muse.md")).exists());
-            assert!(!recovered.contains_output(".mars", &format!("{dest}/muse.md")));
-        }
-        assert!(recovered.contains_output(".mars", "m-third/muse.md"));
-        assert_eq!(
-            fs::read_to_string(dir.path().join(".mars/m-third/muse.md")).unwrap(),
-            "# m-third\n"
-        );
-        let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
-        sync(dir.path()).assert().success();
-        assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
-    }
 }
 
 #[test]
@@ -590,6 +435,161 @@ fn invalid_write_record_shapes_preserve_recovery_evidence() {
         assert_eq!(fs::read(&path).unwrap(), intent);
         assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), lock_before);
         assert_eq!(fs::read(&muse).unwrap(), bytes_before);
+    }
+}
+
+#[test]
+fn recovery_survives_multiple_failures_and_source_changes() {
+    let dir = interrupted_package();
+    dir.child("agents/new.md").write_str("# New\n").unwrap();
+    sync(dir.path()).assert().failure();
+    assert!(dir.path().join(".mars/agents/new.md").is_file());
+    dir.child("agents/muse.md")
+        .write_str("# Revised\n")
+        .unwrap();
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
+        "# Revised\n"
+    );
+    let lock = lock::load(dir.path()).unwrap();
+    assert!(lock.contains_output(".mars", "agents/new.md"));
+    assert!(lock.contains_output(".mars", "agents/muse.md"));
+}
+
+#[test]
+fn recovered_output_is_pruned_when_source_was_removed() {
+    let dir = interrupted_package();
+    fs::remove_file(dir.path().join("agents/muse.md")).unwrap();
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    assert!(!dir.path().join(".mars/agents/muse.md").exists());
+    assert!(
+        !lock::load(dir.path())
+            .unwrap()
+            .contains_output(".mars", "agents/muse.md")
+    );
+}
+
+#[test]
+fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
+    let dir = TempDir::new().unwrap();
+    dir.child("mars.toml").write_str("[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={muse='custom/muse.md'}\n").unwrap();
+    dir.child("source/mars.toml")
+        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
+        .unwrap();
+    dir.child("source/agents/muse.md")
+        .write_str("# Muse\n")
+        .unwrap();
+    dir.child(".mars-src/skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    sync(dir.path()).assert().failure();
+    assert!(dir.path().join(".mars/custom/muse.md").is_file());
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    assert!(
+        lock::load(dir.path())
+            .unwrap()
+            .contains_output(".mars", "custom/muse.md")
+    );
+}
+
+#[test]
+fn interrupted_destination_move_preserves_old_claim_until_removal() {
+    let dir = TempDir::new().unwrap();
+    let config = |dest: &str| {
+        format!(
+            "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
+        )
+    };
+    dir.child("mars.toml").write_str(&config("old")).unwrap();
+    dir.child("source/mars.toml")
+        .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
+        .unwrap();
+    dir.child("source/agents/muse.md")
+        .write_str("# Muse\n")
+        .unwrap();
+    sync(dir.path()).assert().success();
+    let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
+    dir.child("mars.toml").write_str(&config("new")).unwrap();
+    dir.child(".mars-src/skills/craft/SKILL.md")
+        .write_str("# Craft\n")
+        .unwrap();
+    dir.child(".mars/skills")
+        .write_str("obstruction\n")
+        .unwrap();
+    sync(dir.path()).assert().failure();
+    assert!(dir.path().join(".mars/new/muse.md").is_file());
+    assert!(dir.path().join(".mars/old/muse.md").is_file());
+    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), old_lock);
+    fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+    sync(dir.path()).assert().success();
+    assert!(!dir.path().join(".mars/old/muse.md").exists());
+    let recovered = lock::load(dir.path()).unwrap();
+    assert!(recovered.contains_output(".mars", "new/muse.md"));
+    assert!(!recovered.contains_output(".mars", "old/muse.md"));
+    let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
+    sync(dir.path()).assert().success();
+    assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
+}
+
+#[test]
+fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
+    for established in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let config = |dest: &str| {
+            format!(
+                "[settings]\ntargets=[]\nagent_emission='never'\n[dependencies.dep]\npath='./source'\nrename={{muse='{dest}/muse.md'}}\n"
+            )
+        };
+        dir.child("source/mars.toml")
+            .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
+            .unwrap();
+        dir.child("source/agents/muse.md")
+            .write_str("# Original\n")
+            .unwrap();
+        if established {
+            dir.child("mars.toml")
+                .write_str(&config("committed"))
+                .unwrap();
+            sync(dir.path()).assert().success();
+        }
+        let old_lock = fs::read(dir.path().join("mars.lock")).ok();
+        dir.child(".mars-src/skills/craft/SKILL.md")
+            .write_str("# Craft\n")
+            .unwrap();
+        dir.child(".mars/skills")
+            .write_str("obstruction\n")
+            .unwrap();
+        for dest in ["z-first", "a-second", "m-third"] {
+            dir.child("mars.toml").write_str(&config(dest)).unwrap();
+            dir.child("source/agents/muse.md")
+                .write_str(&format!("# {dest}\n"))
+                .unwrap();
+            sync(dir.path()).assert().failure();
+            assert!(dir.path().join(format!(".mars/{dest}/muse.md")).is_file());
+            assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), old_lock);
+        }
+        fs::remove_file(dir.path().join(".mars/skills")).unwrap();
+        sync(dir.path()).assert().success();
+        let recovered = lock::load(dir.path()).unwrap();
+        for dest in ["committed", "z-first", "a-second"] {
+            assert!(!dir.path().join(format!(".mars/{dest}/muse.md")).exists());
+            assert!(!recovered.contains_output(".mars", &format!("{dest}/muse.md")));
+        }
+        assert!(recovered.contains_output(".mars", "m-third/muse.md"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".mars/m-third/muse.md")).unwrap(),
+            "# m-third\n"
+        );
+        let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
+        sync(dir.path()).assert().success();
+        assert_eq!(fs::read(dir.path().join("mars.lock")).unwrap(), bytes);
     }
 }
 

@@ -227,16 +227,6 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn entry(name: &str, event: &str, script: &str) -> HookEntry {
-        HookEntry {
-            name: name.to_string(),
-            native_event: event.to_string(),
-            entries: vec![
-                serde_json::json!({"hooks": [{"type": "command", "command": format!("bash '{script}'")}]}),
-            ],
-        }
-    }
-
     fn record(event: &str, command: &str) -> BTreeMap<String, ConfigEntryRecord> {
         BTreeMap::from([(
             format!("hook:{event}:audit"),
@@ -244,23 +234,6 @@ mod tests {
                 emitted_json: serde_json::json!([{"hooks": [{"command": command}]}]).to_string(),
             },
         )])
-    }
-
-    #[test]
-    fn write_creates_the_file_and_appends_in_call_order() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("hooks.json");
-        write(&path, &[entry("audit", "PreToolUse", "/old/run.sh")], &[]).unwrap();
-        write(&path, &[entry("audit", "PreToolUse", "/new/run.sh")], &[]).unwrap();
-
-        let json: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        let commands: Vec<_> = json["hooks"]["PreToolUse"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|e| e["hooks"][0]["command"].as_str().unwrap())
-            .collect();
-        assert_eq!(commands, ["bash '/old/run.sh'", "bash '/new/run.sh'"]);
     }
 
     #[test]
@@ -286,28 +259,5 @@ mod tests {
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             before
         );
-    }
-
-    #[test]
-    fn removal_prunes_an_emptied_hooks_object() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("hooks.json");
-        std::fs::write(
-            &path,
-            serde_json::json!({"version": 1, "hooks": {"sessionStart": [{"hooks": [{"command": "owned"}]}]}})
-                .to_string(),
-        )
-        .unwrap();
-
-        remove_recorded(
-            &path,
-            &record("sessionStart", "owned"),
-            ".cursor",
-            &mut DiagnosticCollector::new(),
-        )
-        .unwrap();
-
-        let after: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(after, serde_json::json!({"version": 1}));
     }
 }

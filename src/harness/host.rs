@@ -141,14 +141,6 @@ pub struct CapabilitySession {
 
 impl CapabilitySession {
     #[cfg(test)]
-    pub(crate) fn set_opencode_probe_for_test(&mut self, result: OpenCodeProbeResult) {
-        self.opencode = Some(ObservedOutcome {
-            outcome: CachedProbeOutcome::Hit(result),
-            observation: None,
-        });
-    }
-
-    #[cfg(test)]
     pub(crate) fn set_opencode_outcome_for_test(&mut self, outcome: CachedProbeOutcome) {
         self.opencode = Some(ObservedOutcome {
             outcome,

@@ -151,10 +151,6 @@ pub fn assert_hook_target_owner(
 /// user-edited; a non-file needs no checksum check because retaining its record
 /// preserves authority to retry deletion; an absent path must not retain a record,
 /// because that would be ghost ownership.
-pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) {
-    assert_config_entry_consistency_with_diagnostics(project, "");
-}
-
 fn assert_config_entry_consistency_with_diagnostics(
     project: &assert_fs::fixture::ChildPath,
     diagnostics: &str,
@@ -293,4 +289,8 @@ fn assert_config_entry_consistency_with_diagnostics(
             );
         }
     }
+}
+
+pub fn assert_config_entry_consistency(project: &assert_fs::fixture::ChildPath) {
+    assert_config_entry_consistency_with_diagnostics(project, "");
 }

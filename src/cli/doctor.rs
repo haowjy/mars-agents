@@ -256,16 +256,18 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
 struct TargetDivergence {
     /// Present, but different from the installed checksum: hand-edited.
     modified: usize,
-    /// Absent from the target.
+    /// Absent from the target, including a symlink whose target is gone.
     missing: usize,
-    /// Present, but Mars could not read it to compare.
+    /// Present, but Mars could not read it to compare (permissions, I/O).
     unchecked: usize,
+    /// A file where a directory belongs, or the reverse: neither sync nor `--force` replaces it.
+    wrong_kind: usize,
 }
 
 impl TargetDivergence {
     /// The closing line: one next step per kind, each one that works for that kind.
     /// Only an edited file needs `--force`; a plain sync restores a missing item, and an
-    /// unreadable one needs its cause fixed, not an overwrite.
+    /// unreadable or wrong-kind one needs its cause removed first, not an overwrite.
     fn summary(&self) -> Option<String> {
         let mut steps = Vec::new();
         if self.modified > 0 {
@@ -280,8 +282,17 @@ impl TargetDivergence {
                 managed_cmd("mars sync")
             ));
         }
+        if self.wrong_kind > 0 {
+            steps.push(format!(
+                "move or delete the items of the wrong kind, then run `{}`",
+                managed_cmd("mars sync")
+            ));
+        }
         if self.unchecked > 0 {
-            steps.push("fix the access problem reported above for the files Mars could not check, then run doctor again".to_string());
+            steps.push(format!(
+                "fix the cause reported above for the items Mars could not check, then run `{}` again",
+                managed_cmd("mars doctor")
+            ));
         }
         (!steps.is_empty()).then(|| format!("target divergence detected; {}", steps.join("; ")))
     }
@@ -298,53 +309,49 @@ fn check_target_divergence(
 
     for target_name in targets {
         for (dest_path, item) in lock.flat_items_for_target(target_name) {
-            let relative_path = std::path::Path::new(target_name).join(dest_path.as_str());
-            let target_path = project_root.join(&relative_path);
+            let target_path = project_root.join(target_name).join(dest_path.as_str());
+            let shown = format!("{target_name}/{}", dest_path.as_str());
 
-            // A dangling symlink still exists; only NotFound means the item is gone.
-            if let Err(e) = target_path.symlink_metadata() {
-                if e.kind() == std::io::ErrorKind::NotFound {
+            // A generated hook file is one file; the lock records its plain content hash.
+            let hashed = if crate::lock::is_generated_hook_file(item.kind, dest_path.as_str()) {
+                hash::hash_file(&target_path)
+            } else {
+                hash::compute_hash(&target_path, item.kind)
+            };
+            match hashed {
+                Ok(target_hash) if target_hash == item.installed_checksum => {}
+                Ok(_) => {
                     warnings.push(format!(
-                        "missing in target: {}/{}",
-                        target_name,
-                        dest_path.as_str()
+                        "divergent in target: {shown} (local modifications)"
                     ));
-                    divergence.missing += 1;
-                } else {
-                    warnings.push(format!(
-                        "could not check target item: {}/{} ({e})",
-                        target_name,
-                        dest_path.as_str()
-                    ));
-                    divergence.unchecked += 1;
+                    divergence.modified += 1;
                 }
-                continue;
-            }
-
-            match hash::compute_hash(&target_path, item.kind) {
-                Ok(target_hash) => {
-                    if target_hash != item.installed_checksum {
-                        warnings.push(format!(
-                            "divergent in target: {}/{} (local modifications)",
-                            target_name,
-                            dest_path.as_str()
-                        ));
-                        divergence.modified += 1;
+                Err(error) => match io_error_kind(&error) {
+                    Some(std::io::ErrorKind::NotFound) => {
+                        warnings.push(format!("missing in target: {shown}"));
+                        divergence.missing += 1;
                     }
-                }
-                Err(e) => {
-                    warnings.push(format!(
-                        "could not check target item: {}/{} ({e})",
-                        target_name,
-                        dest_path.as_str()
-                    ));
-                    divergence.unchecked += 1;
-                }
+                    Some(std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory) => {
+                        warnings.push(format!("wrong kind of file in target: {shown} ({error})"));
+                        divergence.wrong_kind += 1;
+                    }
+                    _ => {
+                        warnings.push(format!("could not check target item: {shown} ({error})"));
+                        divergence.unchecked += 1;
+                    }
+                },
             }
         }
     }
 
     divergence
+}
+
+fn io_error_kind(error: &MarsError) -> Option<std::io::ErrorKind> {
+    match error {
+        MarsError::Io { source, .. } => Some(source.kind()),
+        _ => None,
+    }
 }
 
 struct InstalledItem {

@@ -40,15 +40,16 @@ mars doctor
 
 ### Target divergence
 
-Doctor checks each managed target directory against the lock's expected checksums and reports three different things, each with its own next step:
+Doctor checks each managed target directory against the lock's expected checksums. It sorts each item by why the comparison failed:
 
 | Report | Meaning | Fix |
 |---|---|---|
 | `divergent in target: ... (local modifications)` | The item exists and its content differs from what Mars installed | `mars sync --force` resets it; plain `mars sync` keeps your edit |
-| `missing in target: ...` | The item is gone | `mars sync` restores it |
-| `could not check target item: ... (<reason>)` | Mars could not read the item to compare (for example a permission error) | Fix the cause the message names, then run `mars doctor` again. Nothing here calls for overwriting |
+| `missing in target: ...` | The item is gone, or is a symlink to nothing | `mars sync` restores it |
+| `wrong kind of file in target: ...` | A file sits where Mars installed a directory, or a directory where it installed a file | Move or delete it, then `mars sync`. `--force` cannot replace a directory with a file |
+| `could not check target item: ... (<reason>)` | Mars could not read the item to compare (for example a permission error) | Fix the cause the message names, then run `mars doctor` again |
 
-A generated hook file (`.pi/extensions/mars-<name>.hooks.ts`, `.opencode/plugins/mars-<name>.hooks.ts`) is one file, and the lock records its plain file hash.
+A generated hook file (`.pi/extensions/mars-<name>.hooks.ts`, `.opencode/plugins/mars-<name>.ts` or `.hooks.ts`) is one file, and the lock records its plain file hash.
 
 ## `mars repair`
 

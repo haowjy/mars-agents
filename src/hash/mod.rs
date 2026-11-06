@@ -8,7 +8,7 @@ use mars_schema::item::ItemKind;
 
 /// Compute SHA-256 of a file or directory (for skills).
 ///
-/// For agents (single `.md` file) and generated hook files: SHA-256 of file content.
+/// For agents (single `.md` file): SHA-256 of file content.
 /// For directories (skills, hooks, MCP server files): SHA-256 of sorted
 /// `(relative_path, file_hash)` pairs — deterministic regardless of filesystem ordering.
 ///
@@ -20,9 +20,6 @@ use mars_schema::item::ItemKind;
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
         ItemKind::Agent => hash_file(path),
-        // A generated hook installed to a file target (`mars-<name>.hooks.ts`) is one file whose
-        // lock checksum is the plain file hash; a hook directory is hashed as a tree.
-        ItemKind::Hook if path.is_file() => hash_file(path),
         ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
         ItemKind::BootstrapDoc => {
             let is_doc_file = path.file_name().is_some_and(|name| name == "BOOTSTRAP.md");
@@ -31,7 +28,8 @@ pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     }
 }
 
-fn hash_file(path: &Path) -> Result<String, MarsError> {
+/// SHA-256 of one file's content; what the lock records for an agent or a generated hook file.
+pub(crate) fn hash_file(path: &Path) -> Result<String, MarsError> {
     let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
     Ok(hash_bytes(&content))
 }

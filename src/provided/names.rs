@@ -38,7 +38,7 @@ impl ProvidedNames {
         let record = match ProvidedLock::load(root)? {
             Ok(record) => record,
             Err(unusable) => {
-                diag.warn("provided-lock-unusable", unusable.reader_message());
+                diag.warn_advisory("provided-lock-unusable", unusable.reader_message());
                 return Ok(Self::default());
             }
         };

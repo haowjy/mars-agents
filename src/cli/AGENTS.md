@@ -58,15 +58,17 @@ is the curated harness-model view; only `--live` routes its rows.
 
 ## Lossiness Gating
 
-`SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Hidden`) is applied when the
-pipeline creates its `DiagnosticCollector`. Lossiness-category diagnostics are suppressed
-at emission time when mode is `Hidden`.
+`SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Verbose` | `Hidden`) is applied when the
+pipeline creates its `DiagnosticCollector`. In `Hidden` mode the collector buffers no lossy field.
+`SyncOptions.preview_warnings` is set only by `sync --diff`: a dry run reports what a real sync
+would repair (a hand-edited native agent or MCP entry) only then, so `validate` stays clean.
 
 | Route | Mechanism | `lossiness_mode` | Calls lossiness preview directly |
 |---|---|---|---|
 | `mars sync` | Sync pipeline | `Surface` | No |
 | `mars upgrade` | Sync pipeline | `Surface` | No |
-| `mars validate` / `export` / `add` / `repair` | Sync pipeline | `Hidden` | No |
+| `mars validate` / `export` / `repair` | Sync pipeline | `Hidden` | No |
+| `mars add` / `version` | Sync pipeline | `Surface` | No |
 | `mars check` | Direct preview | `Surface` | Yes |
 | `mars init` | Direct preview | `Surface` | Yes |
 

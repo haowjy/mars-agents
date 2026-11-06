@@ -384,6 +384,7 @@ fn emit_selective_fanout_agents_match_case_insensitively() {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &fanout_agents,
     };
@@ -490,6 +491,7 @@ fn compile_emit_all_agents(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -537,6 +539,7 @@ fn compile_emit_all_opencode(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -783,6 +786,7 @@ fn compile_emit_all_with_overlays(
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -830,6 +834,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
                 force: false,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: false,
+                preview_warnings: false,
             },
             fanout_agents: &[],
         },
@@ -1233,6 +1238,7 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
             force: false,
             collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
+            preview_warnings: false,
         },
         fanout_agents: &[],
     };
@@ -1253,16 +1259,10 @@ fn emit_all_overlay_user_invocable_false_warn_drops_on_native_emit() {
         "agents have no native user-invocable key: {native}"
     );
 
-    let dropped: Vec<_> = diag
-        .drain()
-        .into_iter()
-        .filter(|d| d.code == "agent-field-dropped")
-        .collect();
-    assert_eq!(dropped.len(), 1, "overlay false must warn-drop on emit");
+    let lines = diag.drain();
     assert!(
-        dropped[0].message.contains("user-invocable"),
-        "expected user-invocable in lossiness summary: {}",
-        dropped[0].message
+        !lines.iter().any(|d| d.code.starts_with("agent-")),
+        "a plain drop is quiet by default: {lines:?}"
     );
 }
 

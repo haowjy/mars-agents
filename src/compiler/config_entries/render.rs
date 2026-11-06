@@ -122,10 +122,10 @@ pub(crate) fn preflight_config_entries(
         match &output {
             HookOutput::Merge(merged) => {
                 for event in &merged.unchecked_events {
-                    diag.warn("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
+                    diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.warn("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.warn_advisory("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -171,7 +171,7 @@ pub(crate) fn preflight_config_entries(
                     );
                 }
                 if let Some(problem) = files.native_hook_problem {
-                    diag.warn(
+                    diag.warn_advisory(
                         "hook-native-contract",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` native hook `{}` {problem}; the native hook will still be installed",
@@ -230,7 +230,7 @@ fn report_skips(
             match item.origin {
                 Origin::Local => {
                     for line in lines {
-                        diag.warn(
+                        diag.warn_advisory(
                             "hook-event-skipped",
                             format!("hook `{}`: `{target}` {line}", item.def.name),
                         );
@@ -293,7 +293,7 @@ pub(crate) fn lower_hook_entries(
         match crate::compiler::hooks::load_plugin_output(item, target, shared, &tokens) {
             Ok(HookOutput::Merge(output)) => {
                 for skip in &output.skips {
-                    diag.warn(
+                    diag.warn_advisory(
                         "hook-event-skipped",
                         format!(
                             "hook `{}` from `{}`: the `{}` plugin tree {}",

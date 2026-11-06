@@ -117,11 +117,11 @@ pub(crate) fn finalize(
         ) {
             Ok((_, outcome)) => {
                 if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                    diag.warn("models-cache-refresh", warning);
+                    diag.warn_advisory("models-cache-refresh", warning);
                 }
             }
             Err(err) => {
-                diag.warn(
+                diag.warn_advisory(
                     "models-cache-refresh",
                     format!("failed to refresh models cache: {err}"),
                 );
@@ -153,6 +153,7 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
         hook_files_rewritten: state.rewritten_hook_files,
+        mcp_files_changed: state.mcp_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })

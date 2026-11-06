@@ -15,6 +15,7 @@ use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
+use crate::compiler::lossiness;
 use crate::compiler::native_agents::{
     AgentRef, NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
 };
@@ -49,6 +50,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     prepared: &mars_schema::prepare::Prepared,
     authored_root: &Path,
     mode: LossinessMode,
+    rerun_verbose: &'static str,
 ) -> Result<Vec<Diagnostic>, MarsError> {
     let settings = &lens.effective.settings;
     let native_skill_keys = native_skill_harness_keys(settings);
@@ -57,7 +59,8 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         return Ok(Vec::new());
     }
 
-    let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(mode).rerun_verbose_with(rerun_verbose);
+    let mut codex_emitted = false;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         settings.meridian_agent_copy(),
         &settings.managed_targets(),
@@ -89,15 +92,17 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);
         match definition.kind {
-            mars_schema::item::DefinitionKind::Agent => collect_agent_content_lossiness(
-                &content,
-                &definition.slug,
-                &policy,
-                &configured_harnesses,
-                fanout_agents,
-                model_router.as_mut(),
-                &mut diag,
-            ),
+            mars_schema::item::DefinitionKind::Agent => {
+                codex_emitted |= collect_agent_content_lossiness(
+                    &content,
+                    &definition.slug,
+                    &policy,
+                    &configured_harnesses,
+                    fanout_agents,
+                    model_router.as_mut(),
+                    &mut diag,
+                )
+            }
             mars_schema::item::DefinitionKind::Skill => {
                 let source_path = authored_root.join(&definition.source_path);
                 let skill_dir = source_path.parent().unwrap_or(authored_root);
@@ -115,6 +120,10 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         }
     }
 
+    // As in sync: the project's network settings reach no native Codex file.
+    if codex_emitted {
+        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", &mut diag);
+    }
     Ok(diag.drain())
 }
 
@@ -126,9 +135,9 @@ fn collect_agent_content_lossiness(
     fanout_agents: &[String],
     model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
-) {
+) -> bool {
     let Some(model_router) = model_router else {
-        return;
+        return false;
     };
     let Ok(mars_schema::read::Valid {
         fields: profile,
@@ -136,8 +145,9 @@ fn collect_agent_content_lossiness(
         ..
     }) = mars_schema::agent::read(content).into_valid()
     else {
-        return;
+        return false;
     };
+    let mut codex_emitted = false;
     for NativeEmission {
         harness,
         model,
@@ -154,13 +164,11 @@ fn collect_agent_content_lossiness(
         configured_harnesses,
         model_router,
     ) {
+        codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
-        crate::compiler::lossiness::emit_agent_lossiness_warnings(
-            agent_name,
-            &lowered.lossy_fields,
-            diag,
-        );
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields);
     }
+    codex_emitted
 }
 
 #[cfg(test)]
@@ -175,7 +183,11 @@ mod tests {
         let (lens, prepared) = PublishLens::load(base, &mut publish_diag)?;
         let mut diagnostics = publish_diag.drain();
         diagnostics.extend(collect_prepared_source_lossiness_diagnostics(
-            &lens, &prepared, base, mode,
+            &lens,
+            &prepared,
+            base,
+            mode,
+            "mars sync --verbose",
         )?);
         Ok(diagnostics)
     }
@@ -221,15 +233,8 @@ mod tests {
 
         let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
         assert!(
-            diags.iter().any(|d| {
-                d.code == "launch-time-field-summary"
-                    && d.message.contains("launch-time field mapping")
-            }),
-            "expected meridian-only summary diagnostic: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.code == "agent-field-meridian-only"),
-            "surface must not emit per-item meridian-only warnings: {diags:?}"
+            diags.is_empty(),
+            "launch-time fields are --verbose only: {diags:?}"
         );
     }
 

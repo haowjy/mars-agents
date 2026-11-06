@@ -505,15 +505,27 @@ impl Settings {
         self.meridian.agent_copy.as_ref()
     }
 
-    /// The network keys a project sets in `[settings]` (or inherits from the user config).
-    pub fn network_keys(&self) -> Vec<&'static str> {
+    /// The network keys a project sets in `[settings]` (or inherits from the user config), each
+    /// with whether it restricts: `default_network = "allow"` is a grant.
+    pub fn network_keys(&self) -> Vec<(&'static str, bool)> {
         [
-            ("default-network", self.default_network.is_some()),
-            ("network-allow", !self.network_allow.entries().is_empty()),
-            ("network-deny", !self.network_deny.entries().is_empty()),
+            (
+                "default-network",
+                self.default_network
+                    .as_ref()
+                    .map(|policy| *policy != mars_schema::network::NetworkPolicy::Allow),
+            ),
+            (
+                "network-allow",
+                (!self.network_allow.entries().is_empty()).then_some(true),
+            ),
+            (
+                "network-deny",
+                (!self.network_deny.entries().is_empty()).then_some(true),
+            ),
         ]
         .into_iter()
-        .filter_map(|(key, set)| set.then_some(key))
+        .filter_map(|(key, restricts)| restricts.map(|restricts| (key, restricts)))
         .collect()
     }
 
@@ -856,6 +868,32 @@ fn network_key_warnings(
             ),
         })
         .collect()
+}
+
+/// Unknown `[settings]` keys in the project's `mars.toml` and `mars.local.toml`, one warning
+/// each. Only `mars validate` asks for these: sync stays silent so an older Mars accepts a newer
+/// config. A network-looking key already warns as `unknown-network-key`, so it is skipped here.
+pub(crate) fn unknown_settings_diagnostics(loaded: &LoadedProjectConfig) -> Vec<Diagnostic> {
+    [
+        ("mars.toml", &loaded.config.settings.unknown),
+        ("mars.local.toml", &loaded.local.settings.unknown),
+    ]
+    .into_iter()
+    .flat_map(|(file, unknown)| {
+        unknown
+            .keys()
+            .filter(|key| !looks_like_network_key(key))
+            .map(move |key| Diagnostic {
+                level: DiagnosticLevel::Warning,
+                code: "unknown-settings-key".into(),
+                message: format!(
+                    "{file} [settings]: unknown key `{key}` is ignored by this Mars version (a typo, or a setting only a newer Mars reads)"
+                ),
+                context: None,
+                category: Some(DiagnosticCategory::Validation),
+            })
+    })
+    .collect()
 }
 
 fn stale_overlay_warnings(

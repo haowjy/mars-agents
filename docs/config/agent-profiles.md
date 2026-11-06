@@ -456,7 +456,7 @@ from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
 
 Per-harness target-native passthrough table. Mars writes each harness's block into that harness's native file, and passes the block matching the resolved harness to the launch bundle's `execution_policy.native_config`. Nested keys are target-native: Mars validates only that the block is a mapping of serializable values.
 
-Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace a field Mars lowers itself; it is dropped with a warning.
+Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace a field Mars lowers itself; it is dropped, and [the sync reports it](agent-compilation.md#harness-override-passthrough) when the key can carry a restriction; `mars sync --verbose` shows every dropped key.
 
 ```yaml
 harness-overrides:

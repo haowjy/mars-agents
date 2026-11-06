@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use serde::Serialize;
 
+use crate::compiler::lossiness::{LossRecord, LossyField};
+
 /// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
@@ -19,6 +21,19 @@ pub struct Diagnostic {
     pub category: Option<DiagnosticCategory>,
 }
 
+impl Diagnostic {
+    /// Whether this diagnostic means the sync may have fallen short of the state it wanted
+    /// (a failed write, an edit left in place), so `already up to date` is not printed.
+    /// Every warning counts unless it is advisory or lossiness.
+    pub fn blocks_up_to_date(&self) -> bool {
+        self.level == DiagnosticLevel::Warning
+            && !matches!(
+                self.category,
+                Some(DiagnosticCategory::Advisory | DiagnosticCategory::Lossiness)
+            )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticLevel {
@@ -33,28 +48,25 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LossinessMode {
-    /// Suppress lossiness warnings (validate, export, add, repair, …).
+    /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Surface consequential lossiness warnings plus one meridian-only summary line.
+    /// Default for sync, check, init and plugin builds: one line for the project covering the
+    /// restrictions an agent loses (`Lossiness::Dropped`).
     Surface,
-    /// Surface all lossiness warnings, including per-item meridian-only detail.
+    /// Every lossy field per item and target: quiet, approximate and launch-time ones too.
     Verbose,
 }
 
 impl LossinessMode {
     pub fn surfaces_lossiness(self) -> bool {
-        matches!(self, LossinessMode::Surface | LossinessMode::Verbose)
+        self != LossinessMode::Hidden
     }
-}
 
-/// One launch-time field omitted from a native artifact but enforced by Meridian at spawn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MeridianOnlyRecord {
-    item_kind: String,
-    item_name: String,
-    target: String,
-    field: String,
+    /// Whether every lossy field prints per item, not only the project line for dropped ones.
+    pub fn verbose(self) -> bool {
+        self == LossinessMode::Verbose
+    }
 }
 
 /// Broad category for a diagnostic — used in structured output and validation gates.
@@ -67,6 +79,9 @@ pub enum DiagnosticCategory {
     Lossiness,
     /// Schema validation and structural checks.
     Validation,
+    /// A warning that says nothing about whether the sync reached the state it wanted
+    /// (an unset env var, a skipped unknown event). It does not stop `already up to date`.
+    Advisory,
 }
 
 /// Collects diagnostics during pipeline execution.
@@ -74,8 +89,10 @@ pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
-    /// Launch-time / meridian-enforced field mappings accumulated for summary or verbose detail.
-    meridian_only_records: Vec<MeridianOnlyRecord>,
+    /// The command that re-runs this one with `--verbose`, named in the default lossiness line.
+    rerun_verbose: &'static str,
+    /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
+    lossy_records: Vec<LossRecord>,
     /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
@@ -85,12 +102,20 @@ impl DiagnosticCollector {
         Self::with_lossiness_mode(LossinessMode::default())
     }
 
+    /// Name the command whose `--verbose` shows the detail behind the default lossiness line,
+    /// for a caller that is not `mars sync`.
+    pub fn rerun_verbose_with(mut self, command: &'static str) -> Self {
+        self.rerun_verbose = command;
+        self
+    }
+
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
-            meridian_only_records: Vec::new(),
+            rerun_verbose: "mars sync --verbose",
+            lossy_records: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
     }
@@ -119,7 +144,7 @@ impl DiagnosticCollector {
         } else if diagnostic.code == "field.unknown" {
             self.warn_unknown_field(code, &diagnostic.message, context);
         } else {
-            self.warn(code, message);
+            self.warn_advisory(code, message);
         }
     }
 
@@ -132,7 +157,7 @@ impl DiagnosticCollector {
         }
         sites.push(context.to_owned());
         if sites.len() == 1 {
-            self.warn(code.clone(), format!("{context}: {text}"));
+            self.warn_advisory(code.clone(), format!("{context}: {text}"));
             return;
         }
         let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
@@ -192,27 +217,22 @@ impl DiagnosticCollector {
         std::mem::take(&mut self.engine_fallbacks)
     }
 
-    /// Record a launch-time field mapping for meridian-only summary or verbose detail.
-    pub fn record_meridian_only_field(
+    /// Buffer one lowered item's lossy fields; `drain` renders them by mode.
+    pub fn record_lossy_fields(
         &mut self,
-        item_kind: &str,
+        item_kind: &'static str,
         item_name: &str,
-        target: &str,
-        field: &str,
+        fields: &[LossyField],
     ) {
         if !self.lossiness_mode.surfaces_lossiness() {
             return;
         }
-        self.meridian_only_records.push(MeridianOnlyRecord {
-            item_kind: item_kind.to_string(),
-            item_name: item_name.to_string(),
-            target: target.to_string(),
-            field: field.to_string(),
-        });
-    }
-
-    fn should_emit_lossiness(&self) -> bool {
-        self.lossiness_mode.surfaces_lossiness()
+        self.lossy_records
+            .extend(fields.iter().map(|field| LossRecord {
+                item_kind,
+                item_name: item_name.to_string(),
+                field: field.clone(),
+            }));
     }
 
     pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
@@ -231,9 +251,6 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Error,
             code: code.into(),
@@ -253,16 +270,35 @@ impl DiagnosticCollector {
         });
     }
 
+    /// A warning that does not imply the sync fell short of the state it wanted. Every other
+    /// warning does: `already up to date` is withheld while one is present, so an unmarked
+    /// site costs a reassuring line, never a false one.
+    pub fn warn_advisory(
+        &mut self,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        self.warn_with_category(code, message, DiagnosticCategory::Advisory);
+    }
+
     pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {
         let message = message.into();
-        if self
-            .diagnostics
+        if !self.has(code, &message) {
+            self.warn(code, message);
+        }
+    }
+
+    pub(crate) fn warn_advisory_once(&mut self, code: &'static str, message: impl Into<String>) {
+        let message = message.into();
+        if !self.has(code, &message) {
+            self.warn_advisory(code, message);
+        }
+    }
+
+    fn has(&self, code: &str, message: &str) -> bool {
+        self.diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
-        {
-            return;
-        }
-        self.warn(code, message);
     }
 
     pub fn warn_with_category(
@@ -271,9 +307,6 @@ impl DiagnosticCollector {
         message: impl Into<String>,
         category: DiagnosticCategory,
     ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
         self.diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
             code: code.into(),
@@ -304,24 +337,6 @@ impl DiagnosticCollector {
             return;
         }
         self.info(code, message);
-    }
-
-    pub fn info_with_category(
-        &mut self,
-        code: impl Into<Cow<'static, str>>,
-        message: impl Into<String>,
-        category: DiagnosticCategory,
-    ) {
-        if category == DiagnosticCategory::Lossiness && !self.should_emit_lossiness() {
-            return;
-        }
-        self.diagnostics.push(Diagnostic {
-            level: DiagnosticLevel::Info,
-            code: code.into(),
-            message: message.into(),
-            context: None,
-            category: Some(category),
-        });
     }
 
     pub fn warn_with_context(
@@ -361,64 +376,13 @@ impl DiagnosticCollector {
     }
 
     pub fn drain(&mut self) -> Vec<Diagnostic> {
-        self.flush_meridian_only_lossiness();
+        let records = std::mem::take(&mut self.lossy_records);
+        self.diagnostics.extend(crate::compiler::lossiness::render(
+            &records,
+            self.lossiness_mode,
+            self.rerun_verbose,
+        ));
         std::mem::take(&mut self.diagnostics)
-    }
-
-    fn flush_meridian_only_lossiness(&mut self) {
-        if self.meridian_only_records.is_empty() || !self.lossiness_mode.surfaces_lossiness() {
-            return;
-        }
-        match self.lossiness_mode {
-            LossinessMode::Surface => {
-                let count = self.meridian_only_records.len();
-                let noun = if count == 1 { "mapping" } else { "mappings" };
-                self.info_with_category(
-                    "launch-time-field-summary",
-                    format!(
-                        "{count} launch-time field {noun} handled by meridian at spawn — run with --verbose for detail"
-                    ),
-                    DiagnosticCategory::Lossiness,
-                );
-            }
-            LossinessMode::Verbose => {
-                use std::collections::BTreeMap;
-                let mut grouped: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
-                for record in &self.meridian_only_records {
-                    grouped
-                        .entry((
-                            record.item_kind.clone(),
-                            record.item_name.clone(),
-                            record.target.clone(),
-                        ))
-                        .or_default()
-                        .push(record.field.clone());
-                }
-                for ((item_kind, item_name, target), mut fields) in grouped {
-                    fields.sort();
-                    fields.dedup();
-                    let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
-                    let count = field_refs.len();
-                    let noun = if count == 1 { "field" } else { "fields" };
-                    let target_label = format!(".{}", target.to_lowercase());
-                    let code = if item_kind == "skill" {
-                        "skill-field-meridian-only"
-                    } else {
-                        "agent-field-meridian-only"
-                    };
-                    self.warn_with_category(
-                        code,
-                        format!(
-                            "{item_kind} `{item_name}`: {count} {noun} not lowered (meridian-only) for {target_label} ({})",
-                            field_refs.join(", ")
-                        ),
-                        DiagnosticCategory::Lossiness,
-                    );
-                }
-            }
-            LossinessMode::Hidden => {}
-        }
-        self.meridian_only_records.clear();
     }
 }
 
@@ -566,25 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn collector_suppresses_lossiness_when_hidden() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
-        coll.warn_with_category(
-            "agent-field-dropped",
-            "agent `x`: dropped",
-            DiagnosticCategory::Lossiness,
-        );
-        assert!(coll.drain().is_empty());
-
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.warn_with_category(
-            "agent-field-dropped",
-            "agent `x`: dropped",
-            DiagnosticCategory::Lossiness,
-        );
-        assert_eq!(coll.drain().len(), 1);
-    }
-
-    #[test]
     fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
         use crate::resolve::{
             EngineFallback, EngineFallbackRequirement, EngineFallbackSkippedVersion,
@@ -639,44 +584,29 @@ mod tests {
         assert_eq!(fallbacks[0].engines, vec!["mars", "meridian"]);
     }
 
-    #[test]
-    fn collector_suppresses_info_lossiness_when_hidden() {
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Hidden);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        assert!(coll.drain().is_empty());
-
-        let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.info_with_category(
-            "field-approximate",
-            "field `x`: approximate",
-            DiagnosticCategory::Lossiness,
-        );
-        let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].level, DiagnosticLevel::Info);
-        assert_eq!(diags[0].category, Some(DiagnosticCategory::Lossiness));
+    fn meridian_only(field: &str) -> LossyField {
+        LossyField {
+            field: field.into(),
+            target: "Claude".into(),
+            classification: crate::compiler::lossiness::Lossiness::MeridianOnly,
+        }
     }
 
     #[test]
     fn collector_verbose_surfaces_meridian_only_detail() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
         let diags = coll.drain();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "agent-field-meridian-only");
     }
 
     #[test]
-    fn collector_surface_emits_meridian_only_summary() {
+    fn collector_surface_is_silent_about_meridian_only_fields() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.record_meridian_only_field("agent", "coder", "Claude", "approval");
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
         let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "launch-time-field-summary");
+        assert!(diags.is_empty());
     }
 
     #[test]

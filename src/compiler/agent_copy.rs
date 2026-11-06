@@ -31,7 +31,7 @@ pub fn build_agent_copy_spec(
 ) -> Option<AgentCopySpec> {
     let config = config?;
     if let Some(message) = deprecated_fanout_agents_warning(Some(config)) {
-        diag.warn("agent-copy-fanout-moved", message);
+        diag.warn_advisory("agent-copy-fanout-moved", message);
     }
     if config.harnesses.is_empty() {
         return None;
@@ -44,7 +44,7 @@ pub fn build_agent_copy_spec(
             continue;
         }
         let Some(kind) = mars_schema::harness::parse(trimmed) else {
-            diag.warn(
+            diag.warn_advisory(
                 "agent-copy-invalid-harness",
                 format!(
                     "settings.meridian.agent_copy.harnesses: unknown harness '{trimmed}'; \
@@ -56,7 +56,7 @@ pub fn build_agent_copy_spec(
         };
         let target = crate::harness::registry::descriptor(kind).default_target;
         if !managed_targets.iter().any(|t| t == target) {
-            diag.warn(
+            diag.warn_advisory(
                 "agent-copy-harness-not-in-targets",
                 format!(
                     "settings.meridian.agent_copy.harnesses: harness '{trimmed}' maps to target \

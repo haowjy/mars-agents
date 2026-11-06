@@ -1159,11 +1159,7 @@ path = "{}"
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
-        .success()
-        .stderr(
-            predicate::str::contains("launch-time field mapping handled by meridian at spawn")
-                .not(),
-        );
+        .success();
 
     assert!(project.child(".mars/agents/cursor-worker.md").exists());
     assert!(project.child(".cursor/agents/cursor-worker.md").exists());

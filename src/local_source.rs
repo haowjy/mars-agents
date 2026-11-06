@@ -79,7 +79,7 @@ pub fn discover_local_items(
             .iter()
             .find(|item| item.discovered.id == candidate.discovered.id)
         {
-            diag.warn(
+            diag.warn_advisory(
                 "local-shadow",
                 format!(
                     "self {} `{}` at `{}` shadows package source `{}`",

@@ -279,7 +279,12 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                 }
                 Err(err) => return Err(err),
             };
-            dispatch_with_root(cmd, &ctx, cli.json)
+            dispatch_with_root(
+                cmd,
+                &ctx,
+                cli.root.is_some().then_some(ctx.project_root.as_path()),
+                cli.json,
+            )
         }
     }
 }
@@ -308,12 +313,17 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
     )
 }
 
-fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+fn dispatch_with_root(
+    cmd: &Command,
+    ctx: &MarsContext,
+    explicit_root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     match cmd {
         Command::Validate(args) => validate::run(args, ctx, json),
         Command::Export(args) => export::run(args, ctx, json),
         Command::Add(args) => add::run(args, ctx, json),
-        Command::Adopt(args) => adopt::run(args, ctx, json),
+        Command::Adopt(args) => adopt::run(args, ctx, explicit_root, json),
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),
@@ -330,13 +340,32 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Doctor(args) => doctor::run(args, ctx, json),
         Command::Repair(args) => repair::run(args, ctx, json),
         Command::Models(args) => models::run(args, ctx, json),
-        Command::Build(args) => build::run(args, ctx, json),
+        Command::Build(args) => build::run(args, ctx, explicit_root, json),
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
         // Root-free commands handled in dispatch_result — unreachable here
         Command::Init(_) | Command::Check(_) | Command::Cache(_) | Command::Provide(_) => {
             unreachable!()
         }
+    }
+}
+
+/// Absolute form of a path typed on the command line. A relative path resolves against the
+/// working directory when it exists there, since that is where the user typed it. Otherwise,
+/// with an explicit `--root`, it resolves against the project root that `--root` led to
+/// (`explicit_root`; `--root` is a walk-up start, so it can name a subdirectory). A host such as
+/// `meridian mars` always appends `--root`, so the working directory must win when it can.
+pub(crate) fn resolve_cli_path(
+    path: &Path,
+    explicit_root: Option<&Path>,
+) -> Result<PathBuf, MarsError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let from_cwd = std::env::current_dir()?.join(path);
+    match explicit_root {
+        Some(root) if from_cwd.symlink_metadata().is_err() => Ok(root.join(path)),
+        _ => Ok(from_cwd),
     }
 }
 

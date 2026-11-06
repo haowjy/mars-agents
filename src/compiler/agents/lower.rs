@@ -110,9 +110,14 @@ mod tests {
             !codex_text.contains("my_custom_tool") && !codex_text.contains("mcp__server__Tool"),
             "codex native agent artifacts drop tools entirely: {codex_text}"
         );
-        assert!(codex.lossy_fields.iter().any(|field| {
-            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
-        }));
+        assert!(
+            !codex
+                .lossy_fields
+                .iter()
+                .any(|field| field.field.starts_with("tools")),
+            "a plain grant loses nothing: {:?}",
+            codex.lossy_fields
+        );
 
         let cursor = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
         let cursor_text = String::from_utf8(cursor.bytes).unwrap();
@@ -122,9 +127,14 @@ mod tests {
                 && !cursor_text.contains("mcp__server__Tool"),
             "cursor native agent artifacts drop tools entirely: {cursor_text}"
         );
-        assert!(cursor.lossy_fields.iter().any(|field| {
-            field.field == "tools" && matches!(field.classification, Lossiness::Dropped)
-        }));
+        assert!(
+            !cursor
+                .lossy_fields
+                .iter()
+                .any(|field| field.field.starts_with("tools")),
+            "a plain grant loses nothing: {:?}",
+            cursor.lossy_fields
+        );
     }
 
     #[test]
@@ -205,9 +215,9 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_pi(&profile, fm.body(), &NativeModel::Inherit);
         assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "mcp"
+            field.field.starts_with("mcp")
                 && field.target == "Pi"
-                && matches!(field.classification, Lossiness::Dropped)
+                && matches!(field.classification, Lossiness::Quiet { .. })
         }));
     }
     #[test]
@@ -223,7 +233,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "model-invocable"
                 && f.target == "Claude"
-                && f.classification == Lossiness::Dropped
+                && matches!(f.classification, Lossiness::Quiet { .. })
         }));
     }
 
@@ -240,7 +250,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "user-invocable"
                 && f.target == "Claude"
-                && f.classification == Lossiness::Dropped
+                && matches!(f.classification, Lossiness::Quiet { .. })
         }));
     }
 
@@ -260,8 +270,8 @@ mod tests {
         for field in ["network", "network-allow", "network-deny"] {
             assert!(
                 out.lossy_fields.iter().any(|lossy| lossy.field == field
-                    && matches!(lossy.classification, Lossiness::Dropped)),
-                "{field} not dropped: {:?}",
+                    && matches!(lossy.classification, Lossiness::Dropped(_))),
+                "{field} not reported as a lost restriction: {:?}",
                 out.lossy_fields
             );
         }
@@ -312,7 +322,7 @@ mod tests {
         );
         assert!(out.lossy_fields.iter().any(|field| {
             field.field == "harness-overrides.codex.model_reasoning_effort"
-                && matches!(field.classification, Lossiness::Dropped)
+                && matches!(field.classification, Lossiness::Quiet { .. })
         }));
     }
 
@@ -380,7 +390,7 @@ mod tests {
 
     #[test]
     fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
-        let content = "---\nname: r\nharness: cursor\ntools:\n  Read: allow\n  mcp(plugin:base): allow\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+        let content = "---\nname: r\nharness: cursor\ntools:\n  \"*\": deny\n  Read: allow\n  mcp(plugin:base): allow\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
@@ -388,7 +398,7 @@ mod tests {
             opencode
                 .lossy_fields
                 .iter()
-                .any(|field| field.field == "tools"),
+                .any(|field| field.field.starts_with("tools")),
             "harness-overrides passthrough should not clear tools lossiness",
         );
         assert!(
@@ -404,7 +414,7 @@ mod tests {
             cursor
                 .lossy_fields
                 .iter()
-                .any(|field| field.field == "tools"),
+                .any(|field| field.field.starts_with("tools")),
             "cursor override should keep tools lossiness",
         );
         assert!(
@@ -458,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_sandbox_is_approximate_not_dropped() {
+    fn cursor_sandbox_is_meridian_only() {
         let content = "---\nname: r\nharness: cursor\nsandbox: read-only\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
@@ -470,28 +480,18 @@ mod tests {
             "sandbox leaked into artifact: {text}"
         );
 
-        // lossiness must be Approximate, not Dropped
+        // Meridian applies it at spawn, like every other target
         let field = out
             .lossy_fields
             .iter()
             .find(|f| f.field == "sandbox")
             .expect("sandbox should appear in lossy_fields");
         assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
-            assert!(
-                note.contains("workspace-write") && note.contains("disabled"),
-                "note should document workspace-write mapping: {note}"
-            );
-        }
+        assert_eq!(field.classification, Lossiness::MeridianOnly);
     }
 
     #[test]
-    fn cursor_approval_is_approximate_not_dropped() {
+    fn cursor_approval_is_meridian_only() {
         let content = "---\nname: r\nharness: cursor\napproval: auto\n---\n# body";
         let (profile, fm, _) = profile_from(content);
         let out = lower_to_cursor_with_model(&profile, fm.body(), &NativeModel::Inherit);
@@ -503,27 +503,15 @@ mod tests {
             "approval leaked into artifact: {text}"
         );
 
-        // lossiness must be Approximate, not Dropped
+        // Meridian applies it at spawn, like every other target
         let field = out
             .lossy_fields
             .iter()
             .find(|f| f.field == "approval")
             .expect("approval should appear in lossy_fields");
         assert_eq!(field.target, "Cursor");
-        assert!(
-            matches!(field.classification, Lossiness::Approximate { .. }),
-            "expected Approximate, got {:?}",
-            field.classification
-        );
-        if let Lossiness::Approximate { note } = field.classification {
-            assert!(
-                note.contains("--force") && note.contains("--yolo"),
-                "note should document --force/--yolo mapping: {note}"
-            );
-        }
+        assert_eq!(field.classification, Lossiness::MeridianOnly);
     }
-
-    // --- 3.3: Pi lowering ---
 
     #[test]
     fn pi_lowering_preserves_name_description_model() {

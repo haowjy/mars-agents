@@ -17,7 +17,6 @@ model-policies:
 # Cursor body
 "#;
 
-const LOSSINESS_SUMMARY_SNIPPET: &str = "launch-time field mapping handled by meridian at spawn";
 const LOSSINESS_VERBOSE_SNIPPET: &str = "not lowered (meridian-only) for .cursor (model-policies)";
 
 fn setup_lossy_synced_project(dir: &TempDir) -> std::path::PathBuf {
@@ -42,7 +41,7 @@ path = "{}"
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 
     project.to_path_buf()
 }
@@ -56,11 +55,11 @@ fn sync_hides_lossiness_summary_without_verbose() {
         .args(["sync", "--root", project.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 }
 
 #[test]
-fn sync_json_keeps_the_info_summary() {
+fn sync_json_has_no_lossiness_without_verbose() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
@@ -76,8 +75,8 @@ fn sync_json_keeps_the_info_summary() {
             .as_array()
             .expect("diagnostics array")
             .iter()
-            .any(|d| d["code"] == "launch-time-field-summary" && d["level"] == "info"),
-        "sync --json must keep the info summary: {stdout}"
+            .all(|d| d["category"].as_str() != Some("lossiness")),
+        "sync --json carries no launch-time lossiness by default: {stdout}"
     );
 }
 
@@ -105,10 +104,6 @@ fn validate_suppresses_lossiness_warnings() {
     assert!(
         !stderr.contains(LOSSINESS_VERBOSE_SNIPPET),
         "validate stderr must not contain lossiness warning: {stderr}"
-    );
-    assert!(
-        !stderr.contains(LOSSINESS_SUMMARY_SNIPPET),
-        "validate stderr must not contain lossiness summary: {stderr}"
     );
 }
 
@@ -163,12 +158,11 @@ agent_emission = "always"
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not())
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 }
 
 #[test]
-fn check_surfaces_lossiness_for_configured_targets() {
+fn check_is_silent_about_launch_time_fields_without_verbose() {
     let dir = TempDir::new().unwrap();
     let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
     std::fs::write(
@@ -181,7 +175,7 @@ fn check_surfaces_lossiness_for_configured_targets() {
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 }
 
 #[test]
@@ -198,7 +192,7 @@ fn check_skips_agent_lossiness_when_emission_suppressed() {
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
+        .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET).not());
 }
 
 #[test]

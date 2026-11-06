@@ -233,7 +233,7 @@ pub fn check_env_refs(
                 if strict {
                     return Err(MarsError::Config(ConfigError::Invalid { message: msg }));
                 }
-                diag.warn("mcp-env-missing", msg);
+                diag.warn_advisory("mcp-env-missing", msg);
             }
         }
     }

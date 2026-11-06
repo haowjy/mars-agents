@@ -132,7 +132,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 ..SyncOptions::default()
             },
             recovery: Default::default(),
-            lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
+            lossiness_mode: crate::diagnostic::LossinessMode::Surface,
         };
 
         let report = crate::sync::execute(ctx, &request)?;
@@ -155,7 +155,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             ..SyncOptions::default()
         },
         recovery: Default::default(),
-        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
+        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
     };
 
     let report = crate::sync::execute(ctx, &request)?;

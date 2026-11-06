@@ -81,7 +81,7 @@ impl LocalMerge<'_> {
             if let Some(existing) = target_state.items.shift_remove(&dest_path)
                 && existing.source_hash != target_item.source_hash
             {
-                diag.warn(
+                diag.warn_advisory(
                     "local-shadow",
                     format!(
                         "local hook `{}` shadows dependency `{}` hook on target `{target_name}`",
@@ -170,7 +170,7 @@ impl LocalMerge<'_> {
         if let Some(existing) = target_state.items.shift_remove(&dest_path)
             && existing.source_hash != source_hash
         {
-            diag.warn(
+            diag.warn_advisory(
                 "local-shadow",
                 format!(
                     "local {} `{}` shadows dependency `{}` {} `{}`",

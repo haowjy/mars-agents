@@ -401,7 +401,7 @@ pub(crate) fn report_native_hook(
 ) {
     match item.origin {
         Origin::Local => diag.error("hook-native-hook", error.to_string()),
-        Origin::Dependency => diag.warn("hook-native-hook", error.to_string()),
+        Origin::Dependency => diag.warn_advisory("hook-native-hook", error.to_string()),
     }
 }
 

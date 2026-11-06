@@ -199,7 +199,6 @@ pub(super) struct TreeProfile {
     pub(super) harness: HarnessId,
     pub(super) root_file: RootFile,
     pub(super) dropped_agent_fields: &'static [&'static str],
-    pub(super) approximate_lowers_to_dropped: bool,
     /// `None` keeps the native lowering as is.
     pub(super) agents: Option<AgentPolicy>,
     pub(super) native_model_aliases: &'static [&'static str],

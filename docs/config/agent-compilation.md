@@ -495,32 +495,44 @@ Every field lowering is classified as one of four categories:
 | **dropped** | No native equivalent; value is discarded in the native artifact (preserved in `.mars/`) |
 | **meridian-only** | Consumed exclusively by Meridian; never lowered to any harness-native format |
 
-A plain `mars sync`, `mars upgrade` or `mars add` reports one fact: a restriction was lost. When a
-target cannot carry a tool deny, an `ask`, an allow list such as `{"*": deny, read: allow}`, an MCP
-deny or `ask` it does not write, or a network limit (`network: deny`, `network-allow`,
-`network-deny` on Codex), the target runs the agent with tools or network access you withheld.
-Mars prints one line for the whole project, however many targets and agents are affected (code
-`agent-restriction-dropped`), on every sync and on `add`, until the restriction is gone from the
-agent:
+Mars warns only when you can act on a loss or it changes behaviour that matters. Everything
+else is quiet and appears under `--verbose`. A plain `mars sync`, `mars upgrade`, `mars add`,
+`mars check`, `mars init` or `mars build plugin` prints one line per agent and target for a
+**dropped** field:
+
+- a `harness-overrides.<harness>` key that can carry policy (`disallowed-tools`, `permission`,
+  `sandbox_mode`, …) which Mars discards because it lowers that key itself, or a scalar OpenCode
+  `permission` that replaces the whole map: remove or move the override;
+- `model-invocable: false`, which no target file carries, so another model can pick the agent.
 
 ```
-warning: 3 agents (`allowlist`, `mixed`, `reviewer`) lose a restriction on .codex and .pi: it does not apply there; run `mars sync --verbose` for the rules per agent and target
+warning: agent `reviewer`: 1 field dropped for .codex (harness-overrides.codex.sandbox_mode)
 ```
 
-Names past the third are counted (`and 2 more`). When the agents do not all lose a restriction on
-every target the line says `on some of .codex and .pi`; `--verbose` has the exact pairs. A field Mars does not write is reported by
-default, so this also covers an override Mars discards: a `harness-overrides.<harness>` key that
-can carry policy (`disallowed-tools`, `permission`, `sandbox_mode`, …) or a scalar OpenCode
-`permission` that replaces the whole map. A site is quiet only when it says why it loses nothing
-the author withheld: a plain grant (`tools: {read: allow}`), `user-invocable: false` (`model-invocable: false`
-is reported, since it stops another model choosing the agent), `network: allow` on Codex, an OpenCode `permission` entry that loses to a
-stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, and every skill
-field. Approximate mappings and meridian-only fields are quiet too.
+Everything else is quiet, and a quiet site carries its reason:
 
-`mars sync --verbose` (and `mars upgrade --verbose`) print one warning per agent and target for
-every dropped and approximate field, with the field names you wrote, for example
-`tools (deny edit, deny bash)`, plus meridian-only fields. `mars check` and `mars init` always list
-everything per agent:
+| Quiet class | Why it is quiet |
+|---|---|
+| Tool, MCP and network rules a native file cannot carry (a tool deny, `ask`, an allow list, an MCP deny or `ask`, `network` limits on Codex, scoped denies on OpenCode) | You cannot fix it in the profile. Meridian enforces what the harness supports at launch, and `meridian spawn --dry-run` reports each gap (owner ruling: gaps are reported there, not warned about) |
+| Launch-time fields (`model-policies`, `sandbox`, `approval`, `mode`, `fanout`, and the network fields on targets that do not lower them) | Meridian applies them at spawn |
+| Approximate mappings | The closest native equivalent; the semantics differ slightly |
+| A plain grant, `user-invocable: false`, `network: allow` on Codex, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, an override of an identity, model or skill-list key, every skill field | Nothing the author withheld is lost |
+
+The tool rule is the same on every target, because what the native file lacks is the same
+question each time:
+
+- **Codex** has no carrier for tools or network in its agent TOML.
+- **OpenCode** keeps plain `deny` rules as `permission`; Meridian enforces scoped rules and
+  allow lists on the selected config agent at launch.
+- **Pi**'s native file carries none; Meridian's `meridian-permissions` extension enforces them at
+  launch.
+- **Cursor** has no tool rules and Meridian cannot enforce them there either. That is a real gap,
+  and the dry-run report is where it is named.
+
+`--verbose` (on `sync`, `upgrade`, `check` and `build plugin`) prints one warning per agent and
+target for every lossy field: dropped, quiet with its reason, approximate and launch-time, with
+the field names you wrote, for example `tools (deny edit, deny bash)`. `mars sync --verbose` also notes once
+that project `[settings]` network keys reach no Codex file.
 
 ```
 warning: agent `reviewer`: 1 field approximately mapped for .opencode (effort: effort maps to --variant on subprocess only)

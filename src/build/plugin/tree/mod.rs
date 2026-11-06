@@ -482,30 +482,7 @@ fn lower_agent(
     );
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
-    let plugin_lossy_fields;
-    let lossy_fields = if tree_profile.approximate_lowers_to_dropped {
-        plugin_lossy_fields = lowered
-            .lossy_fields
-            .iter()
-            .cloned()
-            .map(|mut field| {
-                if let crate::compiler::lossiness::Lossiness::Approximate { note } =
-                    field.classification
-                {
-                    // The plugin tree has no launch-time projection to approximate with, but
-                    // an approximate field is not a lost restriction: keep it quiet and keep
-                    // its note.
-                    field.classification =
-                        crate::compiler::lossiness::Lossiness::Harmless { why: note };
-                }
-                field
-            })
-            .collect::<Vec<_>>();
-        plugin_lossy_fields.as_slice()
-    } else {
-        lowered.lossy_fields.as_slice()
-    };
-    diag.record_lossy_fields("agent", item.id.name.as_str(), lossy_fields);
+    diag.record_lossy_fields("agent", item.id.name.as_str(), &lowered.lossy_fields);
 
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(

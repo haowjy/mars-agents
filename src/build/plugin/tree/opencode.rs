@@ -29,7 +29,6 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
         file: OPENCODE_ROOT_FILE,
     },
     dropped_agent_fields: &[],
-    approximate_lowers_to_dropped: false,
     agents: Some(keep_plugin_agent_fields),
     native_model_aliases: &[],
     plugin_root: PluginRoot::RuntimeResolved,

@@ -38,12 +38,11 @@ pub enum LossinessMode {
     /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Surface one line per project for lost restrictions plus one meridian-only summary line.
+    /// Default for sync, check, init and plugin builds: only losses the user can act on or that
+    /// change behaviour that matters (`Lossiness::Dropped`).
     Surface,
-    /// Surface per-item detail for every dropped and approximate field, and per-item meridian-only detail.
+    /// Every lossy field per item: quiet, approximate and launch-time ones too.
     Verbose,
-    /// The `check` / `init` preview: per-item dropped and approximate fields, one meridian-only summary.
-    Preview,
 }
 
 impl LossinessMode {
@@ -51,13 +50,8 @@ impl LossinessMode {
         self != LossinessMode::Hidden
     }
 
-    /// Whether dropped and approximate fields print per item rather than rolling up.
-    pub fn per_item(self) -> bool {
-        matches!(self, LossinessMode::Verbose | LossinessMode::Preview)
-    }
-
-    /// Whether launch-time (meridian-only) fields print per item rather than as one summary.
-    pub fn meridian_detail(self) -> bool {
+    /// Whether quiet, approximate and launch-time fields print as well as dropped ones.
+    pub fn verbose(self) -> bool {
         self == LossinessMode::Verbose
     }
 }
@@ -213,6 +207,11 @@ impl DiagnosticCollector {
                 item_name: item_name.to_string(),
                 field: field.clone(),
             }));
+    }
+
+    /// Whether `--verbose` asked for the lossiness detail that is quiet by default.
+    pub(crate) fn lossiness_verbose(&self) -> bool {
+        self.lossiness_mode.verbose()
     }
 
     fn should_emit_lossiness(&self) -> bool {
@@ -631,12 +630,11 @@ mod tests {
     }
 
     #[test]
-    fn collector_surface_emits_meridian_only_summary() {
+    fn collector_surface_is_silent_about_meridian_only_fields() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
         coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
         let diags = coll.drain();
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].code, "launch-time-field-summary");
+        assert!(diags.is_empty());
     }
 
     #[test]

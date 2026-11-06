@@ -770,10 +770,12 @@ installs in that package's own checkout: its items plus dependencies under its o
 `[dependencies]` filters, renames, and visibility rules.
 
 ```bash
-mars build plugin [PATH] [--out <dir>]
+mars build plugin [PATH] [--out <dir>] [--verbose]
 ```
 
-`PATH` defaults to the detected project root. With an explicit path the command can run outside
+`PATH` defaults to the detected project root. `--verbose` lists every field a tree's agents do
+not carry; by default only what you wrote and can fix is reported (see
+[lossiness](../config/agent-compilation.md#lossiness-model)). With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
 the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or installed harness
 model catalogs.

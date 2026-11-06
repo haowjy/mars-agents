@@ -181,7 +181,7 @@ Mars compiles universal frontmatter fields to each target's native field names d
 
 ² Cursor rules have no invocation flag. A rule without a description is a Manual rule that Cursor's agent won't select by itself; a rule with one is selected when the description fits.
 
-`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation, but skills lose no restriction, so a plain `mars sync`, `mars upgrade` or `mars add` prints none of them. `mars sync --verbose`, `mars check` and `mars init` list each dropped field per skill, and `Approximate` entries too.
+`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation, but skills lose no restriction, so nothing prints by default. `--verbose` on `mars sync`, `mars upgrade` or `mars check` lists each dropped field per skill, and `Approximate` entries too.
 
 ---
 

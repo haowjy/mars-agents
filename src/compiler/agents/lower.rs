@@ -217,7 +217,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|field| {
             field.field.starts_with("mcp")
                 && field.target == "Pi"
-                && matches!(field.classification, Lossiness::Harmless { .. })
+                && matches!(field.classification, Lossiness::Quiet { .. })
         }));
     }
     #[test]
@@ -250,7 +250,7 @@ mod tests {
         assert!(out.lossy_fields.iter().any(|f| {
             f.field == "user-invocable"
                 && f.target == "Claude"
-                && matches!(f.classification, Lossiness::Harmless { .. })
+                && matches!(f.classification, Lossiness::Quiet { .. })
         }));
     }
 
@@ -270,8 +270,8 @@ mod tests {
         for field in ["network", "network-allow", "network-deny"] {
             assert!(
                 out.lossy_fields.iter().any(|lossy| lossy.field == field
-                    && matches!(lossy.classification, Lossiness::Dropped)),
-                "{field} not reported as a lost restriction: {:?}",
+                    && matches!(lossy.classification, Lossiness::Quiet { .. })),
+                "{field} not reported as a quiet loss: {:?}",
                 out.lossy_fields
             );
         }
@@ -322,7 +322,7 @@ mod tests {
         );
         assert!(out.lossy_fields.iter().any(|field| {
             field.field == "harness-overrides.codex.model_reasoning_effort"
-                && matches!(field.classification, Lossiness::Harmless { .. })
+                && matches!(field.classification, Lossiness::Quiet { .. })
         }));
     }
 

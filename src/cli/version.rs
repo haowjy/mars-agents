@@ -120,6 +120,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 destination: crate::build::plugin::PluginBuildDestination::Configured,
                 metadata: metadata.clone(),
                 version: Some(next_version.clone()),
+                lossiness_mode: crate::diagnostic::LossinessMode::Surface,
             },
         )?)
     } else {

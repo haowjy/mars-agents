@@ -58,7 +58,7 @@ is the curated harness-model view; only `--live` routes its rows.
 
 ## Lossiness Gating
 
-`SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Hidden`) is applied when the
+`SyncRequest.lossiness_mode` (`LossinessMode::Surface` | `Verbose` | `Hidden`) is applied when the
 pipeline creates its `DiagnosticCollector`. Lossiness-category diagnostics are suppressed
 at emission time when mode is `Hidden`.
 

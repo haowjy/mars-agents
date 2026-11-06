@@ -32,6 +32,10 @@ pub struct PluginArgs {
     /// Destination for the generated plugin output.
     #[arg(long)]
     pub out: Option<PathBuf>,
+
+    /// Show every field a plugin tree does not carry, not only what you can act on.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 fn parse_harness(value: &str) -> Result<HarnessId, String> {
@@ -193,6 +197,11 @@ fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
         destination,
         metadata,
         version: None,
+        lossiness_mode: if args.verbose {
+            crate::diagnostic::LossinessMode::Verbose
+        } else {
+            crate::diagnostic::LossinessMode::Surface
+        },
     })?;
 
     if json {

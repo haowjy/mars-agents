@@ -106,6 +106,7 @@ pub(crate) struct PluginBuildRequest {
     pub destination: PluginBuildDestination,
     pub metadata: PackageMetadata,
     pub version: Option<String>,
+    pub lossiness_mode: LossinessMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,7 +178,7 @@ pub(crate) fn build_plugin(request: &PluginBuildRequest) -> Result<PluginBuildRe
 }
 
 pub(crate) fn stage_plugin(request: &PluginBuildRequest) -> Result<StagedPluginBuild, MarsError> {
-    let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
     match stage_plugin_inner(request, &mut diag) {
         Ok(staged) => Ok(staged),
         Err(source) => {

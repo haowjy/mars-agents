@@ -178,22 +178,20 @@ the authored source tree remains untouched and the install layer applies the in-
 `execute()` creates the pipeline `DiagnosticCollector`. Lossiness-category diagnostics are
 suppressed at emission (`warn_with_category` / `error_with_category`) when mode is `Hidden`.
 
-`mars sync`, `mars upgrade` and `mars add` set `Surface` (`--verbose` on sync and upgrade sets
-`Verbose`); validate, export, repair, link, etc. set `Hidden`. `mars check` / `mars init` use
-`Preview`: per-item dropped and approximate fields with one meridian-only summary (`Verbose`
-prints per-item meridian-only detail too). `LossinessMode::per_item` is the split.
+`mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin` set
+`Surface`; `--verbose` (sync, upgrade, check, build plugin) sets `Verbose`; validate, export,
+repair, link, etc. set `Hidden`.
 
-`Surface` reports `Lossiness::Dropped`, the default class: a field the native file does not
-carry may be a restriction the target then runs without. Emission calls
-`DiagnosticCollector::record_lossy_fields`, which buffers every field; `drain` hands the buffer to
-`compiler::lossiness::render`, the one place a loss becomes a line. `Surface` renders one line for
-the whole project naming the agents and the targets (`agent-restriction-dropped`), like
-`launch-time-field-summary`; the per-item modes render per agent and target. A lowering site is quiet
-only by saying why: `Harmless { why }` (shown per item with `--verbose`/`Preview`), `Approximate`
-or `MeridianOnly`. Quiet needs a reason, so an unclassified or misfiled site costs one extra line,
-not a silent loss. The line prints on every sync and `add`: there is deliberately no "once" gate,
-because a lock change does not prove the user saw the warning (Hidden commands, overlays and fresh
-clones all advance or skip it).
+The rule: warn only when the user can act on it or it changes behaviour that matters; the rest is
+`--verbose`. `Surface` therefore prints `Lossiness::Dropped` only, per agent and target. Emission
+calls `DiagnosticCollector::record_lossy_fields`, which buffers every field; `drain` hands the
+buffer to `compiler::lossiness::render`, the one place a loss becomes a line. A lowering site is
+quiet only by saying why: `Quiet { why }`, `Approximate` or `MeridianOnly`, all `Verbose`-only.
+Tool, MCP and network rules a native file cannot carry share `NO_NATIVE_CARRIER` (in
+`agents/lower_policy.rs`) as their reason: meridian enforces them at launch and
+`meridian spawn --dry-run` reports the gap. That one classification covers Codex, OpenCode, Pi
+and Cursor; there is no per-harness list. Quiet needs a reason, so an unclassified site is loud.
+There is deliberately no "once" gate: a lock change does not prove the user saw a warning.
 
 ### Frozen Gate
 

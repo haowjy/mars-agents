@@ -88,7 +88,7 @@ mod tests {
         lossy_fields.iter().any(|f| {
             f.field == field
                 && f.target == target
-                && matches!(f.classification, Lossiness::Harmless { .. })
+                && matches!(f.classification, Lossiness::Quiet { .. })
         })
     }
 

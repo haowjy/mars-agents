@@ -12,14 +12,16 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Dropped fields with non-default values emit [`LossyField`] diagnostics.
 ///
-/// Launch-time fields (approval, sandbox, network, mode where not emitted, …) are
-/// classified [`Lossiness::MeridianOnly`] — Meridian enforces them at spawn, so omitting
-/// them from native artifacts is not a behavioral loss. Every other field the native file does
-/// not carry is [`Lossiness::Dropped`] and is reported by default, unless the site says why
-/// nothing the author withheld is lost ([`Lossiness::Harmless`]) or the mapping is merely
-/// coarse ([`Lossiness::Approximate`]). Quiet needs a reason: an unclassified site must be
-/// loud. Codex lowers `network` as dropped, because its native artifact carries `sandbox_mode`,
-/// so a natively run Codex agent keeps Codex's own network default.
+/// Launch-time fields (approval, sandbox, mode where not emitted, model-policies, …) are
+/// classified [`Lossiness::MeridianOnly`]: Meridian applies them at spawn. A tool, MCP or network
+/// rule the native file cannot carry is [`Lossiness::Quiet`] with [`NO_NATIVE_CARRIER`] as its
+/// reason: the user cannot fix it in the profile, and `meridian spawn --dry-run` reports the gap.
+/// The classes are decided by that, not per harness: Codex has no carrier at all; OpenCode keeps
+/// plain denies as `permission` and meridian enforces the scoped and allow-list rules at launch;
+/// Pi's extension enforces them at launch; Cursor has neither, and the dry-run report says so.
+/// [`Lossiness::Dropped`] is for what the user wrote and can act on (a `harness-overrides` key
+/// Mars discards, `model-invocable: false`), and it prints by default. An unclassified site is
+/// loud: quiet needs a reason.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput};
 use crate::compiler::tool_policy::{PolicyProjection, RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
@@ -157,11 +159,18 @@ fn tools_label(rules: &[String]) -> String {
     format!("tools ({})", rules.join(", "))
 }
 
+/// Why a tool or network rule the native file cannot carry is quiet. The user cannot fix it by
+/// editing the profile, and meridian enforces what the harness supports at launch.
+const NO_NATIVE_CARRIER: Lossiness = Lossiness::Quiet {
+    why: "the native file has no carrier for this rule; meridian enforces it at launch where the \
+          harness supports it, and `meridian spawn --dry-run` reports the gap",
+};
+
 fn restriction_lost(field: String, target: &str) -> LossyField {
     LossyField {
         field,
         target: target.into(),
-        classification: Lossiness::Dropped,
+        classification: NO_NATIVE_CARRIER,
     }
 }
 
@@ -211,7 +220,7 @@ fn record_agent_invocation_lossiness(
         lossy.push(LossyField {
             field: "user-invocable".into(),
             target: target.into(),
-            classification: Lossiness::Harmless {
+            classification: Lossiness::Quiet {
                 why: "the user can still invoke it here; no tool or network access changes",
             },
         });
@@ -392,7 +401,7 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::EffortApproximate("Pi effort semantics unverified"),
         AgentLossinessStep::Mcp {
             carries_denies: false,
-            remainder: Lossiness::Harmless {
+            remainder: Lossiness::Quiet {
                 why: "an MCP grant restricts nothing",
             },
         },
@@ -434,7 +443,7 @@ fn native_overrides<'a>(
                 // Any other key may carry policy (`disallowed-tools`, `permission`,
                 // `sandbox_mode`, …): its override is a restriction the target never gets.
                 classification: if NON_POLICY_OVERRIDE_KEYS.contains(&key.as_str()) {
-                    Lossiness::Harmless {
+                    Lossiness::Quiet {
                         why: "not a restriction: an identity, model or skill-list key",
                     }
                 } else {
@@ -480,7 +489,7 @@ fn opencode_permission(
         {
             lossy.push(lost(
                 format!("harness-overrides.opencode.permission.{name}"),
-                Lossiness::Harmless {
+                Lossiness::Quiet {
                     why: "Mars's deny wins, the stricter entry",
                 },
             ));
@@ -609,10 +618,10 @@ impl<'a> AgentLoweringCtx<'a> {
         // omitted `tools:` inherits every tool). A map-form grant is not lossy: omitting
         // `tools:` already leaves the granted tool available.
         if self.eff.has_ask() {
-            self.record_if_present("tools (ask)", true, Lossiness::Dropped);
+            self.record_if_present("tools (ask)", true, NO_NATIVE_CARRIER);
         }
         if allowlist && allowed.is_empty() {
-            self.record_if_present("tools (allowlist)", true, Lossiness::Dropped);
+            self.record_if_present("tools (allowlist)", true, NO_NATIVE_CARRIER);
         }
         if !overlaps.is_empty() {
             self.lossy.push(LossyField {
@@ -711,7 +720,7 @@ impl<'a> AgentLoweringCtx<'a> {
             self.lossy.push(LossyField {
                 field: format!("tools (deny {} is scoped)", scoped.join(", ")),
                 target: target.into(),
-                classification: Lossiness::Dropped,
+                classification: NO_NATIVE_CARRIER,
             });
         }
         self.denied = unscoped;
@@ -1034,9 +1043,9 @@ pub fn lower_to_codex(
                 field: field.into(),
                 target: target.into(),
                 classification: if restriction {
-                    Lossiness::Dropped
+                    NO_NATIVE_CARRIER
                 } else {
-                    Lossiness::Harmless {
+                    Lossiness::Quiet {
                         why: "a grant, not a restriction; Codex keeps its own network setting",
                     }
                 },

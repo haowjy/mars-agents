@@ -60,7 +60,7 @@ fn sync_hides_lossiness_summary_without_verbose() {
 }
 
 #[test]
-fn sync_json_keeps_the_info_summary() {
+fn sync_json_has_no_lossiness_without_verbose() {
     let dir = TempDir::new().unwrap();
     let project = setup_lossy_synced_project(&dir);
 
@@ -76,8 +76,8 @@ fn sync_json_keeps_the_info_summary() {
             .as_array()
             .expect("diagnostics array")
             .iter()
-            .any(|d| d["code"] == "launch-time-field-summary" && d["level"] == "info"),
-        "sync --json must keep the info summary: {stdout}"
+            .all(|d| d["category"].as_str() != Some("lossiness")),
+        "sync --json carries no launch-time lossiness by default: {stdout}"
     );
 }
 
@@ -168,7 +168,7 @@ agent_emission = "always"
 }
 
 #[test]
-fn check_surfaces_lossiness_for_configured_targets() {
+fn check_is_silent_about_launch_time_fields_without_verbose() {
     let dir = TempDir::new().unwrap();
     let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
     std::fs::write(
@@ -181,7 +181,7 @@ fn check_surfaces_lossiness_for_configured_targets() {
         .args(["check", pkg.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET));
+        .stderr(predicate::str::contains(LOSSINESS_SUMMARY_SNIPPET).not());
 }
 
 #[test]

@@ -140,7 +140,7 @@ In the launch bundle, a skill with no `metadata.type` has `skill_type` `referenc
 
 ## `harness-overrides`
 
-A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped with a warning.
+A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped, and `mars sync --verbose` names it.
 
 ```yaml
 ---

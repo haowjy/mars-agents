@@ -80,7 +80,7 @@ Mars does not merge `harness-overrides.<target>` into top-level profile values. 
 
 Each harness's own block is written into its native file: `harness-overrides.claude` into `.claude/agents/*.md` and the Claude plugin tree, `harness-overrides.codex` into the Codex TOML, and so on. A block never reaches another harness's file. Mars validates the outer shape and serializability, then leaves nested keys and values alone.
 
-A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped and the sync warns: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
+A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped. A key that can carry policy (`disallowed-tools`, a scalar OpenCode `permission`, `sandbox_mode`, `approval_policy`, and any key not listed next) counts as a lost restriction, and every sync reports it. Dropping `name`, `description`, `model`, `effort`, `skills` or `model_reasoning_effort` loses no restriction, so only `mars sync --verbose` shows it: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
 
 For launch bundles, Mars also selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`.
 
@@ -352,7 +352,8 @@ OpenCode's agent file has one tool control, the `permission` map (its `tools` bo
 deprecated), so a deny rule lowers to `<tool>: deny` using the permission names in the table
 above (`write` and `edit` both become `edit`). The map merges with the author's
 `harness-overrides.opencode.permission`: the author's other entries stay, in their order, and an
-entry that disagrees with a Mars deny is dropped with a warning. Allow and `ask` rules and scoped
+entry that disagrees with a Mars deny is dropped; Mars's deny is the stricter entry, so only
+`mars sync --verbose` shows it. Allow and `ask` rules and scoped
 rules have no entry Mars writes, so they are reported as dropped; write them under
 `harness-overrides.opencode.permission` to have them in the file.
 

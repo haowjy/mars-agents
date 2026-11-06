@@ -192,7 +192,7 @@ So the Agent's own policy wins over its top-level field: top-level `effort` is t
 
 `harness-overrides.<name>` holds configuration that one consumer owns, on an Agent or a skill. Mars checks only that it is a map of serializable values and keeps it in the installed file. It does two things with a harness block:
 
-- **Native file.** The block for a harness is written into that harness's own Agent or skill file (frontmatter for Markdown, top-level keys for Codex TOML), and into that harness's plugin tree. No other harness sees it. A key Mars lowers itself (`model`, `tools`, `effort`, `description` and the rest) keeps Mars's value; the override is dropped with a warning that names it.
+- **Native file.** The block for a harness is written into that harness's own Agent or skill file (frontmatter for Markdown, top-level keys for Codex TOML), and into that harness's plugin tree. No other harness sees it. A key Mars lowers itself (`model`, `tools`, `effort`, `description` and the rest) keeps Mars's value; the override is dropped. On an Agent, `mars sync` reports a dropped key that can carry a restriction, and `mars sync --verbose` names every dropped key.
 - **Launch bundle.** The block for the resolved harness reaches the launcher as `execution_policy.native_config`.
 
 It never replaces a top-level field of the same name.

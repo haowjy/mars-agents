@@ -464,7 +464,7 @@ mod tests {
     use mars_schema::HarnessId;
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
-    use mars_schema::tool_policy::{append_mcp_server_entries_to_tools, yaml_str_list};
+    use mars_schema::tool_policy::{append_mcp_server_entries_to_tools};
     use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {

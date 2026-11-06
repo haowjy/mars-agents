@@ -416,3 +416,178 @@ fn source_has_unrenamed_item(
         item.source_name == *source_name && item.id.kind == kind && item.id.name == *name
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hash;
+    use crate::lock::ItemId;
+    use crate::resolve::ResolvedGraph;
+    use crate::sync::target::{CollisionRename, ExplicitRename, TargetItem, TargetState};
+    use crate::types::SourceId;
+    use indexmap::IndexMap;
+    use mars_schema::item::ItemKind;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn test_item(
+        kind: ItemKind,
+        name: &str,
+        source_name: &str,
+        source_path: std::path::PathBuf,
+        dest_path: &str,
+    ) -> TargetItem {
+        let source_hash = if kind == ItemKind::Skill {
+            hash::compute_hash(&source_path, kind).unwrap().into()
+        } else {
+            hash::hash_bytes(fs::read(&source_path).unwrap().as_slice()).into()
+        };
+
+        TargetItem {
+            id: ItemId {
+                kind,
+                name: name.into(),
+            },
+            source_name: source_name.into(),
+            source_path,
+            dest_path: dest_path.into(),
+            source_hash,
+            is_flat_skill: false,
+            rewritten_content: None,
+        }
+    }
+
+    fn graph_with_deps(
+        root: &std::path::Path,
+        source_name: &str,
+        deps: Vec<&str>,
+    ) -> ResolvedGraph {
+        let mut nodes = IndexMap::new();
+        nodes.insert(
+            SourceName::from(source_name),
+            crate::resolve::ResolvedNode {
+                fetch_url: None,
+                source_name: source_name.into(),
+                source_id: SourceId::Path {
+                    canonical: root.to_path_buf(),
+                    subpath: None,
+                    plugin: None,
+                },
+                rooted_ref: crate::resolve::RootedSourceRef {
+                    checkout_root: root.to_path_buf(),
+                    authored_root: root.to_path_buf(),
+                    package_root: root.to_path_buf(),
+                    plugin: None,
+                },
+                prepared: crate::resolve::prepared_with_deps(&deps),
+                resolved_ref: crate::source::ResolvedRef {
+                    source_name: source_name.into(),
+                    version: None,
+                    version_tag: None,
+                    commit: None,
+                    tree_path: root.to_path_buf(),
+                },
+                manifest: None,
+            },
+        );
+        ResolvedGraph {
+            nodes,
+            order: vec![source_name.into()],
+            selection: Default::default(),
+            version_constraints: std::collections::HashMap::new(),
+            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn apply_test_renames(
+        target: &mut TargetState,
+        explicit_skill_renames: &[ExplicitRename],
+        collision_renames: &[CollisionRename],
+        graph: &ResolvedGraph,
+        dep_precedence: &[SourceName],
+    ) {
+        let index = RenameIndex::new(explicit_skill_renames, collision_renames, target);
+        apply_renames(target, &index, graph, dep_precedence).unwrap();
+    }
+
+    #[test]
+    fn collision_does_not_retarget_existing_same_source_ref_to_dep() {
+        let dir = TempDir::new().unwrap();
+        let agent_path = dir.path().join("source-a/agents/coder.md");
+        fs::create_dir_all(agent_path.parent().unwrap()).unwrap();
+        fs::write(&agent_path, "---\nskills: [planning]\n---\n# Agent\n").unwrap();
+
+        let source_a_skill_path = dir.path().join("source-a/skills/planning");
+        let source_b_skill_path = dir.path().join("source-b/skills/planning");
+        let source_c_skill_path = dir.path().join("source-c/skills/planning");
+        fs::create_dir_all(&source_a_skill_path).unwrap();
+        fs::create_dir_all(&source_b_skill_path).unwrap();
+        fs::create_dir_all(&source_c_skill_path).unwrap();
+        fs::write(source_a_skill_path.join("SKILL.md"), "# Planning A").unwrap();
+        fs::write(source_b_skill_path.join("SKILL.md"), "# Planning B").unwrap();
+        fs::write(source_c_skill_path.join("SKILL.md"), "# Planning C").unwrap();
+
+        let mut items = IndexMap::new();
+        items.insert(
+            "agents/coder.md".into(),
+            test_item(
+                ItemKind::Agent,
+                "coder",
+                "source-a",
+                agent_path,
+                "agents/coder.md",
+            ),
+        );
+        items.insert(
+            "skills/planning".into(),
+            test_item(
+                ItemKind::Skill,
+                "planning",
+                "source-a",
+                source_a_skill_path,
+                "skills/planning",
+            ),
+        );
+        items.insert(
+            "skills/planning__source-b".into(),
+            test_item(
+                ItemKind::Skill,
+                "planning__source-b",
+                "source-b",
+                source_b_skill_path,
+                "skills/planning__source-b",
+            ),
+        );
+        items.insert(
+            "skills/planning__source-c".into(),
+            test_item(
+                ItemKind::Skill,
+                "planning__source-c",
+                "source-c",
+                source_c_skill_path,
+                "skills/planning__source-c",
+            ),
+        );
+
+        let mut target = TargetState::from_items(items);
+        let renames = vec![
+            CollisionRename {
+                original_name: "planning".into(),
+                new_name: "planning__source-b".into(),
+                source_name: "source-b".into(),
+                kind: ItemKind::Skill,
+            },
+            CollisionRename {
+                original_name: "planning".into(),
+                new_name: "planning__source-c".into(),
+                source_name: "source-c".into(),
+                kind: ItemKind::Skill,
+            },
+        ];
+        let graph = graph_with_deps(dir.path(), "source-a", vec!["source-b"]);
+
+        apply_test_renames(&mut target, &[], &renames, &graph, &[]);
+
+        assert!(target.items["agents/coder.md"].rewritten_content.is_none());
+    }
+}

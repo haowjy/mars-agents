@@ -739,3 +739,64 @@ fn frozen_rejects_engine_incompatible_lock() {
         Err(MarsError::FrozenViolation { .. })
     ));
 }
+
+#[test]
+fn transitive_dep_propagates_subpath_into_source_identity() {
+    let dir = TempDir::new().unwrap();
+    let tree_a = dir.path().join("a");
+    let tree_dep = dir.path().join("dep");
+    std::fs::create_dir_all(&tree_a).unwrap();
+    std::fs::create_dir_all(tree_dep.join("plugins/foo")).unwrap();
+
+    let mut manifest_deps = IndexMap::new();
+    manifest_deps.insert(
+        "dep".to_string(),
+        Entry {
+            version: Some(">=1.0.0".to_string()),
+            subpath: Some(SourceSubpath::new("plugins/foo").unwrap()),
+            ..Entry::git("https://example.com/dep.git")
+        },
+    );
+    let manifest_a = Manifest {
+        package: PackageInfo {
+            name: "a".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            authors: None,
+            homepage: None,
+            license: None,
+            schema: None,
+            uses_providers: Vec::new(),
+            requires_mars: None,
+            requires_meridian: None,
+        },
+        dependencies: manifest_deps,
+        models: IndexMap::new(),
+    };
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
+    provider.add_versions("https://example.com/dep.git", vec![(1, 0, 0)]);
+    provider.add_source("a", tree_a, Some(manifest_a));
+    provider.add_source("dep", tree_dep.clone(), None);
+
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a.git", Some("v1.0.0")),
+    )]);
+    let graph = resolve(&config, &provider, None, &default_options()).unwrap();
+
+    let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
+    // SourceId stores the canonical URL (no protocol, no .git suffix)
+    assert_eq!(
+        dep_node.source_id,
+        SourceId::git_with_subpath(
+            SourceUrl::from("example.com/dep"),
+            Some(SourceSubpath::new("plugins/foo").unwrap())
+        )
+    );
+    assert_eq!(
+        dep_node.rooted_ref.package_root,
+        tree_dep.join("plugins/foo")
+    );
+}

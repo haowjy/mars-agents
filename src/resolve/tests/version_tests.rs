@@ -887,3 +887,41 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
         "error must name the conflicting source: {err}"
     );
 }
+
+#[test]
+fn stale_lock_entry_with_mismatched_url_is_ignored_in_normal_sync() {
+    let dir = TempDir::new().unwrap();
+    let tree = dir.path().join("a");
+    std::fs::create_dir_all(&tree).unwrap();
+
+    let mut provider = MockProvider::new();
+    provider.add_versions("https://example.com/a-new.git", vec![(1, 0, 0), (1, 2, 0)]);
+    provider.add_source("a", tree, None);
+
+    let config = make_config(vec![(
+        "a",
+        git_spec("https://example.com/a-new.git", Some("^1.0")),
+    )]);
+
+    let mut lock = LockFile::empty();
+    lock.dependencies.insert(
+        "a".into(),
+        crate::lock::LockedSource {
+            url: Some("https://example.com/a-old.git".into()),
+            path: None,
+            subpath: None,
+            version: Some("v1.0.0".into()),
+            commit: Some("stale-lock-commit".into()),
+            plugin: None,
+            content: None,
+        },
+    );
+
+    let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
+    assert_eq!(
+        graph.nodes["a"].resolved_ref.version,
+        Some(Version::new(1, 2, 0)),
+        "stale lock identity should be ignored; resolver should pick newest compatible"
+    );
+    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+}

@@ -20,7 +20,7 @@ use crate::compiler::lossiness::Lossiness;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mars_schema::{HarnessId, frontmatter::Frontmatter};
+    use mars_schema::{ frontmatter::Frontmatter};
     use mars_schema::{agent::AgentProfile, diagnostic::SchemaDiagnostic};
 
     fn profile_from(content: &str) -> (AgentProfile, Frontmatter, Vec<SchemaDiagnostic>) {

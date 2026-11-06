@@ -7,7 +7,6 @@ use crate::resolve::{ResolvedGraph, ResolvedNode};
 use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
-use mars_schema::item::ItemKind;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;

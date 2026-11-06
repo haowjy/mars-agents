@@ -100,12 +100,6 @@ impl MockProvider {
             .insert((name.to_string(), version_tag.to_string()), tree_path);
     }
 
-    fn set_commit_sequence(&mut self, source_name: &str, commits: Vec<&str>) {
-        self.commit_sequences.insert(
-            source_name.to_string(),
-            commits.into_iter().map(|c| c.to_string()).collect(),
-        );
-    }
 
     fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
         self.unreachable_preferred_commits
@@ -116,13 +110,6 @@ impl MockProvider {
         self.seen_preferred_commits.borrow().clone()
     }
 
-    fn fetch_count(&self, source_name: &str) -> usize {
-        self.fetch_counts
-            .borrow()
-            .get(source_name)
-            .copied()
-            .unwrap_or(0)
-    }
 
     fn list_versions_count(&self, url: &str) -> usize {
         self.list_versions_counts
@@ -432,19 +419,6 @@ fn resolve_with_diagnostics(
     (result, diag.drain())
 }
 
-fn resolve_with_report_details(
-    config: &EffectiveConfig,
-    provider: &dyn SourceProvider,
-    locked: Option<&LockFile>,
-    options: &ResolveOptions,
-) -> (
-    Result<ResolvedGraph, MarsError>,
-    Vec<crate::resolve::EngineFallback>,
-) {
-    let mut diag = DiagnosticCollector::new();
-    let result = super::resolve(config, provider, locked, options, &mut diag);
-    (result, diag.take_engine_fallbacks())
-}
 
 /// The tree's `mars.toml`, as a package author would write it.
 fn write_manifest(tree: &Path, manifest: &Manifest) {

@@ -193,3 +193,107 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
         "a tombstone has no installed claim to diverge from"
     );
 }
+
+fn pinned_alias_with_harness(
+    model: &str,
+    harness: &str,
+    default_effort: Option<&str>,
+) -> ModelAlias {
+    ModelAlias {
+        harness: Some(harness.to_string()),
+        description: None,
+        prompting: None,
+        default_effort: default_effort.map(str::to_owned),
+        autocompact: None,
+        autocompact_pct: None,
+        spec: ModelSpec::Pinned {
+            model: model.to_string(),
+            provider: None,
+        },
+    }
+}
+
+fn compile_emit_all_with_overlays(
+    dir: &Path,
+    configured_harnesses: &[HarnessId],
+    agents: &[MarsCanonicalAgent],
+    aliases: &IndexMap<String, ModelAlias>,
+    overlays: &IndexMap<String, crate::config::AgentOverlay>,
+) -> Vec<CompiledNativeOutput> {
+    let mut diag = DiagnosticCollector::new();
+    let models_cache = empty_models_cache();
+    let ctx = NativeAgentCompileCtx {
+        project_root: dir,
+        old_lock: &LockFile::empty(),
+        harness_scope: None,
+        configured_emit_harnesses: configured_harnesses,
+        options: NativeAgentSurfaceCompileOptions {
+            force: false,
+            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            dry_run: false,
+            preview_warnings: false,
+        },
+        fanout_agents: &[],
+    };
+    // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
+    let resolved = resolve_native_agent_profiles(agents, overlays);
+    let mut router = test_router(aliases, &models_cache);
+    compile_native_agents(
+        &ctx,
+        &AgentSurfacePolicy::EmitAll,
+        &resolved,
+        &mut router,
+        &mut diag,
+    )
+}
+
+#[test]
+fn emit_all_consumes_overlay_description_and_tools_disallowed() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+
+    let mut aliases = IndexMap::new();
+    aliases.insert(
+        "opus".to_string(),
+        pinned_alias_with_harness("claude-opus-4-6", "claude", None),
+    );
+
+    let agent = parse_mars_agent(
+        "---\nname: worker\ndescription: Profile desc\nmodel: opus\ntools:\n  '*': deny\n  Bash: allow\n---\n# Worker\n",
+        "worker",
+    );
+    let mut overlays: IndexMap<String, crate::config::AgentOverlay> = IndexMap::new();
+    overlays.insert(
+        "worker".to_string(),
+        crate::config::AgentOverlay {
+            description: Some("Overlay description".to_string()),
+            tools: crate::config::AgentOverlayTools {
+                disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let records = compile_emit_all_with_overlays(
+        dir.path(),
+        &[HarnessId::Claude],
+        std::slice::from_ref(&agent),
+        &aliases,
+        &overlays,
+    );
+    assert_eq!(records.len(), 1);
+    let native = std::fs::read_to_string(dir.path().join(".claude/agents/worker.md")).unwrap();
+    assert!(
+        native.contains("description: Overlay description"),
+        "overlay.description must replace profile description: {native}"
+    );
+    assert!(
+        native.contains("disallowed-tools:") && native.contains("Write"),
+        "overlay tools.disallowed must appear in lowered output: {native}"
+    );
+    assert!(
+        !native.contains("Profile desc"),
+        "profile description must be replaced: {native}"
+    );
+}

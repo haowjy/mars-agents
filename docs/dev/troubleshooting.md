@@ -40,7 +40,16 @@ mars doctor
 
 ### Target divergence
 
-Doctor checks each managed target directory against the lock's expected checksums. Missing files and files with unexpected content are reported as warnings with suggestions to run `mars sync --force` or `mars repair` to restore canonical state.
+Doctor checks each managed target directory against the lock's expected checksums. It sorts each item by why the comparison failed:
+
+| Report | Meaning | Fix |
+|---|---|---|
+| `divergent in target: ... (local modifications)` | The item exists and its content differs from what Mars installed | An edited native agent or skill (`... the next sync overwrites them`): plain `mars sync` overwrites your edit, so copy it into the source first. An edited hook (`... sync keeps them`): `mars sync --force` resets it, and it resets every diverged item in the project |
+| `missing in target: ...` | The item is gone | `mars sync` restores it |
+| `wrong kind of file in target: ...` | A file sits where Mars installed a directory, a directory where it installed a file, or a symlink to nothing is there | Move or delete it, then `mars sync`. `--force` cannot replace a directory with a file |
+| `could not check target item: ... (<reason>)` | Mars could not read the item to compare (for example a permission error) | Fix the cause the message names, then run `mars doctor` again |
+
+A generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts` under `.pi/extensions/` or `.opencode/plugins/`) is one file, and the lock records its plain file hash.
 
 ## `mars repair`
 

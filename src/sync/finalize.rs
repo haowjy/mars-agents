@@ -218,8 +218,7 @@ fn retry_tombstone_removals(
                 .join(&output.target_root)
                 .join(output.dest_path.as_str());
             let result = if matches!(item.kind, ItemKind::Agent)
-                || (matches!(item.kind, ItemKind::Hook)
-                    && !output.dest_path.as_str().starts_with("hooks/"))
+                || crate::lock::is_generated_hook_file(item.kind, output.dest_path.as_str())
             {
                 match std::fs::remove_file(&path) {
                     Ok(()) => Ok(()),

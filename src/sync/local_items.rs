@@ -95,8 +95,9 @@ impl LocalMerge<'_> {
                 diag.warn(
                     "unmanaged-collision",
                     format!(
-                        "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched",
-                        hook.def.name
+                        "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched. \
+                         Move it out of `.mars/` and sync again to install the local hook (`--force` does not replace it)",
+                        hook.def.name,
                     ),
                 );
                 continue;

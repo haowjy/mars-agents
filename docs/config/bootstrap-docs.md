@@ -56,17 +56,16 @@ Package-level bootstrap docs are **not** copied to native harness directories. T
 
 ### Manifest-declared bootstrap docs
 
-Bootstrap docs can also be declared in package manifests instead of discovered from `bootstrap/<doc-name>/BOOTSTRAP.md`.
+A plugin manifest (JSON, such as `.claude-plugin/plugin.json`) can declare bootstrap docs instead of relying on `bootstrap/<doc-name>/BOOTSTRAP.md` discovery:
 
-Supported declarations:
-
-```toml
-bootstrapDocs = ["./docs/global-auth"]
-bootstrap_docs = ["./docs/workspace-setup"]
-
-[package.bootstrap]
-path = "./bootstrap"
+```json
+{
+  "bootstrapDocs": ["./docs/global-auth"],
+  "bootstrap_docs": ["./docs/workspace-setup"]
+}
 ```
+
+`mars.toml` has no bootstrap field: `[package.bootstrap]` is not read, and `mars validate` and `mars sync` warn about it. Put the doc in `bootstrap/<doc-name>/BOOTSTRAP.md`.
 
 Each path points to either:
 

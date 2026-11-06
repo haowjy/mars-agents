@@ -570,8 +570,12 @@ pub(crate) fn build_target(
         diag.warn(
             "unmanaged-collision",
             format!(
-                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched",
-                collision.source_name, collision.path
+                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched. \
+                 Run `{}` to replace it with the package's version, or move your copy out of `.mars/` \
+                 (an agent or skill you want to keep belongs in `.mars-src/`) and sync again",
+                collision.source_name,
+                collision.path,
+                crate::types::managed_cmd("mars sync --force"),
             ),
         );
         built.target.items.shift_remove(&collision.path);

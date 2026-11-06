@@ -108,11 +108,19 @@ fn read_package(
                 "`package.visibility` was removed; remove it",
             ));
         } else if !known.contains(&key.as_str()) {
+            let message = if key == "bootstrap" {
+                // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
+                "`package.bootstrap` is not read; Mars finds bootstrap docs in \
+                 `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field"
+                    .to_string()
+            } else {
+                format!("unknown package field `{key}` is preserved")
+            };
             diagnostics.push(SchemaDiagnostic::new(
                 "field.unknown",
                 Severity::Warning,
                 child_path("package", key),
-                format!("unknown package field `{key}` is preserved"),
+                message,
             ));
         }
     }

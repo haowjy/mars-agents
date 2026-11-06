@@ -19,7 +19,7 @@ mars doctor
 | Config-lock consistency | Every dependency in config has a lock entry |
 | Skill references | Every agent's declared skill deps exist on disk |
 | Legacy item symlinks | Symlinked agents and skills in `.mars/` are reported for normalization |
-| Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree |
+| Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree that has content (an empty one is not reported) |
 | Target divergence | Each locked item's target copy matches lock checksum |
 
 ### Exit codes
@@ -102,7 +102,8 @@ leaves the original evidence on disk.
 ### "collides with unmanaged path"
 
 A managed item would overwrite a file that Mars doesn't own. Options:
-- Move the unmanaged file out of the way
+- `mars sync --force` replaces the file with the package's version (not for a local hook)
+- Move the unmanaged file out of the way; an agent or skill you want to keep goes in `.mars-src/`, where it shadows the package's
 - Rename the managed item: `mars rename agents/conflict.md agents/other-name.md`
 - Use `--force` with a command that supports deliberate adoption; repair does not run a special collision-removal retry loop
 

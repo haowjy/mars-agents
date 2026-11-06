@@ -146,6 +146,8 @@ impl Open {
 pub(crate) struct Reconciled {
     pub records: BTreeMap<String, ConfigEntryRecord>,
     pub removed: Vec<String>,
+    /// Whether this reconcile wrote or deleted the file.
+    pub changed: bool,
 }
 
 /// Bring `file` to `desired`: remove what the lock owns and mars no longer
@@ -186,6 +188,7 @@ pub(crate) fn reconcile(
                     .map(|(name, record)| (format!("{MCP_KEY_PREFIX}{name}"), record.clone()))
                     .collect(),
                 removed: Vec::new(),
+                changed: false,
             }
         }
     }
@@ -285,7 +288,8 @@ fn try_reconcile(
 
     // Only a file this reconcile changed can be deleted: one mars never touched
     // may be the user's, empty on purpose.
-    if open.changed {
+    let changed = open.changed;
+    if changed {
         if open.existed && open.doc.is_empty() {
             std::fs::remove_file(&open.path)?;
         } else {
@@ -298,7 +302,11 @@ fn try_reconcile(
         .filter(|name| !wanted.contains(*name) && !kept.contains(*name))
         .map(|name| format!("{MCP_KEY_PREFIX}{name}"))
         .collect();
-    Ok(Reconciled { records, removed })
+    Ok(Reconciled {
+        records,
+        removed,
+        changed,
+    })
 }
 
 #[cfg(test)]

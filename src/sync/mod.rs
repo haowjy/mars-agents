@@ -59,6 +59,9 @@ pub struct SyncReport {
     /// whose bytes this run wrote, as `(target_root, dest_path)`. Surfaced because a sync
     /// that rewrites only these is not "already up to date".
     pub hook_files_rewritten: Vec<(String, String)>,
+    /// MCP config files (`.mcp.json`, `.codex/config.toml`, ...) this run wrote or deleted,
+    /// as `(target_root, file path)`. Surfaced for the same reason as `hook_files_rewritten`.
+    pub mcp_files_changed: Vec<(String, String)>,
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
@@ -181,6 +184,8 @@ pub(crate) struct SyncedState {
     pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
     /// Generated hook files written this run, as `(target_root, dest_path)`.
     pub rewritten_hook_files: Vec<(String, String)>,
+    /// MCP config files written or deleted this run, as `(target_root, file path)`.
+    pub mcp_files_changed: Vec<(String, String)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
@@ -209,6 +214,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
+            mcp_files_changed: Vec::new(),
             recovery_halt: Some(recovery_halt),
             engine_fallbacks: diag.take_engine_fallbacks(),
         });
@@ -722,6 +728,7 @@ pub(crate) fn sync_targets(
             config_entries: BTreeMap::new(),
             config_entry_outputs: Vec::new(),
             rewritten_hook_files: Vec::new(),
+            mcp_files_changed: Vec::new(),
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
             removed_native_outputs: Vec::new(),
@@ -782,6 +789,7 @@ pub(crate) fn sync_targets(
         config_entries: BTreeMap::new(),
         config_entry_outputs: Vec::new(),
         rewritten_hook_files: Vec::new(),
+        mcp_files_changed: Vec::new(),
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),

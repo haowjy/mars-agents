@@ -28,6 +28,8 @@ pub(crate) struct ConfigEntryCompilation {
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     /// Generated hook files whose bytes this run wrote, as `(target_root, dest_path)`.
     pub rewritten_outputs: Vec<(String, String)>,
+    /// MCP config files this run wrote or deleted, as `(target_root, file path)`.
+    pub mcp_files_changed: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -282,6 +284,7 @@ pub(crate) fn compile_config_entries(
             records: desired_records,
             emitted_outputs,
             rewritten_outputs,
+            mcp_files_changed: Vec::new(),
             removed_outputs,
         };
     }
@@ -360,6 +363,7 @@ pub(crate) fn compile_config_entries(
     // still gets its stale servers removed.
     let mut mcp_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
     let mut mcp_removed: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut mcp_files_changed = Vec::new();
     for target_root in previous_records
         .keys()
         .chain(desired_mcp.keys())
@@ -378,6 +382,11 @@ pub(crate) fn compile_config_entries(
             mcp_records.insert(target_root.clone(), reconciled.records);
         }
         mcp_removed.insert(target_root.clone(), reconciled.removed);
+        if reconciled.changed
+            && let Some(file) = registry.get(target_root).and_then(|a| a.mcp_file())
+        {
+            mcp_files_changed.push((target_root.clone(), file.at.path.to_string()));
+        }
     }
     report_removed(retention.removed_keys(), &mcp_removed, diag);
 
@@ -395,6 +404,7 @@ pub(crate) fn compile_config_entries(
         emitted_outputs,
         removed_outputs,
     );
+    compiled.mcp_files_changed = mcp_files_changed;
     for (target_root, records) in mcp_records {
         compiled
             .records
@@ -531,6 +541,7 @@ pub(crate) fn reconcile_mcp(
         return mcp_file::Reconciled {
             records: retained,
             removed: Vec::new(),
+            changed: false,
         };
     };
     // A target that takes no MCP servers has no file to hold a record.
@@ -538,6 +549,7 @@ pub(crate) fn reconcile_mcp(
         return mcp_file::Reconciled {
             records: BTreeMap::new(),
             removed: Vec::new(),
+            changed: false,
         };
     };
     mcp_file::reconcile(
@@ -638,6 +650,7 @@ fn apply_replacement_writes(
         records,
         emitted_outputs,
         rewritten_outputs,
+        mcp_files_changed: Vec::new(),
         removed_outputs,
     }
 }

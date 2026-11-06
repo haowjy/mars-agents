@@ -503,7 +503,7 @@ disallowed = ["agent"]
 
 An overlay's `effort`, `approval`, `sandbox` and `network` take the same values as an Agent file, and `mars.toml` fails to load on any other: ``mars.toml: [agents.coder] `approval` has invalid value `yolo`; allowed: default, auto, confirm, never``.
 
-Keys that overlays no longer read are ignored, and each one warns (`stale-config-key`) with its table and name: `autocompact` and `autocompact_pct` on an agent, `tools.mcp` on an agent, and `tools` on a skill. Delete them. Put an MCP grant in `tools.allowed` (`"mcp(plugin:demo)"`; see [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references)), and compaction on the model alias. Any other unknown key is ignored silently, for forward compatibility, except a key that looks like network policy (`network_access`, `default-network-mode`): it warns (`unknown-network-key`) with the accepted keys, because ignoring a mistyped `network-deny` would drop a deny without a word.
+Keys that overlays no longer read are ignored, and each one warns (`stale-config-key`) with its table and name: `autocompact` and `autocompact_pct` on an agent, `tools.mcp` on an agent, and `tools` on a skill. Delete them. Put an MCP grant in `tools.allowed` (`"mcp(plugin:demo)"`; see [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references)), and compaction on the model alias. Any other unknown key is ignored silently, for forward compatibility (an older Mars must accept a newer config), except a key that looks like network policy (`network_access`, `default-network-mode`): it warns (`unknown-network-key`) with the accepted keys, because ignoring a mistyped `network-deny` would drop a deny without a word.
 
 Each `model-policies` rule has a `match` table with exactly one of `alias`, `model`,
 or `model-glob`, plus optional `override`, `when` and `no-fallback` fields. Overlay/settings
@@ -741,6 +741,13 @@ For local overlay semantics:
 Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning
 with `network` produces a warning with the accepted keys. Unknown keys under local `[settings]`
 are kept the same way.
+
+Unknown keys under `[settings]` in `mars.toml` and `mars.local.toml` stay silent in `mars sync` and
+every other command, so an older Mars accepts a newer config, and Mars keeps them when it rewrites
+the file. `mars validate` warns about each one (`unknown-settings-key`), because a typo does nothing
+and validate is where someone asks whether the config is right. A network-looking key warns as
+`unknown-network-key` everywhere and is not repeated. `mars validate --strict` turns the warning
+into an error, like any other warning.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

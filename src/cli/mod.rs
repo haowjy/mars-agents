@@ -279,7 +279,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                 }
                 Err(err) => return Err(err),
             };
-            dispatch_with_root(cmd, &ctx, cli.json)
+            dispatch_with_root(cmd, &ctx, cli.root.as_deref(), cli.json)
         }
     }
 }
@@ -308,12 +308,17 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
     )
 }
 
-fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+fn dispatch_with_root(
+    cmd: &Command,
+    ctx: &MarsContext,
+    explicit_root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     match cmd {
         Command::Validate(args) => validate::run(args, ctx, json),
         Command::Export(args) => export::run(args, ctx, json),
         Command::Add(args) => add::run(args, ctx, json),
-        Command::Adopt(args) => adopt::run(args, ctx, json),
+        Command::Adopt(args) => adopt::run(args, ctx, explicit_root, json),
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),
@@ -330,7 +335,7 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
         Command::Doctor(args) => doctor::run(args, ctx, json),
         Command::Repair(args) => repair::run(args, ctx, json),
         Command::Models(args) => models::run(args, ctx, json),
-        Command::Build(args) => build::run(args, ctx, json),
+        Command::Build(args) => build::run(args, ctx, explicit_root, json),
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
         // Root-free commands handled in dispatch_result — unreachable here
@@ -338,6 +343,24 @@ fn dispatch_with_root(cmd: &Command, ctx: &MarsContext, json: bool) -> Result<i3
             unreachable!()
         }
     }
+}
+
+/// Absolute form of a path typed on the command line. A relative path resolves against an
+/// explicit `--root` (`explicit_root`), otherwise against the working directory: with no
+/// `--root` the project root is found by walking up, so the user typed the path from where they
+/// stand.
+pub(crate) fn resolve_cli_path(
+    path: &Path,
+    explicit_root: Option<&Path>,
+) -> Result<PathBuf, MarsError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let base = match explicit_root {
+        Some(root) => std::path::absolute(root)?,
+        None => std::env::current_dir()?,
+    };
+    Ok(base.join(path))
 }
 
 /// Check if a path is a symlink (uses symlink_metadata, doesn't follow).

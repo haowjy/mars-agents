@@ -136,6 +136,8 @@ This is the core operation. It runs the full [sync pipeline](../internals/sync-p
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
+The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)` and counts them as `updated N MCP config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the count as `mcp_files_changed`. `--diff` does not preview these writes yet.
+
 ---
 
 ## `mars upgrade`
@@ -305,6 +307,8 @@ mars adopt <path> [--dry-run]
 - Skill directories (containing `SKILL.md`) are moved to `.mars-src/skills/<name>/`
 - Runs `mars sync` so the item is immediately installed back through the normal pipeline
 - Same-filesystem only in MVP; the target directory must be on the same filesystem as the project root
+
+A relative `path` resolves against an explicit `--root`; without `--root` it resolves against the working directory.
 
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 
@@ -773,7 +777,7 @@ installs in that package's own checkout: its items plus dependencies under its o
 mars build plugin [PATH] [--out <dir>]
 ```
 
-`PATH` defaults to the detected project root. With an explicit path the command can run outside
+`PATH` defaults to the detected project root. A relative `PATH` resolves against an explicit `--root`, otherwise against the working directory. With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
 the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or installed harness
 model catalogs.

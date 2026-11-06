@@ -168,17 +168,26 @@ pub struct LaunchBundleArgs {
     pub no_refresh_models: bool,
 }
 
-pub fn run(args: &BuildArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+pub fn run(
+    args: &BuildArgs,
+    ctx: &MarsContext,
+    explicit_root: Option<&std::path::Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     match &args.command {
         BuildCommand::LaunchBundle(subargs) => run_launch_bundle(subargs, ctx),
-        BuildCommand::Plugin(subargs) => run_plugin(subargs, ctx, json),
+        BuildCommand::Plugin(subargs) => run_plugin(subargs, ctx, explicit_root, json),
     }
 }
 
-fn run_plugin(args: &PluginArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+fn run_plugin(
+    args: &PluginArgs,
+    ctx: &MarsContext,
+    explicit_root: Option<&std::path::Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     let package_root = match &args.path {
-        Some(path) if path.is_absolute() => path.clone(),
-        Some(path) => std::env::current_dir()?.join(path),
+        Some(path) => super::resolve_cli_path(path, explicit_root)?,
         None => ctx.project_root.clone(),
     };
     let manifest = crate::config::load(&package_root)?;

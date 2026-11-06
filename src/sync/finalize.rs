@@ -153,6 +153,7 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
         hook_files_rewritten: state.rewritten_hook_files,
+        mcp_files_changed: state.mcp_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })

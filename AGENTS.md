@@ -52,9 +52,11 @@ These hold however the work is done. Change one only as its own visible step, ne
 | Invariant | Check |
 |---|---|
 | User content is never overwritten or deleted without authorization. Anything Mars owns is authorized, so source wins on a file Mars manages. | `tests/self_conflicts.rs`, `tests/config_entries/ownership.rs` |
-| Mars never acts beyond what was authorized: nothing outside the package or the destination is read or written | Partial: archive and bootstrap escape tests |
+| Mars never acts beyond what was authorized: it reads only the sources and config it was given, and a package can't reach outside its own root or write outside the destination | Partial: archive and bootstrap escape tests |
 | Private content never reaches the wrong recipient: exported metadata carries no agent or skill bodies, and imported servers get no credentials Claude would withhold | Partial: `tests/validate_and_export.rs` |
 | A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
+
+A restriction is lost when a harness can't express part of a profile. It shows in default `sync`, `check` and `build plugin` output, not at launch.
 
 ## Contracts
 
@@ -127,6 +129,7 @@ other merge to `main` needs Jimmy's approval in the current conversation.
 
 **Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 
-**`CHANGELOG.md` `[Unreleased]` is only an empty anchor.** Never write entries there: the release walks the merged PRs' `## Changelog` sections since the last `release: v` commit and renders them under the new version heading. A `release:skip` merge, a failed or cancelled run, and two merges in one push keep their notes — the next release, automatic or manual, collects them.
+`CHANGELOG.md` `[Unreleased]` is only an empty anchor. The release collects PR
+notes since the last `release: v` commit, including skipped or failed releases.
 
 **Note:** `mars version` is for prompt packages only. For mars-agents itself, use the CI release flow. See `.github/workflows/README.md` for the step order, the manual backfill path, and the remedy when a merged PR body fails the notes gate.

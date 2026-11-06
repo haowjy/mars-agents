@@ -1,18 +1,10 @@
-# mars-schema: nice-to-have follow-ups
+# mars-schema follow-ups
 
-- **Smaller `.wasm`** (`crates/mars-schema`, `scripts/build-schema-wasm.sh`): two cuts remain.
-  - Read manifests only through `toml_edit` and drop the `toml` crate (about 36 KB). This changes TOML error text, which is part of the fixture contract.
-  - Replace the `yaml_rust2` structural event scan (about 92 KB) with checks on the `serde_yaml` value.
-  - `wasm-opt -Oz` is not used, because it would make the build depend on Binaryen being installed.
-- **Integer-like mapping keys** (`npm/@meridian-flow/mars-schema/index.d.ts`): a JS object always lists keys like `"1"` first, so their file order is lost across the WASM boundary. The fix is a pairs array for mappings in readings, which changes the JS contract.
-- **An installed read can drop an invalid value silently** (`src/read.rs`, `installed`): when a
-  file also carries a pre-v1 spelling, the upgrade set-asides a value it cannot convert
-  (`Destination::Nowhere`) and its notes are discarded. An installed Agent with `effort: banana`
-  alone is refused, but `effort: banana` plus `model_invocable: true` launches with no effort and
-  no warning. The fix is to keep `UpgradeResult::diagnostics` as warnings on the reading so a
-  dropped value is visible; deciding pre-v1 vintage from something other than the diagnostics is
-  the alternative.
-- **Nothing stops a new `.mars/` reader from using the strict reader** (`src`, `mars-schema::read`):
-  see `src/.context/FUTURE`.
-- **`frontmatter.too-deep` counts raw brackets** (`src/frontmatter.rs`): more than 64 `[`/`{` inside a quoted string would be a false refusal. The fix is to count only outside quoted scalars.
-- **NUL in tree paths** (`src/tree.rs` `FileTree::insert`): a NUL in a path component is accepted. That is harmless on disk; refuse it if a caller stores paths where NUL matters.
+- Reduce WASM size by replacing duplicate TOML parsing and the YAML structural
+  event scan; TOML error text is part of the fixture contract.
+- Integer-like mapping keys lose file order across the WASM boundary. Returning
+  pairs would preserve it but change the JS contract.
+- Installed reads discard upgrade diagnostics. An invalid value combined with a
+  pre-v1 spelling can therefore be dropped without warning.
+- `frontmatter.too-deep` counts brackets inside quoted strings and can reject
+  valid input; count only outside quoted scalars.

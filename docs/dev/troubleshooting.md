@@ -44,7 +44,7 @@ Doctor checks each managed target directory against the lock's expected checksum
 
 | Report | Meaning | Fix |
 |---|---|---|
-| `divergent in target: ... (local modifications)` | The item exists and its content differs from what Mars installed | `mars sync --force` resets it; plain `mars sync` keeps your edit |
+| `divergent in target: ... (local modifications)` | The item exists and its content differs from what Mars installed | An edited native agent or skill (`... the next sync overwrites them`): plain `mars sync` overwrites your edit, so copy it into the source first. An edited hook (`... sync keeps them`): `mars sync --force` resets it, and it resets every diverged item in the project |
 | `missing in target: ...` | The item is gone | `mars sync` restores it |
 | `wrong kind of file in target: ...` | A file sits where Mars installed a directory, a directory where it installed a file, or a symlink to nothing is there | Move or delete it, then `mars sync`. `--force` cannot replace a directory with a file |
 | `could not check target item: ... (<reason>)` | Mars could not read the item to compare (for example a permission error) | Fix the cause the message names, then run `mars doctor` again |

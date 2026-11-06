@@ -254,8 +254,10 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
 /// How many target items differ from the lock, by what a reader should do about each.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct TargetDivergence {
-    /// Present, but different from the installed checksum: hand-edited.
-    modified: usize,
+    /// Hand-edited native agents and skills: the next plain sync overwrites the edit.
+    overwritten: usize,
+    /// Any other hand-edited item (hooks): sync keeps the edit until `--force`.
+    kept: usize,
     /// Absent from the target.
     missing: usize,
     /// Present, but Mars could not read it to compare (permissions, I/O).
@@ -267,13 +269,21 @@ struct TargetDivergence {
 
 impl TargetDivergence {
     /// The closing line: one next step per kind, each one that works for that kind.
-    /// Only an edited file needs `--force`; a plain sync restores a missing item, and an
-    /// unreadable or wrong-kind one needs its cause removed first, not an overwrite.
+    /// Plain sync overwrites an edited native agent or skill, so that step is a warning, not a
+    /// command; only an edited hook needs `--force` (which is project-wide). A plain sync also
+    /// restores a missing item, and an unreadable or wrong-kind one needs its cause removed
+    /// first, not an overwrite.
     fn summary(&self) -> Option<String> {
         let mut steps = Vec::new();
-        if self.modified > 0 {
+        if self.overwritten > 0 {
             steps.push(format!(
-                "run `{}` to reset modified files",
+                "`{}` overwrites edited agents and skills, so copy any edit you want to keep into its source first",
+                managed_cmd("mars sync")
+            ));
+        }
+        if self.kept > 0 {
+            steps.push(format!(
+                "run `{}` to reset edited hooks (it resets every diverged item in the project)",
                 managed_cmd("mars sync --force")
             ));
         }
@@ -322,10 +332,22 @@ fn check_target_divergence(
             match hashed {
                 Ok(target_hash) if target_hash == item.installed_checksum => {}
                 Ok(_) => {
-                    warnings.push(format!(
-                        "divergent in target: {shown} (local modifications)"
-                    ));
-                    divergence.modified += 1;
+                    // What plain sync does with the edit, by kind (see `target_sync` for
+                    // skills, `compiler::native_agents` for agents, `file_hooks` for hooks).
+                    if matches!(
+                        item.kind,
+                        mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
+                    ) {
+                        warnings.push(format!(
+                            "divergent in target: {shown} (local modifications; the next sync overwrites them)"
+                        ));
+                        divergence.overwritten += 1;
+                    } else {
+                        warnings.push(format!(
+                            "divergent in target: {shown} (local modifications; sync keeps them)"
+                        ));
+                        divergence.kept += 1;
+                    }
                 }
                 // The error kind alone says nothing about the item's own path (a tree walk can
                 // fail on something inside it), so look at the item itself.
@@ -478,7 +500,7 @@ mod tests {
         let divergence =
             check_target_divergence(root, &lock, &[".agents".to_string()], &mut warnings);
 
-        assert_eq!((divergence.modified, divergence.missing), (1, 1));
+        assert_eq!((divergence.overwritten, divergence.missing), (1, 1));
         assert!(
             warnings
                 .iter()
@@ -488,7 +510,7 @@ mod tests {
             warnings
                 .iter()
                 .any(|w| w
-                    == "divergent in target: .agents/agents/modified.md (local modifications)")
+                    == "divergent in target: .agents/agents/modified.md (local modifications; the next sync overwrites them)")
         );
     }
 
@@ -518,7 +540,7 @@ mod tests {
             &mut warnings,
         );
 
-        assert_eq!((divergence.modified, divergence.missing), (0, 1));
+        assert_eq!((divergence.overwritten, divergence.missing), (0, 1));
         assert!(
             warnings
                 .iter()

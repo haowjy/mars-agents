@@ -182,18 +182,14 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     // Check explicitly managed native targets against lock checksums.
     if let Some(project_config) = &project_config {
-        let target_divergence_count = check_target_divergence(
+        let divergence = check_target_divergence(
             &ctx.project_root,
             &lock,
             &project_config.effective.settings.managed_targets(),
             &mut warnings,
         );
-        if target_divergence_count > 0 {
-            warnings.push(format!(
-                "target divergence detected; run `{cmd1}` to reset modified files or `{cmd2}` to restore missing files",
-                cmd1 = managed_cmd("mars sync --force"),
-                cmd2 = managed_cmd("mars repair"),
-            ));
+        if let Some(summary) = divergence.summary() {
+            warnings.push(summary);
         }
     }
 
@@ -255,29 +251,73 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
     }
 }
 
+/// How many target items differ from the lock, by what a reader should do about each.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct TargetDivergence {
+    /// Present, but different from the installed checksum: hand-edited.
+    modified: usize,
+    /// Absent from the target.
+    missing: usize,
+    /// Present, but Mars could not read it to compare.
+    unchecked: usize,
+}
+
+impl TargetDivergence {
+    /// The closing line: one next step per kind, each one that works for that kind.
+    /// Only an edited file needs `--force`; a plain sync restores a missing item, and an
+    /// unreadable one needs its cause fixed, not an overwrite.
+    fn summary(&self) -> Option<String> {
+        let mut steps = Vec::new();
+        if self.modified > 0 {
+            steps.push(format!(
+                "run `{}` to reset modified files",
+                managed_cmd("mars sync --force")
+            ));
+        }
+        if self.missing > 0 {
+            steps.push(format!(
+                "run `{}` to restore missing files",
+                managed_cmd("mars sync")
+            ));
+        }
+        if self.unchecked > 0 {
+            steps.push("fix the access problem reported above for the files Mars could not check, then run doctor again".to_string());
+        }
+        (!steps.is_empty()).then(|| format!("target divergence detected; {}", steps.join("; ")))
+    }
+}
+
 /// Check managed target directories against lockfile-installed checksums.
-///
-/// Returns the number of divergent or missing target items found.
 fn check_target_divergence(
     project_root: &std::path::Path,
     lock: &crate::lock::LockFile,
     targets: &[String],
     warnings: &mut Vec<String>,
-) -> usize {
-    let mut divergence_count = 0;
+) -> TargetDivergence {
+    let mut divergence = TargetDivergence::default();
 
     for target_name in targets {
         for (dest_path, item) in lock.flat_items_for_target(target_name) {
             let relative_path = std::path::Path::new(target_name).join(dest_path.as_str());
             let target_path = project_root.join(&relative_path);
 
-            if !target_path.exists() && target_path.symlink_metadata().is_err() {
-                warnings.push(format!(
-                    "missing in target: {}/{}",
-                    target_name,
-                    dest_path.as_str()
-                ));
-                divergence_count += 1;
+            // A dangling symlink still exists; only NotFound means the item is gone.
+            if let Err(e) = target_path.symlink_metadata() {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    warnings.push(format!(
+                        "missing in target: {}/{}",
+                        target_name,
+                        dest_path.as_str()
+                    ));
+                    divergence.missing += 1;
+                } else {
+                    warnings.push(format!(
+                        "could not check target item: {}/{} ({e})",
+                        target_name,
+                        dest_path.as_str()
+                    ));
+                    divergence.unchecked += 1;
+                }
                 continue;
             }
 
@@ -289,22 +329,22 @@ fn check_target_divergence(
                             target_name,
                             dest_path.as_str()
                         ));
-                        divergence_count += 1;
+                        divergence.modified += 1;
                     }
                 }
                 Err(e) => {
                     warnings.push(format!(
-                        "divergent in target: {}/{} (local modifications; failed to hash: {e})",
+                        "could not check target item: {}/{} ({e})",
                         target_name,
                         dest_path.as_str()
                     ));
-                    divergence_count += 1;
+                    divergence.unchecked += 1;
                 }
             }
         }
     }
 
-    divergence_count
+    divergence
 }
 
 struct InstalledItem {
@@ -415,10 +455,10 @@ mod tests {
             .expect("write modified file");
 
         let mut warnings = Vec::new();
-        let divergences =
+        let divergence =
             check_target_divergence(root, &lock, &[".agents".to_string()], &mut warnings);
 
-        assert_eq!(divergences, 2);
+        assert_eq!((divergence.modified, divergence.missing), (1, 1));
         assert!(
             warnings
                 .iter()
@@ -451,14 +491,14 @@ mod tests {
             .expect("write matching file");
 
         let mut warnings = Vec::new();
-        let divergences = check_target_divergence(
+        let divergence = check_target_divergence(
             root,
             &lock,
             &[".agents".to_string(), ".claude".to_string()],
             &mut warnings,
         );
 
-        assert_eq!(divergences, 1);
+        assert_eq!((divergence.modified, divergence.missing), (0, 1));
         assert!(
             warnings
                 .iter()

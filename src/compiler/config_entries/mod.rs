@@ -270,6 +270,35 @@ pub(crate) fn compile_config_entries(
         .old_lock
         .config_entries;
 
+    // A target whose hook entries equal what the lock records, and whose file still holds
+    // them in the order they would be written, is left alone: removing and re-appending them
+    // would rewrite the file and move entries (Codex keys its trust on entry position). A file
+    // that lost or edited an entry, or whose `order` changed, goes through removal, which
+    // warns of the divergence and appends the package entries in order.
+    let hook_records = |records: Option<&BTreeMap<String, ConfigEntryRecord>>| {
+        records
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.starts_with(HOOK_KEY_PREFIX))
+            .map(|(key, record)| (key.clone(), record.clone()))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let mut unchanged_records = BTreeMap::new();
+    for target_root in pending_hooks.keys().cloned().collect::<Vec<_>>() {
+        let desired = hook_records(desired_records.get(&target_root));
+        let previous = hook_records(previous_records.get(&target_root));
+        let holds_previous = desired == previous
+            && merge_file(&target_root).is_some_and(|merge| {
+                crate::target::hook_file::holds_recorded(
+                    &ctx.project_root.join(&target_root).join(merge.file),
+                    &pending_hooks[&target_root],
+                )
+            });
+        if holds_previous {
+            pending_hooks.remove(&target_root);
+            unchanged_records.insert(target_root, desired);
+        }
+    }
     if dry_run {
         for (target_root, records) in previous_records {
             let stale: Vec<&str> = records
@@ -294,7 +323,7 @@ pub(crate) fn compile_config_entries(
         }
         // Preview the generated hook files a real sync would write: a missing file or one
         // whose bytes differ from what would be rendered.
-        let rewritten_outputs = pending_file_writes
+        let mut rewritten_outputs: Vec<(String, String)> = pending_file_writes
             .iter()
             .flat_map(|(target_root, files)| {
                 files.iter().filter_map(move |(_, relative, content)| {
@@ -305,6 +334,10 @@ pub(crate) fn compile_config_entries(
                 })
             })
             .collect();
+        // A merged hook file that is not already as a real sync would leave it is rewritten.
+        rewritten_outputs.extend(pending_hooks.keys().filter_map(|target_root| {
+            merge_file(target_root).map(|merge| (target_root.clone(), merge.file.to_string()))
+        }));
         // Preview the MCP files a real sync would write. A dry run has no real pass after
         // this one, so its warnings are the ones `--diff` shows; other dry runs drop them.
         let mut scratch = DiagnosticCollector::new();
@@ -336,35 +369,6 @@ pub(crate) fn compile_config_entries(
     // `hooks.json` before this sync is what the user last reviewed.
     let trust_before = trust_snapshots(ctx, &target_roots);
 
-    // A target whose hook entries equal what the lock records, and whose file still holds
-    // them in the order they would be written, is left alone: removing and re-appending them
-    // would rewrite the file and move entries (Codex keys its trust on entry position). A file
-    // that lost or edited an entry, or whose `order` changed, goes through removal, which
-    // warns of the divergence and appends the package entries in order.
-    let hook_records = |records: Option<&BTreeMap<String, ConfigEntryRecord>>| {
-        records
-            .into_iter()
-            .flatten()
-            .filter(|(key, _)| key.starts_with(HOOK_KEY_PREFIX))
-            .map(|(key, record)| (key.clone(), record.clone()))
-            .collect::<BTreeMap<_, _>>()
-    };
-    let mut unchanged_records = BTreeMap::new();
-    for target_root in pending_hooks.keys().cloned().collect::<Vec<_>>() {
-        let desired = hook_records(desired_records.get(&target_root));
-        let previous = hook_records(previous_records.get(&target_root));
-        let holds_previous = desired == previous
-            && merge_file(&target_root).is_some_and(|merge| {
-                crate::target::hook_file::holds_recorded(
-                    &ctx.project_root.join(&target_root).join(merge.file),
-                    &pending_hooks[&target_root],
-                )
-            });
-        if holds_previous {
-            pending_hooks.remove(&target_root);
-            unchanged_records.insert(target_root, desired);
-        }
-    }
     let to_remove: BTreeMap<_, _> = previous_records
         .iter()
         .filter(|(target_root, _)| !unchanged_records.contains_key(*target_root))
@@ -663,6 +667,7 @@ fn apply_replacement_writes(
     // Write desired hooks only after every removal has completed. Removal
     // cleared the target's recorded hooks, so a failed write leaves no record.
     let mut written_records = unchanged_records;
+    let mut rewritten_outputs = Vec::new();
     for (target_root, hooks) in pending_hooks {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -677,6 +682,7 @@ fn apply_replacement_writes(
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);
+        rewritten_outputs.push((target_root.clone(), merge.file.to_string()));
         if let Err(error) =
             crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
         {
@@ -699,7 +705,6 @@ fn apply_replacement_writes(
             );
     }
 
-    let mut rewritten_outputs = Vec::new();
     for (target_root, files) in pending_file_writes {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(

@@ -235,7 +235,7 @@ fn sync_tools_agent(tools_yaml: &str) -> (String, String) {
         .child("mars.toml")
         .write_str(&format!(
             "[settings]\ntargets = [\".claude\", \".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
-            source.display()
+            source.display().to_string().replace('\\', "/")
         ))
         .unwrap();
     let run = |extra: &[&str]| {

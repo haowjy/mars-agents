@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-11-07
+
+### Changed
+- Mars no longer treats a scoped allow as a restriction; it only pre-approves the calls it matches. `mars sync` stops warning that an agent "loses restrictions (shell)" when its `tools` has scoped allows such as `bash(rg *)` and no plain `bash` rule. This reverses the report added in 0.27.2 (#329). A `bash: deny` beside a scoped allow, and a `'*': deny` allowlist, are still reported where the target can't carry them. Where a target's unscoped deny blocks the scoped allows beside it, `--verbose` now records those allows.
+
 ## [0.27.3] - 2026-11-07
 
 ### Fixed

@@ -8,16 +8,14 @@ use crate::lock::{CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItem};
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::ContentHash;
 
-/// The diff between current disk state and desired target state.
 #[derive(Debug, Clone)]
 pub struct SyncDiff {
     pub items: Vec<DiffEntry>,
 }
 
-/// A single diff entry — one of six cases from the merge matrix.
 #[derive(Debug, Clone)]
 pub enum DiffEntry {
-    /// New item not in lock or on disk.
+    /// The selected item needs installation.
     Add { target: TargetItem },
     /// Source changed, local unchanged → clean update.
     Update { target: TargetItem },
@@ -26,7 +24,7 @@ pub enum DiffEntry {
         target: TargetItem,
         locked: LockedItem,
     },
-    /// Source changed AND local changed → needs merge.
+    /// Source and local content changed.
     Conflict { target: TargetItem },
     /// In lock but not in target → should be removed.
     Orphan { locked: LockedItem },
@@ -34,13 +32,6 @@ pub enum DiffEntry {
     LocalModified { target: TargetItem },
 }
 
-/// Compute the diff between current disk state + lock and target state.
-///
-/// Uses dual checksums from the lock file:
-/// - `source_checksum`: what the source provided
-/// - `installed_checksum`: what mars wrote to disk
-///
-/// Compares current disk hash against lock checksums to determine the diff entry variant.
 pub fn compute(
     root: &Path,
     lock: &LockFile,
@@ -50,17 +41,14 @@ pub fn compute(
     let mut items = Vec::new();
     let lock_index = LockIndex::new(lock);
 
-    // Process each target item
     for (_dest_key, target_item) in &target.items {
         if let Some(locked_item) =
             lock_index.find_output(CANONICAL_TARGET_ROOT, &target_item.dest_path)
         {
-            // Item exists in lock — compare checksums
             let effective_installed = target_item.expected_installed_hash()?;
             let source_changed = target_item.source_hash != locked_item.source_checksum
                 || effective_installed != locked_item.installed_checksum;
 
-            // Check disk hash against the expected baseline.
             // In --force mode, baseline is source_checksum so conflicted files
             // are treated as local modifications and get overwritten.
             let expected_disk_checksum = if force {
@@ -79,14 +67,11 @@ pub fn compute(
                     None
                 }
             } else {
-                // File was deleted locally — treat as if local changed to "nothing"
-                // In this case, we should reinstall it
                 None
             };
 
             match (source_changed, &local_changed) {
                 (false, None) => {
-                    // Neither changed → skip
                     if disk_path.exists() && target_item.source_name != locked_item.source {
                         // Identical bytes can still transfer ownership. A write outcome
                         // records the selected source and carries native claims forward.
@@ -100,33 +85,28 @@ pub fn compute(
                             locked: locked_item.clone(),
                         });
                     } else {
-                        // File was deleted but hashes match lock — reinstall
                         items.push(DiffEntry::Add {
                             target: target_item.clone(),
                         });
                     }
                 }
                 (true, None) => {
-                    // Source changed, local unchanged → clean update
                     items.push(DiffEntry::Update {
                         target: target_item.clone(),
                     });
                 }
                 (false, Some(_local_hash)) => {
-                    // Local changed, source unchanged → keep local
                     items.push(DiffEntry::LocalModified {
                         target: target_item.clone(),
                     });
                 }
                 (true, Some(_local_hash)) => {
-                    // Both changed → conflict
                     items.push(DiffEntry::Conflict {
                         target: target_item.clone(),
                     });
                 }
             }
         } else {
-            // Not in lock → new item
             items.push(DiffEntry::Add {
                 target: target_item.clone(),
             });
@@ -152,7 +132,6 @@ pub fn compute(
         }
     }
 
-    // Find orphans: items in lock but not in target
     for (dest_path, locked_item) in lock.canonical_flat_items() {
         if !target.items.contains_key(&dest_path) && !kept.contains(&dest_path) {
             items.push(DiffEntry::Orphan {
@@ -176,7 +155,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Create a minimal target item for testing.
     fn make_target_item(
         name: &str,
         kind: ItemKind,
@@ -204,7 +182,6 @@ mod tests {
         }
     }
 
-    /// Build a v2 `(key, LockedItemV2)` pair for inserting into `LockFile.items`.
     fn make_v2_item(
         name: &str,
         kind: ItemKind,
@@ -262,7 +239,6 @@ mod tests {
         let content = b"# existing agent";
         let hash = hash::hash_bytes(content);
 
-        // Write file to disk
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), content).unwrap();
@@ -297,20 +273,17 @@ mod tests {
         let old_hash = hash::hash_bytes(old_content);
         let new_hash = hash::hash_bytes(b"# new version");
 
-        // Write old content to disk (matching lock's installed_checksum)
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), old_content).unwrap();
 
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
-        // Target has new hash
         let target_item = make_target_item("coder", ItemKind::Agent, &new_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState::from_items(target_items);
 
-        // Lock has old hash
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &old_hash, &old_hash);
         lock_items.insert(k, v);
@@ -334,20 +307,17 @@ mod tests {
         let original_hash = hash::hash_bytes(original_content);
         let local_content = b"# locally modified";
 
-        // Write locally modified content to disk
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), local_content).unwrap();
 
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
-        // Target has same source hash as lock (no upstream change)
         let target_item = make_target_item("coder", ItemKind::Agent, &original_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState::from_items(target_items);
 
-        // Lock also has original hash
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &original_hash, &original_hash);
         lock_items.insert(k, v);
@@ -371,20 +341,17 @@ mod tests {
         let new_source_hash = hash::hash_bytes(b"# new upstream");
         let local_content = b"# locally modified";
 
-        // Write locally modified content
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), local_content).unwrap();
 
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
-        // Target has new source hash (upstream changed)
         let target_item = make_target_item("coder", ItemKind::Agent, &new_source_hash, source_path);
         let mut target_items = IndexMap::new();
         target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState::from_items(target_items);
 
-        // Lock has original hash
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &original_hash, &original_hash);
         lock_items.insert(k, v);
@@ -405,10 +372,8 @@ mod tests {
     fn orphan_detected() {
         let root = TempDir::new().unwrap();
 
-        // Empty target — no items wanted
         let target = TargetState::from_items(IndexMap::new());
 
-        // Lock has an item
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("old-agent", ItemKind::Agent, "sha256:aaa", "sha256:aaa");
         lock_items.insert(k, v);
@@ -427,23 +392,18 @@ mod tests {
 
     #[test]
     fn dual_checksum_prevents_false_conflict() {
-        // When mars rewrites frontmatter, source_checksum != installed_checksum.
-        // The disk should match installed_checksum (what mars wrote).
-        // This should NOT be detected as a local modification.
         let root = TempDir::new().unwrap();
 
         let source_hash = hash::hash_bytes(b"# original source");
         let installed_content = b"# rewritten by mars";
         let installed_hash = hash::hash_bytes(installed_content);
 
-        // Disk has the mars-rewritten content
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), installed_content).unwrap();
 
         let source_path = PathBuf::from("/tmp/source/agents/coder.md");
 
-        // Target has same source hash as before (no upstream change)
         let mut target_item = make_target_item("coder", ItemKind::Agent, &source_hash, source_path);
         target_item.rewritten_content =
             Some(String::from_utf8(installed_content.to_vec()).unwrap());
@@ -451,7 +411,6 @@ mod tests {
         target_items.insert("agents/coder.md".into(), target_item);
         let target = TargetState::from_items(target_items);
 
-        // Lock has different source_checksum and installed_checksum
         let mut lock_items = IndexMap::new();
         let (k, v) = make_v2_item("coder", ItemKind::Agent, &source_hash, &installed_hash);
         lock_items.insert(k, v);
@@ -465,8 +424,6 @@ mod tests {
 
         let diff = compute(root.path(), &lock, &target, false).unwrap();
         assert_eq!(diff.items.len(), 1);
-        // Should be Unchanged because disk matches installed_checksum
-        // and source_hash matches source_checksum
         assert!(
             matches!(&diff.items[0], DiffEntry::Unchanged { .. }),
             "expected Unchanged, got {:?}",
@@ -484,10 +441,8 @@ mod tests {
         let hash_b_old = hash::hash_bytes(b"# old version");
         let hash_b_new = hash::hash_bytes(b"# new version");
 
-        // Write unchanged file
         fs::write(agents_dir.join("stable.md"), b"# unchanged").unwrap();
 
-        // Write file with old content (will be updated)
         fs::write(agents_dir.join("updating.md"), b"# old version").unwrap();
 
         let source_path_a = PathBuf::from("/tmp/source/agents/stable.md");
@@ -568,7 +523,6 @@ mod tests {
         let source_hash = hash::hash_bytes(upstream_content);
         let installed_hash = hash::hash_bytes(conflicted_content);
 
-        // Disk matches prior conflicted content from last sync.
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), conflicted_content).unwrap();

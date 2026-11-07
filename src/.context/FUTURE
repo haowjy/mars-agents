@@ -1,9 +1,4 @@
-# src follow-ups
+# Installed reads
 
-- **One path for every `.mars/` read** (`src/content.rs`, `mars_schema::read::installed_agent` /
-  `installed_skill`): the installed readers exist and every current call site uses them, but each
-  still reads its file and picks the reader, so a new reader can call
-  `mars_schema::agent::read`/`skill::read` and drop an item from a tree an older Mars wrote. Move
-  the read onto `ContentRoots` (`src/content.rs` already resolves these paths) so a call site
-  cannot choose, or add a `clippy.toml` `disallowed-methods` entry for
-  `mars_schema::{agent,skill}::read` outside the modules that read authored content.
+- Make `.mars/` reads choose the compatibility readers by construction or enforce that choice with a lint. A new strict reader can silently drop definitions written by an older Mars.
+- Untangle in the rewrite: `src/model/mod.rs:4`, `src/sync/mod.rs:102`, and `src/compiler/config_entries/mod.rs:45` carry the old lock, open sync lock, and staging generation inside the reader handoff, then nest each pipeline phase inside its successor. Separate immutable resolved data from a small resource owner and pass stages their needed inputs, preserving lock and staging lifetimes through publication.

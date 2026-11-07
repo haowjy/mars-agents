@@ -1,0 +1,2 @@
+- Untangle in the rewrite: `src/cli/add.rs:114` and `src/sync/mutation.rs:71` use separate single and batch mutations and duplicate sync-request construction, although both call the same per-entry update and report the same change list. One batch operation for one or more entries could retain validation before mutation and a single sync lock.
+- Untangle in the rewrite: `src/sync/diff.rs:60` stores a differing disk hash in an option, although consumers use only its presence. A boolean could express the decision while preserving missing-file behavior.

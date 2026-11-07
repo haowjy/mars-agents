@@ -14,7 +14,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
     let project = dir.child("project");
     project.create_dir_all().unwrap();
 
-    // 1. Init with custom target (.custom)
     mars()
         .args([
             "init",
@@ -25,7 +24,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .assert()
         .success();
 
-    // 2. Verify mars.toml has [dependencies], not [sources], no init marker
     let config_content = fs::read_to_string(project.child("mars.toml").path()).unwrap();
     assert!(
         config_content.contains("[dependencies]"),
@@ -40,10 +38,8 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "should not have init marker"
     );
 
-    // 3. Verify init does not modify .gitignore.
     assert!(!project.child(".gitignore").exists());
 
-    // 4. Verify settings.managed_root persisted
     let config: Value = toml::from_str(&config_content).unwrap();
     assert_eq!(
         config["settings"]["managed_root"].as_str(),
@@ -51,12 +47,10 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "managed_root should be persisted"
     );
 
-    // 5. Add [package] section and create local items
     let mut config_str = config_content.clone();
     config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\nschema = 1\n");
     fs::write(project.child("mars.toml").path(), &config_str).unwrap();
 
-    // Create local agent and skill under the local package source root.
     let local_agents = project.child(".mars-src").child("agents");
     local_agents.create_dir_all().unwrap();
     fs::write(
@@ -76,7 +70,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
     )
     .unwrap();
 
-    // 6. Add external dependency
     let source = create_source(
         &dir,
         "ext-source",
@@ -93,9 +86,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .assert()
         .success();
 
-    // 7-10. Verify items exist in .mars/ canonical store and target.
-    // Agents now materialize to .mars/agents/ (canonical store), not the
-    // managed target dir. Skills still go to the target.
     let managed = project.child(".custom");
     let local_skill_target = managed.child("skills").child("local-skill");
 
@@ -116,7 +106,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "external agent should exist in .mars/agents/"
     );
 
-    // In .mars/ canonical store, local items are regular copied content
     assert!(
         !mars_local_agent
             .path()
@@ -127,7 +116,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "local agent in .mars/ should be a regular file copy"
     );
 
-    // External agent is also a regular file copy
     assert!(
         !mars_external_agent
             .path()
@@ -138,20 +126,17 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "external agent should not be a symlink"
     );
 
-    // 11. Verify lock file has _self entries
     let lock_content = fs::read_to_string(project.child("mars.lock").path()).unwrap();
     assert!(
         lock_content.contains("[dependencies._self]"),
         "lock should have _self dependency: {lock_content}"
     );
 
-    // 12. Verify lock file uses [dependencies.xxx] not [sources.xxx]
     assert!(
         !lock_content.contains("[sources."),
         "lock should not have [sources.]: {lock_content}"
     );
 
-    // 13. Re-run sync — verify idempotent
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
@@ -170,7 +155,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "lock should retain local _self skill after re-sync: {lock_content_after_resync}"
     );
 
-    // 14. Re-run init — should be idempotent
     mars()
         .args([
             "init",
@@ -181,7 +165,6 @@ fn full_pipeline_with_local_package_and_custom_target() {
         .assert()
         .success();
 
-    // 15. Verify init on package-only mars.toml succeeds
     let pkg_dir = dir.child("pkg-only");
     pkg_dir.create_dir_all().unwrap();
     fs::write(

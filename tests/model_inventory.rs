@@ -1,4 +1,4 @@
-//! End-to-end P3 command contracts with isolated catalog and probe caches.
+//! End-to-end command contracts with isolated catalog and probe caches.
 mod common;
 
 use common::*;

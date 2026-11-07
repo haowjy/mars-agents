@@ -31,7 +31,6 @@ pub(super) struct RootFilePlan {
 }
 
 impl RootFilePlan {
-    /// Package-relative root files this plan will write or delete.
     pub(super) fn touched_paths(&self) -> Vec<PathBuf> {
         self.writes
             .keys()

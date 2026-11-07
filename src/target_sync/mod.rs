@@ -19,31 +19,22 @@ use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 use crate::types::managed_cmd;
 
-/// A linked-target output recorded during sync for lock persistence.
 #[derive(Debug, Clone)]
 pub struct TargetSyncedOutput {
     pub dest_path: String,
     pub installed_checksum: ContentHash,
 }
 
-/// Result of syncing content to a single target directory.
 #[derive(Debug, Clone)]
 pub struct TargetSyncOutcome {
-    /// Target directory name (e.g. ".claude").
     pub target: String,
-    /// Number of items successfully synced.
     pub items_synced: usize,
-    /// Number of items removed (orphan cleanup).
     pub items_removed: usize,
-    /// Non-fatal errors encountered during sync.
     pub errors: Vec<String>,
-    /// Outputs successfully copied to this target (for lock persistence).
     pub synced_outputs: Vec<TargetSyncedOutput>,
-    /// Dest paths removed from this target (for lock persistence).
     pub removed_dest_paths: Vec<String>,
 }
 
-/// Per-run target sync options shared across all linked targets.
 pub struct TargetSyncContext<'a> {
     pub old_lock: &'a LockFile,
     pub force: bool,
@@ -52,12 +43,6 @@ pub struct TargetSyncContext<'a> {
     pub orphan_preserve_paths: Option<&'a HashMap<String, HashSet<String>>>,
 }
 
-/// Sync all managed targets from .mars/ canonical store.
-///
-/// For each configured target, copies content from `.mars/agents/` and `.mars/skills/`
-/// into the target directory.
-/// Cleans up orphaned items that are no longer in the apply outcomes.
-///
 /// Target sync is non-fatal by default — errors per-target are recorded but don't
 /// stop other targets from being synced.
 pub fn sync_managed_targets(
@@ -470,7 +455,6 @@ fn should_copy_to_target(
     }
 }
 
-/// Whether `actual` is what the recorded lock entry or the plan expects.
 fn dest_matches_recorded_or_desired(
     actual: &ContentHash,
     target_name: &str,
@@ -519,7 +503,6 @@ fn hash_target_dest(
     crate::hash::compute_hash(dest, kind).map(ContentHash::from)
 }
 
-/// Record an installed destination whose checksum could be read.
 fn record_synced_output(
     synced_outputs: &mut Vec<TargetSyncedOutput>,
     dest_rel: &str,
@@ -533,13 +516,6 @@ fn record_synced_output(
     }
 }
 
-/// Copy an item (file or directory) from .mars/ to a target directory.
-///
-/// Follows symlinks on the source side (targets get file copies, not symlinks).
-/// Uses shared atomic file operations.
-///
-/// Returns `true` when bytes were written to `dest`, `false` when existing content
-/// was already byte-identical and left untouched.
 fn copy_item_to_target(
     source: &Path,
     dest: &Path,
@@ -559,13 +535,11 @@ fn copy_item_to_target(
         );
     }
 
-    // Ensure parent directories exist
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| MarsError::io("create copy parent", parent, error))?;
     }
 
-    // Follow symlinks to determine if source is a file or directory
     let metadata = std::fs::metadata(source)
         .map_err(|error| MarsError::io("read metadata for", source, error))?;
 
@@ -584,14 +558,6 @@ fn copy_item_to_target(
     Ok(true)
 }
 
-/// Clean up orphaned items in a target directory.
-///
-/// Uses lock v2 output records (via `previous_managed_paths`) to determine
-/// what was managed in the prior sync, rather than scanning hardcoded
-/// subdirectories. Removes entries that were previously managed but are no
-/// longer expected in the current sync.
-///
-/// Returns the number of items removed.
 fn cleanup_orphans(
     target_root: &Path,
     expected: &HashSet<String>,
@@ -601,8 +567,6 @@ fn cleanup_orphans(
 ) -> usize {
     let mut removed = 0;
 
-    // Lock-driven: iterate paths from the old lock, not hardcoded subdirectories.
-    // Only remove entries that were previously managed and are no longer expected.
     for managed_path in previous_managed_paths {
         if expected.contains(managed_path) {
             continue;
@@ -730,7 +694,6 @@ mod tests {
         let mars_dir = dir.path().join(".mars");
         let target = dir.path().join(".agents");
 
-        // Set up .mars/ content
         std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
         std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
 
@@ -791,11 +754,9 @@ mod tests {
         let mars_dir = dir.path().join(".mars");
         let target = dir.path().join(".agents");
 
-        // Set up .mars/ with one agent
         std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
         std::fs::write(mars_dir.join("agents/coder.md"), "# Coder").unwrap();
 
-        // Set up target with an extra agent (orphan)
         std::fs::create_dir_all(target.join("agents")).unwrap();
         std::fs::write(target.join("agents/orphan.md"), "# Orphan").unwrap();
 
@@ -1141,7 +1102,6 @@ mod tests {
         let outcomes = vec![make_outcome("agents/coder.md", ActionTaken::Installed)];
         let mut diag = DiagnosticCollector::new();
 
-        // First run
         sync_managed_targets(
             dir.path(),
             &mars_dir,
@@ -1151,7 +1111,6 @@ mod tests {
             &mut diag,
         );
 
-        // Second run with Skipped action — should converge (file already exists)
         let outcomes2 = vec![make_outcome("agents/coder.md", ActionTaken::Skipped)];
         let results = sync_managed_targets(
             dir.path(),
@@ -1166,7 +1125,6 @@ mod tests {
         );
 
         assert!(target.join("agents/coder.md").exists());
-        // items_synced should be 0 since file already exists
         assert_eq!(results[0].items_synced, 0);
     }
 

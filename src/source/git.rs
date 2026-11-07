@@ -12,7 +12,6 @@ use crate::types::CommitHash;
 use super::archive;
 use super::git_cli;
 
-/// Options controlling git fetch behavior.
 #[derive(Debug, Clone, Default)]
 pub struct FetchOptions {
     /// Preferred commit SHA to checkout before resolving tags/versions.
@@ -78,7 +77,6 @@ fn resolve_version(
     })
 }
 
-/// Return true when the URL host resolves to github.com.
 pub fn is_github_host(url: &str) -> bool {
     extract_hostname(url)
         .map(|host| host.eq_ignore_ascii_case("github.com"))
@@ -185,7 +183,6 @@ pub fn fetch(
     })
 }
 
-/// Fetch a git source at an exact locked commit without resolving a live ref first.
 pub fn fetch_commit(
     url: &str,
     commit: &str,

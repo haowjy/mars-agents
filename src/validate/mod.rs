@@ -4,17 +4,11 @@ use std::path::Path;
 use crate::error::MarsError;
 use crate::lock::ItemId;
 
-/// Warning from dependency validation.
-///
-/// Agents declare `skills: [X, Y]` in YAML frontmatter. After resolution,
-/// every referenced skill must exist somewhere in the target state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationWarning {
-    /// An agent references a skill that doesn't exist in target state.
     MissingSkill {
         agent: ItemId,
         skill_name: String,
-        /// Fuzzy match suggestion: "did you mean X?"
         suggestion: Option<String>,
     },
     /// An agent references `x__p`, its package declares provider `p`, and `p` has not provided
@@ -80,8 +74,6 @@ impl ValidationWarning {
     }
 }
 
-/// Parse skill dependencies from an Agent file.
-///
 /// The callers read files Mars or a provider wrote — an installed Agent under `.mars/` — so the
 /// read tolerates a pre-v1 spelling. Returns the `skills` list, or an empty vec if there is no
 /// frontmatter, no `skills` field, or malformed YAML, and reads only the frontmatter block
@@ -94,9 +86,6 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
         .unwrap_or_default())
 }
 
-/// How one skill ref of an Agent is judged against the skills installed: `None` when it is
-/// satisfied. The one rule `mars sync` and `mars doctor` share.
-///
 /// `declared` is the Agent's package's `uses-providers`: `Some` for a package, `None` for a
 /// consumer project's own items, which need no declaration. `provided_here` is whether this
 /// machine's `.mars/provided.lock` supplies the name.
@@ -144,14 +133,9 @@ pub(crate) fn classify_skill_ref(
     })
 }
 
-/// Find a suggestion for a missing skill using substring matching.
-///
-/// Checks if any available skill name contains the missing name as a
-/// substring or vice versa. No edit distance library needed for v1.
 pub(crate) fn find_suggestion(missing: &str, available: &HashSet<String>) -> Option<String> {
     let missing_lower = missing.to_lowercase();
 
-    // Sort for deterministic suggestion when multiple match
     let mut candidates: Vec<&String> = available.iter().collect();
     candidates.sort();
 
@@ -172,8 +156,6 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    // ── Validation tests ────────────────────────────────────────────
-
     fn write_agent(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(format!("{name}.md"));
         fs::write(&path, content).unwrap();
@@ -193,7 +175,6 @@ mod tests {
     }
     #[test]
     fn suggestion_reverse_substring() {
-        // "planning" contains "plan" → suggestion
         let available: HashSet<String> = ["planning"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
             find_suggestion("plan", &available),
@@ -203,7 +184,6 @@ mod tests {
 
     #[test]
     fn suggestion_forward_substring() {
-        // "review-pr" contains "review" → suggestion
         let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
             find_suggestion("review-pr", &available),

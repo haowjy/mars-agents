@@ -17,12 +17,9 @@ use toml_edit::{DocumentMut, Item, Table};
 
 use crate::error::{ConfigError, MarsError};
 
-/// How the file holds its section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionFormat {
-    /// A JSON object at this top-level key maps entry name to entry.
     JsonSection(&'static str),
-    /// A TOML table at this top-level key holds one `[key.<name>]` table per entry.
     TomlTable(&'static str),
 }
 
@@ -34,8 +31,6 @@ pub(super) struct JsonDoc {
     key: &'static str,
 }
 
-/// The file, narrowed to its section at `key`. Each variant holds its
-/// format's document, already checked to have the expected shape.
 pub(super) enum Doc {
     Json(JsonDoc),
     Toml { doc: DocumentMut, key: &'static str },
@@ -85,7 +80,6 @@ impl JsonDoc {
         }
     }
 
-    /// The section, created if absent.
     pub(super) fn section_mut(&mut self) -> &mut IndexMap<String, OrderedValue> {
         let OrderedValue::Object(section) = self
             .root
@@ -97,14 +91,12 @@ impl JsonDoc {
         section
     }
 
-    /// Drop the section if it holds nothing.
     pub(super) fn drop_section_if_empty(&mut self) {
         if self.section().is_some_and(IndexMap::is_empty) {
             self.root.shift_remove(self.key);
         }
     }
 
-    /// Set a top-level key outside the section.
     pub(super) fn set_top_level(&mut self, key: &str, value: Value) {
         self.root.insert(key.to_owned(), to_ordered(value));
     }
@@ -188,7 +180,6 @@ impl Doc {
         }
     }
 
-    /// Nothing left but, at most, an empty section.
     pub(super) fn is_empty(&self) -> bool {
         match self {
             Self::Json(doc) => doc.is_empty(),
@@ -252,10 +243,9 @@ fn write_through(path: &Path, content: &[u8]) -> Result<(), MarsError> {
     }
 }
 
-/// Follow `path` through symlinks to the file at the end, which may not exist yet.
 fn resolve_symlinks(path: &Path) -> Result<std::path::PathBuf, MarsError> {
     let mut current = path.to_path_buf();
-    // The OS stops following at 40 links; so do we.
+    // Bound manually followed links to stop cycles.
     for _ in 0..40 {
         if !current.symlink_metadata().is_ok_and(|m| m.is_symlink()) {
             return Ok(current);

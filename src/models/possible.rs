@@ -64,8 +64,6 @@ pub enum HarnessPossible {
     Unlisted(UnlistedReason),
 }
 
-/// One diagnostic per harness, derived from the same session outcome as its
-/// Possible rows. A retained failed refresh is distinct from no listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListingIssue {
     Unavailable {
@@ -82,7 +80,6 @@ pub trait PossibleSource {
     fn rows_for(&mut self, harness: HarnessId) -> &HarnessPossible;
 }
 
-/// Lazily asks the command-scoped capability session only for requested harnesses.
 /// Display calls `all_rows`; routing callers may ask for a single harness.
 pub struct SessionPossibleSource<'a> {
     catalog: &'a ModelsCache,

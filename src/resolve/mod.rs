@@ -71,14 +71,11 @@ fn describe_resolved_ref(resolved: &ResolvedRef) -> String {
     format!("{version}@{commit}")
 }
 
-/// Lists semver-tagged versions available for a git source.
 pub trait VersionLister {
     fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError>;
 }
 
-/// Fetches concrete source trees after the resolver has picked a strategy.
 pub trait SourceFetcher {
-    /// Fetch a git source at a specific version tag.
     fn fetch_git_version(
         &self,
         url: &SourceUrl,
@@ -88,7 +85,6 @@ pub trait SourceFetcher {
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
-    /// Fetch a git source at a branch/commit ref (non-semver path).
     fn fetch_git_ref(
         &self,
         url: &SourceUrl,
@@ -98,7 +94,6 @@ pub trait SourceFetcher {
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
-    /// Fetch a git source at an exact commit without resolving a live ref first.
     fn fetch_git_commit(
         &self,
         url: &SourceUrl,
@@ -107,7 +102,6 @@ pub trait SourceFetcher {
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
-    /// Resolve a local path source into a concrete tree reference.
     fn fetch_path(
         &self,
         path: &Path,
@@ -116,41 +110,11 @@ pub trait SourceFetcher {
     ) -> Result<ResolvedRef, MarsError>;
 }
 
-/// What `resolve()` needs from the outside world.
 pub trait SourceProvider: VersionLister + SourceFetcher {}
 impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
 
-/// Resolve the full dependency graph from config.
-///
-/// Uses lock-preferred latest-compatible selection by default: if the lock has
-/// a compatible version, replay it; otherwise pick the newest satisfying version.
-/// Users who want lock-agnostic maximization use `mars upgrade`.
-///
-/// When `locked` is provided, prefer locked versions when constraints allow
-/// (reproducible builds).
-///
-/// ## Fresh-context restart algorithm
-///
-/// The bottom-up traversal can discover that an already-resolved package would
-/// select a different version under the full accumulated constraint set (e.g.
-/// a `Latest` constraint from a later-processed package changes the optimum).
-/// When this happens `resolve_package_bottom_up` emits `ResolutionRestartNeeded`.
-///
-/// The driver handles this by:
-///   1. Reading the "correct" (new) ref from the context.
-///   2. Carrying it as an override into a fresh `ResolverContext`.
-///   3. Restarting the bottom-up phase from scratch.
-///
-/// On the next pass the override is used at first-resolution time — the package
-/// starts at the right version, so the same constraint pattern does NOT re-trigger
-/// a restart. B1 (stale manifest-derived constraints) and B2 (new deps not
-/// materialized) are avoided by construction because the fresh context has no stale
-/// state and the override falls through to the normal first-resolution code path.
-///
-/// Convergence is guaranteed in practice because versions only move in one direction
-/// (upward under maximize, toward the lock-preferred/latest-compatible optimum).
-/// If a package starts bouncing between previously-seen refs, the driver reports
-/// a true per-package oscillation with the observed ref cycle.
+/// Restart with a fresh context when accumulated constraints change a resolved ref,
+/// so stale manifest constraints and dependencies cannot survive.
 pub fn resolve(
     config: &EffectiveConfig,
     provider: &dyn SourceProvider,
@@ -158,7 +122,6 @@ pub fn resolve(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
-    // Build direct requests (stable across restarts — determined by config + options).
     let direct_requests: Vec<PendingSource> = config
         .dependencies
         .iter()
@@ -173,8 +136,6 @@ pub fn resolve(
         })
         .collect();
 
-    // Version overrides carried across restarts:
-    // package → (correct ref, correct rooted package).
     let mut version_overrides: HashMap<
         SourceName,
         (
@@ -183,18 +144,13 @@ pub fn resolve(
             crate::staging::HookSurfaceState,
         ),
     > = HashMap::new();
-    // Per-package restart history used for true oscillation detection.
     let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
     let mut exclusions = EngineExclusions::new();
 
-    // Restart loop: normally executes once. Restarts only when a package would
-    // resolve differently under the full constraint set than it did at first-resolution
-    // time (order-dependent constraint accumulation bug).
     let ctx = loop {
         let mut ctx = ResolverContext::new();
         ctx.set_version_overrides(version_overrides.clone());
 
-        // Bottom-up phase: resolve all packages, with version selection.
         let bottom_up_result = (|| -> Result<(), MarsError> {
             for request in &direct_requests {
                 resolve_package_bottom_up(
@@ -214,7 +170,6 @@ pub fn resolve(
         match bottom_up_result {
             Err(MarsError::ResolutionRestartNeeded { package }) => {
                 version_overrides = ctx.version_overrides().clone();
-                // Read the override info before discarding ctx.
                 let Some((pkg_name, new_ref, new_rooted, hook_surface)) =
                     ctx.take_pending_restart()
                 else {
@@ -242,7 +197,6 @@ pub fn resolve(
                 }
                 history.push(new_ref.clone());
                 version_overrides.insert(pkg_name, (new_ref, new_rooted, hook_surface));
-                // Discard ctx and retry with updated overrides.
                 continue;
             }
             Err(other) => return Err(other),

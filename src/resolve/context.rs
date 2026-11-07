@@ -10,20 +10,11 @@ use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName};
 use mars_schema::selection::SelectionResult;
 
-/// Mutable resolver state threaded through bottom-up resolution.
 pub struct ResolverContext {
     registry: IndexMap<SourceName, RegisteredPackage>,
     package_states: HashMap<SourceName, PackageResolutionState>,
     id_index: HashMap<SourceId, SourceName>,
     version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
-    /// Version overrides carried from a prior restart pass.
-    ///
-    /// When a restart is triggered because package X would resolve to a different
-    /// version under the full accumulated constraint set, the driver carries the
-    /// correct (new) ref into the fresh context via this map. The first-resolution
-    /// branch in `resolve_package_bottom_up` checks this map and uses the override
-    /// directly, so the same constraint-accumulation pattern does NOT re-trigger a
-    /// restart on the next pass.
     version_overrides: HashMap<
         SourceName,
         (
@@ -32,8 +23,6 @@ pub struct ResolverContext {
             crate::staging::HookSurfaceState,
         ),
     >,
-    /// Pending restart info set by `resolve_package_bottom_up` just before it returns
-    /// `ResolutionRestartNeeded`. The driver reads this before discarding the context.
     pending_restart: Option<(
         SourceName,
         ResolvedRef,
@@ -62,9 +51,6 @@ impl ResolverContext {
         }
     }
 
-    /// Set version overrides from a prior restart pass.
-    /// These are used by `resolve_package_bottom_up` to skip re-resolution for
-    /// packages where the correct version was already computed.
     pub(super) fn set_version_overrides(
         &mut self,
         overrides: HashMap<
@@ -79,8 +65,6 @@ impl ResolverContext {
         self.version_overrides = overrides;
     }
 
-    /// Look up an override for the first resolution of `name`.
-    /// Returns the pre-computed ref and rooted package if present.
     pub(super) fn version_override(
         &self,
         name: &SourceName,
@@ -117,9 +101,6 @@ impl ResolverContext {
         &self.version_overrides
     }
 
-    /// Record the restart info: the package that triggered a restart and the ref
-    /// it should be resolved to on the next pass. Called by `resolve_package_bottom_up`
-    /// just before returning `ResolutionRestartNeeded`.
     pub(super) fn set_pending_restart(
         &mut self,
         package: SourceName,
@@ -130,7 +111,6 @@ impl ResolverContext {
         self.pending_restart = Some((package, new_ref, new_rooted, hook_surface));
     }
 
-    /// Drain the pending restart info. Called by the driver after catching the signal.
     pub(super) fn take_pending_restart(
         &mut self,
     ) -> Option<(

@@ -178,8 +178,6 @@ impl Target {
     }
 }
 
-// Claude Code 2.1.312 (`CLAUDE_VERSION`); event names from https://code.claude.com/docs/en/hooks (2026-07-24),
-// matcher fields from research/claude-codex-cursor-answers.md § Matchers per moment.
 const CLAUDE_EVENTS: &[Event] = &[
     matched("SessionStart", "source"),
     event("Setup"),
@@ -212,10 +210,7 @@ const CLAUDE_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason").timeout_ms(1_500),
 ];
 
-// codex-cli 0.164.0: `HookEventsToml` (codex-rs/config/src/hook_config.rs L39-69) names
-// fourteen events. These are the ones Claude also has; the Codex-only ones (`PreModelRequest`,
-// `PostModelRequest`, `Interrupt`) stay in a Codex native hook. `SessionEnd` fires on 0.164.0
-// (`reason` is always `other`; research/live-unverified-rows.md); 0.144.4 did not.
+// Codex reports `SessionEnd` reason as `other`.
 const CODEX_EVENTS: &[Event] = &[
     matched("SessionStart", "source"),
     event("UserPromptSubmit"),
@@ -230,9 +225,6 @@ const CODEX_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason"),
 ];
 
-// cursor-agent 2026.07.16 installed-binary validator, extracted and
-// verified by p5714 on 2026-07-24; p5695 provided the docs baseline. Matcher fields are
-// recorded when Cursor renders generated hooks (0.26).
 const CURSOR_EVENTS: &[Event] = &[
     event("beforeShellExecution"),
     event("beforeMCPExecution"),
@@ -257,9 +249,7 @@ const CURSOR_EVENTS: &[Event] = &[
     event("workspaceOpen"),
 ];
 
-// What the generated OpenCode plugin registers (verified live on OpenCode 2.2.0, `matcher`
-// fields included). `PreCompact` has no matcher field: its compaction callback does not say
-// why it ran.
+// OpenCode's compaction callback does not identify its trigger.
 const OPENCODE_EVENTS: &[Event] = &[
     matched("PreToolUse", "tool_name"),
     matched("PostToolUse", "tool_name"),
@@ -269,7 +259,6 @@ const OPENCODE_EVENTS: &[Event] = &[
     matched("PermissionRequest", "tool_name"),
 ];
 
-// What the generated Pi extension registers (Pi 1.4.0).
 const PI_EVENTS: &[Event] = &[
     matched("PreToolUse", "tool_name"),
     matched("PostToolUse", "tool_name"),

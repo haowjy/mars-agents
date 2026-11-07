@@ -12,8 +12,6 @@ use std::process::Stdio;
 #[cfg(windows)]
 mod detached_windows;
 
-/// Launch an independent child from explicit program/argv, without a shell.
-///
 /// The child inherits the ambient environment and current directory, but no
 /// caller stdio handles. On POSIX it starts a new session and is reaped on a
 /// background thread; on Windows it has no inherited handles and its process
@@ -94,10 +92,6 @@ pub(crate) fn remove_git_local_env(command: &mut Command) {
     }
 }
 
-/// Run a git command and return stdout on success.
-///
-/// Arguments are passed as an explicit argv array, never through a shell.
-/// Errors include context, arguments, exit code, and stderr.
 pub fn run_git(args: &[&str], cwd: &Path, context: &str) -> Result<String, MarsError> {
     let command_display = display_command(args);
     let mut command = Command::new("git");
@@ -136,9 +130,6 @@ pub fn run_git(args: &[&str], cwd: &Path, context: &str) -> Result<String, MarsE
     }
 }
 
-/// Run a git command with a specific ref argument that may contain special characters.
-///
-/// Wraps `run_git` but takes the ref as a separate argument to ensure it's passed correctly.
 pub fn run_git_with_ref(
     base_args: &[&str],
     ref_arg: &str,
@@ -150,7 +141,6 @@ pub fn run_git_with_ref(
     run_git(&args, cwd, context)
 }
 
-/// Display a command for error messages (not for execution).
 pub fn display_command(args: &[&str]) -> String {
     if args.is_empty() {
         "git".to_string()
@@ -179,7 +169,6 @@ mod tests {
 
     #[test]
     fn run_git_version_succeeds() {
-        // git --version should work in any environment with git
         let tmp = TempDir::new().unwrap();
         let result = run_git(&["--version"], tmp.path(), "test");
         assert!(result.is_ok(), "git --version should succeed: {:?}", result);

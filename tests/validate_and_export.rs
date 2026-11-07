@@ -38,7 +38,6 @@ fn validate_json_outputs_clean_true_on_success() {
 
 #[test]
 fn validate_strict_clean_project_still_passes() {
-    // --strict on a project with zero warnings should still exit 0.
     let dir = TempDir::new().unwrap();
     let agent_content = "---\nname: planner\ndescription: plans\n---\n# Planner";
     let project = setup_synced_project(&dir, "proj", "src", &[("planner", agent_content)], &[]);
@@ -51,24 +50,18 @@ fn validate_strict_clean_project_still_passes() {
 
 #[test]
 fn validate_strict_with_override_warning() {
-    // override-missing-dep is a Warning diagnostic.
-    // --strict should escalate it to an error (exit 1).
     let dir = TempDir::new().unwrap();
     let agent_content = "---\nname: agent\ndescription: an agent\n---\n# Agent";
     let project = setup_synced_project(&dir, "proj", "src", &[("agent", agent_content)], &[]);
 
-    // Add mars.local.toml with an override pointing to a non-existent dep.
-    // This produces an override-missing-dep Warning diagnostic.
     let local_toml = "[overrides.nonexistent-dep]\npath = \"/does/not/exist\"\n";
     fs::write(project.join("mars.local.toml"), local_toml).unwrap();
 
-    // Normal validate exits 0 (warning doesn't fail)
     offline_mars(dir.path())
         .args(["validate", "--root", project.to_str().unwrap()])
         .assert()
         .success();
 
-    // --strict exits 1 (warning escalated to error)
     offline_mars(dir.path())
         .args(["validate", "--strict", "--root", project.to_str().unwrap()])
         .assert()
@@ -194,7 +187,6 @@ fn validate_json_strict_escalates_warnings_in_output() {
     let agent_content = "---\nname: alpha\ndescription: agent\n---\n# Alpha";
     let project = setup_synced_project(&dir, "proj", "src", &[("alpha", agent_content)], &[]);
 
-    // Add override-missing-dep warning via mars.local.toml.
     let local_toml = "[overrides.ghost-dep]\npath = \"/does/not/exist\"\n";
     fs::write(project.join("mars.local.toml"), local_toml).unwrap();
 
@@ -209,7 +201,6 @@ fn validate_json_strict_escalates_warnings_in_output() {
         .output()
         .unwrap();
 
-    // Exit code should be non-zero (warning escalated to error)
     assert!(
         !output.status.success(),
         "strict mode should fail on missing-skill warning"

@@ -9,22 +9,14 @@ use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName, SourceUrl};
 use mars_schema::claude::manifest::PluginSource;
 
-/// The resolved dependency graph — all sources with concrete versions.
-///
-/// Produced by the resolver after fetching sources, reading manifests,
-/// intersecting version constraints, and sorting the packages by name.
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
     pub nodes: IndexMap<SourceName, ResolvedNode>,
     /// Alphabetical, for the order sync walks the packages in. The order skill refs resolve in is
     /// not this one; `selection` computes it.
     pub order: Vec<SourceName>,
-    /// The Agents, skills and documents the consumer installs, chosen once the graph settled.
     pub selection: mars_schema::selection::SelectionResult,
-    /// All version constraints collected for each source (direct + transitive).
     pub version_constraints: HashMap<SourceName, Vec<(String, Constraint)>>,
-    /// Hook surfaces that cannot be compiled because they use a removed schema.
-    ///
     /// This is classified during staging and consumed only by the recovery halt
     /// gate at the reader/compiler boundary.
     pub unreadable_hook_surfaces:
@@ -32,7 +24,6 @@ pub struct ResolvedGraph {
 }
 
 impl ResolvedGraph {
-    /// Shortest dependency distance from the consumer's direct declarations.
     pub(crate) fn dependency_depths(
         &self,
         dependencies: &IndexMap<SourceName, EffectiveDependency>,
@@ -127,7 +118,6 @@ pub struct EngineFallback {
     pub engines: Vec<String>,
 }
 
-/// A single node in the resolved graph.
 #[derive(Debug, Clone)]
 pub struct ResolvedNode {
     pub source_name: SourceName,
@@ -138,10 +128,8 @@ pub struct ResolvedNode {
     /// a path source.
     pub fetch_url: Option<SourceUrl>,
     pub rooted_ref: RootedSourceRef,
-    /// Crate-owned semantic preparation result for this authored package.
     pub prepared: std::sync::Arc<mars_schema::prepare::Prepared>,
     pub resolved_ref: ResolvedRef,
-    /// None if source has no mars.toml.
     pub manifest: Option<Manifest>,
 }
 
@@ -157,7 +145,6 @@ impl ResolvedNode {
     }
 }
 
-/// Source checkout provenance and rooted package boundary.
 #[derive(Debug, Clone)]
 pub struct RootedSourceRef {
     /// The checkout the package's files came from: the marketplace's for a local plugin, the
@@ -167,7 +154,6 @@ pub struct RootedSourceRef {
     pub authored_root: PathBuf,
     /// Current materialized content view. Relative dependencies must never use this.
     pub package_root: PathBuf,
-    /// Set when the package is one plugin of a marketplace.
     pub plugin: Option<PluginRoot>,
 }
 
@@ -176,7 +162,6 @@ pub struct RootedSourceRef {
 #[derive(Debug, Clone)]
 pub struct PluginRoot {
     pub hint: mars_schema::inspect::PluginHint,
-    /// Where the plugin's files came from.
     pub content: crate::lock::LockedContent,
     /// The dependency named this plugin; otherwise its marketplace lists only this one.
     pub named: bool,
@@ -202,7 +187,6 @@ impl PluginRoot {
     }
 }
 
-/// High-level resolver mode shared by sync and upgrade.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveMode {
     /// Normal sync: replay compatible lock entries, otherwise pick newest compatible.
@@ -218,17 +202,13 @@ pub enum ResolveMode {
     },
 }
 
-/// Options controlling resolution behavior.
 #[derive(Debug, Clone)]
 pub struct ResolveOptions {
     pub mode: ResolveMode,
-    /// Running mars version override. Production uses the crate version.
     pub mars_version: Option<semver::Version>,
-    /// Running meridian version override. Production reads `MERIDIAN_VERSION`.
     pub meridian_version: Option<semver::Version>,
     pub ignore_requires_mars: bool,
     pub ignore_requires_meridian: bool,
-    /// Local source substitutions, including names first introduced transitively.
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     pub(crate) prepared_sources:
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
@@ -352,8 +332,6 @@ impl ResolveOptions {
     }
 }
 
-/// A prepared package whose manifest depends on `deps` (path entries, unfiltered; no manifest when
-/// there are none), for tests that build a `ResolvedNode` by hand.
 #[cfg(test)]
 pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::prepare::Prepared> {
     let manifest = (!deps.is_empty()).then(|| {

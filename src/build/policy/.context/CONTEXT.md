@@ -1,40 +1,5 @@
 # Policy resolution
 
-## Harness preferences and pins
+Harness precedence is CLI, overlay, overlay model policy, profile, profile model policy, settings model policy, then alias. Resolve it independently of model precedence: a CLI model does not erase a profile harness preference. A blocked CLI harness still permits implicit model backups on that harness; a CLI model pin prevents backups.
 
-Harness field precedence is CLI → overlay → overlay model-policy → profile →
-profile model-policy → settings model-policy → alias. Resolve this independently
-from model precedence; a CLI model does not suppress the profile harness preference.
-
-Only CLI harness is fixed. Its blocked assessment is an exhausted model attempt,
-so implicit model backups can still run on that same harness. A CLI model pin
-prevents those backups. Target/caller exclusion of a CLI harness fails before probes.
-
-For implicit selection, pass the highest-precedence harness and its source to the
-shared routing evaluator. It leads configured harness order, default_harness and
-remaining permitted registry candidates. Permission filters and stable dedup apply
-to the entire list. The preferred route is assessed once, like any other route;
-installation, provider mismatch or rejected auth cannot turn it into a default-model
-launch. Keep selected field provenance and the matched policy rule when the
-preference wins; otherwise use the selected candidate's source.
-
-## Model attempts
-
-The outer loop evaluates the primary, then the shared profile backup iterator.
-Each attempt independently resolves model identity, provider constraints and
-settings. An eligible route or a route selected by supported authored preference
-wins immediately; retain the first whole unverified attempt only when neither
-kind wins. Do not reconstruct that attempt
-from the last iteration's state. Native auth observations are shared across attempts.
-
-The loop also owns the aggregate `RouteDecisionReport`: append each trace before
-moving to a backup and retain it on selection errors. Final routing projection
-receives that report intact; it must not reconstruct history from the winning trace.
-A configuration rejection before harness assessment records an unassessed model
-attempt, not a fabricated verdict.
-
-## Related docs
-
-- [Policy overview](../AGENTS.md)
-- [Bundle contracts](../../.context/CONTEXT.md)
-- [Routing evaluator](../../../routing/.context/CONTEXT.md)
+Keep each model attempt's route, settings and provenance together. If no eligible or supported preferred route wins, select the first whole unverified attempt, not a reconstruction from the last attempt. Append every trace to the aggregate report before moving on; a configuration rejection before assessment is an unassessed attempt, not a fabricated verdict.

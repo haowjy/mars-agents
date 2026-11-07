@@ -1,0 +1,1 @@
+- Untangle in the rewrite: `src/target/mod.rs:45` and the Claude, Codex, Cursor, OpenCode, and Pi adapters repeat target names, skill-variant keys, and the same skill destination rule in boxed trait implementations. A static descriptor table with a shared skill rule and per-target MCP render functions could retain the legacy `.agents` behavior and extension seam.

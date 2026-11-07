@@ -1,7 +1,5 @@
-# src/compiler follow-ups
+# Compiler follow-ups
 
-- Pi MCP projection is stale. `project_mcp_ref` treats Pi as having no MCP surface
-  (`HarnessDropsMcp`, so every MCP rule on Pi is `unknown`), but Pi 1.2.0 ships MCP
-  (`pi mcp`, `--no-mcp`, `mcp__` tool filtering). Re-check the token shape against the
-  installed Pi.
-- **OpenCode `ask` rules and scoped denies** (`src/compiler/agents/lower_policy.rs`, `collect_denied_as_permission`): only unscoped `deny` rules are lowered to OpenCode `permission` entries. `ask` rules (`permission: {<tool>: ask}`) and scoped denies (`bash(git *)` as a nested `permission.bash` map) are reported as dropped.
+- Check Pi's MCP token shape against the installed Pi: `project_mcp_ref` currently reports every Pi MCP rule as unsupported, but Pi has an MCP surface.
+- Lower OpenCode `ask` rules and scoped denies in `src/compiler/agents/lower_policy.rs`; they are currently reported as dropped.
+- Untangle in the rewrite: `src/compiler/config_entries/mod.rs:45` and its write phase at lines 518–605 thread target decisions through parallel maps and twelve arguments. A typed per-target plan could carry hooks, files, records, and outcomes together, while retaining the global removal-before-write gate and ownership permits.

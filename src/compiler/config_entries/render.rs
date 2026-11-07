@@ -13,11 +13,9 @@ use mars_schema::hooks::render::Skip;
 use mars_schema::hooks::targets::Profile;
 use mars_schema::hooks::{HookOutput, MergeOutput, Origin};
 
-/// Every selected hook's output, by the hook's canonical directory, as preflight rendered it.
 pub(crate) struct RenderedHooks(HashMap<String, HookOutput>);
 
 impl RenderedHooks {
-    /// The output of a hook preflight selected. Compile only asks for selected hooks.
     pub(crate) fn get(&self, dir: &PackageDir) -> &HookOutput {
         self.0
             .get(dir.canonical().as_str())
@@ -25,9 +23,6 @@ impl RenderedHooks {
     }
 }
 
-/// Validate and render every selected hook, and check the destinations config entries will
-/// touch, before the apply phase.
-///
 /// This is deliberately separate from config emission so an invalid hook
 /// cannot leave canonical or target state partially mutated.
 pub(crate) fn preflight_config_entries(
@@ -263,13 +258,10 @@ pub(crate) fn skip_text(skip: &Skip) -> String {
     }
 }
 
-/// A hook, for grouping what is said about it: its package and name.
 fn hook_key(item: &ParsedHookItem) -> String {
     format!("{}/{}", item.source_name, item.def.name)
 }
 
-/// Read and lower a plugin build's mergeable hook entries for one target.
-///
 /// The caller supplies each hook's directory token: the replacement for
 /// `${MARS_HOOK_DIR}` in its native hook. `${MARS_HOOK_TARGET}` is `plugin` there: the
 /// tree is shared by every harness that reads it.

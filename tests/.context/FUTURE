@@ -1,15 +1,5 @@
-# Test architecture follow-ups
+# Test follow-ups
 
-- `tests/release_metadata.rs`: label/version/tag-recovery tests still mirror shell
-  spelling and comments. When release logic gains an executable script seam,
-  replace these checks with temporary-repository decision tests; retain release
-  safety coverage until then. Windows command checks are now scoped to its job.
-- `tests/launch_bundle/routing.rs`: loosen full warning/error sentences in the
-  three unavailable/profile-harness pivot cases and four Cursor effort error
-  cases. Preserve selected model/harness/provenance, exit code, diagnostic
-  subjects/remediation and negative misclassification checks. Do not merge
-  distinct routing failures merely to reduce test count.
-- Broader suite isolation (library and process tests): GitHub #167. Unknown
-  skill-variant harness validation warning: #166; removing its ignored test did
-  not implement that behavior.
-- **Dry run racing a real sync** (`src/sync/mod.rs`, `PendingStagingGeneration::scratch`): checked only by holding `flock` on Linux. Windows file locking and a dry run racing a sync that is mid-publish are unverified.
+- Replace `tests/release_metadata.rs` shell-text assertions with temporary-repository behavior tests when release logic has an executable seam; retain release safety coverage.
+- Loosen full diagnostic-sentence assertions in `tests/launch_bundle/routing.rs` while retaining route, provenance, exit and failure distinction checks.
+- Verify Windows locking and a dry run racing a sync during publication.

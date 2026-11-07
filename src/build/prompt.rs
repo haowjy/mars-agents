@@ -344,10 +344,7 @@ fn compose_system_instruction(
         blocks.push(format!("# Agent Profile\n\n{body}"));
     }
 
-    // Auto-loaded skills: full content, already sorted by type priority
-    // (principles first, then guardrails, then others).
-    // Each skill has its own `# Skill: name` heading — no intermediate
-    // wrapper headings that would break markdown hierarchy.
+    // Each skill supplies its own heading; wrappers would alter the Markdown hierarchy.
     for doc in supplemental_documents {
         let content = doc.content.trim();
         if !content.is_empty() {
@@ -355,8 +352,6 @@ fn compose_system_instruction(
         }
     }
 
-    // Available skills: names only, grouped by type. Meridian composes its own
-    // inventory and renders descriptions, so the two formats are independent.
     if !available_skills.is_empty() {
         let mut avail_block = String::from(
             "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",
@@ -394,7 +389,6 @@ fn compose_system_instruction(
                 }
             }
         }
-        // Remaining types: each gets its own heading, no description.
         let other_skills: Vec<_> = available_skills
             .iter()
             .filter(|s| {

@@ -1,12 +1,3 @@
-/// `.opencode` target adapter.
-///
-/// Handles MCP server registration for the OpenCode harness.
-///
-/// OpenCode-native lowering:
-/// - MCP: writes to `opencode.json` (`mcp` section), with local command arrays and
-///   `{env:VAR}` environment references
-///
-/// Mars has no OpenCode hook config writer; OpenCode hooks are TypeScript plugins.
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
@@ -16,8 +7,6 @@ use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
 
 const MCP_SECTION: &str = "mcp";
 
-/// Render one server as an OpenCode `mcp` entry with `{env:VAR}` references:
-/// `local` is a command array, `remote` a URL with headers.
 fn render(server: &McpServerEntry) -> McpRender {
     let interpolate = |var: &str| format!("{{env:{var}}}");
     let entry = match &server.transport {

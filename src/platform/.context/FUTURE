@@ -1,0 +1,1 @@
+- Untangle in the rewrite: `src/fs/mod.rs:125` and `src/platform/fs.rs:20` independently stage and replace directories with `.old`, rollback, and cleanup. Their stale-backup, symlink, and Windows readonly handling differs. Reconcile those policies, then share a replacement primitive while leaving copying and filtering to callers.

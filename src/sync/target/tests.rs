@@ -10,12 +10,10 @@ use mars_schema::filter::FilterMode;
 use std::fs;
 use tempfile::TempDir;
 
-/// The consumer's own package in a dependency-only test graph.
 fn test_local_source() -> SourceName {
     crate::types::SourceOrigin::LocalPackage.to_string().into()
 }
 
-/// Helper: create a source tree with agents and skills
 fn make_source_tree(agents: &[(&str, &str)], skills: &[(&str, &str)]) -> TempDir {
     let dir = TempDir::new().unwrap();
     if !agents.is_empty() {
@@ -240,8 +238,6 @@ fn hook_depths_are_stable_for_longer_path_discovered_after_shorter_path() {
     }
 }
 
-// === Target build tests ===
-
 #[test]
 fn build_single_source_no_filter() {
     let tree = make_source_tree(&[("coder.md", "# coder")], &[("planning", "# planning")]);
@@ -301,7 +297,6 @@ fn build_with_path_rename_mapping() {
         FilterMode::All,
     )]);
 
-    // Add rename mapping
     config
         .dependencies
         .get_mut("base")
@@ -394,8 +389,6 @@ fn build_with_invalid_rename_destination_returns_error() {
     .unwrap_err();
     assert!(matches!(err, MarsError::Source { .. }));
 }
-
-// === Collision tests ===
 
 #[test]
 fn collision_auto_renames_both() {
@@ -653,8 +646,6 @@ fn no_collision_no_renames() {
     assert_eq!(target.items.len(), 2);
 }
 
-// === Source with agents filter + skill deps ===
-
 #[test]
 fn build_with_agents_filter_pulls_transitive_skills() {
     let tree = make_source_tree(
@@ -683,7 +674,6 @@ fn build_with_agents_filter_pulls_transitive_skills() {
     assert_eq!(target.items.len(), 2); // coder + planning
     assert!(target.items.contains_key("agents/coder.md"));
     assert!(target.items.contains_key("skills/planning"));
-    // unused-skill should NOT be present
     assert!(!target.items.contains_key("skills/unused-skill"));
 }
 
@@ -750,7 +740,6 @@ fn unmanaged_disk_path_collision_reported() {
     assert!(renames.is_empty());
     let install_root = TempDir::new().unwrap();
 
-    // Existing user-authored file at the same destination.
     let existing = install_root.path().join("agents").join("coder.md");
     fs::create_dir_all(existing.parent().unwrap()).unwrap();
     fs::write(&existing, "# user-authored").unwrap();
@@ -787,12 +776,10 @@ fn unmanaged_collision_skipped_when_hash_matches() {
     assert!(renames.is_empty());
     let install_root = TempDir::new().unwrap();
 
-    // Simulate partial prior install: file on disk with same content
     let existing = install_root.path().join("agents").join("coder.md");
     fs::create_dir_all(existing.parent().unwrap()).unwrap();
     fs::write(&existing, content).unwrap();
 
-    // Should skip collision — disk content matches planned install (crash recovery)
     let collisions = check_unmanaged_collisions(
         install_root.path(),
         &Ownership::new(&LockFile::empty(), &ProvidedNames::default()),
@@ -822,7 +809,6 @@ fn unmanaged_collision_reported_on_different_content() {
     assert!(renames.is_empty());
     let install_root = TempDir::new().unwrap();
 
-    // User-authored file with different content
     let existing = install_root.path().join("agents").join("coder.md");
     fs::create_dir_all(existing.parent().unwrap()).unwrap();
     fs::write(&existing, "# different user content").unwrap();

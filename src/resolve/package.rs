@@ -19,13 +19,10 @@ use super::requires::{EngineRequirementFailure, check_package_requirements};
 use super::types::{ResolveOptions, ResolvedNode};
 use super::version::resolve_single_source;
 
-/// Internal: a source waiting to be resolved.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingSource {
     pub(crate) name: SourceName,
-    /// Identity declared by the requesting manifest, before any local override.
     pub(crate) declared_source_id: SourceId,
-    /// Effective identity fetched for this run (possibly a local override).
     pub(crate) source_id: SourceId,
     pub(crate) spec: SourceSpec,
     pub(crate) subpath: Option<SourceSubpath>,
@@ -110,24 +107,6 @@ pub(crate) fn resolve_package_bottom_up(
         ctx.package_states().get(&pending_src.name),
         Some(PackageResolutionState::Resolved)
     ) {
-        // Re-resolution check: when a new constraint arrives on an already-resolved
-        // git package, check whether the full accumulated constraint set (now including
-        // the new constraint) would select a different version or commit than what is
-        // currently in the registry.
-        //
-        // If so, emit `ResolutionRestartNeeded` — the driver will start a fresh
-        // `ResolverContext`, carry the correct (new) ref as an override, and re-run
-        // the bottom-up phase from scratch. B1 (stale manifest-derived constraints) and
-        // B2 (new deps not materialized) are both avoided by construction: the fresh
-        // context has no stale state, and the override is used at first-resolution time
-        // (the normal first-resolution path).
-        //
-        // Fast paths that skip the check:
-        //   Path sources — no version selection, never change.
-        //   Semver(req) where existing version already satisfies req — adding that
-        //     requirement cannot invalidate the currently selected version.
-        // A pin that differs from the settled ref, or a range beside a pin, is refused by
-        // `settle` in the re-resolution.
         let needs_check = matches!(pending_src.spec, SourceSpec::Git(_));
 
         if needs_check {
@@ -136,7 +115,6 @@ pub(crate) fn resolve_package_bottom_up(
                 .get(&pending_src.name)
                 .map(|p| p.node.resolved_ref.clone());
 
-            // Fast path: semver constraint already satisfied → selection cannot change.
             let skip = match (&pending_src.constraint, &existing_ref) {
                 (Constraint::Semver(req), Some(ref_)) => {
                     ref_.version.as_ref().is_some_and(|v| req.matches(v))
@@ -167,8 +145,7 @@ pub(crate) fn resolve_package_bottom_up(
                     Err(error) => return Err(error),
                 };
 
-                // Compare version AND commit (N3: same semver, different commit when
-                // maximize policy changes after a locked-commit first-pass).
+                // Maximizing can select a different commit at the same version.
                 let ref_changed = existing_ref.as_ref().is_none_or(|existing| {
                     new_ref.version != existing.version
                         || new_ref.commit != existing.commit
@@ -217,15 +194,6 @@ pub(crate) fn resolve_package_bottom_up(
     ctx.package_states_mut()
         .insert(pending_src.name.clone(), PackageResolutionState::Resolving);
 
-    // Check for a version override carried from a prior restart pass.
-    // When the driver restarts after a would-change detection, it seeds the fresh
-    // context with the correct (new) ref for the package that triggered the restart.
-    // Using it here ensures that when `resolve_package_bottom_up` is first called
-    // for this package in the new pass, it immediately uses the right version without
-    // having to trigger another restart. B1 and B2 are avoided because:
-    //   B1: no stale manifest-derived constraints — fresh context, fresh accumulator.
-    //   B2: we fall through to normal first-resolution logic below, which runs the
-    //       same path as any non-overridden first resolution.
     let mut rejected: Vec<(String, Vec<EngineRequirementFailure>)> = Vec::new();
     let mut override_candidate =
         ctx.version_override(&pending_src.name)

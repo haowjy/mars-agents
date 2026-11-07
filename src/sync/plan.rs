@@ -7,7 +7,6 @@ use crate::types::{ContentHash, DestPath, SourceName};
 #[cfg(test)]
 use mars_schema::item::ItemKind;
 
-/// A planned set of actions to execute.
 #[derive(Debug, Clone)]
 pub struct SyncPlan {
     pub actions: Vec<PlannedAction>,
@@ -40,10 +39,6 @@ pub enum PlannedAction {
     },
 }
 
-/// Create execution plan from diff.
-///
-/// `--force`: all Conflict entries become Overwrite (source wins).
-/// `--dry_run`: plan is computed identically but not executed (handled by apply).
 pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticCollector) -> SyncPlan {
     let mut actions = Vec::new();
 
@@ -81,7 +76,6 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
                     );
                 }
 
-                // Source wins: overwrite local modifications
                 actions.push(PlannedAction::Overwrite {
                     target: target.clone(),
                 });
@@ -95,7 +89,6 @@ pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticColle
 
             DiffEntry::LocalModified { target } => {
                 if options.force {
-                    // --force: source wins even when only local changed
                     actions.push(PlannedAction::Overwrite {
                         target: target.clone(),
                     });

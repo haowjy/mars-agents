@@ -56,21 +56,6 @@ residue in the primary checkout is how drift starts.
 - **Windows is first-class** — no POSIX-only assumptions.
 - **No VCS dependency** — walk to filesystem root via `Path::parent()`, not `.git`.
 
-## Architecture
-
-See `src/AGENTS.md` for the dependency graph and module index. Each `src/*/AGENTS.md`
-documents its own mental model, key rules, and anti-patterns.
-
-## Dev Workflow
-
-```bash
-cargo build
-cargo test
-cargo clippy
-```
-
-Integration tests under `tests/`.
-
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.

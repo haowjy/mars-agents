@@ -17,7 +17,6 @@ use super::SourceProvider;
 use super::package::PendingSource;
 use super::types::{ResolveOptions, ResolvedNode, VersionMode};
 
-/// Resolve a single source to a concrete version/ref.
 pub(crate) fn resolve_single_source(
     pending: &PendingSource,
     provider: &dyn SourceProvider,
@@ -30,7 +29,6 @@ pub(crate) fn resolve_single_source(
     let mode = options.version_mode(&pending.name);
     match &pending.spec {
         crate::config::SourceSpec::Path(path) => {
-            // Path sources: no version resolution, just use the path
             provider.fetch_path(path, pending.name.as_ref(), diag)
         }
         crate::config::SourceSpec::Git(git) => {
@@ -290,7 +288,6 @@ fn resolve_untagged_source(
     policy: SelectionPolicy,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
-    // No semver tags → treat as "latest commit", with locked-commit replay.
     let preferred_commit = match policy {
         SelectionPolicy::LatestOnly => None,
         SelectionPolicy::PreferLockThenLatest => {
@@ -324,7 +321,6 @@ fn resolve_untagged_source(
     Ok(resolved)
 }
 
-/// Resolve a git source: list versions, intersect constraints, select version.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_git_source(
     name: &SourceName,
@@ -442,7 +438,6 @@ pub(crate) fn resolve_git_source(
         }
     }
 
-    // List available versions
     let available = provider.list_versions(url)?;
     let Some(selected) = select_version(
         name,

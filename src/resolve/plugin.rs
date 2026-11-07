@@ -92,7 +92,6 @@ pub(crate) fn root_package(
                 })?
         }
         (None, [only]) if inspection.kind == Kind::Marketplace => only,
-        // Several plugins: preparing the marketplace reports them and asks for a choice.
         (None, _) => return plain(),
     };
     let plugin_name = plugin.entry.name.as_str();
@@ -189,7 +188,6 @@ fn optional_subpath(name: &str, path: &str) -> Result<Option<SourceSubpath>, Mar
         })
 }
 
-/// The lock's record of this very dependency (same source and plugin).
 fn locked_source<'a>(
     pending: &PendingSource,
     locked: Option<&'a LockFile>,

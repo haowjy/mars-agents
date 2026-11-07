@@ -42,7 +42,6 @@ fn handler_timeout_and_on_failure_fail_the_hook_for_both_origins() {
         let local = read(&bad(field), "h", Origin::Local);
         assert!(local.def.is_none(), "{field}");
         assert_eq!(local.diagnostics[0].code, "hook.handler", "{field}");
-        // A dependency's hook fails whole too, so the sync keeps its last good install.
         let dep = read(&bad(field), "h", Origin::Dependency);
         assert!(dep.def.is_none(), "{field}");
         assert_eq!(dep.diagnostics[0].code, "hook.handler", "{field}");
@@ -75,7 +74,6 @@ fn tokens() -> Tokens<'static> {
     }
 }
 
-/// A hook with one target table per `(root, unchecked)`, and `extra` top-level text.
 fn def_with(extra: &str, tables: &[(&str, bool)]) -> HookDef {
     let mut text = format!("{extra}\n");
     for (root, unchecked) in tables {
@@ -127,7 +125,6 @@ fn event_tables_match_supported_command_hook_targets() {
         assert!(targets::target(root).unwrap().is_file());
     }
     assert!(targets::target(".agents").is_none());
-    // Every Codex event is a Claude event, so a Claude-keyed table renders on both.
     assert!(
         codex
             .iter()
@@ -217,7 +214,6 @@ fn merge_refuses_unknown_events_unless_unchecked() {
     let loose = def_with("", &[(".codex", true)]);
     let merged = output(&loose, ".codex", Some(text), Origin::Local).unwrap();
     assert_eq!(merged.unchecked_events, ["Bogus"]);
-    // A dependency's unknown event is skipped; the project's is the error above.
     let skipped = output(&strict, ".codex", Some(text), Origin::Dependency).unwrap();
     assert_eq!(skipped.skipped_events, ["Bogus"]);
     assert!(skipped.events.is_empty());
@@ -230,7 +226,6 @@ fn merge_refuses_non_objects_and_non_arrays() {
     assert!(run("[]").is_err());
     assert!(run("nope").is_err());
     assert!(run(r#"{"Stop":{}}"#).is_err());
-    // A wrapper with another key is an event table, so `hooks` is an unknown event.
     assert!(run(r#"{"hooks":{},"Stop":[]}"#).is_err());
 }
 
@@ -302,7 +297,6 @@ fn a_native_hook_still_installs_on_a_skipped_target() {
     let managed = [".codex".to_string()];
     assert_eq!(def.select(&managed), [".codex"]);
     let out = output(&def, ".codex", Some(r#"{"Stop":[]}"#), Origin::Local).unwrap();
-    // Skipped: no generated PreToolUse. The native hook's own event is all there is.
     assert_eq!(out.events.keys().collect::<Vec<_>>(), ["Stop"]);
 }
 
@@ -315,11 +309,9 @@ fn a_native_hook_replaces_only_the_events_it_declares() {
     .unwrap();
     let native_hook = r#"{"PreToolUse":[],"Stop":[{"hooks":[]}]}"#;
     let out = output(&def, ".codex", Some(native_hook), Origin::Local).unwrap();
-    // The empty array is kept, so the caller sees the event turned off.
     assert_eq!(out.events["PreToolUse"], Vec::<OrderedValue>::new());
     assert_eq!(out.overrides, ["PreToolUse"]);
     assert!(out.events.contains_key("Stop"));
-    // The override check also needs a declared event: `Stop` is not in `[hooks]`.
     let untouched = output(&def, ".claude", None, Origin::Local).unwrap();
     assert_eq!(untouched.events.len(), 2);
     assert!(untouched.overrides.is_empty());
@@ -330,7 +322,6 @@ fn hooks_need_explicit_native_hook_names() {
     let got = read_local(&format!("{GUARD}\n[targets.\".codex\"]\n"));
     assert!(got.def.is_none());
     assert!(message(&got).contains("must name its `native-hook`"));
-    // Without `[hooks]` an empty table keeps today's meaning.
     assert!(read_local("[targets.\".codex\"]\n").def.is_some());
 }
 
@@ -361,7 +352,6 @@ fn unknown_events_are_strict_for_the_project_and_skipped_for_a_dependency() {
     assert!(!def.portable().unwrap().declares("FutureEvent"));
     assert!(def.portable().unwrap().declares("PreToolUse"));
 
-    // `unchecked = true` keeps it: Claude renders it, Codex reports it.
     let def = read_local(&format!("unchecked = true\n{text}"))
         .def
         .unwrap();

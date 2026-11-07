@@ -1,4 +1,3 @@
-// qa-validated: mars-release-workflow-audit
 use std::path::Path;
 
 fn repo_root() -> &'static Path {
@@ -137,7 +136,6 @@ fn release_on_main_has_rc_default_label_contract() {
     assert!(workflow.contains("elif [[ \"${has_rc_label}\" == \"true\" ]]; then"));
     assert!(workflow.contains("release_kind=\"stable\""));
     assert!(workflow.contains("echo \"release_kind=${release_kind}\" >> \"$GITHUB_OUTPUT\""));
-    // Bump kind: major > minor > patch precedence
     assert!(workflow.contains("bump_kind=\"patch\""));
     assert!(workflow.contains("bump_kind=\"major\""));
     assert!(workflow.contains("bump_kind=\"minor\""));
@@ -153,7 +151,6 @@ fn release_on_main_has_rc_default_label_contract() {
         "if [[ -n \"${unknown_release_labels}\" ]]; then",
         "elif [[ \"${has_rc_label}\" == \"true\" ]]; then",
     );
-    // Major > minor > patch label precedence
     assert_before(
         &workflow,
         "if [[ \"${has_major_label}\" == \"true\" ]]; then",

@@ -86,10 +86,16 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     // Check skill dependencies — every agent's declared skills must exist on disk.
     // Uses discover_installed() to scan the actual filesystem, catching both
     // mars-managed and user-created local agents/skills.
-    {
+    'installed: {
         use std::collections::HashSet;
 
-        let installed = installed_items(&mars_dir)?;
+        let installed = match installed_items(&mars_dir) {
+            Ok(installed) => installed,
+            Err(e) => {
+                errors.push(e.to_string());
+                break 'installed;
+            }
+        };
 
         // Warn on legacy symlinks found in managed directories.
         for item in installed.agents.iter().chain(installed.skills.iter()) {

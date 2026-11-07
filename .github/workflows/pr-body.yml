@@ -56,7 +56,11 @@ jobs:
           body_file="${RUNNER_TEMP}/pr-body.md"
           base_file="${RUNNER_TEMP}/base-changelog.md"
           printf '%s' "${PR_BODY}" > "${body_file}"
-          git show "origin/${BASE_REF}:CHANGELOG.md" > "${base_file}"
+          # A release branch takes main's released headings when main is merged
+          # into it; those are main's, not this PR's, so compare against main.
+          base_ref="${BASE_REF}"
+          case "${base_ref}" in release/*) base_ref=main ;; esac
+          git show "origin/${base_ref}:CHANGELOG.md" > "${base_file}"
           python3 scripts/changelog-notes.py validate \
             --notes-file "${body_file}" \
             --changelog CHANGELOG.md \

@@ -7,6 +7,13 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-11-07
+
+### Fixed
+- `doctor` reports a missing `.mars/` store alongside its other findings instead of exiting on it alone.
+- `approval: confirm` writes `approval_policy = "on-request"` in Codex agent files. Codex has dropped `"untrusted"`.
+- `mars sync` counts merged hook files such as `.codex/hooks.json` as written. `mars sync --diff` now previews them, and previews native skill copies that a real sync would repair.
+
 ## [0.27.2] - 2026-11-06
 
 ### Fixed

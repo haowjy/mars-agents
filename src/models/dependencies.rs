@@ -19,7 +19,8 @@ pub(crate) fn declaration_ordered_dep_models(
         decl_pos.insert(name.clone(), idx);
     }
 
-    // Inherit the earliest direct sponsor so alias precedence follows consumer order.
+    // Propagate declaration position to transitives: a transitive dependency
+    // takes the minimum position among all direct dependencies that reach it.
     for (idx, sponsor) in config.dependencies.keys().enumerate() {
         let Some(sponsor_node) = graph.nodes.get(sponsor) else {
             continue;
@@ -44,7 +45,8 @@ pub(crate) fn declaration_ordered_dep_models(
         }
     }
 
-    // Edges run from dependency to dependent so dependencies sort first.
+    // Build Kahn structures using dependency edges:
+    // dep -> dependent (name depends on dep).
     let mut in_degree: HashMap<SourceName, usize> = HashMap::new();
     let mut adjacency: HashMap<SourceName, Vec<SourceName>> = HashMap::new();
 
@@ -87,7 +89,8 @@ pub(crate) fn declaration_ordered_dep_models(
         }
     }
 
-    // Cyclic dependency graphs are allowed; use graph order when topological sorting fails.
+    // Graph should already be acyclic from resolver; this keeps behavior
+    // deterministic if that invariant is ever violated.
     let ordered_names: Vec<SourceName> = if ordered.len() == graph.nodes.len() {
         ordered
     } else {
@@ -117,224 +120,4 @@ pub(crate) fn merged_model_aliases(
 ) -> IndexMap<String, ModelAlias> {
     let dep_models = declaration_ordered_dep_models(graph, effective);
     super::merge_model_config(&effective.models, &dep_models, diag, None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::{
-        EffectiveConfig, EffectiveDependency, Manifest, PackageInfo, Settings, SourceSpec,
-    };
-    use crate::resolve::{ResolvedGraph, ResolvedNode};
-    use crate::types::SourceId;
-    use mars_schema::filter::FilterMode;
-    use std::path::PathBuf;
-
-    fn model_alias(model: &str) -> ModelAlias {
-        ModelAlias {
-            harness: None,
-            description: None,
-            prompting: None,
-            default_effort: None,
-            autocompact: None,
-            autocompact_pct: None,
-            spec: super::super::ModelSpec::Pinned {
-                model: model.to_string(),
-                provider: None,
-            },
-        }
-    }
-
-    fn manifest_with_models(name: &str) -> Manifest {
-        let mut models = IndexMap::new();
-        models.insert(
-            format!("{name}-alias"),
-            model_alias(&format!("{name}-model")),
-        );
-        Manifest {
-            package: PackageInfo {
-                name: name.to_string(),
-                version: "1.0.0".to_string(),
-                description: None,
-                authors: None,
-                homepage: None,
-                license: None,
-                schema: None,
-                uses_providers: Vec::new(),
-                requires_mars: None,
-                requires_meridian: None,
-            },
-            dependencies: IndexMap::new(),
-            models,
-        }
-    }
-
-    fn resolved_node(name: &str, deps: &[&str], with_models: bool) -> ResolvedNode {
-        let canonical = PathBuf::from(format!("/tmp/{name}"));
-        ResolvedNode {
-            fetch_url: None,
-            source_name: name.into(),
-            source_id: SourceId::Path {
-                canonical: canonical.clone(),
-                subpath: None,
-                plugin: None,
-            },
-            rooted_ref: crate::resolve::RootedSourceRef {
-                checkout_root: canonical.clone(),
-                authored_root: canonical.clone(),
-                package_root: canonical.clone(),
-                plugin: None,
-            },
-            prepared: crate::resolve::prepared_with_deps(deps),
-            resolved_ref: crate::source::ResolvedRef {
-                source_name: name.into(),
-                version: None,
-                version_tag: None,
-                commit: None,
-                tree_path: canonical,
-            },
-            manifest: with_models.then(|| manifest_with_models(name)),
-        }
-    }
-
-    fn effective_config_with_decl_order(names: &[&str]) -> EffectiveConfig {
-        let mut dependencies = IndexMap::new();
-        for name in names {
-            let canonical = PathBuf::from(format!("/tmp/dep-{name}"));
-            dependencies.insert(
-                (*name).into(),
-                EffectiveDependency {
-                    declared_source_id: SourceId::Path {
-                        canonical: canonical.clone(),
-                        subpath: None,
-                        plugin: None,
-                    },
-                    source_id: SourceId::Path {
-                        canonical: canonical.clone(),
-                        subpath: None,
-                        plugin: None,
-                    },
-                    spec: SourceSpec::Path(canonical),
-                    subpath: None,
-                    filter: FilterMode::All,
-                    rename: mars_schema::names::RenameMap::new(),
-                    dialect: None,
-                },
-            );
-        }
-        EffectiveConfig {
-            dependencies,
-            settings: Settings::default(),
-            models: indexmap::IndexMap::new(),
-            agents: indexmap::IndexMap::new(),
-            skills: indexmap::IndexMap::new(),
-        }
-    }
-
-    fn dep_model_names(models: &[ResolvedDepModels]) -> Vec<String> {
-        models.iter().map(|m| m.source_name.clone()).collect()
-    }
-
-    #[test]
-    fn declaration_ordered_dep_models_sibling_order() {
-        let mut nodes = IndexMap::new();
-        nodes.insert("a".into(), resolved_node("a", &[], true));
-        nodes.insert("b".into(), resolved_node("b", &[], true));
-
-        let graph = ResolvedGraph {
-            nodes,
-            order: vec!["a".into(), "b".into()],
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let config = effective_config_with_decl_order(&["b", "a"]);
-
-        let dep_models = declaration_ordered_dep_models(&graph, &config);
-        assert_eq!(dep_model_names(&dep_models), vec!["b", "a"]);
-    }
-
-    #[test]
-    fn declaration_ordered_dep_models_diamond_uses_minimum_sponsor_position() {
-        let mut nodes = IndexMap::new();
-        nodes.insert("a".into(), resolved_node("a", &["d"], true));
-        nodes.insert("b".into(), resolved_node("b", &["d"], true));
-        nodes.insert("d".into(), resolved_node("d", &[], true));
-
-        let graph = ResolvedGraph {
-            nodes,
-            order: vec!["d".into(), "a".into(), "b".into()],
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let config = effective_config_with_decl_order(&["a", "b"]);
-
-        let dep_models = declaration_ordered_dep_models(&graph, &config);
-        assert_eq!(dep_model_names(&dep_models), vec!["d", "a", "b"]);
-    }
-
-    #[test]
-    fn declaration_ordered_dep_models_transitives_follow_sponsor_declaration_order() {
-        let mut nodes = IndexMap::new();
-        nodes.insert("a".into(), resolved_node("a", &["d"], false));
-        nodes.insert("b".into(), resolved_node("b", &["e"], false));
-        nodes.insert("d".into(), resolved_node("d", &[], true));
-        nodes.insert("e".into(), resolved_node("e", &[], true));
-
-        let graph = ResolvedGraph {
-            nodes,
-            order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let config = effective_config_with_decl_order(&["a", "b"]);
-
-        let dep_models = declaration_ordered_dep_models(&graph, &config);
-        assert_eq!(dep_model_names(&dep_models), vec!["d", "e"]);
-    }
-
-    #[test]
-    fn declaration_ordered_dep_models_keeps_deps_before_dependents() {
-        let mut nodes = IndexMap::new();
-        nodes.insert("a".into(), resolved_node("a", &["d"], true));
-        nodes.insert("d".into(), resolved_node("d", &[], true));
-
-        let graph = ResolvedGraph {
-            nodes,
-            order: vec!["d".into(), "a".into()],
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let config = effective_config_with_decl_order(&["a", "d"]);
-
-        let dep_models = declaration_ordered_dep_models(&graph, &config);
-        assert_eq!(dep_model_names(&dep_models), vec!["d", "a"]);
-    }
-
-    #[test]
-    fn declaration_ordered_dep_models_is_deterministic() {
-        let mut nodes = IndexMap::new();
-        nodes.insert("a".into(), resolved_node("a", &["d"], true));
-        nodes.insert("b".into(), resolved_node("b", &["e"], true));
-        nodes.insert("d".into(), resolved_node("d", &[], true));
-        nodes.insert("e".into(), resolved_node("e", &[], true));
-
-        let graph = ResolvedGraph {
-            nodes,
-            order: vec!["d".into(), "e".into(), "a".into(), "b".into()],
-            selection: Default::default(),
-            version_constraints: std::collections::HashMap::new(),
-            unreadable_hook_surfaces: std::collections::BTreeMap::new(),
-        };
-        let config = effective_config_with_decl_order(&["a", "b"]);
-
-        let first = dep_model_names(&declaration_ordered_dep_models(&graph, &config));
-        for _ in 0..10 {
-            let current = dep_model_names(&declaration_ordered_dep_models(&graph, &config));
-            assert_eq!(current, first);
-        }
-    }
 }

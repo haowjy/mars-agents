@@ -1,5 +1,4 @@
 pub mod bundle;
-pub mod inventory;
 pub mod plugin;
 pub mod policy;
 pub mod prompt;
@@ -132,14 +131,6 @@ pub fn build_launch_bundle(
     )?;
 
     warnings.extend(policy.warnings);
-    let with_selection_report = |err: MarsError| match err {
-        MarsError::Config(_) => MarsError::Selection {
-            code: "invalid_config",
-            message: err.to_string(),
-            report: Box::new(policy.routing.route_trace.clone()),
-        },
-        _ => err,
-    };
 
     let prompt = compile_prompt_surface(
         &content_roots,
@@ -149,14 +140,10 @@ pub fn build_launch_bundle(
         &policy.routing.harness,
         &policy.routing.model_token,
         &policy.routing.model,
-        &profile.subagents,
-        effective_project_config.settings.meridian_fanout_agents(),
-    )
-    .map_err(with_selection_report)?;
+    );
 
     warnings.extend(prompt.warnings);
-    let resolved_tools =
-        resolve_bundle_tools(&profile, &policy.routing.harness).map_err(with_selection_report)?;
+    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
@@ -168,7 +155,6 @@ pub fn build_launch_bundle(
         prompt_surface: bundle::PromptSurface {
             system_instruction: prompt.system_instruction,
             supplemental_documents: prompt.supplemental_documents,
-            inventory_prompt: prompt.inventory_prompt,
         },
         scaffold_slots: ScaffoldSlots::placeholders(),
         tools: resolved_tools,
@@ -207,7 +193,7 @@ fn empty_agent_profile() -> AgentProfile {
     }
 }
 
-fn load_effective_project_config_or_default(
+pub(crate) fn load_effective_project_config_or_default(
     project_root: &std::path::Path,
 ) -> Result<EffectiveProjectConfig, MarsError> {
     match crate::config::load_effective_project_config(project_root) {

@@ -44,11 +44,16 @@ struct AdoptJson<'a> {
     sync: Option<serde_json::Value>,
 }
 
-pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
+pub fn run(
+    args: &AdoptArgs,
+    ctx: &MarsContext,
+    explicit_root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     let config = crate::config::load(&ctx.project_root)?;
 
     let lock = crate::lock::load(&ctx.project_root)?;
-    let source_abs = resolve_cli_path(&args.path)?;
+    let source_abs = super::resolve_cli_path(&args.path, explicit_root)?;
     let source_display = relative_display(&ctx.project_root, &source_abs);
 
     if source_abs.symlink_metadata().is_err() {
@@ -138,19 +143,10 @@ pub fn run(args: &AdoptArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsE
             "adopted {} `{}`: {} -> {}",
             plan.kind, plan.name, plan.source_display, plan.dest_display
         ));
-        output::print_sync_report(&report, false, true);
+        output::print_sync_report(&report, false, true, false);
     }
 
     Ok(0)
-}
-
-fn resolve_cli_path(path: &Path) -> Result<PathBuf, MarsError> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    Ok(absolute)
 }
 
 fn source_target_membership(

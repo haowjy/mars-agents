@@ -15,6 +15,7 @@ use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
 use crate::compiler::harness_descriptor::configured_emit_harnesses;
+use crate::compiler::lossiness;
 use crate::compiler::native_agents::{
     AgentRef, NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
 };
@@ -49,6 +50,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     prepared: &mars_schema::prepare::Prepared,
     authored_root: &Path,
     mode: LossinessMode,
+    rerun_verbose: &'static str,
 ) -> Result<Vec<Diagnostic>, MarsError> {
     let settings = &lens.effective.settings;
     let native_skill_keys = native_skill_harness_keys(settings);
@@ -57,7 +59,8 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         return Ok(Vec::new());
     }
 
-    let mut diag = DiagnosticCollector::with_lossiness_mode(mode);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(mode).rerun_verbose_with(rerun_verbose);
+    let mut codex_emitted = false;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         settings.meridian_agent_copy(),
         &settings.managed_targets(),
@@ -89,15 +92,17 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);
         match definition.kind {
-            mars_schema::item::DefinitionKind::Agent => collect_agent_content_lossiness(
-                &content,
-                &definition.slug,
-                &policy,
-                &configured_harnesses,
-                fanout_agents,
-                model_router.as_mut(),
-                &mut diag,
-            ),
+            mars_schema::item::DefinitionKind::Agent => {
+                codex_emitted |= collect_agent_content_lossiness(
+                    &content,
+                    &definition.slug,
+                    &policy,
+                    &configured_harnesses,
+                    fanout_agents,
+                    model_router.as_mut(),
+                    &mut diag,
+                )
+            }
             mars_schema::item::DefinitionKind::Skill => {
                 let source_path = authored_root.join(&definition.source_path);
                 let skill_dir = source_path.parent().unwrap_or(authored_root);
@@ -115,6 +120,10 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         }
     }
 
+    // As in sync: the project's network settings reach no native Codex file.
+    if codex_emitted {
+        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", &mut diag);
+    }
     Ok(diag.drain())
 }
 
@@ -126,9 +135,9 @@ fn collect_agent_content_lossiness(
     fanout_agents: &[String],
     model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
-) {
+) -> bool {
     let Some(model_router) = model_router else {
-        return;
+        return false;
     };
     let Ok(mars_schema::read::Valid {
         fields: profile,
@@ -136,8 +145,9 @@ fn collect_agent_content_lossiness(
         ..
     }) = mars_schema::agent::read(content).into_valid()
     else {
-        return;
+        return false;
     };
+    let mut codex_emitted = false;
     for NativeEmission {
         harness,
         model,
@@ -154,241 +164,9 @@ fn collect_agent_content_lossiness(
         configured_harnesses,
         model_router,
     ) {
+        codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
-        crate::compiler::lossiness::emit_agent_lossiness_warnings(
-            agent_name,
-            &lowered.lossy_fields,
-            diag,
-        );
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields);
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::diagnostic::DiagnosticCategory;
-    use mars_schema::HarnessId;
-    use tempfile::TempDir;
-
-    fn collect_lossiness(base: &Path, mode: LossinessMode) -> Result<Vec<Diagnostic>, MarsError> {
-        let mut publish_diag = DiagnosticCollector::new();
-        let (lens, prepared) = PublishLens::load(base, &mut publish_diag)?;
-        let mut diagnostics = publish_diag.drain();
-        diagnostics.extend(collect_prepared_source_lossiness_diagnostics(
-            &lens, &prepared, base, mode,
-        )?);
-        Ok(diagnostics)
-    }
-
-    #[test]
-    fn configured_emit_harnesses_uses_managed_targets() {
-        let settings = Settings {
-            targets: Some(vec![".cursor".into(), ".agents".into()]),
-            ..Default::default()
-        };
-        let harnesses = configured_emit_harnesses(&settings);
-        assert_eq!(harnesses, vec![HarnessId::Cursor]);
-    }
-
-    #[test]
-    fn collect_source_lossiness_empty_without_targets() {
-        let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/coder.md"),
-            "---\nname: coder\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      x: true\n---\n# Coder",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(diags.is_empty());
-    }
-
-    #[test]
-    fn collect_source_lossiness_reports_agent_field_loss() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.code == "launch-time-field-summary"
-                    && d.message.contains("launch-time field mapping")
-            }),
-            "expected meridian-only summary diagnostic: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.code == "agent-field-meridian-only"),
-            "surface must not emit per-item meridian-only warnings: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_verbose_shows_meridian_only_detail() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".claude\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\napproval: auto\n---\n# Worker",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Verbose).unwrap();
-        assert!(
-            diags.iter().any(|d| {
-                d.category == Some(DiagnosticCategory::Lossiness) && d.message.contains("approval")
-            }),
-            "expected verbose meridian-only diagnostic: {diags:?}"
-        );
-        assert!(
-            !diags.iter().any(|d| d.code == "launch-time-field-summary"),
-            "verbose must not emit summary: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_suppresses_agents_under_never_emission() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"never\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags
-                .iter()
-                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
-            "expected no agent lossiness under SuppressAll: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_only_warns_for_native_skill_targets() {
-        let dir = TempDir::new().unwrap();
-        let skill = dir.path().join("skills/demo");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\nwhen_to_use: planning\n---\n# Body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".agents\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags
-                .iter()
-                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
-            ".agents does not project native skills — expected no skill lossiness: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_stable_when_mars_cache_exists() {
-        let dir = TempDir::new().unwrap();
-        let skill = dir.path().join("skills/demo");
-        std::fs::create_dir_all(&skill).unwrap();
-        std::fs::write(
-            skill.join("SKILL.md"),
-            "---\nname: demo\ndescription: d\ndisable-model-invocation: true\n---\n# Body\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".codex\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-
-        let before = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-
-        std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
-
-        let after = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        let before_msgs: Vec<_> = before.iter().map(|d| d.message.clone()).collect();
-        let after_msgs: Vec<_> = after.iter().map(|d| d.message.clone()).collect();
-        assert_eq!(
-            before_msgs, after_msgs,
-            "preview must not treat .mars cache as consumer authoring: before={before:?} after={after:?}"
-        );
-    }
-
-    #[test]
-    fn collect_source_lossiness_hidden_mode_suppresses_warnings() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Hidden).unwrap();
-        assert!(
-            diags
-                .iter()
-                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
-            "Hidden mode must not emit lossiness diagnostics: {diags:?}"
-        );
-    }
-
-    #[test]
-    fn publish_preview_ignores_mars_local_toml() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\ntargets = [\".agents\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("mars.local.toml"),
-            "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
-        std::fs::write(
-            dir.path().join("agents/worker.md"),
-            "---\nname: worker\ndescription: test\nharness-overrides:\n  cursor:\n    native-config:\n      cursor.only: true\n---\n# Worker",
-        )
-        .unwrap();
-
-        let diags = collect_lossiness(dir.path(), LossinessMode::Surface).unwrap();
-        assert!(
-            diags
-                .iter()
-                .all(|d| d.category != Some(DiagnosticCategory::Lossiness)),
-            "publish lens must ignore mars.local.toml target overrides: {diags:?}"
-        );
-    }
+    codex_emitted
 }

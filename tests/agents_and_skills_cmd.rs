@@ -3,8 +3,8 @@
 //! Pins the `--json` output contract:
 //!
 //! - List envelope shapes: `{"agents":[...]}` and `{"skills":[...]}`
-//! - Kebab-case `model-invocable` on both skills list and skills show.
-//!   Regression guard: list previously emitted `model_invocable` (snake)
+//! - Kebab-case `model-invocable` on list and show, for agents and skills alike.
+//!   Regression guard: skills list previously emitted `model_invocable` (snake)
 //!   while show emitted `model-invocable` (kebab).
 //! - `subagents` array present in agent show output
 //! - Not-found exits non-zero
@@ -87,6 +87,113 @@ fn agents_list_json_envelope_and_fields() {
     );
     assert!(entry["mode"].is_string(), "'mode' key required:\n{stdout}");
     assert_eq!(entry["mode"], "primary", "'mode' value:\n{stdout}");
+}
+
+#[test]
+fn agents_list_json_reports_routing_fields() {
+    // Meridian's `spawn subagents` reads these to hide `model-invocable: false` agents and
+    // to route native agents to the harness's own tool unless they are fanout agents.
+    let dir = TempDir::new().unwrap();
+    let project = setup_synced_project(
+        &dir,
+        "proj",
+        "src",
+        &[
+            ("orchestrator", AGENT_CONTENT),
+            ("worker", FALLBACK_AGENT_CONTENT),
+            (
+                "manual",
+                "---\nname: manual\ndescription: Only when asked\nmode: subagent\nmodel-invocable: false\n---\n# Manual\n",
+            ),
+        ],
+        &[],
+    );
+    let config = std::fs::read_to_string(project.join("mars.toml")).unwrap();
+    std::fs::write(
+        project.join("mars.toml"),
+        format!("{config}\n[settings.meridian.fanout]\nagents = [\"worker\"]\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join(".mars/native-agents.json"),
+        r#"{"version": 1, "agents": {"worker": ["claude"], "orchestrator": ["claude"]}}"#,
+    )
+    .unwrap();
+
+    let output = mars()
+        .args(["--json", "agents", "--root", project.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "mars agents should exit 0");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let entry = |name: &str| {
+        json["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == name)
+            .unwrap_or_else(|| panic!("expected '{name}' in agents list:\n{stdout}"))
+            .clone()
+    };
+
+    let manual = entry("manual");
+    assert_eq!(manual["model-invocable"], false, "{stdout}");
+    assert_eq!(
+        manual["native-harnesses"],
+        serde_json::json!([]),
+        "{stdout}"
+    );
+    assert_eq!(manual["fanout"], false, "{stdout}");
+
+    let worker = entry("worker");
+    assert_eq!(worker["model-invocable"], true, "{stdout}");
+    assert_eq!(
+        worker["native-harnesses"],
+        serde_json::json!(["claude"]),
+        "{stdout}"
+    );
+    assert_eq!(worker["fanout"], true, "{stdout}");
+
+    let orchestrator = entry("orchestrator");
+    assert_eq!(
+        orchestrator["native-harnesses"],
+        serde_json::json!(["claude"]),
+        "{stdout}"
+    );
+    assert_eq!(orchestrator["fanout"], false, "{stdout}");
+
+    // `--model-invocable` and the M-INV column mirror `mars skills`.
+    let root = project.to_str().unwrap();
+    let filtered = mars()
+        .args(["--json", "agents", "--model-invocable", "--root", root])
+        .output()
+        .unwrap();
+    let filtered: serde_json::Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    let names: Vec<&str> = filtered["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["orchestrator", "worker"]);
+
+    let text = mars().args(["agents", "--root", root]).output().unwrap();
+    let text = String::from_utf8(text.stdout).unwrap();
+    assert!(text.lines().next().unwrap().contains("M-INV"), "{text}");
+    let manual_row = text.lines().find(|l| l.starts_with("manual")).unwrap();
+    assert!(manual_row.contains(" no "), "{text}");
+
+    // `show` carries the same facts as the list entry.
+    let show = mars()
+        .args(["--json", "agents", "show", "worker", "--root", root])
+        .output()
+        .unwrap();
+    let show: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(show["model-invocable"], true);
+    assert_eq!(show["user-invocable"], true);
+    assert_eq!(show["native-harnesses"], serde_json::json!(["claude"]));
+    assert_eq!(show["fanout"], true);
 }
 
 #[test]

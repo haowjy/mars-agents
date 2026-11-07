@@ -32,6 +32,9 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
     pub force: bool,
     pub collision_hint: crate::surface_ownership::CollisionAdoptHint,
     pub dry_run: bool,
+    /// `sync --diff`: a dry run that reports what a real sync would change, such as a diverged
+    /// native agent it would repair. Every other dry run stays quiet about it.
+    pub preview_warnings: bool,
 }
 
 /// Shared inputs for native agent compilation.
@@ -155,10 +158,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             probe_refresh: crate::models::probes::ProbeRefreshMode::Background,
         });
         Self::with_session(aliases, cache, routing_settings, session)
-    }
-
-    pub(crate) fn project_network_keys(&self) -> Vec<&'static str> {
-        self.settings.network_keys()
     }
 
     /// Settings model policies join the native precedence chain, as in the bundle.
@@ -800,10 +799,10 @@ pub(crate) fn compile_native_agents<'a>(
     }
 
     // Native Codex files carry no network setting, and a project default is not any one
-    // Agent's, so it is reported once for the target.
+    // Agent's, so it is recorded once for the target.
     if codex_emitted {
-        crate::compiler::lossiness::emit_project_settings_dropped_warning(
-            &model_router.project_network_keys(),
+        crate::compiler::lossiness::record_project_network_loss(
+            &model_router.settings.network_keys(),
             "Codex",
             diag,
         );
@@ -950,12 +949,6 @@ fn emit_lowered_native_agent(
     let lowered =
         lower_for_harness_with_model(agent.harness, agent.profile, agent.body, agent.model);
 
-    crate::compiler::lossiness::emit_agent_lossiness_warnings(
-        agent.agent_name,
-        &lowered.lossy_fields,
-        diag,
-    );
-
     let harness_dir = ctx
         .project_root
         .join(crate::harness::registry::descriptor(*agent.harness).default_target);
@@ -1002,9 +995,8 @@ fn emit_lowered_native_agent(
         }
     }
 
-    if ctx.options.dry_run {
-        return;
-    }
+    // Reported only for a file Mars writes: a preserved user file has no loss to report.
+    diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
 
     let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
     let existing_bytes = native_path
@@ -1013,16 +1005,20 @@ fn emit_lowered_native_agent(
         .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
         .and_then(|_| std::fs::read(&native_path).ok());
     if existing_bytes.as_deref() == Some(lowered.bytes.as_slice()) {
-        records.push(CompiledNativeOutput {
-            owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
-            target_root: target_dir.to_string(),
-            dest_path: dest_rel,
-            installed_checksum: checksum,
-        });
+        if !ctx.options.dry_run {
+            records.push(CompiledNativeOutput {
+                owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
+                target_root: target_dir.to_string(),
+                dest_path: dest_rel,
+                installed_checksum: checksum,
+            });
+        }
         return;
     }
 
-    if !ctx.options.force
+    // `--diff` reports an edit a real sync would overwrite, as the real sync does.
+    if (!ctx.options.dry_run || ctx.options.preview_warnings)
+        && !ctx.options.force
         && let Some(existing_bytes) = existing_bytes
         && let Some(recorded_checksum) = ctx
             .old_lock
@@ -1031,8 +1027,19 @@ fn emit_lowered_native_agent(
     {
         diag.warn(
             "native-agent-projection-repaired",
-            format!("repaired diverged native agent: {target_dir}/{dest_rel}"),
+            format!(
+                "{} diverged native agent: {target_dir}/{dest_rel}",
+                if ctx.options.dry_run {
+                    "would repair"
+                } else {
+                    "repaired"
+                }
+            ),
         );
+    }
+
+    if ctx.options.dry_run {
+        return;
     }
 
     if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {
@@ -1251,6 +1258,7 @@ pub(crate) fn materialize_native_agents_after_link(
                 force: input.force,
                 collision_hint: crate::surface_ownership::CollisionAdoptHint::LinkForce,
                 dry_run: false,
+                preview_warnings: false,
             },
             fanout_agents,
         })

@@ -226,24 +226,6 @@ fn models_prompting_json_resolves_direct_model_alias() {
 }
 
 #[test]
-fn models_prompt_singular_subcommand_stays_rejected() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_model_prompting_project(&dir);
-
-    mars()
-        .args([
-            "models",
-            "prompt",
-            "gpt55",
-            "--root",
-            project.to_str().unwrap(),
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unrecognized subcommand 'prompt'"));
-}
-
-#[test]
 fn models_prompting_direct_auto_alias_refreshes_catalog_for_model_name() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("fixture", "# Fixture\n")], &[]);

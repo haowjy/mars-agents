@@ -478,7 +478,7 @@ pub(crate) fn report_diagnostics(
             } else {
                 migrate
             };
-            diag.warn_once(
+            diag.warn_advisory_once(
                 "legacy-package",
                 format!("{name} {format} ({count} to upgrade); {advice}"),
             );

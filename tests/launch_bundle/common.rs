@@ -60,20 +60,12 @@ pub fn setup_bundle_project_with_agents(
 
 pub fn assert_prompt_surface_excludes(bundle: &Value, needles: &[&str]) {
     let prompt_surface = &bundle["prompt_surface"];
-    let mut surfaces = vec![
-        (
-            "system_instruction",
-            prompt_surface["system_instruction"]
-                .as_str()
-                .expect("prompt surface must contain string fields"),
-        ),
-        (
-            "inventory_prompt",
-            prompt_surface["inventory_prompt"]
-                .as_str()
-                .expect("prompt surface must contain string fields"),
-        ),
-    ];
+    let mut surfaces = vec![(
+        "system_instruction",
+        prompt_surface["system_instruction"]
+            .as_str()
+            .expect("prompt surface must contain string fields"),
+    )];
 
     let docs = prompt_surface["supplemental_documents"]
         .as_array()

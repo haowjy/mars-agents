@@ -24,7 +24,7 @@ pub struct CheckArgs {
     /// Directory to validate as a source package (default: current directory).
     pub path: Option<PathBuf>,
 
-    /// Show per-item detail for launch-time fields handled by meridian at spawn.
+    /// Show per-item detail for every lossy field: dropped restrictions, approximate mappings, quiet ones, and launch-time fields handled by meridian at spawn.
     #[arg(long)]
     pub verbose: bool,
 }
@@ -252,6 +252,7 @@ fn lossiness_diagnostics_for_check(
         prepared,
         authored_root,
         mode,
+        "mars check --verbose",
     )
 }
 

@@ -77,10 +77,16 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
-    let min_required: Option<String> =
-        match crate::config::load_effective_project_config(&ctx.project_root) {
-            Ok(effective) => effective.settings.min_mars_version,
-            Err(MarsError::Config(ConfigError::NotFound { .. })) => None,
+    // Load config to get min_mars_version for compatibility preflight and the unknown
+    // `[settings]` keys that only validate reports. This is a lightweight read that doesn't
+    // acquire the sync lock.
+    let (min_required, unknown_settings) =
+        match crate::config::load_project_config_layers(&ctx.project_root) {
+            Ok(loaded) => (
+                loaded.effective.settings.min_mars_version.clone(),
+                crate::config::unknown_settings_diagnostics(&loaded),
+            ),
+            Err(MarsError::Config(ConfigError::NotFound { .. })) => (None, Vec::new()),
             Err(err) => return Err(err),
         };
 
@@ -93,6 +99,8 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
     {
         all_diagnostics.insert(0, compat_diag);
     }
+
+    all_diagnostics.extend(unknown_settings);
 
     let error_count = all_diagnostics
         .iter()
@@ -119,8 +127,10 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
     } else {
         print_text_report(&all_diagnostics, args.strict);
         println!();
-        if clean {
+        if clean && warning_count == 0 {
             super::output::print_success("validate: clean");
+        } else if clean {
+            super::output::print_warn(&format!("validate: no errors, {warning_count} warning(s)"));
         } else {
             super::output::print_error(&format!(
                 "validate: {error_count} error(s){}",
@@ -169,6 +179,7 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
         DiagnosticCategory::Compatibility => "compatibility",
         DiagnosticCategory::Lossiness => "lossiness",
         DiagnosticCategory::Validation => "validation",
+        DiagnosticCategory::Advisory => "advisory",
     }
 }
 

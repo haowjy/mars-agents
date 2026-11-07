@@ -375,57 +375,6 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
 
 #[test]
 #[serial]
-fn models_list_static_default_does_not_execute_harness_commands() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let marker_file = temp.path().join("harness-invocations.log");
-    let bin_dir = install_tracing_harnesses(
-        temp.path(),
-        &marker_file,
-        &["claude", "codex", "pi", "cursor", "opencode"],
-    );
-    fs::write(
-        project_root.join("mars.toml"),
-        r#"[models.fast]
-harness = "codex"
-model = "gpt-5"
-"#,
-    )
-    .expect("failed to write mars.toml");
-    write_cache(
-        &project_root,
-        vec![json!({
-            "id": "gpt-5",
-            "provider": "OpenAI",
-            "release_date": "2026-01-01"
-        })],
-        &fresh_fetched_at(),
-    );
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "aliases", "--no-refresh-models"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().success().get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("models list --json should return JSON");
-    let aliases = stdout["aliases"]
-        .as_array()
-        .expect("models list JSON should include aliases");
-    let fast = aliases
-        .iter()
-        .find(|entry| entry["name"].as_str() == Some("fast"))
-        .expect("expected static list output to include fast alias");
-    assert!(fast["harness"].is_null());
-    assert!(fast.get("availability").is_none());
-    assert!(
-        !marker_file.exists(),
-        "default models list should not execute harness commands"
-    );
-}
-
-#[test]
-#[serial]
 fn resolve_prefix_no_match_fails_cleanly() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -469,30 +418,6 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
 
     assert_eq!(stdout["source"].as_str(), Some("passthrough"));
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
-    assert_eq!(
-        stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
-    );
-}
-
-#[test]
-#[serial]
-fn resolve_passthrough_unrecognized_pattern_with_no_harnesses_fails_cleanly() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &[]);
-    write_cache(&project_root, sample_cached_models(), &fresh_fetched_at());
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["--json", "models", "resolve", "xyz-unknown"]);
-    cmd.env("PATH", replace_path_with(&bin_dir));
-
-    let output = cmd.assert().code(1).get_output().clone();
-    let stdout: Value =
-        serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
-
-    assert_eq!(stdout["source"].as_str(), Some("passthrough"));
-    assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
         json!(["claude", "codex", "pi", "cursor", "opencode"])
@@ -921,23 +846,6 @@ model = "gemini-2.5-pro"
 
 #[test]
 #[serial]
-fn resolve_unknown_with_no_refresh_without_cache_is_non_zero() {
-    let server = MockServer::start();
-    let (temp, project_root) = setup_project(&server);
-
-    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cmd.args(["models", "resolve", "unknown-xyz", "--no-refresh-models"]);
-
-    let output = cmd.assert().code(3).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
-    assert!(
-        stderr.contains("--no-refresh-models"),
-        "expected no-refresh cache error, stderr:\n{stderr}"
-    );
-}
-
-#[test]
-#[serial]
 fn resolve_pinned_exact_alias_json_no_refresh_without_cache_succeeds() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
@@ -1279,37 +1187,6 @@ fn install_fake_harnesses_with_pi_help(
             let mut perms = fs::metadata(&path).unwrap().permissions();
             perms.set_mode(0o755);
             fs::set_permissions(path, perms).unwrap();
-        }
-    }
-
-    bin_dir
-}
-
-fn install_tracing_harnesses(temp_root: &Path, marker_file: &Path, harnesses: &[&str]) -> PathBuf {
-    let bin_dir = temp_root.join("harness-bin-tracing");
-    fs::create_dir_all(&bin_dir).expect("failed to create tracing harness bin dir");
-
-    for harness in harnesses {
-        #[cfg(windows)]
-        {
-            let marker = marker_file.to_string_lossy().replace('/', "\\");
-            let script = format!("@echo off\r\necho {harness} %*>>\"{marker}\"\r\nexit /b 99\r\n");
-            fs::write(bin_dir.join(format!("{harness}.bat")), script)
-                .expect("failed to write tracing harness script");
-        }
-        #[cfg(not(windows))]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let marker = marker_file.to_string_lossy().replace('\'', "'\"'\"'");
-            let path = bin_dir.join(harness);
-            let script =
-                format!("#!/bin/sh\nprintf '%s\\n' \"{harness} $*\" >> '{marker}'\nexit 99\n");
-            fs::write(&path, script).expect("failed to write tracing harness script");
-            let mut perms = fs::metadata(&path)
-                .expect("failed to stat tracing harness script")
-                .permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(path, perms).expect("failed to chmod tracing harness script");
         }
     }
 

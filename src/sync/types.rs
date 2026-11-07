@@ -19,4 +19,7 @@ pub struct SyncOptions {
     pub ignore_requires_mars: bool,
     /// Skip package `requires-meridian` compatibility checks.
     pub ignore_requires_meridian: bool,
+    /// `sync --diff`: a dry run that also reports what a real sync would overwrite or repair
+    /// (a hand-edited config entry or native agent). Every other dry run leaves those to `--diff`.
+    pub preview_warnings: bool,
 }

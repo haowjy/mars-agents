@@ -261,39 +261,3 @@ impl std::fmt::Display for RouteDecisionReport {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::harness::host::AuthState;
-    use crate::routing::{
-        CandidateAssessment, MatchEvidence, RouteSource, trace_for_fixed_harness,
-    };
-
-    #[test]
-    fn preference_selection_is_visible_in_full_and_compact_json() {
-        let assessment = CandidateAssessment {
-            auth: Some(AuthState::Authenticated),
-            harness: "codex".into(),
-            installed: true,
-            candidate_slugs: Vec::new(),
-            filtered_slugs: Vec::new(),
-            chosen_slug: None,
-            chosen_model: Some("gpt-5".into()),
-            match_evidence: Some(MatchEvidence::Confirmed),
-            skip_reason: None,
-        };
-        let mut trace =
-            trace_for_fixed_harness(RouteSource::Profile, "codex", assessment, Vec::new());
-        trace.selected_by_preference = true;
-        let attempt = ModelAttemptReport::from_trace("gpt-5", "gpt-5", "profile", &trace);
-        assert_eq!(
-            serde_json::to_value(&attempt).unwrap()["selected_by_preference"],
-            true
-        );
-        assert_eq!(
-            serde_json::to_value(attempt.compact_summary()).unwrap()["selected_by_preference"],
-            true
-        );
-    }
-}

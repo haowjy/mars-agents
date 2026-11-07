@@ -67,22 +67,31 @@ pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 }
 
-fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let mut entries: Vec<SkillEntry> = Vec::new();
-    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+/// A skill visible from the roots, parsed, with its `SKILL.md` path.
+struct VisibleSkill {
+    scope: String,
+    skill_md: PathBuf,
+    /// Directory name, matched by `show` alongside the profile name.
+    dir: String,
+    name: String,
+    profile: mars_schema::skill::SkillProfile,
+}
+
+/// Skills visible from the roots whose `SKILL.md` parses; unreadable ones are skipped with a
+/// warning. `source` filters before reading, so filtering never reveals a shadowed fallback.
+fn visible_skills(
+    roots: &ContentRoots,
+    source: Option<&str>,
+) -> Result<Vec<VisibleSkill>, MarsError> {
     let visible = roots.visible_locked_items(ItemKind::Skill)?;
     output::print_warnings(&visible.warnings);
 
+    let mut skills = Vec::new();
     for (scope, item, disk_path) in visible.items {
-        let skill_md = disk_path.join("SKILL.md");
-
-        // Filtering never reveals a shadowed fallback item.
-        if let Some(ref filter_source) = args.source
-            && item.source != *filter_source
-        {
+        if source.is_some_and(|source| item.source != source) {
             continue;
         }
-
+        let skill_md = disk_path.join("SKILL.md");
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
             Err(err) => {
@@ -90,7 +99,6 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 continue;
             }
         };
-
         let profile = match mars_schema::read::installed_skill(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
@@ -98,71 +106,68 @@ fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 continue;
             }
         };
-
-        if args.model_invocable && !profile.model_invocable {
-            continue;
-        }
-
-        let type_str = profile.skill_type.clone().unwrap_or_default();
-        if let Some(ref filter_type) = args.skill_type
-            && type_str != *filter_type
-        {
-            continue;
-        }
-
-        let name = profile.name.clone().unwrap_or_else(|| dir_name(&disk_path));
-        let description = profile.description.clone().unwrap_or_default();
-
-        entries.push(SkillEntry {
-            name,
-            description,
-            skill_type: type_str,
-            model_invocable: profile.model_invocable,
+        skills.push(VisibleSkill {
             scope: scope.as_str().to_string(),
-            source_path: skill_md,
+            name: profile.name.clone().unwrap_or_else(|| dir_name(&disk_path)),
+            dir: dir_name(&disk_path),
+            skill_md,
+            profile,
         });
     }
+    Ok(skills)
+}
 
+impl VisibleSkill {
+    fn entry(&self) -> SkillEntry {
+        SkillEntry {
+            name: self.name.clone(),
+            description: self.profile.description.clone().unwrap_or_default(),
+            skill_type: self.profile.skill_type.clone().unwrap_or_default(),
+            model_invocable: self.profile.model_invocable,
+            scope: self.scope.clone(),
+            source_path: self.skill_md.clone(),
+        }
+    }
+}
+
+/// `show --json`: the list entry plus the fields only `show` reports.
+#[derive(serde::Serialize)]
+struct SkillDetail {
+    #[serde(flatten)]
+    entry: SkillEntry,
+    #[serde(rename = "user-invocable")]
+    user_invocable: bool,
+}
+
+fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let mut entries: Vec<SkillEntry> = visible_skills(&roots, args.source.as_deref())?
+        .iter()
+        .filter(|skill| !args.model_invocable || skill.profile.model_invocable)
+        .map(VisibleSkill::entry)
+        .filter(|entry| {
+            args.skill_type
+                .as_ref()
+                .is_none_or(|filter| entry.skill_type == *filter)
+        })
+        .collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     if json {
         output::print_json(&serde_json::json!({ "skills": entries }));
     } else {
-        if entries.is_empty() {
-            println!("  no skills");
-        } else {
-            let name_w = entries
-                .iter()
-                .map(|e| e.name.len())
-                .max()
-                .unwrap_or(4)
-                .max(4);
-            let type_w = entries
-                .iter()
-                .map(|e| e.skill_type.len())
-                .max()
-                .unwrap_or(4)
-                .max(4);
-            let scope_w = entries
-                .iter()
-                .map(|e| e.scope.len())
-                .max()
-                .unwrap_or(5)
-                .max(5);
-            println!(
-                "{:<name_w$}  {:<type_w$}  {:<5}  {:<scope_w$}  DESCRIPTION",
-                "NAME", "TYPE", "M-INV", "SCOPE"
-            );
-            for e in &entries {
-                let inv = if e.model_invocable { "yes" } else { "no" };
-                println!(
-                    "{:<name_w$}  {:<type_w$}  {:<5}  {:<scope_w$}  {}",
-                    e.name, e.skill_type, inv, e.scope, e.description
-                );
-            }
-        }
+        let rows: Vec<_> = entries
+            .iter()
+            .map(|e| output::CatalogRow {
+                name: &e.name,
+                kind: &e.skill_type,
+                model_invocable: e.model_invocable,
+                scope: &e.scope,
+                description: &e.description,
+            })
+            .collect();
+        output::print_catalog_table(&rows, "TYPE", "no skills");
     }
-
     Ok(0)
 }
 
@@ -173,63 +178,30 @@ fn run_show(
     fallback_root: Option<&std::path::Path>,
 ) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(&ctx.project_root, fallback_root);
-    let visible = roots.visible_locked_items(ItemKind::Skill)?;
-    output::print_warnings(&visible.warnings);
+    let found = visible_skills(&roots, None)?.into_iter().find(|skill| {
+        skill.name.eq_ignore_ascii_case(name) || skill.dir.eq_ignore_ascii_case(name)
+    });
+    let Some(skill) = found else {
+        eprintln!("error: skill `{name}` not found");
+        return Ok(1);
+    };
 
-    for (scope, _item, disk_path) in visible.items {
-        let skill_md = disk_path.join("SKILL.md");
-        let fallback = dir_name(&disk_path);
-
-        let content = match std::fs::read_to_string(&skill_md) {
-            Ok(c) => c,
-            Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
-                continue;
-            }
-        };
-
-        let profile = match mars_schema::read::installed_skill(&content).into_fields() {
-            Ok(profile) => profile,
-            Err(why) => {
-                eprintln!("warning: skipping {}: {why}", skill_md.display());
-                continue;
-            }
-        };
-
-        let skill_name = profile.name.as_deref().unwrap_or(fallback.as_str());
-        if !fallback.eq_ignore_ascii_case(name) && !skill_name.eq_ignore_ascii_case(name) {
-            continue;
-        }
-
-        let description_str = profile.description.as_deref().unwrap_or("");
-        let type_str = profile.skill_type.as_deref().unwrap_or("");
-        let scope = scope.as_str();
-
-        if json {
-            output::print_json(&serde_json::json!({
-                "name": skill_name,
-                "description": description_str,
-                "type": type_str,
-                "model-invocable": profile.model_invocable,
-                "user-invocable": profile.user_invocable,
-                "scope": scope,
-                "source_path": skill_md,
-            }));
-        } else {
-            println!("name:          {skill_name}");
-            println!("description:   {description_str}");
-            println!("type:          {type_str}");
-            println!("model-invocable: {}", profile.model_invocable);
-            println!("user-invocable:  {}", profile.user_invocable);
-            println!("scope:         {scope}");
-            println!("source_path:   {}", skill_md.display());
-        }
-
-        return Ok(0);
+    let entry = skill.entry();
+    if json {
+        output::print_json(&SkillDetail {
+            entry,
+            user_invocable: skill.profile.user_invocable,
+        });
+    } else {
+        println!("name:          {}", entry.name);
+        println!("description:   {}", entry.description);
+        println!("type:          {}", entry.skill_type);
+        println!("model-invocable: {}", entry.model_invocable);
+        println!("user-invocable:  {}", skill.profile.user_invocable);
+        println!("scope:         {}", entry.scope);
+        println!("source_path:   {}", entry.source_path.display());
     }
-
-    eprintln!("error: skill `{name}` not found");
-    Ok(1)
+    Ok(0)
 }
 
 fn dir_name(path: &std::path::Path) -> String {

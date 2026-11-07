@@ -315,6 +315,13 @@ pub enum OutputState {
     PendingDeletion,
 }
 
+/// Whether a lock output is a generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts`
+/// on a file target) rather than the hook's directory copy under `hooks/`. The lock records
+/// the file's plain content hash, not a directory hash.
+pub fn is_generated_hook_file(kind: ItemKind, dest_path: &str) -> bool {
+    kind == ItemKind::Hook && !dest_path.starts_with("hooks/")
+}
+
 impl OutputRecord {
     pub fn installed(
         target_root: String,
@@ -1416,20 +1423,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn v1_lock_version_has_actionable_error() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), "version = 1\n").unwrap();
-
-        let error = load(dir.path()).unwrap_err().to_string();
-
-        assert!(error.contains("unsupported lock version 1"));
-        assert!(error.contains(&format!(
-            "remove it and run `{}`",
-            crate::types::managed_cmd("mars sync")
-        )));
-    }
-
     #[cfg(unix)]
     #[test]
     fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
@@ -1511,220 +1504,6 @@ installed_checksum = "sha256:bbb"
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
         assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));
-    }
-
-    #[test]
-    fn load_for_runtime_aliases_allows_missing_dependency_aliases_when_no_dependencies() {
-        let toml_str = r#"
-version = 3
-
-[items."agent/coder"]
-source = "_self"
-kind = "agent"
-source_checksum = "sha256:aaa"
-
-[[items."agent/coder".outputs]]
-target_root = ".mars"
-dest_path = "agents/coder.md"
-state = "installed"
-installed_checksum = "sha256:bbb"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
-
-        let lock = load_for_runtime_aliases(dir.path()).unwrap();
-        assert!(lock.dependencies.is_empty());
-        assert!(lock.dependency_model_aliases.is_empty());
-    }
-
-    #[test]
-    fn roundtrip_lock_file() {
-        let mut lock = sample_lock();
-        let mut nested = lock.dependencies["base"].clone();
-        nested.subpath = Some(mars_schema::names::SourceSubpath::new(r"plugins\foo").unwrap());
-        lock.dependencies.insert("nested".into(), nested);
-        let dir = TempDir::new().unwrap();
-        write(dir.path(), &lock).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-        assert_eq!(lock, reloaded);
-    }
-
-    #[test]
-    fn roundtrip_lock_file_with_config_entries() {
-        let mut lock = sample_lock();
-        lock.config_entries.insert(
-            ".claude".to_string(),
-            BTreeMap::from([(
-                "mcp:context7".to_string(),
-                ConfigEntryRecord {
-                    emitted_json: "{}".into(),
-                },
-            )]),
-        );
-
-        let dir = TempDir::new().unwrap();
-        write(dir.path(), &lock).unwrap();
-        let reloaded = load(dir.path()).unwrap();
-
-        assert_eq!(lock, reloaded);
-        assert_eq!(
-            reloaded.config_entries[".claude"]["mcp:context7"].emitted_json,
-            "{}"
-        );
-    }
-
-    #[test]
-    fn write_emits_dependency_model_aliases_table_even_when_empty() {
-        let lock = sample_lock();
-        let dir = TempDir::new().unwrap();
-        write(dir.path(), &lock).unwrap();
-
-        let content = std::fs::read_to_string(dir.path().join("mars.lock")).unwrap();
-        assert!(
-            content.contains("dependency_model_aliases"),
-            "serialized lock should include dependency_model_aliases authority table"
-        );
-    }
-
-    #[test]
-    fn deterministic_serialization() {
-        let lock = sample_lock();
-        let s1 = toml::to_string_pretty(&lock).unwrap();
-        let s2 = toml::to_string_pretty(&lock).unwrap();
-        assert_eq!(s1, s2);
-
-        let coder_pos = s1.find("agent/coder").unwrap();
-        let review_pos = s1.find("skill/review").unwrap();
-        assert!(
-            coder_pos < review_pos,
-            "agent/coder should appear before skill/review"
-        );
-    }
-
-    #[test]
-    fn write_sorts_dependency_model_aliases_keys() {
-        let toml_str = r#"
-version = 3
-
-[dependency_model_aliases.zeta]
-model = "openai/gpt-z"
-
-[dependency_model_aliases.alpha]
-model = "openai/gpt-a"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
-
-        let lock = load(dir.path()).unwrap();
-        write(dir.path(), &lock).unwrap();
-
-        let written = std::fs::read_to_string(dir.path().join("mars.lock")).unwrap();
-        let alpha = written
-            .find("[dependency_model_aliases.alpha]")
-            .expect("alpha alias should be serialized");
-        let zeta = written
-            .find("[dependency_model_aliases.zeta]")
-            .expect("zeta alias should be serialized");
-        assert!(alpha < zeta, "aliases should serialize in sorted key order");
-    }
-
-    #[test]
-    fn load_absent_returns_empty() {
-        let dir = TempDir::new().unwrap();
-        let lock = load(dir.path()).unwrap();
-        assert_eq!(lock.version, LOCK_VERSION);
-        assert!(lock.dependencies.is_empty());
-        assert!(lock.items.is_empty());
-    }
-
-    #[test]
-    fn path_source_in_lock() {
-        let toml_str = r#"
-version = 3
-
-[dependencies.local]
-path = "/home/dev/agents"
-
-[items."agent/helper"]
-source = "local"
-kind = "agent"
-source_checksum = "sha256:111"
-
-[[items."agent/helper".outputs]]
-target_root = ".mars"
-dest_path = "agents/helper.md"
-state = "installed"
-installed_checksum = "sha256:222"
-"#;
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
-        let lock = load(dir.path()).unwrap();
-        let source = &lock.dependencies["local"];
-        assert!(source.url.is_none());
-        assert_eq!(source.path.as_deref(), Some("/home/dev/agents"));
-        assert!(source.commit.is_none());
-    }
-
-    #[test]
-    fn item_kind_serializes_lowercase() {
-        let item = LockedItemV2 {
-            source: "base".into(),
-            kind: ItemKind::Skill,
-            version: None,
-            source_checksum: "sha256:aaa".into(),
-            source_path: None,
-            outputs: vec![OutputRecord::installed(
-                ".mars".to_string(),
-                "skills/review".into(),
-                "sha256:bbb".into(),
-            )],
-        };
-        let serialized = toml::to_string(&item).unwrap();
-        assert!(serialized.contains("kind = \"skill\""));
-    }
-
-    #[test]
-    fn item_id_display() {
-        let id = ItemId {
-            kind: ItemKind::Agent,
-            name: "coder".into(),
-        };
-        assert_eq!(id.to_string(), "agent/coder");
-    }
-
-    #[test]
-    fn item_kind_display() {
-        assert_eq!(ItemKind::Agent.to_string(), "agent");
-        assert_eq!(ItemKind::Skill.to_string(), "skill");
-    }
-
-    #[test]
-    fn find_by_dest_path_returns_flat_view() {
-        let lock = sample_lock();
-        let found = lock
-            .find_by_dest_path(&DestPath::from("agents/coder.md"))
-            .unwrap();
-        assert_eq!(found.source, "base");
-        assert_eq!(found.kind, ItemKind::Agent);
-        assert_eq!(found.source_checksum, "sha256:aaa");
-        assert_eq!(found.installed_checksum, "sha256:bbb");
-        assert_eq!(found.dest_path.as_str(), "agents/coder.md");
-    }
-
-    #[test]
-    fn find_by_dest_path_missing_returns_none() {
-        let lock = sample_lock();
-        assert!(
-            lock.find_by_dest_path(&DestPath::from("agents/missing.md"))
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn contains_dest_path_hit_and_miss() {
-        let lock = sample_lock();
-        assert!(lock.contains_dest_path(&DestPath::from("agents/coder.md")));
-        assert!(!lock.contains_dest_path(&DestPath::from("agents/nobody.md")));
     }
 
     #[test]

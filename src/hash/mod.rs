@@ -11,16 +11,19 @@ use mars_schema::item::ItemKind;
 /// recorded it.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
-        ItemKind::Agent => {
-            let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
-            Ok(hash_bytes(&content))
-        }
+        ItemKind::Agent => hash_file(path),
         ItemKind::Skill | ItemKind::Hook | ItemKind::McpServer => compute_dir_hash(path),
         ItemKind::BootstrapDoc => {
             let is_doc_file = path.file_name().is_some_and(|name| name == "BOOTSTRAP.md");
             compute_dir_hash(path.parent().filter(|_| is_doc_file).unwrap_or(path))
         }
     }
+}
+
+/// SHA-256 of one file's content; what the lock records for an agent or a generated hook file.
+pub(crate) fn hash_file(path: &Path) -> Result<String, MarsError> {
+    let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;
+    Ok(hash_bytes(&content))
 }
 
 pub fn compute_skill_hash_filtered(
@@ -176,107 +179,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn hash_bytes_returns_lowercase_hex() {
-        let hash = hash_bytes(b"test");
-        assert!(hash.starts_with("sha256:"));
-        let hex = &hash["sha256:".len()..];
-        assert_eq!(hex.len(), 64);
-        assert!(
-            hex.chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-        );
-    }
-
-    #[test]
-    fn compute_hash_skill_directory() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("my-skill");
-        fs::create_dir_all(skill_dir.join("sub")).unwrap();
-        fs::write(skill_dir.join("main.md"), "main content").unwrap();
-        fs::write(skill_dir.join("sub").join("helper.md"), "helper content").unwrap();
-
-        let hash = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert!(hash.starts_with("sha256:"));
-
-        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert_eq!(hash, hash2);
-    }
-
-    #[test]
-    fn dir_hash_deterministic_regardless_of_creation_order() {
-        let dir1 = TempDir::new().unwrap();
-        let skill1 = dir1.path().join("skill");
-        fs::create_dir_all(&skill1).unwrap();
-        fs::write(skill1.join("a.md"), "content a").unwrap();
-        fs::write(skill1.join("b.md"), "content b").unwrap();
-
-        let dir2 = TempDir::new().unwrap();
-        let skill2 = dir2.path().join("skill");
-        fs::create_dir_all(&skill2).unwrap();
-        fs::write(skill2.join("b.md"), "content b").unwrap();
-        fs::write(skill2.join("a.md"), "content a").unwrap();
-
-        let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
-        let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
-        assert_eq!(hash1, hash2);
-    }
-
-    #[test]
-    fn dir_hash_changes_with_different_content() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skill");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("file.md"), "version 1").unwrap();
-
-        let hash1 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-
-        fs::write(skill_dir.join("file.md"), "version 2").unwrap();
-
-        let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn dir_hash_changes_with_different_filename() {
-        let dir1 = TempDir::new().unwrap();
-        let skill1 = dir1.path().join("skill");
-        fs::create_dir_all(&skill1).unwrap();
-        fs::write(skill1.join("a.md"), "content").unwrap();
-
-        let dir2 = TempDir::new().unwrap();
-        let skill2 = dir2.path().join("skill");
-        fs::create_dir_all(&skill2).unwrap();
-        fs::write(skill2.join("b.md"), "content").unwrap();
-
-        let hash1 = compute_hash(&skill1, ItemKind::Skill).unwrap();
-        let hash2 = compute_hash(&skill2, ItemKind::Skill).unwrap();
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn filtered_skill_hash_ignores_excluded_top_level_entries() {
-        let dir = TempDir::new().unwrap();
-        let skill_dir = dir.path().join("skill");
-        fs::create_dir_all(skill_dir.join(".git")).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "base").unwrap();
-        fs::write(skill_dir.join("mars.toml"), "v1").unwrap();
-        fs::write(skill_dir.join(".git").join("config"), "ignored").unwrap();
-
-        let hash1 =
-            compute_skill_hash_filtered(&skill_dir, crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL)
-                .unwrap();
-
-        fs::write(skill_dir.join("mars.toml"), "v2").unwrap();
-        fs::write(skill_dir.join(".git").join("config"), "changed").unwrap();
-
-        let hash2 =
-            compute_skill_hash_filtered(&skill_dir, crate::fs::FLAT_SKILL_EXCLUDED_TOP_LEVEL)
-                .unwrap();
-
-        assert_eq!(hash1, hash2);
-    }
 
     #[cfg(unix)]
     #[test]

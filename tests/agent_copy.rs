@@ -322,102 +322,6 @@ path = "{}"
 }
 
 #[test]
-fn agent_copy_steady_state_survives_consecutive_syncs() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_with_settings(
-        &dir,
-        r#"
-[settings]
-targets = [".claude"]
-
-[settings.meridian.agent_copy]
-harnesses = ["claude"]
-"#,
-        CLAUDE_HARNESS_AGENT,
-        Some("1"),
-    );
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists()
-    );
-    assert!(lock_has_native_agent(&project, "coder"));
-
-    sync_project(&project, Some("1"));
-
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists(),
-        "second selective sync must not delete native agent emitted on first sync"
-    );
-    assert!(
-        lock_has_native_agent(&project, "coder"),
-        "second selective sync must keep native agent lock record"
-    );
-}
-
-#[test]
-fn agent_copy_stale_native_removed_when_config_cleared() {
-    let dir = TempDir::new().unwrap();
-    let project = setup_with_settings(
-        &dir,
-        r#"
-[settings]
-targets = [".claude"]
-
-[settings.meridian.agent_copy]
-harnesses = ["claude"]
-"#,
-        CLAUDE_HARNESS_AGENT,
-        Some("1"),
-    );
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists()
-    );
-
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = [".claude"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            dir.child("src")
-                .path()
-                .display()
-                .to_string()
-                .replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    assert!(
-        !project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists(),
-        "removing agent_copy should reconcile stale native agent"
-    );
-    assert!(
-        !lock_has_native_agent(&project, "coder"),
-        "stale .claude/agents output record should be removed from mars.lock"
-    );
-}
-
-#[test]
 fn sync_uses_effective_agent_emission_from_local_override() {
     let dir = TempDir::new().unwrap();
     let project = setup_with_settings(
@@ -443,112 +347,6 @@ agent_emission = "never"
             .child("coder.md")
             .exists(),
         "mars.local.toml agent_emission=always should override project never via effective settings"
-    );
-}
-
-#[test]
-fn agent_copy_link_materializes_selective_native_agents() {
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-
-[settings.meridian.agent_copy]
-harnesses = ["claude"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-    assert!(
-        !project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists(),
-        "sync without .claude linked should not emit native agent"
-    );
-
-    mars()
-        .args([
-            "link",
-            ".claude",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MERIDIAN_MANAGED", "1")
-        .assert()
-        .success();
-
-    assert!(
-        project
-            .child(".claude")
-            .child("agents")
-            .child("coder.md")
-            .exists(),
-        "mars link .claude should materialize selective native agents"
-    );
-    assert!(
-        lock_has_native_agent(&project, "coder"),
-        "link should record native agent output in mars.lock"
-    );
-}
-
-#[test]
-fn agent_copy_link_lock_tracks_codex_native_output() {
-    const CODEX_AGENT: &str = r#"---
-name: explorer
-description: Codex explorer
-harness: codex
-model: gpt-5.3-codex
----
-# Explorer
-"#;
-
-    let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "src", &[("explorer", CODEX_AGENT)], &[]);
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"
-[settings]
-targets = []
-
-[settings.meridian.agent_copy]
-harnesses = ["codex"]
-
-[dependencies.src]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    sync_project(&project, Some("1"));
-
-    mars()
-        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
-        .env("MERIDIAN_MANAGED", "1")
-        .assert()
-        .success();
-
-    assert!(
-        project.child(".codex/agents/explorer.toml").exists(),
-        "mars link .codex should materialize codex native agent"
-    );
-    assert!(
-        lock_has_codex_native_agent(&project, "explorer"),
-        "link should record codex native output against canonical .mars owner"
     );
 }
 
@@ -782,5 +580,207 @@ path = "{}"
     assert!(
         !codex.contains("model = "),
         "overlay claude model must NOT leak into the declared codex harness file: {codex}"
+    );
+}
+
+#[test]
+fn agent_copy_steady_state_survives_consecutive_syncs() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_with_settings(
+        &dir,
+        r#"
+[settings]
+targets = [".claude"]
+
+[settings.meridian.agent_copy]
+harnesses = ["claude"]
+"#,
+        CLAUDE_HARNESS_AGENT,
+        Some("1"),
+    );
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists()
+    );
+    assert!(lock_has_native_agent(&project, "coder"));
+
+    sync_project(&project, Some("1"));
+
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists(),
+        "second selective sync must not delete native agent emitted on first sync"
+    );
+    assert!(
+        lock_has_native_agent(&project, "coder"),
+        "second selective sync must keep native agent lock record"
+    );
+}
+
+#[test]
+fn agent_copy_stale_native_removed_when_config_cleared() {
+    let dir = TempDir::new().unwrap();
+    let project = setup_with_settings(
+        &dir,
+        r#"
+[settings]
+targets = [".claude"]
+
+[settings.meridian.agent_copy]
+harnesses = ["claude"]
+"#,
+        CLAUDE_HARNESS_AGENT,
+        Some("1"),
+    );
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists()
+    );
+
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = [".claude"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            dir.child("src")
+                .path()
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+
+    assert!(
+        !project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists(),
+        "removing agent_copy should reconcile stale native agent"
+    );
+    assert!(
+        !lock_has_native_agent(&project, "coder"),
+        "stale .claude/agents output record should be removed from mars.lock"
+    );
+}
+
+#[test]
+fn agent_copy_link_materializes_selective_native_agents() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+
+[settings.meridian.agent_copy]
+harnesses = ["claude"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+    assert!(
+        !project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists(),
+        "sync without .claude linked should not emit native agent"
+    );
+
+    mars()
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert!(
+        project
+            .child(".claude")
+            .child("agents")
+            .child("coder.md")
+            .exists(),
+        "mars link .claude should materialize selective native agents"
+    );
+    assert!(
+        lock_has_native_agent(&project, "coder"),
+        "link should record native agent output in mars.lock"
+    );
+}
+
+#[test]
+fn agent_copy_link_lock_tracks_codex_native_output() {
+    const CODEX_AGENT: &str = r#"---
+name: explorer
+description: Codex explorer
+harness: codex
+model: gpt-5.3-codex
+---
+# Explorer
+"#;
+
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("explorer", CODEX_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            r#"
+[settings]
+targets = []
+
+[settings.meridian.agent_copy]
+harnesses = ["codex"]
+
+[dependencies.src]
+path = "{}"
+"#,
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    sync_project(&project, Some("1"));
+
+    mars()
+        .args(["link", ".codex", "--root", project.path().to_str().unwrap()])
+        .env("MERIDIAN_MANAGED", "1")
+        .assert()
+        .success();
+
+    assert!(
+        project.child(".codex/agents/explorer.toml").exists(),
+        "mars link .codex should materialize codex native agent"
+    );
+    assert!(
+        lock_has_codex_native_agent(&project, "explorer"),
+        "link should record codex native output against canonical .mars owner"
     );
 }

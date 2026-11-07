@@ -2,7 +2,6 @@
 
 mod filter_tests;
 mod integration_tests;
-mod skill_tests;
 mod version_tests;
 
 use super::*;
@@ -14,7 +13,6 @@ use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::names::{RenameMap, SourceSubpath};
-use mars_schema::version::{Constraint, parse_constraint};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -100,13 +98,6 @@ impl MockProvider {
             .insert((name.to_string(), version_tag.to_string()), tree_path);
     }
 
-    fn set_commit_sequence(&mut self, source_name: &str, commits: Vec<&str>) {
-        self.commit_sequences.insert(
-            source_name.to_string(),
-            commits.into_iter().map(|c| c.to_string()).collect(),
-        );
-    }
-
     fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
         self.unreachable_preferred_commits
             .insert(commit.to_string());
@@ -114,14 +105,6 @@ impl MockProvider {
 
     fn seen_preferred_commits(&self) -> Vec<Option<String>> {
         self.seen_preferred_commits.borrow().clone()
-    }
-
-    fn fetch_count(&self, source_name: &str) -> usize {
-        self.fetch_counts
-            .borrow()
-            .get(source_name)
-            .copied()
-            .unwrap_or(0)
     }
 
     fn list_versions_count(&self, url: &str) -> usize {
@@ -428,20 +411,6 @@ fn resolve_with_diagnostics(
     let mut diag = DiagnosticCollector::new();
     let result = super::resolve(config, provider, locked, options, &mut diag);
     (result, diag.drain())
-}
-
-fn resolve_with_report_details(
-    config: &EffectiveConfig,
-    provider: &dyn SourceProvider,
-    locked: Option<&LockFile>,
-    options: &ResolveOptions,
-) -> (
-    Result<ResolvedGraph, MarsError>,
-    Vec<crate::resolve::EngineFallback>,
-) {
-    let mut diag = DiagnosticCollector::new();
-    let result = super::resolve(config, provider, locked, options, &mut diag);
-    (result, diag.take_engine_fallbacks())
 }
 
 /// The tree's `mars.toml`, as a package author would write it.

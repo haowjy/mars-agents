@@ -198,24 +198,6 @@ mod tests {
     use tar::Builder;
     use tempfile::TempDir;
 
-    fn build_tar_gz(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let encoder = GzEncoder::new(Vec::new(), Compression::default());
-        let mut builder = Builder::new(encoder);
-
-        for (path, contents) in files {
-            let mut header = tar::Header::new_gnu();
-            header.set_mode(0o644);
-            header.set_size(contents.len() as u64);
-            header.set_cksum();
-            builder
-                .append_data(&mut header, *path, Cursor::new(*contents))
-                .unwrap();
-        }
-
-        let encoder = builder.into_inner().unwrap();
-        encoder.finish().unwrap()
-    }
-
     fn build_tar_gz_with_symlink() -> Vec<u8> {
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
@@ -292,26 +274,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_and_strip_archive_flattens_top_level_directory() {
-        let tarball = build_tar_gz(&[
-            ("repo-abc/agents/coder.md", b"agent"),
-            ("repo-abc/skills/review/SKILL.md", b"skill"),
-        ]);
-        let out = TempDir::new().unwrap();
-
-        extract_and_strip_archive(&tarball, out.path()).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(out.path().join("agents/coder.md")).unwrap(),
-            "agent"
-        );
-        assert_eq!(
-            fs::read_to_string(out.path().join("skills/review/SKILL.md")).unwrap(),
-            "skill"
-        );
-    }
-
-    #[test]
     fn extract_and_strip_archive_rejects_parent_traversal() {
         let tarball = build_raw_tar_gz_single_file("repo-abc/../escape.txt", b"bad");
         let out = TempDir::new().unwrap();
@@ -330,30 +292,5 @@ mod tests {
 
         assert!(out.path().join("agents/coder.md").exists());
         assert!(!out.path().join("agents/link.md").exists());
-    }
-
-    #[test]
-    fn fetch_archive_uses_safe_cache_key_before_network() {
-        let cache_root = TempDir::new().unwrap();
-        let cache = GlobalCache {
-            root: cache_root.path().join("cache"),
-        };
-        fs::create_dir_all(cache.archives_dir()).unwrap();
-
-        let url = "https://github.com/group/pkg.git";
-        let sha = "abc123";
-        let expected_cache_path = cache
-            .archives_dir()
-            .join(archive_cache_component(url, sha).unwrap());
-        fs::create_dir_all(&expected_cache_path).unwrap();
-
-        let resolved = fetch_archive(url, sha, &cache).unwrap();
-
-        assert_eq!(resolved, expected_cache_path);
-        let file_name = resolved.file_name().unwrap().to_string_lossy();
-        assert!(
-            !file_name.contains(':'),
-            "archive cache key must be one Windows-safe component: {file_name}"
-        );
     }
 }

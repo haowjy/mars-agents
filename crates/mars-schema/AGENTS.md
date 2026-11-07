@@ -9,10 +9,11 @@ across those callers rather than making a second binary-side copy.
 ## Reading and preparation
 
 - Route authored definitions through the shared reader. Schema-v1 authored fields are
-  strict; foreign and pre-v1 definitions go through translation and set-aside so a
-  dependency the consumer cannot edit can still install. Keep valid entries in lowered
-  fields and network host lists when rejecting individual entries: losing a deny entry
-  can widen an agent's permissions. Report lost restrictions as changes.
+  strict; foreign and pre-v1 definitions go through translation and `set_aside_rejected_keys`
+  so an uneditable dependency can still install. Preserve valid entries in `LoweredField`,
+  `skill::LOWERED_KEYS`, and network host lists; losing a deny entry can widen permissions.
+  Record lost deny/ask tools, disallowed tools, deny hosts and restriction fields as
+  `field.restriction-lost` changes, exposed by `Prepared::lost_restrictions`.
 - Ordinary reading leaves schema-v1 files as written; migration may repair removed
   fields because it writes the result back. Upgrade definitions without changing
   unrelated bytes when possible. Do not change a dependency's `requires-mars` during
@@ -20,12 +21,12 @@ across those callers rather than making a second binary-side copy.
   floor when it can edit the manifest minimally; it leaves an existing requirement
   or an inline package table unchanged and provides advice when needed.
 - A `mars.toml` without `[package]` is consumer configuration, not a package manifest.
-  Use the preparation context and `project_authored_root` to choose the authored tree;
-  applying package rules to consumer configuration changes what is read and written.
+  `project_authored_root` selects `.mars-src` with `AuthoredLocal` for consumer
+  configuration, otherwise the project root with `Package`.
 - Prepare before applying consumer filters and renames. Check skill body links against
   the actual installed layout after those choices: preparation cannot know whether a
-  target from another package will be installed. Use the shared item selection result
-  for Agents, skills and bootstrap documents so callers agree on what is selected.
+  target from another package will be installed. Use `selection::select` and its
+  `SelectionResult` for Agents, skills and bootstrap documents so callers agree.
 - Read consumer dependency entries strictly. A package dependency's conflicting
   filters or `plugin` plus `dialect` warn instead, so a dependent can still sync.
 - Preserve `.git` and `node_modules` in Mars skill payloads even though foreign
@@ -38,8 +39,9 @@ across those callers rather than making a second binary-side copy.
 - Dependency `version` and `requires-mars` / `requires-meridian` use different
   grammars: bare `0.20` is a caret range for a dependency and a minimum for a
   requirement. Keep their parsers distinct.
-- Keep an allowed lock when the selection policy prefers it and no request asks for
-  latest, without checking whether its tag still exists upstream. This lets a locked
+- `version::keeps_lock` keeps a lock under `PreferLockThenLatest` when every
+  semver constraint allows it, it is not excluded, and no request asks for latest,
+  without checking whether its tag still exists upstream. This lets a locked
   install replay without listing tags. Every constraint must hold at the chosen ref;
   incompatible pins and a pin beside a range fail.
 - Preserve the published read, edit, preparation, selection and hook output shapes,

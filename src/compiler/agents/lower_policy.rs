@@ -869,7 +869,7 @@ pub fn lower_to_codex(
         match a {
             ApprovalMode::Default => None,
             ApprovalMode::Auto => Some("on-request"),
-            ApprovalMode::Confirm => Some("untrusted"),
+            ApprovalMode::Confirm => Some("on-request"),
             ApprovalMode::Never => Some("never"),
         }
     });

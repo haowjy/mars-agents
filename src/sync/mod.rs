@@ -55,8 +55,9 @@ pub struct SyncReport {
     /// Native harness agent outputs removed this run, as `(target_root, dest_path)`.
     /// Surfaced so SuppressAll / selective prunes are not reported as "up to date".
     pub native_removed: Vec<(String, String)>,
-    /// Generated hook files (`mars-<name>.hooks.ts`, a native hook written to a file target)
-    /// whose bytes this run wrote, as `(target_root, dest_path)`. Surfaced because a sync
+    /// Hook files this run wrote (or, in a dry run, would): generated files
+    /// (`mars-<name>.hooks.ts`, a native hook written to a file target) and merged ones
+    /// (`.codex/hooks.json`), as `(target_root, dest_path)`. Surfaced because a sync
     /// that rewrites only these is not "already up to date".
     pub hook_files_rewritten: Vec<(String, String)>,
     /// MCP config files (`.mcp.json`, `.codex/config.toml`, ...) this run wrote or deleted,
@@ -746,6 +747,20 @@ pub(crate) fn sync_targets(
     diag: &mut DiagnosticCollector,
 ) -> SyncedState {
     if request.options.dry_run {
+        crate::target_sync::preview_native_skill_repairs(
+            &ctx.project_root,
+            &ctx.project_root.join(".mars"),
+            &applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .effective
+                .settings
+                .managed_targets(),
+            &applied.applied.outcomes,
+            diag,
+        );
         return SyncedState {
             applied,
             target_outcomes: Vec::new(),

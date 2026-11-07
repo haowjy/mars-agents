@@ -304,8 +304,10 @@ the bundle's `execution_policy.network`.
 |---|---|
 | `default` | (omitted) |
 | `auto` | `"on-request"` |
-| `confirm` | `"untrusted"` |
+| `confirm` | `"on-request"` |
 | `never` | `"never"` |
+
+`auto` and `confirm` write the same value: Codex has dropped `"untrusted"`, and `approvals_reviewer` is not written in an agent file. Meridian sets the reviewer on its own launches. Codex does not validate this key in agent files, so whether it takes effect there is unconfirmed.
 
 **Example output:**
 

@@ -104,6 +104,73 @@ pub fn sync_managed_targets(
     results
 }
 
+/// Where `outcome` lands inside `target_name`; `None` when it belongs to another target.
+fn target_dest_rel(outcome: &ActionOutcome, target_name: &str) -> Option<String> {
+    match crate::sync::package_dir::PackageDir::parse_canonical(
+        outcome.item_id.kind,
+        &outcome.dest_path,
+    ) {
+        Some(dir) => dir.belongs_to(target_name).then(|| dir.native()),
+        None => Some(outcome.dest_path.to_string()),
+    }
+}
+
+/// What a dry run shows of `sync_one_target`'s skill refresh: a native skill projection that
+/// differs from what a real sync would write is repaired, so it is named here as it is there.
+pub fn preview_native_skill_repairs(
+    project_root: &Path,
+    mars_dir: &Path,
+    targets: &[String],
+    outcomes: &[ActionOutcome],
+    diag: &mut DiagnosticCollector,
+) {
+    let registry = crate::target::TargetRegistry::new();
+    for target_name in targets {
+        let Some(variant_key) = registry
+            .get(target_name)
+            .and_then(|adapter| adapter.skill_variant_key())
+        else {
+            continue;
+        };
+        for outcome in outcomes {
+            if outcome.item_id.kind != mars_schema::item::ItemKind::Skill
+                || !matches!(outcome.action, ActionTaken::Skipped)
+            {
+                continue;
+            }
+            let Some(dest_rel) = target_dest_rel(outcome, target_name) else {
+                continue;
+            };
+            let source = mars_dir.join(outcome.dest_path.as_str());
+            let dest = project_root.join(target_name).join(&dest_rel);
+            if !source.exists() || !surface_ownership::target_dest_exists(&dest) {
+                continue;
+            }
+            let matches = crate::compiler::variants::prepare_native_skill_projection(
+                &source,
+                variant_key,
+                &mut DiagnosticCollector::new(),
+                outcome.item_id.name.as_str(),
+            )
+            .and_then(|projection| {
+                crate::compiler::variants::prepared_native_skill_projection_matches(
+                    &dest,
+                    &projection,
+                )
+            })
+            .unwrap_or(false);
+            if !matches {
+                diag.warn(
+                    "target-native-projection-repaired",
+                    format!(
+                        "diverged native projection would be repaired: {target_name}/{dest_rel}/SKILL.md"
+                    ),
+                );
+            }
+        }
+    }
+}
+
 fn sync_one_target(
     mars_dir: &Path,
     target_root: &Path,
@@ -143,19 +210,10 @@ fn sync_one_target(
             continue;
         }
         let canonical_dest_rel = outcome.dest_path.as_str();
-        let scoped_dest;
-        let dest_rel = if let Some(dir) = crate::sync::package_dir::PackageDir::parse_canonical(
-            outcome.item_id.kind,
-            &outcome.dest_path,
-        ) {
-            if !dir.belongs_to(target_name) {
-                continue;
-            }
-            scoped_dest = dir.native();
-            scoped_dest.as_str()
-        } else {
-            canonical_dest_rel
+        let Some(dest_rel) = target_dest_rel(outcome, target_name) else {
+            continue;
         };
+        let dest_rel = dest_rel.as_str();
         if outcome.item_id.kind == mars_schema::item::ItemKind::Agent
             && !target_accepts_canonical_agents
         {

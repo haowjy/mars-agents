@@ -1,17 +1,10 @@
 use crate::types::DestPath;
-/// `.agents` target adapter — deprecated full-fidelity legacy output.
-///
-/// This is the primary target that Meridian reads at runtime. It emits:
-/// - `agents/<name>.md` — full-fidelity agent markdown with frontmatter preserved
-/// - `skills/<name>/` — portable skill trees also consumed by external harnesses
-///
-/// See `design/spec/agents-target-adapter.md` for the V0 contract. The key
-/// point: NO field stripping — all agent frontmatter fields needed by Meridian
 /// are preserved.
 use mars_schema::item::ItemKind;
 
 use super::TargetAdapter;
 
+// Legacy `.agents` outputs retain full agent frontmatter.
 #[derive(Debug)]
 pub struct AgentsAdapter;
 

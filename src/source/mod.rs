@@ -10,7 +10,6 @@ use crate::error::MarsError;
 use crate::platform::cache::global_cache_root;
 use crate::types::{CommitHash, SourceName, SourceUrl};
 
-/// Global source cache under the OS cache root (or `MARS_CACHE_DIR`).
 #[derive(Debug, Clone)]
 pub struct GlobalCache {
     pub root: PathBuf,
@@ -19,11 +18,6 @@ pub struct GlobalCache {
 impl GlobalCache {
     /// Locate the cache. Nothing is created here: the first fetch creates `git/` and `archives/`,
     /// so a run that fetches nothing works with a read-only cache root.
-    ///
-    /// Resolution order:
-    /// 1. `MARS_CACHE_DIR`
-    /// 2. OS cache directory + `mars/cache`
-    /// 3. `{current_working_dir}/.mars/cache` fallback
     pub fn new() -> Result<Self, MarsError> {
         let root = global_cache_root()?;
 
@@ -39,18 +33,15 @@ impl GlobalCache {
     }
 }
 
-/// A resolved source reference — pinned to a specific version/commit.
 #[derive(Debug, Clone)]
 pub struct ResolvedRef {
     pub source_name: SourceName,
     pub version: Option<semver::Version>,
-    /// Original tag name (e.g., "v0.5.2")
     pub version_tag: Option<String>,
     pub commit: Option<CommitHash>,
     pub tree_path: PathBuf,
 }
 
-/// Available version from a git remote.
 #[derive(Debug, Clone)]
 pub struct AvailableVersion {
     pub tag: String,
@@ -58,7 +49,6 @@ pub struct AvailableVersion {
     pub commit_id: String,
 }
 
-/// List available versions from a git remote (for resolution).
 pub fn list_versions(
     url: &SourceUrl,
     cache: &GlobalCache,

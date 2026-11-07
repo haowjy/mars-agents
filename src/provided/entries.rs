@@ -16,7 +16,6 @@ use mars_schema::skill::SkillProfile;
 
 use super::spec::ProvideSpec;
 
-/// One skill directory and the digest of its bytes.
 #[derive(Debug)]
 pub(crate) struct ProvidedSkill {
     pub name: String,
@@ -26,7 +25,6 @@ pub(crate) struct ProvidedSkill {
     pub digest: String,
 }
 
-/// Everything one `mars provide` call offers, validated and digested.
 pub(crate) struct ProvidedEntries {
     pub skills: Vec<ProvidedSkill>,
     /// SHA-256 over `(name, skill digest)` pairs: it moves when any skill's bytes, executable
@@ -35,8 +33,6 @@ pub(crate) struct ProvidedEntries {
     pub digest: String,
 }
 
-/// Read, validate and digest `<dir>/skills/`, with the warnings its readers produced.
-///
 /// Fails before the caller writes anything when the source could not be installed as named:
 /// a name that is not `<skill>__<provider>`, or a `SKILL.md` the schema reader rejects.
 pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<String>), MarsError> {
@@ -89,9 +85,6 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
     ))
 }
 
-/// The digest of a directory's regular files: the manifest format package skills use, with each
-/// file's executable bit folded in.
-///
 /// An install is bytes plus the mode the copy path gives them (`0o644` and the source's execute
 /// bits), so freshness must see an execute-bit change: a host that fixes a script's execute bit needs a
 /// replacement without a dummy content edit. "Executable" is
@@ -113,7 +106,6 @@ pub(crate) fn tree_digest(dir: &Path) -> Result<String, MarsError> {
     Ok(crate::hash::hash_file_manifest(entries))
 }
 
-/// Read `SKILL.md` through the schema contract, failing on error-level diagnostics.
 fn read_skill(
     name: &str,
     dir: &Path,

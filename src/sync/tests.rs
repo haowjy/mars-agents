@@ -11,12 +11,10 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-/// The consumer's own package in a dependency-only test graph.
 fn test_local_source() -> crate::types::SourceName {
     crate::types::SourceOrigin::LocalPackage.to_string().into()
 }
 
-/// Helper to set up a complete sync context with temp dirs.
 struct TestFixture {
     project_root: TempDir,
     managed_root: PathBuf,
@@ -471,8 +469,6 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
     assert!(!project_root.path().join("mars.lock").exists());
 }
 
-// === Integration tests for the pipeline stages ===
-
 #[test]
 fn local_modification_preserved() {
     let mut fixture = TestFixture::new();
@@ -480,7 +476,6 @@ fn local_modification_preserved() {
 
     let (graph, config) = make_graph_config(&fixture, vec![("base", src_idx, FilterMode::All)]);
 
-    // First sync
     let (target, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
@@ -496,14 +491,12 @@ fn local_modification_preserved() {
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
-    // Locally modify the installed file
     fs::write(
         fixture.managed_root().join("agents/coder.md"),
         "# Locally modified",
     )
     .unwrap();
 
-    // Re-sync (source unchanged)
     let (target2, _, _, _) = target::build_with_collisions_and_diag(
         &graph,
         &config,
@@ -513,14 +506,12 @@ fn local_modification_preserved() {
     .unwrap();
     let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
 
-    // Should detect LocalModified
     assert_eq!(sync_diff2.items.len(), 1);
     assert!(matches!(
         &sync_diff2.items[0],
         diff::DiffEntry::LocalModified { .. }
     ));
 
-    // Plan should KeepLocal
     let sync_plan2 = create_sync_plan(&sync_diff2, &options);
     assert!(matches!(
         &sync_plan2.actions[0],
@@ -553,15 +544,11 @@ fn dry_run_produces_plan_without_changes() {
     let sync_plan = create_sync_plan(&sync_diff, &dry_options);
     assert!(!sync_plan.actions.is_empty());
 
-    // Execute in dry-run mode
     let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
     assert!(!result.outcomes.is_empty());
 
-    // No files should have been created
     assert!(!fixture.managed_root().join("agents/coder.md").exists());
 }
-
-// === Tests for OnlySkills / OnlyAgents filter in pipeline ===
 
 #[test]
 fn pipeline_only_skills_filter() {
@@ -581,7 +568,6 @@ fn pipeline_only_skills_filter() {
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    // Should only have the skill, not the agent
     assert_eq!(target.items.len(), 1);
     assert!(target.items.contains_key("skills/planning"));
 }
@@ -589,7 +575,6 @@ fn pipeline_only_skills_filter() {
 #[test]
 fn pipeline_only_agents_filter() {
     let mut fixture = TestFixture::new();
-    // Agent with a skill dependency in frontmatter
     let agent_content = "---\nskills:\n  - planning\n---\n# Coder agent";
     let src_idx = fixture.add_source(
         &[("coder.md", agent_content)],
@@ -609,7 +594,6 @@ fn pipeline_only_agents_filter() {
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    // Should have the agent + its transitive skill dep, but NOT standalone
     assert_eq!(target.items.len(), 2);
     assert!(target.items.contains_key("agents/coder.md"));
     assert!(target.items.contains_key("skills/planning"));
@@ -631,6 +615,5 @@ fn pipeline_only_agents_no_agents_source() {
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    // No agents means nothing gets installed
     assert_eq!(target.items.len(), 0);
 }

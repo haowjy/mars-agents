@@ -69,7 +69,6 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
     let claude = json(&project, ".claude/settings.local.json");
     let codex = json(&project, ".codex/hooks.json");
     let root = portable_path(&dunce::canonicalize(project.path()).unwrap());
-    // Each target gets its own directory in the command, and its own target token.
     assert_eq!(
         commands(&claude, "PreToolUse"),
         [format!(
@@ -80,7 +79,6 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
         commands(&codex, "PreToolUse"),
         [format!("bash \"{root}/.codex/hooks/guard/run.sh\" .codex")]
     );
-    // Claude keeps the fractional timeout; Codex gets whole seconds.
     assert_eq!(claude["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 5.5);
     assert_eq!(codex["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"], 6);
     assert_eq!(commands(&claude, "Notification"), ["echo n"]);
@@ -91,7 +89,6 @@ fn hooks_render_for_claude_and_codex_and_report_the_rest() {
         ["hook:Notification:guard", "hook:PreToolUse:guard"]
     );
     assert_eq!(lock_keys(&project, ".codex"), ["hook:PreToolUse:guard"]);
-    // OpenCode gets the generated plugin for PreToolUse, with its own target token.
     let plugin = fs::read_to_string(
         project
             .child(".opencode/plugins/mars-guard.hooks.ts")
@@ -116,7 +113,6 @@ fn skip_targets_turns_generated_entries_off_for_that_target() {
 
     sync(&project)
         .success()
-        // A skipped target gets no skip reports.
         .stderr(predicate::str::contains("`.codex` does not run").not());
     project
         .child(".codex/hooks.json")
@@ -152,7 +148,6 @@ fn a_native_hook_replaces_only_its_events_and_an_empty_array_turns_one_off() {
         );
 
     let codex = json(&project, ".codex/hooks.json");
-    // PreToolUse is off on Codex; Stop is the native hook's; Claude still has the guard.
     assert!(codex["hooks"].get("PreToolUse").is_none());
     assert_eq!(commands(&codex, "Stop"), ["printf stop"]);
     assert_eq!(lock_keys(&project, ".codex"), ["hook:Stop:guard"]);
@@ -166,7 +161,6 @@ fn removing_the_hook_removes_its_generated_entries_and_records() {
     let project = project(&dir, "\".claude\", \".codex\"");
     write_hook(&project, "guard", GUARD);
     sync(&project).success();
-    // A user's own entry sits beside the generated ones.
     let path = project.child(".codex/hooks.json");
     let mut codex = json(&project, ".codex/hooks.json");
     codex["hooks"]["Stop"] =
@@ -198,13 +192,10 @@ fn codex_trust_is_reported_when_handler_positions_change_and_not_otherwise() {
         predicate::str::contains("codex-hooks-need-trust")
             .or(predicate::str::contains("open Codex and run `/hooks`")),
     );
-    // Nothing changed: nothing to review again.
     sync(&project)
         .success()
         .stderr(predicate::str::contains("open Codex and run `/hooks`").not());
 
-    // A second hook that sorts ahead moves the first hook's position? It lands after it
-    // within the event, so only the new handler is new.
     write_hook(
         &project,
         "audit",
@@ -296,7 +287,6 @@ fn the_projects_own_unknown_event_is_an_error_unless_unchecked() {
     sync(&project).success().stderr(predicate::str::contains(
         "`.codex` does not run `FutureEvent`",
     ));
-    // Claude only.
     let claude = json(&project, ".claude/settings.local.json");
     assert_eq!(commands(&claude, "FutureEvent"), ["echo f"]);
     assert!(
@@ -380,7 +370,6 @@ fn changing_order_reorders_the_installed_entries_at_once() {
     sync(&project).success();
     assert_eq!(pre_tool_use(&project), ["echo beta", "echo alpha"]);
 
-    // Nothing changed: the file is not touched again.
     let before = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
     sync(&project).success();
     assert_eq!(
@@ -388,7 +377,6 @@ fn changing_order_reorders_the_installed_entries_at_once() {
         before
     );
 
-    // An unrelated hook no longer moves the others.
     write_echo(&project, 9, "gamma", "echo gamma");
     sync(&project).success();
     assert_eq!(
@@ -492,7 +480,6 @@ fn a_file_target_keeps_the_generated_file_beside_the_native_hook_and_removes_bot
         .child(".pi/extensions/mars-guard.ts")
         .assert(predicate::path::missing());
 
-    // A second sync leaves the generated file alone, rather than deleting it as an orphan.
     let before = fs::metadata(generated.path()).unwrap().modified().unwrap();
     sync(&project).success();
     assert_eq!(fs::read_to_string(generated.path()).unwrap(), first);
@@ -519,12 +506,10 @@ fn a_sync_that_rewrites_only_a_generated_hook_file_says_so() {
     let generated = project.child(".opencode/plugins/mars-guard.hooks.ts");
     let expected = fs::read_to_string(generated.path()).unwrap();
 
-    // Nothing to write: still up to date.
     sync(&project)
         .success()
         .stdout(predicate::str::contains("already up to date"));
 
-    // Mars owns the file and it is gone: the next sync writes it back, and no item changes.
     fs::remove_file(generated.path()).unwrap();
     mars()
         .args(["sync", "--diff", "--root", project.path().to_str().unwrap()])

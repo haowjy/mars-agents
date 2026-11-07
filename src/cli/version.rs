@@ -31,7 +31,6 @@ pub struct VersionArgs {
     pub no_plugins: bool,
 }
 
-/// Run `mars version`.
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let config = crate::config::load(&ctx.project_root)?;
     let plugin_metadata = config
@@ -324,7 +323,6 @@ fn require_clean_working_tree(
 }
 
 fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsError> {
-    // Skip check if this isn't a source package (no agents/, skills/, or SKILL.md)
     let has_agents = project_root.join("agents").is_dir();
     let has_skills = project_root.join("skills").is_dir();
     let has_root_skill = project_root.join("SKILL.md").is_file();
@@ -355,8 +353,6 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
     }
 }
 
-/// Run the full sync pipeline in dry-run mode and fail on errors.
-///
 /// This catches integration issues that `mars check` cannot see:
 /// dependency resolution failures, cross-package skill graph inconsistencies,
 /// and target generation errors.
@@ -974,8 +970,7 @@ fn today_iso_date() -> String {
 }
 
 fn civil_date_from_days(days_since_unix_epoch: i64) -> String {
-    // Howard Hinnant's civil-from-days algorithm. Converts days since
-    // 1970-01-01 to a proleptic Gregorian date without platform-specific APIs.
+    // Convert days since 1970-01-01 to a proleptic Gregorian date without platform APIs.
     let z = days_since_unix_epoch + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -1305,11 +1300,8 @@ mod tests {
         assert!(remote_tag.contains("refs/tags/v0.1.1"));
     }
 
-    // ── P5: check errors abort version ───────────────────────────────────────────
-
     #[test]
     fn run_aborts_when_package_check_fails() {
-        // P5: an unresolvable dependency causes check to fail, version is not bumped.
         let (repo, ctx) = init_repo_with_mars_toml(
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p5\" }\n",
         );
@@ -1370,11 +1362,8 @@ mod tests {
         );
     }
 
-    // ── P6: --force bypasses check errors ────────────────────────────────────────
-
     #[test]
     fn run_force_bypasses_package_check_errors() {
-        // P6: --force proceeds despite check errors, emits warnings to stderr.
         let (repo, ctx) = init_repo_with_mars_toml(
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-dep-xyz-p6\" }\n",
         );

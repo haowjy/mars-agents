@@ -1,4 +1,4 @@
-# src/cli follow-ups
+# CLI follow-up
 
-- `provide.rs`: a schema error in one provided skill refuses the whole bundle.
-  Consider refusing only that skill so the rest can install.
+- `src/cli/provide.rs`: decide whether an invalid provided skill should be refused individually so the rest of the host bundle can install.
+  Provided bundles are read strictly, so one invalid skill currently refuses the entire bundle; the host may then fall back to its own skills.

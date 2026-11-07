@@ -15,7 +15,6 @@ use crate::harness::registry;
 
 use crate::routing::slug;
 
-/// What an installed probe-backed harness (OpenCode, Pi) has told us.
 pub enum ProbeListing {
     /// Never probed: a listing may still reveal the provider.
     NeverProbed,
@@ -61,7 +60,6 @@ fn slug_providers(slugs: &[String]) -> impl Iterator<Item = String> + '_ {
         .filter_map(|s| s.split_once('/').map(|(provider, _)| provider.to_string()))
 }
 
-/// Warnings for `provider_order` entries absent from `known`.
 pub fn unknown_provider_order_warnings(order: &[String], known: &HashSet<String>) -> Vec<String> {
     let known: HashSet<String> = known
         .iter()
@@ -91,11 +89,8 @@ mod tests {
 
     #[test]
     fn suppression_rule() {
-        // Never probed: pending, so silent.
         assert_eq!(typo_warnings(&[ProbeListing::NeverProbed]), None);
-        // Failed probe adds nothing; both entries are unknown.
         assert_eq!(typo_warnings(&[ProbeListing::Failed]), Some(2));
-        // Observed in a listing: known, only the typo warns.
         let listed = ProbeListing::Listed(vec!["opencode-go/deepseek".to_string()]);
         assert_eq!(typo_warnings(&[listed]), Some(1));
     }

@@ -183,7 +183,6 @@ fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
     let mut provider = MockProvider::new();
     provider.add_source("a", tree, None);
 
-    // Config changed from main -> release, but lock still records main.
     let config = make_config(vec![(
         "a",
         git_spec("https://example.com/a.git", Some("release")),
@@ -722,7 +721,6 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     );
 
     let options = ResolveOptions::frozen();
-    // With frozen, transitive deps also consult the lock → unreachable commit → error.
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(
         matches!(result, Err(MarsError::LockedCommitUnreachable { .. })),
@@ -784,7 +782,6 @@ fn r5_frozen_replays_transitive_from_lock() {
 
     let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
-    // With frozen, transitive lock is respected → shared@v1.1.0 with locked commit.
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 1, 0)),
@@ -799,8 +796,6 @@ fn r5_frozen_replays_transitive_from_lock() {
 
 #[test]
 fn r13_multiple_refpins_conflict() {
-    // Two direct deps that both depend on `shared` via different RefPin constraints.
-    // Because resolve_git_source short-circuits on first RefPin, the first encountered wins.
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -823,7 +818,6 @@ fn r13_multiple_refpins_conflict() {
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
     provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    // shared has no semver tags → goes through ref path
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
@@ -833,7 +827,6 @@ fn r13_multiple_refpins_conflict() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // Two different pins on one package are a conflict, whichever declaration meets them first.
     let error = resolve(&config, &provider, None, &default_options()).unwrap_err();
     let message = error.to_string();
     assert!(
@@ -850,7 +843,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // `a` requires shared ^2.0, but the direct dep pins shared to v1.x.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -866,7 +858,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("shared", tree_shared, None);
 
-    // Direct dep pins shared to ^1.0 (only v1.x satisfies this).
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
         (
@@ -875,7 +866,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
         ),
     ]);
 
-    // `a`'s manifest requires ^2.0 which conflicts with direct ^1.0 → resolution error.
     let result = resolve(&config, &provider, None, &default_options());
     assert!(
         result.is_err(),

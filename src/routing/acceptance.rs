@@ -48,7 +48,6 @@ impl RejectionReason {
     }
 }
 
-/// Check whether a routing trace meets the given acceptance policy.
 pub fn accept_route(
     trace: &RoutingTrace,
     installed: &HashSet<String>,
@@ -88,7 +87,6 @@ pub fn accept_route(
     }
 }
 
-/// Check whether a single candidate assessment is acceptable.
 pub fn accept_assessment(assessment: &CandidateAssessment) -> Result<(), RejectionReason> {
     if !assessment.installed {
         return Err(RejectionReason::HarnessNotInstalled {

@@ -489,7 +489,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     });
     let installed = capability_session.installed_harnesses();
 
-    // Step 1: exact alias lookup
     if let Some(alias) = merged.get(&args.name) {
         if cache_result.is_none() && matches!(alias.spec, ModelSpec::AutoResolve { .. }) {
             return run_auto_resolve_alias_cache_unavailable(
@@ -544,7 +543,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         );
     }
 
-    // Step 2: alias-prefix resolution
     if let Some((cache, outcome)) = &cache_result
         && let Some(mut resolved) =
             models::resolve_with_alias_prefix_static(&args.name, &merged, cache)
@@ -598,7 +596,6 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         });
     }
 
-    // Step 3: passthrough — no cache needed
     let outcome = cache_result
         .as_ref()
         .map(|(_, o)| o.clone())
@@ -1219,11 +1216,6 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     Ok(0)
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Determine which layer provides an alias (consumer or dependency).
 fn determine_source(
     name: &str,
     project_config: Option<&crate::config::LoadedProjectConfig>,

@@ -1,7 +1,4 @@
-# src/fs follow-ups
+# Filesystem follow-ups
 
-- Interrupted installs leave temporary directories outside `.mars/skills/`.
-  Stage installs in a known Mars-owned scratch directory on the same filesystem
-  so recovery can reclaim them safely.
-- Package sync hashes file bytes but not executable bits, so mode-only changes
-  do not reach installed files. Include the bit in package checksums.
+- Recover interrupted directory installs outside `.mars/skills/`, including old-directory leftovers after a killed swap. A single Mars-owned scratch location on the same filesystem could make recovery bounded.
+- Include executable mode in package checksums: a mode-only change currently leaves the installed mode unchanged. This requires a lock-checksum change.

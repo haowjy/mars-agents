@@ -280,12 +280,9 @@ fn sync_capture(project: &assert_fs::fixture::ChildPath, meridian_managed: Optio
 
 #[test]
 fn sync_summary_reports_native_emit_and_prune() {
-    // Regression (observability gap): the sync summary must surface native-agent
-    // emission and removal instead of reporting "already up to date".
     let dir = TempDir::new().unwrap();
     let project = create_emission_project(&dir);
 
-    // Standalone EmitAll: first sync emits the native agent -> summary says "emitted".
     let standalone = sync_capture(&project, None);
     assert!(
         standalone.contains("emitted") && standalone.contains("native agent"),
@@ -296,7 +293,6 @@ fn sync_summary_reports_native_emit_and_prune() {
         "a sync that emits native agents is not up to date:\n{standalone}"
     );
 
-    // MERIDIAN_MANAGED auto + no agent_copy -> SuppressAll prunes the native agent.
     let managed = sync_capture(&project, Some("1"));
     assert!(
         managed.contains("removed") && managed.contains("native agent"),
@@ -307,7 +303,6 @@ fn sync_summary_reports_native_emit_and_prune() {
         "a sync that prunes native agents must NOT say up to date:\n{managed}"
     );
 
-    // Steady state: nothing left to prune or emit -> genuinely up to date.
     let steady = sync_capture(&project, Some("1"));
     assert!(
         steady.contains("already up to date"),

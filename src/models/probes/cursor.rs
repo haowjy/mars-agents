@@ -121,7 +121,6 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Parse `cursor agent --list-models` output into raw slug strings.
 fn parse_cursor_models_output(stdout: &str) -> Vec<String> {
     stdout
         .lines()

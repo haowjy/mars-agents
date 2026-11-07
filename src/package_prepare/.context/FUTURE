@@ -1,0 +1,1 @@
+- Untangle in the rewrite: `src/package_prepare/mod.rs:21` and `crates/mars-schema/src/tree.rs:9` use a tree interface that cannot return I/O errors. The disk adapter latches errors and returns missing-looking values, requiring each caller to check the side channel. Tree operations could return an explicit result distinguishing missing from failure.

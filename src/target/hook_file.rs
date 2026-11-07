@@ -45,7 +45,6 @@ fn load(path: &Path) -> Result<Option<JsonDoc>, MarsError> {
     Ok(Some(doc))
 }
 
-/// Check the file at `path`, if there is one, before anything is written over it.
 pub(crate) fn validate(path: &Path) -> Result<(), MarsError> {
     load(path).map(|_| ())
 }
@@ -78,11 +77,6 @@ pub(crate) fn write(
     doc.save(path)
 }
 
-/// Whether the file at `path` already holds `hooks` as a sync would write them: per event,
-/// every entry present, in `hooks`' order. Other entries may sit between them. A sync that
-/// changes nothing and finds this true leaves the file alone; a file that lost an entry, or
-/// holds them in another order, is rewritten.
-///
 /// Entries are matched one by one in order, so two hooks with identical entries need two in
 /// the file.
 pub(crate) fn holds_recorded(path: &Path, hooks: &[HookEntry]) -> bool {
@@ -109,7 +103,6 @@ pub(crate) fn holds_recorded(path: &Path, hooks: &[HookEntry]) -> bool {
     true
 }
 
-/// `(event, matcher group, handler)` → what sits there; see [`trust_positions`].
 pub(crate) type TrustPositions = BTreeMap<(String, usize, usize), Value>;
 
 /// Where a handler sits in a hook file and what it is: `(event, matcher group, handler)` →
@@ -198,8 +191,6 @@ pub(crate) fn remove_recorded(
     doc.save(path)
 }
 
-/// Remove each of `expected` from `event`'s array, dropping the event if that
-/// empties it. Returns how many were removed and how many were not found.
 fn remove_entries(
     section: &mut IndexMap<String, OrderedValue>,
     event: &str,

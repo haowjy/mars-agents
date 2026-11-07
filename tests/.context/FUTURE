@@ -1,7 +1,5 @@
-# Test architecture follow-ups
+# Test follow-ups
 
-- Replace release workflow spelling checks in `tests/release_metadata.rs` with
-  temporary-repository decision tests when release logic has an executable seam.
-- Loosen full diagnostic sentence assertions in `tests/launch_bundle/routing.rs`
-  while retaining distinct routing failures and their subjects and remediation.
-- Verify a dry run racing a sync mid-publication, including Windows locking.
+- Replace `tests/release_metadata.rs` shell-text assertions with temporary-repository behavior tests when release logic has an executable seam; retain release safety coverage.
+- Loosen full diagnostic-sentence assertions in `tests/launch_bundle/routing.rs` while retaining route, provenance, exit and failure distinction checks.
+- Verify Windows locking and a dry run racing a sync during publication.

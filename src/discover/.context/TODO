@@ -1,4 +1,3 @@
-# Discovery TODO
+# Discovery follow-ups
 
-- Generated-plugin-tree detection and reporting is duplicated in discovery,
-  MCP discovery and `src/fs/mod.rs`. Share the predicate and diagnostic.
+- Share generated-plugin-tree detection and reporting across `src/discover`, `src/compiler/mcp`, and `src/fs`.

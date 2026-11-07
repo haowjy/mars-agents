@@ -11,16 +11,12 @@ use crate::fs::atomic_write;
 #[cfg(windows)]
 use crate::fs::clear_readonly;
 
-/// Result of cache directory publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CachePublishResult {
-    /// The directory was published (renamed from temp to destination).
     Published,
-    /// The destination already existed; temp was removed.
     AlreadyPresent,
 }
 
-/// Replace a generated directory with rollback semantics.
 pub fn replace_generated_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).map_err(|e| io_context("create generated parent", parent, e))?;
@@ -30,7 +26,6 @@ pub fn replace_generated_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
         dest.file_name().unwrap_or_default().to_string_lossy()
     ));
 
-    // Clean stale rollback content from prior crashes.
     if old_path.symlink_metadata().is_ok() {
         safe_remove(&old_path)?;
     }
@@ -56,7 +51,6 @@ pub fn replace_generated_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
     Ok(())
 }
 
-/// Publish a cache directory iff destination is absent.
 pub fn publish_cache_dir_if_absent(
     src: &Path,
     dest: &Path,
@@ -80,7 +74,6 @@ pub fn publish_cache_dir_if_absent(
     }
 }
 
-/// Remove a file or directory tree safely.
 pub fn safe_remove(path: &Path) -> Result<(), MarsError> {
     let metadata = match path.symlink_metadata() {
         Ok(metadata) => metadata,
@@ -124,7 +117,6 @@ fn io_context(operation: &str, path: &Path, source: std::io::Error) -> MarsError
     }
 }
 
-/// Atomic file copy: read source (following symlinks), write to tmp, rename to dest.
 pub fn atomic_copy_file(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let content = fs::read(source).map_err(|e| io_context("read source file", source, e))?;
     #[cfg(windows)]
@@ -134,12 +126,10 @@ pub fn atomic_copy_file(source: &Path, dest: &Path) -> Result<(), MarsError> {
     atomic_write(dest, &content)
 }
 
-/// Atomically replace one durable text or binary file.
 pub fn atomic_write_file(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
     atomic_write(dest, content)
 }
 
-/// Atomic directory copy: deep copy source tree (following symlinks) to tmp, rename to dest.
 pub fn atomic_copy_dir(source: &Path, dest: &Path) -> Result<(), MarsError> {
     let parent = dest.parent().unwrap_or(Path::new("."));
     // A file where the destination's parent belongs (an unmanaged `.claude/mcp`,
@@ -196,14 +186,12 @@ impl PendingStagingGeneration {
 
 impl Drop for PendingStagingGeneration {
     fn drop(&mut self) {
-        // A scratch directory removes itself.
         if let GenerationLocation::Project(path) = &self.location {
             let _ = safe_remove(path);
         }
     }
 }
 
-/// Remove only the pending canonical generation owned by sync.
 pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError> {
     let pending = mars_dir.join(PENDING_STAGING_GENERATION);
     if pending.symlink_metadata().is_err() {
@@ -213,9 +201,6 @@ pub(crate) fn recover_pending_staging(mars_dir: &Path) -> Result<bool, MarsError
     Ok(true)
 }
 
-/// Remove skill directories a killed install staged under `.mars/skills/` but never renamed
-/// into place.
-///
 /// [`crate::fs::atomic_install_dir`] stages a whole skill there as a `tempfile` directory
 /// (`.tmp` plus six alphanumerics) and renames it into place; a SIGKILL between the two leaves
 /// the copy behind, invisible to `mars.lock`, `provided.lock` and every reader. The caller holds
@@ -246,7 +231,6 @@ pub(crate) fn recover_interrupted_skill_installs(mars_dir: &Path) -> Result<bool
     Ok(reclaimed)
 }
 
-/// One of `tempfile`'s generated names: `.tmp` and six ASCII alphanumerics.
 fn is_tempfile_name(name: &std::ffi::OsStr) -> bool {
     name.to_str()
         .and_then(|name| name.strip_prefix(".tmp"))
@@ -255,7 +239,6 @@ fn is_tempfile_name(name: &std::ffi::OsStr) -> bool {
         })
 }
 
-/// Publish the already-materialized pending generation by rename.
 pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Result<(), MarsError> {
     let pending = mars_dir.join(PENDING_STAGING_GENERATION);
     if source != pending {
@@ -269,8 +252,6 @@ pub(crate) fn publish_staging_generation(source: &Path, mars_dir: &Path) -> Resu
     replace_generated_dir(&pending, &mars_dir.join("staging"))
 }
 
-/// Whether two regular files have identical byte content.
-///
 /// Returns `false` (not an error) when either path is missing, not a regular file,
 /// or a symlink — target sync installs copies, so symlink destinations must be rewritten.
 pub fn file_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> {
@@ -291,8 +272,6 @@ pub fn file_content_equal(left: &Path, right: &Path) -> Result<bool, MarsError> 
     Ok(fs::read(left)? == fs::read(right)?)
 }
 
-/// Whether two directory trees have identical structure (paths + entry kinds) and file bytes.
-///
 /// Returns `false` when either root is a symlink, any nested entry is a symlink or
 /// non-regular type, directory structure differs (including empty directories), or
 /// any regular file's bytes differ.
@@ -306,8 +285,6 @@ pub fn directory_trees_content_equal(left: &Path, right: &Path) -> Result<bool, 
     Ok(left == right)
 }
 
-/// Complete regular-directory structure and file content hashes.
-///
 /// The snapshot includes empty directories. Construction from disk rejects
 /// symlinks and unsupported entry types so copied projections cannot compare
 /// equal to user-controlled indirection.
@@ -498,14 +475,10 @@ pub(crate) fn installed_mode(metadata: &fs::Metadata) -> u32 {
     }
 }
 
-/// Whether a copied file would land executable (any execute bit set).
 pub(crate) fn is_executable(metadata: &fs::Metadata) -> bool {
     installed_mode(metadata) & 0o111 != 0
 }
 
-/// Recursively copy a directory, following symlinks on the source side.
-///
-/// Uses `fs::metadata` (not `symlink_metadata`) to follow symlinks.
 /// Files are copied with plain `fs::read`+`fs::write` because the destination
 /// is inside a temp dir — the atomicity guarantee comes from the final rename
 /// of the enclosing temp dir, not from per-file atomics.
@@ -517,11 +490,9 @@ fn copy_dir_following_symlinks(source: &Path, dest: &Path) -> Result<(), MarsErr
         let source_path = entry.path();
         let dest_path = dest.join(entry.file_name());
 
-        // Follow symlinks — fs::metadata resolves through symlinks
         let metadata = match fs::metadata(&source_path) {
             Ok(m) => m,
             Err(e) => {
-                // If it's a broken symlink, give a descriptive error
                 if entry
                     .file_type()
                     .map_err(|error| io_context("inspect", &source_path, error))?

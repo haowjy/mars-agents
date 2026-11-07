@@ -14,7 +14,6 @@ pub(crate) fn declaration_ordered_dep_models(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
 ) -> Vec<ResolvedDepModels> {
-    // Declaration positions for direct deps in consumer mars.toml.
     let mut decl_pos: HashMap<SourceName, usize> = HashMap::new();
     for (idx, name) in config.dependencies.keys().enumerate() {
         decl_pos.insert(name.clone(), idx);

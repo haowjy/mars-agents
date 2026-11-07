@@ -1,9 +1,7 @@
-# MCP projection
+# MCP tool policy
 
-Unsupported MCP references are omitted and recorded as lossiness rather than
-broadened. Launch-bundle `tools.rules` carries spawn-time policy; the legacy
-`tools.mcp` list is not MCP server configuration.
+The schema crate owns canonical MCP reference parsing; `mcp_ref.rs` projects those references to harness permissions. An unsupported reference produces no native permission and records lossiness, rather than granting broader access. Codex cannot express per-tool MCP permissions through its agent tool list, and Pi drops MCP permissions. Claude cannot express a named tool across all servers.
 
-Native agent reconciliation derives the current emission set and prunes prior
-in-scope claims outside it. Current source names cannot identify stale artifacts
-after dependency removal or rename.
+`EffectiveToolPolicy::project` retains permission-to-tool bindings through conflict resolution. Bundle consumers must use the resulting native permission and tool availability fields separately; deriving one from the other can restore a tool whose permission was removed.
+
+`tools.mcp` in a launch bundle is a legacy list of allowed permission names, not MCP server configuration. `tools.rules` is authoritative for spawn-time tool policy.

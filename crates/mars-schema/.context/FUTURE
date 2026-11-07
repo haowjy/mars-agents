@@ -1,10 +1,7 @@
-# mars-schema follow-ups
+# Schema follow-ups
 
-- Reduce WASM size by replacing duplicate TOML parsing and the YAML structural
-  event scan; TOML error text is part of the fixture contract.
-- Integer-like mapping keys lose file order across the WASM boundary. Returning
-  pairs would preserve it but change the JS contract.
-- Installed reads discard upgrade diagnostics. An invalid value combined with a
-  pre-v1 spelling can therefore be dropped without warning.
-- `frontmatter.too-deep` counts brackets inside quoted strings and can reject
-  valid input; count only outside quoted scalars.
+- Reduce WASM size by using one TOML reader and replacing the `yaml_rust2` structural event scan. Changing TOML readers changes fixture error text; `wasm-opt` would add a Binaryen build dependency.
+- Preserve integer-like mapping key order across the JavaScript boundary with a pairs array; this changes the JS contract.
+- Preserve upgrade diagnostics as warnings on installed readings. A pre-v1 spelling can trigger an upgrade that sets aside an invalid value without reporting it.
+- Count bracket depth outside quoted scalars in `src/frontmatter.rs`; raw bracket counting can reject a valid quoted string.
+- Reject NUL path components in `FileTree::insert` if a caller stores paths where NUL matters.

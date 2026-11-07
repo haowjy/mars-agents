@@ -23,19 +23,16 @@ const PROVIDED_LOCK_VERSION: u32 = 1;
 /// create directories, and the next run replans from the files on disk.
 pub(crate) const PENDING_DIGEST: &str = "pending";
 
-/// Every provider's record. Providers other than the one a run touches are kept verbatim.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ProvidedLock {
     providers: BTreeMap<String, ProviderRecord>,
 }
 
-/// What one provider installed in this project.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ProviderRecord {
     /// The host's version, opaque: host versions need not be semver (Meridian RCs are PEP 440).
     /// Recorded only for display and change detection.
     pub version: String,
-    /// The digest of the provided tree as last applied, or [`PENDING_DIGEST`].
     pub digest: String,
     /// The names this provider installed. A name a package owns, or that collided with a file
     /// Mars did not create, is absent.
@@ -43,8 +40,6 @@ pub(crate) struct ProviderRecord {
     pub skills: Vec<String>,
 }
 
-/// Why a record cannot be read as this build's.
-///
 /// The two reasons differ in what the writer may do about them: a corrupt file can be rebuilt
 /// from the files on disk, while a newer one must not be touched.
 #[derive(Debug)]
@@ -56,7 +51,6 @@ pub(crate) enum Unusable {
 }
 
 impl Unusable {
-    /// What a reader says where it prints: the record is ignored for this run.
     pub(crate) fn reader_message(&self) -> String {
         match self {
             Self::Corrupt { path, reason } => format!(
@@ -81,7 +75,6 @@ impl Unusable {
         }
     }
 
-    /// What the writer says: a corrupt record is replaced, a newer one is refused.
     fn writer_message(&self) -> String {
         match self {
             Self::Corrupt { path, reason } => format!(
@@ -110,8 +103,6 @@ struct OutgoingProvidedLock<'a> {
 }
 
 impl ProvidedLock {
-    /// Read the project's record.
-    ///
     /// The outer error is I/O. The inner one says why the file cannot be read as this build's:
     /// a corrupt file can be rebuilt from the files on disk, a newer one must not be touched.
     pub(crate) fn load(root: &Path) -> Result<Result<ProvidedLock, Unusable>, MarsError> {
@@ -174,19 +165,16 @@ impl ProvidedLock {
         self.providers.get(provider)
     }
 
-    /// Every provider's record, by provider name.
     pub(crate) fn providers(&self) -> impl Iterator<Item = (&str, &ProviderRecord)> {
         self.providers
             .iter()
             .map(|(name, record)| (name.as_str(), record))
     }
 
-    /// Replace one provider's record, keeping every other provider's.
     pub(crate) fn set_provider(&mut self, provider: &str, record: ProviderRecord) {
         self.providers.insert(provider.to_string(), record);
     }
 
-    /// Write the record atomically. Missing `.mars/` is created as part of the write.
     pub(crate) fn save(&self, root: &Path) -> Result<(), MarsError> {
         let path = root.join(".mars").join(PROVIDED_LOCK_FILE);
         let content = toml::to_string_pretty(&OutgoingProvidedLock {

@@ -187,7 +187,7 @@ impl HookDef {
     /// another harness also reads passes `shared` (the Claude tree: [`targets::PLUGIN_CLAUDE_TREE`]):
     /// Codex rejects the whole `hooks/hooks.json` over one handler it cannot parse, so
     /// everything that reaches the file, `[hooks]` and native hook alike, is rendered under
-    /// `shared` and conformed to Codex's rules while keeping its events (D21). Any other
+    /// `shared` and conformed to Codex's rules while keeping its events. Any other
     /// tree passes `None` and takes what [`Self::output`] gives.
     pub fn plugin_output(
         &self,

@@ -20,10 +20,6 @@ use mars_schema::mcp_server::{
 use mars_schema::mcp_servers::{NAME_INVALID, NAME_RULE, is_server_name};
 use mars_schema::visibility::Visibility;
 
-// ---------------------------------------------------------------------------
-// Discovered items
-// ---------------------------------------------------------------------------
-
 /// A discovered MCP server item with provenance.
 #[derive(Debug, Clone)]
 pub struct ParsedMcpItem {
@@ -57,10 +53,6 @@ impl ParsedMcpItem {
         def_uses_dir_token(&self.def)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Discovery
-// ---------------------------------------------------------------------------
 
 /// Discover MCP server items from a package root.
 ///
@@ -196,12 +188,6 @@ fn skip_generated_tree(path: &Path, diag: &mut DiagnosticCollector) -> bool {
     generated
 }
 
-// ---------------------------------------------------------------------------
-// Env var preflight
-// ---------------------------------------------------------------------------
-
-/// Check that env references name variables present in the current environment.
-///
 /// In normal mode: emits a warning per missing variable.
 /// Under `strict`: returns an error for the first missing variable.
 pub fn check_env_refs(
@@ -240,10 +226,6 @@ pub fn check_env_refs(
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Target lowering
-// ---------------------------------------------------------------------------
-
 fn substitute_mcp_dir(text: &str, mcp_dir: &str) -> String {
     text.replace(MCP_DIR_TOKEN, mcp_dir)
 }
@@ -273,10 +255,6 @@ pub fn lower_transport(item: &ParsedMcpItem, mcp_dir: &str) -> McpTransport {
         http @ McpTransport::Http { .. } => http.clone(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

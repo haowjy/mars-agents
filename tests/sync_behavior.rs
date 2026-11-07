@@ -1,4 +1,3 @@
-// qa-validated: launch-bundle-followup-audit
 mod common;
 
 use assert_fs::TempDir;
@@ -42,7 +41,6 @@ fn sync_diff_does_not_modify_files() {
     let source = create_source(&dir, "src", &[("agent", "# Agent content")], &[]);
 
     let agents_dir = dir.child("project").child(".mars");
-    // Manually init so we have the dir without any sync
     fs::create_dir_all(dir.child("project").child(".mars").path()).unwrap();
     fs::write(
         dir.child("project").child("mars.toml").path(),
@@ -70,7 +68,6 @@ fn sync_diff_does_not_modify_files() {
         config_before
     );
 
-    // File should NOT be installed (dry run)
     assert!(!agents_dir.child("agents").child("agent.md").exists());
 }
 
@@ -356,7 +353,6 @@ fn conflict_flow_with_resolve() {
         .assert()
         .success();
 
-    // Modify local in .mars/ canonical store (not .agents/ target)
     let mars_installed = dir
         .child("project")
         .child(".mars")
@@ -364,14 +360,12 @@ fn conflict_flow_with_resolve() {
         .child("coder.md");
     fs::write(mars_installed.path(), "# Local change\nline 2\nline 3\n").unwrap();
 
-    // Modify source
     fs::write(
         source.join("agents").join("coder.md"),
         "# Upstream change\nline 2\nline 3\n",
     )
     .unwrap();
 
-    // Sync — conflicts now overwrite (source wins) with warning
     mars()
         .args([
             "sync",
@@ -382,7 +376,6 @@ fn conflict_flow_with_resolve() {
         .success()
         .stderr(predicates::str::contains("local modifications"));
 
-    // File in .mars/ should have upstream content (overwritten, no merge markers)
     let content = fs::read_to_string(mars_installed.path()).unwrap();
     assert_eq!(
         content, "# Upstream change\nline 2\nline 3\n",
@@ -405,7 +398,6 @@ fn add_skips_unmanaged_file_collision() {
         .assert()
         .success();
 
-    // Place unmanaged file in .mars/ (canonical store) to trigger collision detection
     let mars_dir = dir.child("project").child(".mars");
     let user_file = mars_dir.child("agents").child("coder.md");
     fs::create_dir_all(user_file.path().parent().unwrap()).unwrap();
@@ -463,8 +455,6 @@ fn sync_force_overwrites_divergent_target() {
         .assert()
         .success();
 
-    // Manually edit the canonical store to simulate divergence. Agents
-    // materialize to `.mars/agents`, not the `.agents` link target.
     let target_installed = dir
         .child("project")
         .child(".mars")
@@ -472,7 +462,6 @@ fn sync_force_overwrites_divergent_target() {
         .child("coder.md");
     fs::write(target_installed.path(), "# Hand-edited content\n").unwrap();
 
-    // Normal sync should warn about divergence but preserve the edit
     mars()
         .args([
             "sync",
@@ -487,7 +476,6 @@ fn sync_force_overwrites_divergent_target() {
         "Normal sync should preserve local edit"
     );
 
-    // --force should overwrite the divergent target
     mars()
         .args([
             "sync",
@@ -675,7 +663,6 @@ fn sync_codex_skill_emits_openai_yaml_sibling_for_explicit_model_invocable_false
     let native_bytes = fs::read_to_string(native_skill.path()).unwrap();
     assert!(!native_bytes.contains("allow_implicit_invocation"));
 
-    // Flip to model-invocable: true — sibling must be removed on re-sync.
     fs::write(
         source.join("skills").join("planning").join("SKILL.md"),
         "---\nname: planning\ndescription: base skill\nmodel-invocable: true\n---\n# Base\n",
@@ -1804,21 +1791,16 @@ path = "{}"
         .assert()
         .success();
 
-    // The unmanaged file survives untouched.
     assert_eq!(
         fs::read_to_string(project.child(".cursor/agents/handwritten-only.md").path()).unwrap(),
         "# hand-written\n"
     );
-    // And full-coverage EmitAll still emits the mars source agent to the target.
     assert!(project.child(".cursor/agents/design-lead.md").exists());
 }
 
 #[test]
 fn link_fails_on_unmanaged_collision_without_force() {
     let dir = TempDir::new().unwrap();
-    // Skills are the only items emitted to the `.agents` link target now;
-    // agents materialize to the canonical `.mars/agents` store. Test the
-    // unmanaged-collision guard against a skill the link target would touch.
     let source = create_source(&dir, "base", &[], &[("planning", "# Planning from Mars")]);
 
     let project = dir.child("project");
@@ -1862,9 +1844,6 @@ fn link_fails_on_unmanaged_collision_without_force() {
 #[test]
 fn link_force_adopts_unmanaged_collision_and_records_lock() {
     let dir = TempDir::new().unwrap();
-    // Skills are the only items emitted to the `.agents` link target now;
-    // agents materialize to the canonical `.mars/agents` store. Test
-    // `--force` adoption against a skill the link target would touch.
     let source = create_source(&dir, "base", &[], &[("planning", "# Planning from Mars")]);
 
     let project = dir.child("project");

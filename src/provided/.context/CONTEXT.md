@@ -1,13 +1,9 @@
 # Provided skills
 
-The unlocked fast path checks every source skill and hashes installed trees:
-recorded names can hold package bytes after an interrupted sync, and an omitted
-skill can become installable after its blocker disappears.
+A host can install its own skills into `.mars/skills/` without adding dependencies or changing the package lock. Sync recognizes provided ownership so a package can replace a provided skill; reference validation separately checks whether a declared provided skill is available on disk.
 
-A pending provider record covers old and new names before installs begin, so a
-crash forces the next run to replan and retains authority to remove dropped
-skills. The digest covers bytes and executable bits.
+The unlocked fast path and the locked pass use the same reconciliation plan. It checks every source skill and hashes installed trees: a package sync may have replaced a recorded directory before publishing its lock, and a formerly blocked skill may now be installable. Files are compared as authored, including executable bits.
 
-Availability requires the recorded directory to exist; ownership uses the full
-record. This lets sync replace provided content safely after an interrupted write
-without treating a missing directory as a usable skill.
+The provider record authorizes removal or replacement of its own names; an unrecorded different directory is preserved. A package lock claim takes precedence. Before installation, the provider writes a pending record containing old and planned names, then installs and writes the final record. A crash leaves enough ownership information for the next run to reconcile, including removal of a skill the host has since dropped.
+
+Provider names in the record must belong to that provider and be single path components: the record can have been written by another Mars build and must not authorize removal of another provider's files. Readers ignore an unsupported record version; the writer refuses it to avoid overwriting a newer format.

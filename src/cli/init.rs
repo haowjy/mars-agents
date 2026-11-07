@@ -32,7 +32,6 @@ pub(super) struct InitializedProject {
     pub already_initialized: bool,
 }
 
-/// Validate that a target is a simple directory name, not a path.
 fn validate_target(target: &str) -> Result<(), MarsError> {
     if target.contains('/') || target.contains('\\') {
         return Err(MarsError::Config(ConfigError::Invalid {
@@ -92,8 +91,6 @@ pub(super) fn initialize_project(
     })
 }
 
-/// Run `mars init`.
-///
 /// Init creates a project at cwd or `--root` target. It does NOT walk up.
 pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
     let initialized = initialize_project(explicit_root, args.target.as_deref())?;
@@ -112,7 +109,6 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
         }
     }
 
-    // 5. Process --link flags
     if !args.link.is_empty() {
         let context_managed_root = managed_root
             .clone()
@@ -175,7 +171,6 @@ fn explicit_init_target(
     }
 }
 
-/// Persist managed_root in mars.toml [settings].
 fn persist_managed_root(project_root: &Path, target: Option<&str>) -> Result<(), MarsError> {
     match crate::config::load(project_root) {
         Ok(mut config) => {

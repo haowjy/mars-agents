@@ -378,7 +378,6 @@ fn compose_system_instruction(
                 }
             }
         }
-        // Remaining types: each gets its own heading, no description.
         let other_skills: Vec<_> = available_skills
             .iter()
             .filter(|s| {

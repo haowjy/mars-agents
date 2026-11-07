@@ -26,10 +26,7 @@ const SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, clap::Args)]
 pub struct ExportArgs {
     // No extra flags for now — the command always outputs JSON.
-    // Future: --target <filter> to restrict to specific target roots.
 }
-
-// ── Output types ──────────────────────────────────────────────────────────────
 
 /// Top-level export envelope.
 ///
@@ -111,8 +108,6 @@ pub struct ExportDiagnostic {
     pub category: Option<&'static str>,
 }
 
-// ── Command implementation ────────────────────────────────────────────────────
-
 /// Run `mars export`.
 ///
 /// Always outputs JSON (the `--json` global flag is accepted but redundant here).
@@ -128,10 +123,8 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
-    // Load config for dependency metadata (non-fatal: if missing, no dep metadata).
     let config = crate::config::load(&ctx.project_root).unwrap_or_default();
 
-    // Build the dependency layer from declared dependencies in config.
     let dependencies: Vec<ExportDependency> = config
         .dependencies
         .iter()
@@ -143,7 +136,6 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
         })
         .collect();
 
-    // Run the pipeline in dry-run mode to get the compile plan.
     let (status, items, outputs, diagnostics) = match crate::sync::execute(ctx, &request) {
         Ok(report) => {
             let status = ExportStatus::Complete;
@@ -181,7 +173,6 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
             (status, items, outputs, diagnostics)
         }
         Err(err) => {
-            // Compile failed entirely — report as failed with the error as a diagnostic.
             let diagnostics = vec![ExportDiagnostic {
                 level: "error",
                 code: "pipeline-failed".into(),
@@ -205,8 +196,6 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
     super::output::print_json(&envelope);
     Ok(0)
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn infer_origin(dep: &mars_schema::dependency::RawEntry) -> String {
     if dep.url.is_some() { "git" } else { "path" }.to_string()

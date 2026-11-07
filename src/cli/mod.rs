@@ -49,15 +49,11 @@ use crate::error::{ConfigError, LockError, MarsError};
 pub use crate::types::MarsContext;
 use crate::types::managed_cmd;
 
-/// Deprecated generic output directories still recognized for migration hints.
 pub const WELL_KNOWN: &[&str] = &[".agents"];
 
-/// Tool-specific directories that commonly need linking.
-/// `mars link` warns if the target isn't in TOOL_DIRS or WELL_KNOWN.
 pub const TOOL_DIRS: &[&str] = &[".claude", ".codex", ".opencode", ".cursor", ".pi"];
 
 impl MarsContext {
-    /// Build context from project root (directory containing mars.toml).
     pub fn new(project_root: PathBuf) -> Result<Self, MarsError> {
         let project_canon = if project_root.exists() {
             dunce::canonicalize(&project_root).unwrap_or(project_root.clone())
@@ -69,7 +65,6 @@ impl MarsContext {
         Self::from_roots(project_canon, managed_root)
     }
 
-    /// Build context from explicit project and managed roots.
     pub fn from_roots(project_root: PathBuf, managed_root: PathBuf) -> Result<Self, MarsError> {
         let project_canon = if project_root.exists() {
             dunce::canonicalize(&project_root).unwrap_or(project_root.clone())
@@ -203,8 +198,6 @@ pub enum Command {
     Skills(skills::SkillsArgs),
 }
 
-/// Dispatch a parsed CLI command to the appropriate handler and map errors to
-/// the final exit code.
 pub fn dispatch(cli: Cli) -> i32 {
     let json = cli.json;
     output::set_json_mode(json);
@@ -253,7 +246,6 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
-        // All other commands require context
         cmd => {
             let ctx = match find_agents_root(cli.root.as_deref()) {
                 Ok(ctx) => ctx,
@@ -343,7 +335,6 @@ fn dispatch_with_root(
         Command::Build(args) => build::run(args, ctx, explicit_root, json),
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
-        // Root-free commands handled in dispatch_result — unreachable here
         Command::Init(_) | Command::Check(_) | Command::Cache(_) | Command::Provide(_) => {
             unreachable!()
         }
@@ -369,7 +360,6 @@ pub(crate) fn resolve_cli_path(
     }
 }
 
-/// Check if a path is a symlink (uses symlink_metadata, doesn't follow).
 pub fn is_symlink(path: &Path) -> bool {
     path.symlink_metadata()
         .map(|m| m.file_type().is_symlink())
@@ -377,7 +367,6 @@ pub fn is_symlink(path: &Path) -> bool {
 }
 
 fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
-    // 1. Check explicit settings in mars.toml.
     match crate::config::load(project_root) {
         Ok(config) => {
             if config.settings.managed_root.is_some()
@@ -394,9 +383,7 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
                 return Ok(project_root.join(WELL_KNOWN[0]));
             }
         }
-        // Config doesn't exist yet (before mars init) — expected, fall through
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {}
-        // Config exists but has parse errors — surface the real error
         Err(e) => return Err(e),
     }
 
@@ -414,7 +401,6 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
 /// If `--root` is provided, it sets the walk-up start path, not a direct target.
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     let start = if let Some(root) = explicit {
-        // Reject --root values that look like managed output directories
         if let Some(basename) = root.file_name().and_then(|f| f.to_str())
             && (WELL_KNOWN.contains(&basename) || TOOL_DIRS.contains(&basename))
         {
@@ -436,16 +422,10 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
     find_agents_root_from(&start)
 }
 
-/// Walk up from `start` to filesystem root searching for `mars.toml`.
-///
-/// Uses `Path::parent()` which returns `None` at filesystem root on all platforms:
-/// - Unix: `/` has no parent
-/// - Windows: `C:\` or UNC roots like `\\server\share` have no parent
 fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
     let start_canon = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut dir = start_canon.as_path();
 
-    // Walk up to filesystem root (Path::parent() returns None at root)
     loop {
         let config_path = dir.join("mars.toml");
         if config_path.exists() {
@@ -548,12 +528,8 @@ mod tests {
         );
     }
 
-    // ── Walk-up discovery tests (filesystem root boundary) ──────────────────────────
-
     #[test]
     fn walk_up_crosses_git_boundary_to_find_config() {
-        // Outer has mars.toml, inner has .git but no mars.toml
-        // Starting from inner SHOULD find outer's config (git is irrelevant)
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");
         std::fs::create_dir_all(outer.join(".agents")).unwrap();
@@ -586,7 +562,6 @@ mod tests {
 
     #[test]
     fn walk_up_prefers_nearest_mars_toml() {
-        // child has package-only mars.toml, parent also has mars.toml
         let dir = TempDir::new().unwrap();
         let parent = dir.path().join("parent");
         std::fs::create_dir_all(parent.join(".agents")).unwrap();
@@ -620,8 +595,6 @@ mod tests {
 
     #[test]
     fn walk_up_crosses_submodule_boundary() {
-        // Outer repo has mars.toml
-        // Inner dir has .git FILE (submodule marker) — walk-up should still find outer config
         let dir = TempDir::new().unwrap();
         let outer = dir.path().join("outer");
         std::fs::create_dir_all(outer.join(".agents")).unwrap();
@@ -629,7 +602,6 @@ mod tests {
 
         let submodule = outer.join("submodule");
         std::fs::create_dir_all(&submodule).unwrap();
-        // .git FILE (not dir) marks a submodule
         std::fs::write(
             submodule.join(".git"),
             "gitdir: ../../.git/modules/submodule\n",
@@ -670,7 +642,6 @@ mod tests {
         std::fs::create_dir_all(project.join(".agents")).unwrap();
         std::fs::write(project.join("mars.toml"), "[dependencies]\n").unwrap();
 
-        // --root points to subdirectory — walk up should find mars.toml in parent
         let subdir = project.join("src");
         std::fs::create_dir_all(&subdir).unwrap();
 

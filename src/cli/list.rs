@@ -24,7 +24,6 @@ pub struct ListArgs {
     pub status: bool,
 }
 
-/// Run `mars list`.
 pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let lock = crate::lock::load(&ctx.project_root)?;
 
@@ -33,20 +32,17 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         return run_status(args, &mars_dir, &lock, json);
     }
 
-    // Default: catalog view (name + description from frontmatter)
     let mut agents = Vec::new();
     let mut skills = Vec::new();
     let mut bootstrap = Vec::new();
 
     for (dest_path, item) in lock.canonical_flat_items() {
-        // Filter by source
         if let Some(ref filter_source) = args.source
             && item.source != *filter_source
         {
             continue;
         }
 
-        // Filter by kind
         if let Some(ref filter_kind) = args.kind {
             let kind_str = match item.kind {
                 ItemKind::Agent => "agents",
@@ -60,7 +56,6 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             }
         }
 
-        // Read frontmatter for name + description from .mars/ canonical store
         let disk_path = dest_path.resolve(&mars_dir);
         let content_path = match item.kind {
             ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
@@ -94,7 +89,6 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             ItemKind::Agent => agents.push(entry),
             ItemKind::Skill => skills.push(entry),
             ItemKind::BootstrapDoc => bootstrap.push(entry),
-            // Config kinds are not shown in the default catalog view.
             ItemKind::Hook | ItemKind::McpServer => {}
         }
     }
@@ -116,7 +110,6 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
     Ok(0)
 }
 
-/// Read name and description from a file's frontmatter.
 fn read_name_description(path: &Path, fallback_name: &str, kind: ItemKind) -> (String, String) {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
@@ -142,7 +135,6 @@ fn read_name_description(path: &Path, fallback_name: &str, kind: ItemKind) -> (S
     )
 }
 
-/// Derive a display name from a file path.
 fn path_to_name(path: &Path) -> String {
     path.file_stem()
         .or_else(|| path.parent().and_then(|p| p.file_name()))
@@ -151,7 +143,6 @@ fn path_to_name(path: &Path) -> String {
         .to_string()
 }
 
-/// Status view (original table with source, version, hash check).
 fn run_status(
     args: &ListArgs,
     root: &Path,

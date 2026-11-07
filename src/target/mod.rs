@@ -1,14 +1,3 @@
-/// Per-target compilation adapters.
-///
-/// Each native target root (`.claude`, `.codex`, `.opencode`, `.pi`, `.cursor`)
-/// has an adapter that knows how to lower agents, format config entries, translate
-/// hooks, and resolve model aliases for that target.
-///
-/// The deprecated `.agents` adapter remains available only for explicit legacy
-/// link targets; `.mars/` is the canonical compiled store.
-///
-/// The adapter boundary isolates all per-target branching here, keeping shared
-/// compiler code free of `if target == ...` chains.
 pub mod agents;
 pub mod claude;
 pub mod codex;
@@ -26,56 +15,31 @@ pub use mcp_file::{McpFile, McpLocation};
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-/// Lock-record key prefixes: `mcp:<name>` for a server, `hook:<event>:<name>` for a hook.
 pub(crate) const MCP_KEY_PREFIX: &str = "mcp:";
 pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
 
-/// An MCP server entry ready to be written into a target config file.
-///
 /// Env values are variable names (symbolic). Adapters translate them to the
 /// target's interpolation syntax (e.g. `${VAR}` for Claude, plain name for Codex).
 #[derive(Debug, Clone)]
 pub struct McpServerEntry {
-    /// Server name as it appears in the target config.
     pub name: String,
-    /// How the server is reached, with `${MARS_MCP_DIR}` already resolved.
     pub transport: mars_schema::mcp_server::McpTransport,
 }
 
-/// A hook entry ready to be merged into a target config.
 #[derive(Debug, Clone)]
 pub struct HookEntry {
-    /// Hook name, retained as ownership provenance.
     pub name: String,
-    /// Native event name for this target.
     pub native_event: String,
-    /// Opaque native entries, in author-declared order.
     pub entries: Vec<serde_json::Value>,
 }
 
 impl HookEntry {
-    /// The lock-record key for this entry.
     pub fn key(&self) -> String {
         format!("{HOOK_KEY_PREFIX}{}:{}", self.native_event, self.name)
     }
 }
 
-/// Per-target compilation adapter.
-///
-/// Implementations encapsulate all per-target knowledge:
-/// - Which item kinds this target accepts
-/// - Default destination path layout
-/// - Config-entry format (future: MCP, hooks, model aliases)
-///
-/// The trait is split into file-output surfaces and config-entry surfaces so
-/// parallel pipeline lanes can own disjoint write responsibilities without
-/// interfering with each other.
-///
-/// # Object safety
-/// All methods take `&self` and return concrete types to ensure the trait can
-/// be used as `dyn TargetAdapter`.
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
-    /// Target root name (e.g., `.claude`, `.codex`).
     fn name(&self) -> &str;
 
     /// Skill variant harness key used when projecting skills to this target.
@@ -85,19 +49,9 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// return `None`.
     fn skill_variant_key(&self) -> Option<&str>;
 
-    // -----------------------------------------------------------------------
-    // Path resolution
-    // -----------------------------------------------------------------------
-
-    /// Default destination path for an item of the given kind and name.
-    ///
     /// Returns `None` if this target does not accept the item kind. The
     /// compiler MUST skip items for which this returns `None`.
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
-
-    // -----------------------------------------------------------------------
-    // Config files
-    // -----------------------------------------------------------------------
 
     /// The file this harness reads MCP servers from and how entries render
     /// there; `None` when the target takes no MCP servers.
@@ -106,16 +60,11 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     }
 }
 
-/// Registry of target adapters, keyed by target root name.
-///
-/// Constructed once per sync run. Adapters are registered at startup; no
-/// dynamic registration is needed.
 pub struct TargetRegistry {
     adapters: Vec<Box<dyn TargetAdapter>>,
 }
 
 impl TargetRegistry {
-    /// Build a registry containing all built-in target adapters.
     pub fn new() -> Self {
         Self {
             adapters: vec![
@@ -129,8 +78,6 @@ impl TargetRegistry {
         }
     }
 
-    /// Look up an adapter by target root name.
-    ///
     /// Returns `None` if no adapter is registered for the given name. Callers
     /// may fall back to a default behavior (currently: pass-through copy) when
     /// no adapter is found.

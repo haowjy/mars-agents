@@ -54,8 +54,6 @@ metadata:
 # Review
 ";
 
-// ── mars agents --json ────────────────────────────────────────────────────────
-
 #[test]
 fn agents_list_json_envelope_and_fields() {
     let dir = TempDir::new().unwrap();
@@ -241,8 +239,6 @@ fn agents_show_json_subagents_and_kebab_keys() {
         &[serde_json::json!("worker")],
         "'subagents' list:\n{stdout}"
     );
-
-    // Tool policy is one `rules` list, in the launch bundle's rule shape.
 }
 
 #[test]
@@ -551,12 +547,8 @@ fn corrupt_fallback_lock_warns_and_skips_fallback_content() {
     }
 }
 
-// ── mars skills --json ────────────────────────────────────────────────────────
-
 #[test]
 fn skills_list_json_model_invocable_is_kebab_not_snake() {
-    // Regression guard: list previously emitted `model_invocable` (snake) while
-    // show emitted `model-invocable` (kebab). Both must be kebab.
     let dir = TempDir::new().unwrap();
     let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
 
@@ -580,7 +572,6 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
         .find(|e| e["name"] == "planning")
         .unwrap_or_else(|| panic!("'planning' skill not found in list:\n{stdout}"));
 
-    // The key contract: kebab-case, not snake_case.
     assert!(
         entry.get("model-invocable").is_some(),
         "skills list MUST emit 'model-invocable' (kebab), not 'model_invocable' (snake):\n{stdout}"
@@ -602,7 +593,6 @@ fn skills_list_json_model_invocable_is_kebab_not_snake() {
 
 #[test]
 fn skills_show_json_model_invocable_is_kebab_not_snake() {
-    // Mirror of the list test — both endpoints must agree on kebab-case.
     let dir = TempDir::new().unwrap();
     let project = setup_synced_project(&dir, "proj", "src", &[], &[("planning", SKILL_CONTENT)]);
 
@@ -623,7 +613,6 @@ fn skills_show_json_model_invocable_is_kebab_not_snake() {
     let json: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|_| panic!("mars skills show --json must be valid JSON:\n{stdout}"));
 
-    // Kebab-case contract — the regression was snake vs kebab disagreement.
     assert!(
         json.get("model-invocable").is_some(),
         "skills show MUST emit 'model-invocable' (kebab):\n{stdout}"

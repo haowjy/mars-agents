@@ -11,7 +11,6 @@ use mars_schema::dependency::{Entry, RawEntry};
 use mars_schema::filter::FilterConfig;
 use mars_schema::names::{ItemName, RenameMap};
 
-/// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]
 pub enum ConfigMutation {
     /// Add or update a dependency in mars.toml.
@@ -33,7 +32,6 @@ pub enum ConfigMutation {
     },
 }
 
-/// Metadata captured when `UpsertDependency` mutates an existing/new dependency.
 #[derive(Debug, Clone)]
 pub struct DependencyUpsertChange {
     pub name: SourceName,
@@ -139,7 +137,6 @@ fn apply_dependency_upsert(
         let old_version = existing.version.clone();
         let old_filter = existing.filter.clone();
 
-        // Merge: update location fields, preserve user customizations
         let location = RawEntry::from(entry);
         // A bare `github.com/org/repo` the user wrote stays as written: the entry carries it
         // spelled with `https://`, the same repository.

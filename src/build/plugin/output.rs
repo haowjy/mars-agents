@@ -5,10 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use mars_schema::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 
-/// Stage a Mars-owned plugin output directory without changing the live output.
-///
-/// `write` receives an empty sibling staging directory. The returned value owns
-/// the output lock and removes the staging directory unless it is published.
 pub(super) fn stage<T>(
     out_dir: &Path,
     write: impl FnOnce(&Path) -> Result<(PluginSentinel, T), MarsError>,
@@ -61,7 +57,6 @@ pub(super) fn stage<T>(
     ))
 }
 
-/// Recover a plugin output after an interrupted stage or publish.
 pub fn recover(out_dir: &Path) -> Result<(), MarsError> {
     let paths = OutputPaths::new(out_dir)?;
     let _lock = crate::fs::FileLock::acquire(&paths.lock)?;
@@ -76,11 +71,8 @@ pub(crate) fn recovery_staging_path(out_dir: &Path) -> Result<PathBuf, MarsError
     Ok(OutputPaths::new(out_dir)?.new)
 }
 
-/// A complete plugin output waiting to replace the live directory.
 pub(super) struct StagedPlugin {
     paths: OutputPaths,
-    /// The sentinel written into the staging tree; publication keeps it for the
-    /// post-publish rewrite that drops the root-file recovery record.
     sentinel: PluginSentinel,
     _lock: crate::fs::FileLock,
 }
@@ -93,12 +85,7 @@ impl StagedPlugin {
         }
     }
 
-    /// Drop the recovery record once the root files it guarded are on disk.
-    ///
-    /// The staged sentinel carries `root_files_previous` so a publication that
-    /// dies between the tree swap and the root-file rewrite is resumed by the
-    /// next build. After that rewrite the record describes nothing; keeping it
-    /// would make the next no-change build write a different sentinel.
+    /// Retaining the recovery record after rewriting root files would change the next sentinel.
     pub(super) fn clear_root_files_previous(&mut self) -> Result<(), MarsError> {
         if self.sentinel.root_files_previous.is_empty() {
             return Ok(());
@@ -116,7 +103,6 @@ impl Drop for StagedPlugin {
     }
 }
 
-/// Recompute every regular output file hash except the sentinel.
 pub(super) fn compute_file_hashes(
     out_dir: &Path,
 ) -> Result<std::collections::BTreeMap<String, String>, MarsError> {

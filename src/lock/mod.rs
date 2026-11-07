@@ -14,22 +14,13 @@ use crate::types::{
 };
 use mars_schema::names::SourceSubpath;
 
-/// The complete lock file — ownership registry for all managed items.
-///
-/// Schema version 3: items are keyed by logical identity ("kind/name"), and each item
-/// carries a list of per-output records (one per target root materialization).
-///
-/// TOML format, deterministically ordered (sorted keys) for clean git diffs.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {
-    /// Schema version. Current version is 3.
     pub version: u32,
     #[serde(default)]
     pub dependencies: IndexMap<SourceName, LockedSource>,
-    /// Logical items keyed by "kind/name" identity string.
     #[serde(default)]
     pub items: IndexMap<String, LockedItemV2>,
-    /// Config entries installed by mars sync, keyed by target root and entry key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     /// Dependency model alias winners (declaration-order merged, dependency-only).
@@ -60,7 +51,6 @@ impl LockFile {
         (lock, orphaned)
     }
 
-    /// Create a new empty lock file with the current schema version.
     pub fn empty() -> Self {
         LockFile {
             version: LOCK_VERSION,
@@ -71,9 +61,6 @@ impl LockFile {
         }
     }
 
-    /// Look up a locked item by its output dest_path, returning a flat [`LockedItem`] view.
-    ///
-    /// Searches across all items and their output records. Returns the first match.
     pub fn find_by_dest_path(&self, dest_path: &DestPath) -> Option<LockedItem> {
         for item_v2 in self.items.values() {
             for output in &item_v2.outputs {
@@ -96,7 +83,6 @@ impl LockFile {
         None
     }
 
-    /// Check if any output record has the given dest_path.
     pub fn contains_dest_path(&self, dest_path: &DestPath) -> bool {
         self.items.values().any(|item| {
             item.outputs.iter().any(|o| {
@@ -105,14 +91,12 @@ impl LockFile {
         })
     }
 
-    /// Iterate all output dest_paths across all items.
     pub fn all_output_dest_paths(&self) -> impl Iterator<Item = &DestPath> {
         self.items
             .values()
             .flat_map(|item| item.outputs.iter().map(|o| &o.dest_path))
     }
 
-    /// Dest paths previously managed under a specific target root.
     pub fn output_dest_paths_for_target(&self, target_root: &str) -> HashSet<String> {
         self.items
             .values()
@@ -122,7 +106,6 @@ impl LockFile {
             .collect()
     }
 
-    /// Whether the lock records ownership of `dest_path` under `target_root`.
     pub fn contains_output(&self, target_root: &str, dest_path: &str) -> bool {
         self.items.values().any(|item| {
             item.outputs.iter().any(|output| {
@@ -152,12 +135,10 @@ impl LockFile {
         })
     }
 
-    /// Flat view of canonical `.mars` outputs only.
     pub fn canonical_flat_items(&self) -> Vec<(DestPath, LockedItem)> {
         self.flat_items_for_target(CANONICAL_TARGET_ROOT)
     }
 
-    /// Flat view of outputs materialized under `target_root`.
     pub fn flat_items_for_target(&self, target_root: &str) -> Vec<(DestPath, LockedItem)> {
         self.items
             .values()
@@ -184,10 +165,6 @@ impl LockFile {
     }
 }
 
-/// Ephemeral lookup index for lock files.
-///
-/// `LockFile` preserves the persisted v2 shape. Build this short-lived index
-/// at hot call sites that need repeated output-path lookups.
 pub struct LockIndex<'a> {
     lock: &'a LockFile,
     by_output: HashMap<(String, String), (&'a str, usize)>,
@@ -209,7 +186,6 @@ impl<'a> LockIndex<'a> {
         Self { lock, by_output }
     }
 
-    /// Look up a locked output by target root + dest_path, returning a flat [`LockedItem`] view.
     pub fn find_output(&self, target_root: &str, dest_path: &DestPath) -> Option<LockedItem> {
         let (item_key, output_idx) = *self.by_output.get(&(
             target_root.to_string(),
@@ -232,7 +208,6 @@ impl<'a> LockIndex<'a> {
         Some((item_key, item, output))
     }
 
-    /// Whether any output is recorded for `target_root + dest_path`.
     pub fn contains_output(&self, target_root: &str, dest_path: &DestPath) -> bool {
         self.by_output.contains_key(&(
             target_root.to_string(),
@@ -240,7 +215,6 @@ impl<'a> LockIndex<'a> {
         ))
     }
 
-    /// Whether an installed (not pending-deletion) output is recorded for this path.
     pub(crate) fn contains_installed_output(
         &self,
         target_root: &str,
@@ -273,7 +247,6 @@ fn normalize_dest_path(s: &str) -> String {
     }
 }
 
-/// One resolved source in the lock.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -308,10 +281,6 @@ pub struct LockedContent {
     pub commit: Option<CommitHash>,
 }
 
-/// V2 locked item: one logical item with per-output records.
-///
-/// `source_checksum` is shared across all outputs (same source content).
-/// Each `OutputRecord` has its own `installed_checksum` for divergence detection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItemV2 {
     pub source: SourceName,
@@ -326,23 +295,17 @@ pub struct LockedItemV2 {
     /// older Mars also ignores and drops on rewrite.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
-    /// Per-output records: one per target root this item was materialized to.
     pub outputs: Vec<OutputRecord>,
 }
 
-/// A single path owned by Mars, with its lifecycle claim made explicit.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputRecord {
-    /// Target root this output belongs to (e.g., ".mars", ".claude").
     pub target_root: String,
-    /// Relative path under the target root (e.g., "agents/coder.md").
     pub dest_path: DestPath,
-    /// What authority this record currently asserts for the path.
     #[serde(flatten)]
     pub state: OutputState,
 }
 
-/// The lifecycle claim carried by an [`OutputRecord`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum OutputState {
@@ -451,16 +414,9 @@ mod lock_kind {
 }
 
 const LOCK_FILE: &str = "mars.lock";
-/// Current lock file schema version.
 const LOCK_VERSION: u32 = 3;
-/// Canonical materialization root for `.mars/` apply outcomes.
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
-// ---------------------------------------------------------------------------
-// Persisted wire formats.
-// ---------------------------------------------------------------------------
-
-/// Current wire format for Deserialize (mirrors `LockFile` but derives `Deserialize`).
 #[derive(Deserialize)]
 struct LockFileWire {
     version: u32,
@@ -492,13 +448,6 @@ struct ConfigEntryRecordWire {
     emitted_json: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Load / write
-// ---------------------------------------------------------------------------
-
-/// Load the lock file from the given root directory.
-///
-/// Returns an empty current-version lock if the file is absent.
 /// A version 2 lock keeps only its dependencies and aliases; other older schemas
 /// fail with actionable re-sync guidance.
 pub fn load(root: &Path) -> Result<LockFile, MarsError> {
@@ -545,10 +494,6 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
     Ok(lock)
 }
 
-/// Load the lock file and return any diagnostics produced while reading it.
-///
-/// Version 2 locks are reduced to their dependencies and aliases, with a warning.
-/// Other version and schema failures are returned as actionable lock errors.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let path = root.join(LOCK_FILE);
     let content = match std::fs::read_to_string(&path) {
@@ -606,7 +551,6 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
     }
 }
 
-/// Config-entry records by target root and key.
 type ConfigEntries = BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>;
 
 /// Config-entry records with their `emitted_json`; the records without one are
@@ -680,7 +624,6 @@ fn v2_lock_dropped_warning() -> Diagnostic {
     )
 }
 
-/// Hash regular installed content without following root or nested symlinks.
 /// Callers inspecting write intent must also validate the path ancestors.
 pub(crate) fn regular_output_checksum(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
@@ -702,7 +645,6 @@ pub(crate) fn regular_output_checksum(path: &Path) -> Option<String> {
     None
 }
 
-/// Validate a directory without following links or opening entry contents.
 fn has_only_regular_file_entries(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -727,7 +669,6 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
     true
 }
 
-/// Write the lock file atomically to the given root directory (always current format).
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let path = root.join(LOCK_FILE);
     let mut normalized = lock.clone();
@@ -742,15 +683,6 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
 }
 
-// ---------------------------------------------------------------------------
-// Build
-// ---------------------------------------------------------------------------
-
-/// Build a new lock file from resolved graph + apply results.
-///
-/// Constructs the lock file from the graph (source provenance) and
-/// the apply outcomes (checksums). Items that were skipped, kept, or
-/// merged retain their provenance from the graph. Removed items are excluded.
 pub fn build(
     graph: &crate::resolve::ResolvedGraph,
     applied: &crate::sync::apply::ApplyResult,
@@ -804,12 +736,10 @@ pub fn build(
         }
     }
 
-    // Build dependency entries directly from resolved graph provenance.
     for (name, node) in &graph.nodes {
         dependencies.insert(name.clone(), to_locked_source(node));
     }
 
-    // Build item entries from apply outcomes.
     for outcome in &applied.outcomes {
         match &outcome.action {
             ActionTaken::Removed => {}
@@ -852,14 +782,12 @@ pub fn build(
                     continue;
                 }
 
-                // Use source_name from outcome (propagated from TargetItem)
                 let source_name = if outcome.source_name.as_ref().is_empty() {
                     None
                 } else {
                     Some(outcome.source_name.clone())
                 };
 
-                // Determine version from graph
                 let version = source_name.as_ref().and_then(|sn| {
                     graph
                         .nodes
@@ -907,7 +835,6 @@ pub fn build(
 
     remove_applied_canonical_outputs(&mut items, &applied.outcomes);
 
-    // Add synthetic _self source if any local package items exist.
     let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
     let has_self_items = items.values().any(|item| item.source == local_source_name);
     if has_self_items {
@@ -925,7 +852,6 @@ pub fn build(
         );
     }
 
-    // Validate checksums.
     for item in items.values() {
         if checksum_is_empty(&item.source_checksum) {
             let dest = item
@@ -948,7 +874,6 @@ pub fn build(
         }
     }
 
-    // Sort keys for deterministic output.
     dependencies.sort_keys();
     items.sort_keys();
 
@@ -1150,7 +1075,6 @@ fn remove_applied_canonical_outputs(
     items.retain(|_, item| !item.outputs.is_empty());
 }
 
-/// Merge per-target sync results into a built lock file.
 pub fn apply_target_sync_outputs(
     lock: &mut LockFile,
     target_outcomes: &[crate::target_sync::TargetSyncOutcome],
@@ -1170,10 +1094,8 @@ pub fn apply_target_sync_outputs(
     }
 }
 
-/// Native harness output recorded in the lock for a canonical `.mars` agent item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledNativeOutput {
-    /// Canonical `.mars` dest path for the owning agent (e.g. `agents/coder.md`).
     pub owner_canonical_dest_path: String,
     pub target_root: String,
     pub dest_path: String,
@@ -1196,14 +1118,12 @@ pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutpu
     true
 }
 
-/// Drop native harness output records removed by native agent reconcile.
 pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
     for (target_root, dest_path) in records {
         remove_target_output(&mut lock.items, target_root, dest_path);
     }
 }
 
-/// Record native harness outputs produced by dual-surface compile.
 pub fn apply_compiled_native_outputs(
     lock: &mut LockFile,
     records: &[CompiledNativeOutput],
@@ -1396,10 +1316,6 @@ fn remove_target_output(
     items.retain(|_, item| !item.outputs.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn checksum_is_empty(checksum: &ContentHash) -> bool {
     checksum.as_ref().trim().is_empty()
 }
@@ -1435,14 +1351,9 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
     }
 }
 
-/// Canonical item key for v2 lock: `"kind/name"`.
 pub fn item_key(id: &ItemId) -> String {
     format!("{}/{}", id.kind, id.name)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

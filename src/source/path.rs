@@ -9,12 +9,6 @@ use crate::error::MarsError;
 use crate::source::ResolvedRef;
 use crate::types::SourceName;
 
-/// Fetch a path source: resolve relative paths against project root, verify exists.
-///
-/// - Relative paths are resolved against `project_root`.
-/// - Absolute paths are used as-is.
-/// - The path must exist and be a directory.
-/// - Returns `ResolvedRef` with no version/commit (path sources are unversioned).
 pub fn fetch_path(
     path: &Path,
     project_root: &Path,
@@ -26,10 +20,8 @@ pub fn fetch_path(
         project_root.join(path)
     };
 
-    // Canonicalize to resolve symlinks and `..` components
     let resolved = canonicalize_path(&resolved, source_name)?;
 
-    // Verify the path exists and is a directory
     if !resolved.exists() {
         return Err(MarsError::Source {
             source_name: source_name.to_string(),
@@ -53,7 +45,6 @@ pub fn fetch_path(
     })
 }
 
-/// Canonicalize a path, providing a helpful error on failure.
 fn canonicalize_path(path: &Path, source_name: &str) -> Result<PathBuf, MarsError> {
     dunce::canonicalize(path).map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),

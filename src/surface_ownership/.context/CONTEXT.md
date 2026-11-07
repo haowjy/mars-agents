@@ -1,9 +1,7 @@
 # Surface ownership
 
-A pending deletion authorizes retrying deletion, but not overwriting an existing
-path: it no longer proves which bytes Mars installed. Config-entry ownership is
-structural ownership of an emitted JSON entry, not of the containing file.
+Path ownership is scoped to the exact target root and destination. An `Installed` record authorizes deletion and replacement; `PendingDeletion` authorizes only a deletion retry. A pending record must not authorize overwriting content that may have appeared after a failed removal. Explicit `--force` can adopt that content.
 
-Safe recovery of interrupted writes needs intent published before output and
-transaction ordering across output surfaces. An extra lifecycle state alone
-would grant unsafe adoption authority.
+Config-entry ownership is separate from file ownership. Hook and MCP entries also require a content match before removal, preserving user edits. See [the implementation](../mod.rs).
+
+Interrupted-write recovery is unresolved for these surfaces. A pre-write claim alone would grant unsafe adoption authority: recovery also needs intent published before output, transaction ordering across surfaces and fault-injection coverage at finalization.

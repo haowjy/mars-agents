@@ -1,5 +1,3 @@
-// qa-validated: capability-cache-resolver-live-probes
-
 mod common;
 
 use assert_cmd::Command;

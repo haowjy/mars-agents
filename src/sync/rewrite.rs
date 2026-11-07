@@ -21,16 +21,11 @@ use mars_schema::names::ItemName;
 type ContentRewriteFn =
     fn(&str, &IndexMap<String, String>) -> Result<Option<String>, frontmatter::FrontmatterError>;
 
-/// All installed-name rewrites indexed by original item name.
 #[derive(Debug, Default)]
 pub struct RenameIndex {
-    /// Skill original_name -> [(installed_name, source_name)].
     skill_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>>,
-    /// Subagent original_name -> [(installed_name, source_name)].
     subagent_renames: HashMap<ItemName, Vec<(ItemName, SourceName)>>,
-    /// Installed agents whose authored `name:` must follow their destination.
     renamed_agents: HashSet<(SourceName, ItemName)>,
-    /// Installed skills whose authored `name:` must follow their destination.
     renamed_skills: HashSet<(SourceName, ItemName)>,
 }
 
@@ -132,8 +127,6 @@ impl RenameIndex {
             && self.renamed_skills.is_empty()
     }
 
-    /// Installed-name rewrites visible from one source package.
-    ///
     /// This is the same own-package-first, then dependency-order rule used by
     /// `apply_renames`. Plugin builds also need it for markdown body references,
     /// which are outside sync's canonical frontmatter rewrite.
@@ -155,7 +148,6 @@ impl RenameIndex {
     }
 }
 
-/// Apply installed names to renamed skills, then rewrite agent references.
 pub fn apply_renames(
     target: &mut TargetState,
     index: &RenameIndex,
@@ -197,7 +189,6 @@ pub fn apply_renames(
         }
     }
 
-    // For each agent in target, check if it references any renamed items.
     let agent_keys: Vec<DestPath> = target
         .items
         .iter()
@@ -373,7 +364,6 @@ fn package_relative(path: &std::path::Path) -> String {
     }
 }
 
-/// `<package>: agents/<file>`, naming the dependency instead of its cache location.
 fn package_location(source_name: &SourceName, path: &std::path::Path) -> String {
     format!("{source_name}: {}", package_relative(path))
 }

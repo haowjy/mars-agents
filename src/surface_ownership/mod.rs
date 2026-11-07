@@ -44,33 +44,26 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::lock::LockFile;
 use crate::types::managed_cmd;
 
-/// Which command's `--force` flag would adopt an untracked collision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollisionAdoptHint {
     SyncForce,
     LinkForce,
 }
 
-/// Whether a copy/install to a linked target may proceed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceCopyDecision {
-    /// Dest is missing, has an installed-content claim, or `--force` adopt applies.
     Proceed,
-    /// Dest exists without an installed-content claim — preserve local content.
     SkipWithoutInstalledClaim,
 }
 
-/// Whether `dest` exists on disk (file, directory, or symlink).
 pub fn target_dest_exists(dest: &Path) -> bool {
     dest.exists() || dest.symlink_metadata().is_ok()
 }
 
-/// Whether Mars may delete `dest_path` under `target_root`.
 pub fn may_delete(old_lock: &LockFile, target_root: &str, dest_path: &str) -> bool {
     old_lock.contains_output(target_root, dest_path)
 }
 
-/// Decide whether Mars may copy/install to a linked target path.
 pub fn copy_decision(
     old_lock: &LockFile,
     target_root: &str,
@@ -93,7 +86,6 @@ pub fn copy_decision(
     SurfaceCopyDecision::SkipWithoutInstalledClaim
 }
 
-/// Emit `target-unmanaged-collision` when an existing path lacks an installed claim.
 pub fn warn_no_installed_claim_collision(
     target_name: &str,
     dest_rel: &str,
@@ -116,7 +108,6 @@ pub fn warn_no_installed_claim_collision(
     );
 }
 
-/// Emit `target-unmanaged-adopted` when `--force` adopts a path without an installed claim.
 pub fn warn_no_installed_claim_adopted(
     target_name: &str,
     dest_rel: &str,

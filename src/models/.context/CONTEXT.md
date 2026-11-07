@@ -1,6 +1,5 @@
-# Launch model projection
+# Launch model ID
 
-Availability and launch-bundle project the selected assessment rather than
-rerunning slug selection. Native Claude and Codex retain the requested spelling;
-probe-backed harnesses use selected evidence. A provider constraint filters
-selection rather than blindly prefixing the requested ID.
+Project the selected routing assessment into the launch ID; availability and bundle construction must not select a slug again. Claude and Codex receive the requested spelling, even when catalog matching normalized it. Probe-backed harnesses use the selected slug when present; Pi and OpenCode may qualify an unqualified passthrough with a provider constraint. A provider constraint filters routing and is not a blind prefix.
+
+Compare model IDs using routing's normalized matcher when associating live rows: case and punctuation variants can describe the same model.

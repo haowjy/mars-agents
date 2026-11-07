@@ -95,7 +95,6 @@ pub(crate) fn extract_and_strip_archive(
         }
 
         let mut components = entry_path.components();
-        // Strip the top-level `{repo}-{sha}/` directory.
         components.next();
 
         let mut relative_path = PathBuf::new();

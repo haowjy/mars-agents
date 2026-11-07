@@ -169,7 +169,6 @@ fn parse(document: &serde_json::Value) -> Result<HookEventsToml, serde_json::Err
     serde_json::from_value::<HooksFile>(document.clone()).map(|file| file.hooks)
 }
 
-/// The document mars writes for Codex: the renderer's events under `hooks`.
 fn codex_document(claude_json: &str) -> (serde_json::Value, PortableHooks) {
     let (hooks, _) = PortableHooks::from_claude_json(claude_json).unwrap();
     let rendered = hooks.render(
@@ -190,7 +189,6 @@ fn codex_document(claude_json: &str) -> (serde_json::Value, PortableHooks) {
     (serde_json::json!({ "hooks": events }), hooks)
 }
 
-/// Every Claude event, and every handler shape a Claude author can write.
 const EVERYTHING: &str = r#"{
   "SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo a","timeout":1.2}]}],
   "UserPromptSubmit":[{"hooks":[{"type":"command","command":"echo b","statusMessage":"s","async":true}]}],
@@ -234,7 +232,6 @@ fn codex_admits_matcher(pattern: &str) -> bool {
 
 #[test]
 fn every_rendered_matcher_compiles_in_codex() {
-    // Patterns that work on Claude (JavaScript regex) and fail in Rust's `regex`.
     let (document, _) = codex_document(
         r#"{"PreToolUse":[
             {"matcher":"^(?!Read).*","hooks":[{"type":"command","command":"a"}]},
@@ -257,16 +254,12 @@ fn every_rendered_codex_document_loads_with_no_handler_skipped() {
     let events = parse(&document).expect("Codex must deserialize what mars writes");
     let (run, skipped) = loaded(&events);
     assert!(skipped.is_empty(), "Codex would skip: {skipped:?}");
-    // PreToolUse keeps its command and its mcp_tool; each of the other ten Codex events
-    // keeps one handler (SessionEnd loses its mcp_tool).
     assert_eq!(run, 12, "{document:#}");
     let pre = &events.pre_tool_use;
     assert_eq!(pre.len(), 1);
     assert_eq!(pre[0].hooks.len(), 2);
 }
 
-/// The Claude plugin tree's `hooks.json` is read by Codex too (D21): what `[hooks]` and a
-/// Claude native hook put there must load with no handler skipped, and keep Claude's events.
 #[test]
 fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
     use mars_schema::hooks::{HookOutput, Origin, read};
@@ -304,8 +297,6 @@ fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
     let document = serde_json::json!({ "hooks": events });
     let (run, skipped) = loaded(&parse(&document).expect("Codex must deserialize the tree"));
     assert!(skipped.is_empty(), "Codex would skip: {skipped:?}");
-    // The generated command, the native hook's two Stop handlers that survive (the `null` input
-    // is dropped, not the handler), and Notification, which Codex ignores but Claude runs.
     assert_eq!(run, 3, "{document:#}");
     assert!(document["hooks"]["Notification"].is_array());
     assert!(
@@ -320,8 +311,6 @@ fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {
 
 #[test]
 fn the_mirror_rejects_what_the_renderer_leaves_out() {
-    // Without the renderer's checks the same input fails or is skipped, so the test above
-    // can fail: Claude's JSON passed through as is.
     let (hooks, _) = PortableHooks::from_claude_json(EVERYTHING).unwrap();
     let raw = hooks.to_claude_json().to_json();
     let events = parse(&serde_json::json!({ "hooks": raw }));
@@ -337,7 +326,6 @@ fn the_mirror_rejects_what_the_renderer_leaves_out() {
         {"type": "mcp_tool", "server": "s", "tool": "t", "input": {"a": null}}]}]}}))
         .is_err()
     );
-    // A Claude-only event beside `hooks` fails the whole file.
     assert!(parse(&serde_json::json!({"hooks": {}, "Notification": []})).is_err());
 }
 
@@ -357,7 +345,6 @@ fn each_codex_event_is_a_field_of_the_mirror() {
         .keys()
         .map(String::as_str)
         .collect();
-    // Anything the renderer wrote that the mirror does not name would be ignored by Codex.
     for event in &rendered {
         assert!(named.contains(event), "Codex ignores `{event}`");
     }
@@ -365,7 +352,6 @@ fn each_codex_event_is_a_field_of_the_mirror() {
 
 #[test]
 fn the_target_table_names_every_event_codex_reads() {
-    // `trust_positions` counts only these: a key Codex does not read needs no review.
     let target = mars_schema::hooks::targets::target(".codex").unwrap();
     let mirror = HookEventsToml::default();
     for (event, _) in mirror.groups() {

@@ -45,7 +45,6 @@ pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsEr
     })
 }
 
-/// Run `git ls-remote --tags <url>` and parse semver tags.
 pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
     not_an_option("URL", url)?;
     let output = run_git(
@@ -84,7 +83,6 @@ pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
     Ok(versions)
 }
 
-/// Run `git ls-remote <url> HEAD` and return the default-branch SHA.
 pub fn ls_remote_head(url: &str) -> Result<String, MarsError> {
     ls_remote_ref(url, "HEAD")
 }

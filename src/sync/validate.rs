@@ -19,9 +19,6 @@ use crate::validate::ValidationWarning;
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::PreparedDefinition;
 
-/// Validate skill references: check that agents' `skills:` frontmatter entries
-/// reference skills that exist in the target state.
-///
 /// The one reporter of refs against what is installed, and the only place that combines a
 /// package's declaration with this machine: the resolver never reports a ref it defers to a
 /// declared provider, and `provided` (`None` where provided skills must not count, as in plugin
@@ -65,7 +62,6 @@ pub(crate) fn validate_skill_refs(
             Some(content) => content.clone(),
             None => std::fs::read_to_string(&item.source_path).unwrap_or_default(),
         };
-        // An Agent already in schema v1: it was prepared, then possibly rewritten.
         let skills = mars_schema::agent::read(&content)
             .fields
             .map(|profile| profile.skills.all())

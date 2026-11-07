@@ -1,5 +1,3 @@
-// qa-validated: harness-order-settings-audit
-
 use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableResolver};
 use crate::harness::registry;
 use std::collections::HashSet;

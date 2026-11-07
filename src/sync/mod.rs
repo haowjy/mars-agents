@@ -37,16 +37,13 @@ pub use crate::sync::halt::{RecoveryBlocker, RecoveryHalt};
 use crate::sync::halt::{build_recovery_halt, persist_pending_config_mutation};
 pub use crate::sync::mutation::{ConfigMutation, DependencyUpsertChange};
 
-/// Report from a completed sync operation.
 #[derive(Debug)]
 pub struct SyncReport {
     pub applied: ApplyResult,
     pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     pub upgrades_available: usize,
-    /// Per-target sync outcomes from the target sync phase.
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
-    /// Whether this was a dry run (`--diff`). Affects output wording only.
     pub dry_run: bool,
     /// Native harness agent outputs emitted this run that are new or content-changed
     /// vs the previous lock, as `(target_root, dest_path)`. Surfaced so native
@@ -66,24 +63,17 @@ pub struct SyncReport {
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
-    /// Version fallbacks caused by package engine requirements.
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
 }
 
-/// What a CLI command requests from the sync pipeline.
 #[derive(Debug, Clone)]
 pub struct SyncRequest {
-    /// How to resolve versions.
     pub resolution: ResolutionMode,
-    /// Config mutation to apply under flock.
     pub mutation: Option<ConfigMutation>,
-    /// Behavior flags.
     pub options: SyncOptions,
     /// Whether a recovery command may persist intent and halt when resolution
     /// finds a hook surface the compiler cannot read.
     pub recovery: RecoveryPolicy,
-    /// Whether lossiness warnings are included in the returned report.
-    /// `Surface` for `mars sync` / `mars upgrade`; `Hidden` for validate/export/add/repair.
     pub lossiness_mode: LossinessMode,
 }
 
@@ -109,25 +99,15 @@ impl RecoveryPolicy {
     }
 }
 
-/// Resolution behavior for the resolver stage.
 #[derive(Debug, Clone)]
 pub enum ResolutionMode {
-    /// Normal sync behavior.
     Normal,
-    /// Upgrade behavior (maximize versions), optionally scoped to specific
-    /// sources and optionally bumping direct constraints.
     Maximize {
         targets: HashSet<SourceName>,
         bump: bool,
     },
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline phase structs — typed handoffs between pipeline stages.
-// Phase functions consume prior state by value (move semantics, no cloning).
-// ---------------------------------------------------------------------------
-
-/// Phase 1: Load and validate configuration under sync lock.
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
@@ -142,13 +122,11 @@ pub(crate) struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    /// Whether a canonical destination is Mars-owned: claimed by `mars.lock` or provided.
     pub(crate) fn ownership(&self) -> ownership::Ownership<'_> {
         ownership::Ownership::new(&self.old_lock, &self.provided)
     }
 }
 
-/// Phase 2: Resolved dependency graph.
 pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
@@ -158,32 +136,27 @@ pub(crate) struct ResolvedState {
     pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
-/// Phase 3: Desired target state after discovery; the graph's selection already applied the filters.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
     pub warnings: Vec<ValidationWarning>,
 }
 
-/// Phase 4: Diff + plan ready for execution.
 pub(crate) struct PlannedState {
     pub targeted: TargetedState,
     pub plan: plan::SyncPlan,
 }
 
-/// Phase 5: Applied results.
 pub(crate) struct AppliedState {
     pub planned: PlannedState,
     pub applied: ApplyResult,
 }
 
-/// Phase 6: Target sync results.
 pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
     pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
-    /// Generated hook files written this run, as `(target_root, dest_path)`.
     pub rewritten_hook_files: Vec<(String, String)>,
     /// MCP config files written or deleted this run, as `(target_root, file path)`.
     pub mcp_files_changed: Vec<(String, String)>,
@@ -192,9 +165,6 @@ pub(crate) struct SyncedState {
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
 }
 
-/// Execute the unified sync pipeline.
-///
-/// Orchestrates phase functions, each consuming the prior phase's output struct.
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
     let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
@@ -236,12 +206,6 @@ pub(crate) fn execute_validation(
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
-// ---------------------------------------------------------------------------
-// Phase functions
-// ---------------------------------------------------------------------------
-
-/// Phase 1: Acquire sync lock, load config, apply mutations, merge effective config,
-/// and load the existing lock file.
 pub(crate) fn load_config(
     ctx: &MarsContext,
     request: &SyncRequest,
@@ -277,7 +241,6 @@ pub(crate) fn load_config(
         Some(lock)
     };
 
-    // Load config under lock (auto-init when mutating and missing).
     let mut config = match crate::config::load(project_root) {
         Ok(config) => config,
         Err(err) if mutation::is_config_not_found(&err) && request.mutation.is_some() => Config {
@@ -286,20 +249,17 @@ pub(crate) fn load_config(
         },
         Err(err) => return Err(err),
     };
-    // Apply config mutation.
     let dependency_changes = if let Some(m) = &request.mutation {
         mutation::apply_mutation(&mut config, m)?
     } else {
         Vec::new()
     };
 
-    // Load/mutate local overrides under the same lock.
     let mut local = crate::config::load_local(project_root)?;
     if let Some(m) = &request.mutation {
         mutation::apply_local_mutation(&mut local, m);
     }
 
-    // Build effective config.
     let user = crate::config::load_user_config()?;
     let (effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
@@ -322,7 +282,6 @@ pub(crate) fn load_config(
         crate::resolve::check_consumer_package_requirements(package, &options)?;
     }
 
-    // Load existing lock file, routing load diagnostics through sync diagnostics.
     let (mut old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
         Ok(loaded) => loaded,
         Err(MarsError::Lock(crate::error::LockError::Corrupt { message }))
@@ -365,7 +324,6 @@ pub(crate) fn load_config(
     })
 }
 
-/// Phase 2: Validate upgrade targets, resolve the dependency graph.
 pub(crate) fn resolve_graph(
     ctx: &MarsContext,
     mut loaded: LoadedConfig,
@@ -424,7 +382,6 @@ pub(crate) fn resolve_graph(
         loaded.dependency_changes.extend(bump_changes);
     }
 
-    // Merge model config from dependency tree (for diagnostics side effects).
     let _ = crate::models::merged_model_aliases(&graph, &loaded.effective, diag);
 
     Ok(ResolvedState {
@@ -435,7 +392,6 @@ pub(crate) fn resolve_graph(
     })
 }
 
-/// Shared result of graph collection, rename application, and validation.
 pub(crate) struct PreparedTarget {
     pub target: target::TargetState,
     pub rename_index: rewrite::RenameIndex,
@@ -467,7 +423,7 @@ pub(crate) struct BuiltTarget {
 /// `local_source` names the consumer's own package: it wins MCP name collisions
 /// silently. Sync's local package is `_self`; a plugin build's is its root package.
 ///
-/// A dependency hook whose `hook.toml` is invalid keeps what `old_lock` installed (D19); a
+/// A dependency hook whose `hook.toml` is invalid keeps what `old_lock` installed; a
 /// build with no previous install passes `None` and keeps nothing.
 pub(crate) fn build_target_state(
     graph: &crate::resolve::ResolvedGraph,
@@ -496,8 +452,6 @@ pub(crate) fn build_target_state(
     })
 }
 
-/// Build the rename view of the surviving items and rewrite every reference to
-/// them.
 ///
 /// Skill refs are checked by each caller after this returns, with its own context: sync knows
 /// what this machine installed and what the project's own package declares, a plugin build has
@@ -530,11 +484,6 @@ pub(crate) fn apply_target_renames(
     })
 }
 
-/// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
-///
-/// `local_items` are pre-discovered by the reader stage; no discovery is
-/// performed here so that dest-path assignment remains the only compiler
-/// concern for local content.
 pub(crate) fn build_target(
     ctx: &MarsContext,
     resolved: ResolvedState,
@@ -542,7 +491,6 @@ pub(crate) fn build_target(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
-    // Use .mars/ as the canonical content root for diff/collision checks.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
@@ -644,18 +592,15 @@ pub(crate) fn build_target(
     })
 }
 
-/// Phase 4: Compute diff, create plan.
 pub(crate) fn create_plan(
     ctx: &MarsContext,
     targeted: TargetedState,
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
-    // Diff against .mars/ canonical store.
     let mars_dir = ctx.project_root.join(".mars");
     let managed_root = &mars_dir;
 
-    // Compute diff.
     let sync_diff = diff::compute(
         managed_root,
         &targeted.resolved.loaded.old_lock,
@@ -679,7 +624,6 @@ pub(crate) fn create_plan(
         }
     }
 
-    // Create plan.
     let sync_plan = plan::create(&sync_diff, &request.options, diag);
 
     Ok(PlannedState {
@@ -688,7 +632,6 @@ pub(crate) fn create_plan(
     })
 }
 
-/// Check that a frozen sync has no pending changes.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
     let has_changes = planned.plan.actions.iter().any(|a| {
         !matches!(
@@ -704,7 +647,6 @@ pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError>
     Ok(())
 }
 
-/// Phase 5: Persist config if mutated, apply plan to .mars/ canonical store.
 pub(crate) fn apply_plan(
     ctx: &MarsContext,
     planned: PlannedState,
@@ -718,9 +660,6 @@ pub(crate) fn apply_plan(
     // Persist config/local only after validation gate and before apply.
     persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 
-    // Apply plan to .mars/ canonical store (D25).
-    // Content is written to .mars/agents/ and .mars/skills/, then
-    // sync_targets() copies to all managed target directories.
     if !request.options.dry_run {
         recovery::prepare(
             project_root,
@@ -734,11 +673,7 @@ pub(crate) fn apply_plan(
     Ok(AppliedState { planned, applied })
 }
 
-/// Phase 6: Sync managed targets from .mars/ canonical store.
-///
-/// Copies content from .mars/ to all configured target directories.
-/// Non-fatal — target sync errors are recorded as diagnostics.
-/// Lock is written regardless of target sync outcome (D21).
+/// Lock is written regardless of target sync outcome.
 pub(crate) fn sync_targets(
     ctx: &MarsContext,
     applied: AppliedState,
@@ -909,7 +844,6 @@ fn planned_bump_entries(
             if !targets.is_empty() && !targets.contains(name) {
                 return None;
             }
-            // Only git dependencies with semver-tagged resolution can be bumped.
             entry.url.as_ref()?;
             let node = graph.nodes.get(name)?;
             let resolved_version = node.resolved_ref.version.as_ref()?;

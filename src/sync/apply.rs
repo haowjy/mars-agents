@@ -11,27 +11,21 @@ use crate::types::{ContentHash, DestPath, SourceName};
 use mars_schema::item::ItemKind;
 use mars_schema::names::ItemName;
 
-/// The result of applying the sync plan.
 #[derive(Debug, Clone)]
 pub struct ApplyResult {
     pub outcomes: Vec<ActionOutcome>,
 }
 
-/// What action was taken for a single item.
 #[derive(Debug, Clone)]
 pub struct ActionOutcome {
     pub item_id: ItemId,
     pub action: ActionTaken,
     pub dest_path: DestPath,
-    /// Which source this item came from.
     pub source_name: SourceName,
-    /// Source checksum (pre-rewrite hash of source content).
     pub source_checksum: Option<ContentHash>,
-    /// Installed checksum (post-rewrite hash of what was written to disk).
     pub installed_checksum: Option<ContentHash>,
 }
 
-/// The specific action taken.
 #[derive(Debug, Clone)]
 pub enum ActionTaken {
     Installed,
@@ -41,15 +35,6 @@ pub enum ActionTaken {
     Kept,
 }
 
-/// Execute the sync plan, applying changes to disk.
-///
-/// For each action:
-/// - Install: copy source content to dest (atomic_write or atomic_install_dir)
-/// - Overwrite: replace existing with new source content
-/// - Remove: delete file/dir from disk
-/// - Skip/KeepLocal: record as no-op
-///
-/// Returns outcomes with both source_checksum and installed_checksum.
 /// The installed_checksum may differ from source_checksum when frontmatter
 /// rewriting occurred.
 pub fn execute(
@@ -61,7 +46,6 @@ pub fn execute(
 
     for action in &plan.actions {
         let outcome = if options.dry_run {
-            // Dry run: compute the outcome without touching disk
             dry_run_action(action)
         } else {
             execute_action(root, action)?
@@ -72,13 +56,11 @@ pub fn execute(
     Ok(ApplyResult { outcomes })
 }
 
-/// Execute a single action, writing to disk.
 fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, MarsError> {
     match action {
         PlannedAction::Install { target } => {
             let dest = target.dest_path.resolve(root);
 
-            // Read source content and install
             let installed_checksum = install_item(target, &dest)?;
 
             Ok(ActionOutcome {
@@ -94,7 +76,6 @@ fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, 
         PlannedAction::Overwrite { target } => {
             let dest = target.dest_path.resolve(root);
 
-            // Install (overwrite) source content
             let installed_checksum = install_item(target, &dest)?;
 
             Ok(ActionOutcome {
@@ -157,7 +138,6 @@ fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, 
     }
 }
 
-/// Produce a dry-run outcome without touching disk.
 fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
     match action {
         PlannedAction::Install { target } => ActionOutcome {
@@ -219,9 +199,6 @@ fn dry_run_action(action: &PlannedAction) -> ActionOutcome {
     }
 }
 
-/// Install an item (file or directory) to the destination.
-///
-/// Returns the installed checksum (hash of what was written to disk).
 fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsError> {
     match target.id.kind {
         ItemKind::Agent => {
@@ -256,13 +233,11 @@ fn install_item(target: &TargetItem, dest: &Path) -> Result<ContentHash, MarsErr
                     content.as_bytes(),
                 )?;
             }
-            // Directory items are verified by hashing the installed content.
             crate::hash::compute_hash(dest, target.id.kind).map(ContentHash::from)
         }
     }
 }
 
-/// Write bytes to `dest` and verify persisted bytes hash matches expected.
 fn write_file_and_verify(dest: &Path, content: &[u8]) -> Result<ContentHash, MarsError> {
     atomic_write(dest, content)?;
     let expected = ContentHash::from(crate::hash::hash_bytes(content));
@@ -278,7 +253,6 @@ fn write_file_and_verify(dest: &Path, content: &[u8]) -> Result<ContentHash, Mar
     Ok(actual)
 }
 
-/// Read bytes to install for an agent, honoring in-memory rewrite overrides.
 fn content_to_install(target: &TargetItem) -> Result<Vec<u8>, MarsError> {
     if let Some(content) = &target.rewritten_content {
         Ok(content.as_bytes().to_vec())
@@ -355,8 +329,6 @@ mod tests {
         path
     }
 
-    // === Install tests ===
-
     #[test]
     fn install_creates_new_file() {
         let root = TempDir::new().unwrap();
@@ -380,12 +352,10 @@ mod tests {
         let outcome = &result.outcomes[0];
         assert!(matches!(outcome.action, ActionTaken::Installed));
 
-        // Verify file was created
         let installed_path = root.path().join("agents/coder.md");
         assert!(installed_path.exists());
         assert_eq!(fs::read(&installed_path).unwrap(), content);
 
-        // Verify checksums
         assert_eq!(
             outcome.source_checksum.as_deref(),
             Some(hash::hash_bytes(content).as_str())
@@ -393,14 +363,11 @@ mod tests {
         assert!(outcome.installed_checksum.is_some());
     }
 
-    // === Overwrite tests ===
-
     #[test]
     fn overwrite_replaces_existing_file() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
 
-        // Create existing file
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("coder.md"), b"# old content").unwrap();
@@ -445,13 +412,10 @@ mod tests {
         );
     }
 
-    // === Remove tests ===
-
     #[test]
     fn remove_deletes_file() {
         let root = TempDir::new().unwrap();
 
-        // Create file to remove
         let agents_dir = root.path().join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
         fs::write(agents_dir.join("orphan.md"), b"# orphan").unwrap();
@@ -480,7 +444,6 @@ mod tests {
     fn remove_skill_directory() {
         let root = TempDir::new().unwrap();
 
-        // Create skill directory
         let skill_dir = root.path().join("skills/old-skill");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), b"# old skill").unwrap();
@@ -559,8 +522,6 @@ mod tests {
         assert!(bootstrap_dir.join("keep.md").exists());
     }
 
-    // === Dry run tests ===
-
     #[test]
     fn dry_run_does_not_modify_files() {
         let root = TempDir::new().unwrap();
@@ -583,11 +544,8 @@ mod tests {
         assert_eq!(result.outcomes.len(), 1);
         assert!(matches!(result.outcomes[0].action, ActionTaken::Installed));
 
-        // File should NOT exist
         assert!(!root.path().join("agents/coder.md").exists());
     }
-
-    // === Skip/KeepLocal tests ===
 
     #[test]
     fn skip_produces_skipped_outcome() {
@@ -646,14 +604,11 @@ mod tests {
         assert_eq!(result.outcomes[0].source_name, "base");
     }
 
-    // === Install skill directory tests ===
-
     #[test]
     fn install_skill_directory() {
         let root = TempDir::new().unwrap();
         let source_dir = TempDir::new().unwrap();
 
-        // Create source skill directory
         let source_skill = source_dir.path().join("skills/planning");
         fs::create_dir_all(&source_skill).unwrap();
         fs::write(source_skill.join("SKILL.md"), b"# Planning skill").unwrap();

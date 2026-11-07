@@ -1,0 +1,1 @@
+- Untangle in the rewrite: `src/resolve/mod.rs:171`, `src/resolve/context.rs:104`, and `src/resolve/package.rs:171` signal a restart as an error while carrying its payload separately in mutable context. This creates a missing-payload state and an unreachable user-facing error arm. A resolver-internal restart outcome could carry the complete payload.

@@ -4,7 +4,6 @@ use serde::Serialize;
 
 use crate::compiler::lossiness::{LossRecord, LossyField};
 
-/// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,

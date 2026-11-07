@@ -482,9 +482,7 @@ subpath = "plugins\\foo"
         );
     }
 
-    // ========== RES-001: EffectiveDependency carries subpath after merge ==========
-
-    /// RES-001 (config side): after merge_with_root the EffectiveDependency.subpath
+    /// After merge_with_root the EffectiveDependency.subpath
     /// matches what was in the Config.  This confirms the subpath survives the
     /// config-load → merge step.
     #[test]

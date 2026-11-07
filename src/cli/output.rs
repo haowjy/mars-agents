@@ -95,7 +95,6 @@ pub struct CatalogEntry {
     pub variants: Option<String>,
 }
 
-/// Print catalog view (name: description, grouped by kind).
 pub fn print_catalog(
     agents: &[CatalogEntry],
     skills: &[CatalogEntry],
@@ -178,7 +177,6 @@ pub fn print_catalog(
     }
 }
 
-/// Print sync report as human-readable text or JSON.
 pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool, show_info: bool) {
     if json {
         print_sync_report_json(report);
@@ -187,8 +185,6 @@ pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool,
     }
 }
 
-/// Whether this report is from a dry run (`--diff`).
-/// Returns true when the report was produced without writing any files.
 fn is_dry_run(report: &SyncReport) -> bool {
     report.dry_run
 }
@@ -313,7 +309,6 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
     let mut removed = 0usize;
     let mut kept = 0usize;
 
-    // Print per-item actions
     for outcome in &report.applied.outcomes {
         match outcome.action {
             ActionTaken::Installed => {
@@ -359,7 +354,6 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         let _ = writeln!(stdout, "{file} (MCP servers, {target_root})");
     }
 
-    // Summary line — use "would ..." wording for dry runs
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
     if installed > 0 {
@@ -496,7 +490,6 @@ fn print_native_line(
     let _ = writeln!(stdout, "{target_root}/{dest_path} (native agent)");
 }
 
-/// Print a list of items as a table or JSON.
 pub fn print_list(entries: &[ListEntry], json: bool) {
     if json {
         println!("{}", serde_json::to_string(entries).unwrap_or_default());
@@ -511,7 +504,6 @@ fn print_list_human(entries: &[ListEntry]) {
         return;
     }
 
-    // Compute column widths
     let source_w = entries
         .iter()
         .map(|e| e.source.len())
@@ -531,7 +523,6 @@ fn print_list_human(entries: &[ListEntry]) {
         .unwrap_or(7)
         .max(7);
 
-    // Header
     println!(
         "{:<source_w$}  {:<item_w$}  {:<version_w$}  STATUS",
         "SOURCE", "ITEM", "VERSION"
@@ -556,7 +547,6 @@ fn print_list_human(entries: &[ListEntry]) {
     }
 }
 
-/// Print doctor report.
 pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
     if json {
         #[derive(Serialize)]
@@ -602,17 +592,14 @@ pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
     }
 }
 
-/// Print simple JSON value.
 pub fn print_json<T: Serialize>(value: &T) {
     println!("{}", serde_json::to_string(value).unwrap_or_default());
 }
 
-/// Print a simple success message.
 pub fn print_success(msg: &str) {
     narrate(Some((Color::Green, "✓")), msg);
 }
 
-/// Print pipeline diagnostics to stderr (same format as sync report output).
 pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
     let mut stderr = stderr_stream();
     for diag in diagnostics {
@@ -627,17 +614,14 @@ pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
     }
 }
 
-/// Print a warning message (yellow).
 pub fn print_warn(msg: &str) {
     narrate(Some((Color::Yellow, "⚠")), msg);
 }
 
-/// Print an error message (red).
 pub fn print_error(msg: &str) {
     narrate(Some((Color::Red, "✗")), msg);
 }
 
-/// Print an info message.
 pub fn print_info(msg: &str) {
     narrate(None, msg);
 }

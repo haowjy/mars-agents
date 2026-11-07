@@ -1,10 +1,3 @@
-/// `.codex` target adapter.
-///
-/// Handles MCP server registration and hook binding for the Codex harness.
-///
-/// Codex-native lowering:
-/// - MCP: edits `[mcp_servers.<name>]` in `.codex/config.toml`, env vars forwarded by name
-/// - Hooks: appended to `hooks.json` as Codex command hook entries
 use crate::types::DestPath;
 use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
@@ -45,10 +38,6 @@ impl TargetAdapter for CodexAdapter {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Codex MCP — `[mcp_servers.<name>]` entry shape
-// ---------------------------------------------------------------------------
-//
 // Codex forwards an environment variable to the server by name, in
 // `env_vars = ["VAR"]`. A mapping from a differently named key cannot be
 // written, so a renamed reference is reported as lossy and dropped.

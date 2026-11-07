@@ -62,7 +62,6 @@ fn override_writes_local_config() {
         .success()
         .stdout(predicate::str::contains("override"));
 
-    // mars.local.toml should exist
     assert!(dir.child("project").child("mars.local.toml").exists());
 
     let content = fs::read_to_string(dir.child("project").child("mars.local.toml").path()).unwrap();
@@ -466,6 +465,5 @@ fn remove_prunes_stale_config_entries() {
         .success();
     assert_config_entry_consistency(&project);
 
-    // The last server went and the file held nothing else: it is deleted.
     assert!(!mcp_path.path().exists());
 }

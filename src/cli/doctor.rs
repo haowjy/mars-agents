@@ -10,12 +10,10 @@ use super::output;
 #[derive(Debug, clap::Args)]
 pub struct DoctorArgs {}
 
-/// Run `mars doctor`.
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
-    // Check config is valid
     let project_config = match crate::config::load_project_config_layers(&ctx.project_root) {
         Ok(loaded) => Some(loaded),
         Err(e) => {
@@ -24,7 +22,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     };
 
-    // Check lock file
     let lock = match crate::lock::load(&ctx.project_root) {
         Ok(l) => l,
         Err(e) => {
@@ -34,12 +31,10 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     };
 
-    // Check each locked item against .mars/ canonical store
     let mars_dir = ctx.project_root.join(".mars");
     for (dest_path_str, item) in lock.canonical_flat_items() {
         let disk_path = dest_path_str.resolve(&mars_dir);
 
-        // Check file exists
         if !disk_path.exists() {
             errors.push(format!(
                 "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
@@ -47,7 +42,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             continue;
         }
 
-        // Check for conflict markers
         if item.kind == mars_schema::item::ItemKind::Agent
             && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
@@ -60,7 +54,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    // Check agent→skill references
     if let Some(project_config) = &project_config {
         match crate::config::merge_with_root(
             project_config.config.clone(),
@@ -69,7 +62,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.project_root,
         ) {
             Ok((effective, _diagnostics)) => {
-                // Check that all sources in config have corresponding lock entries
                 for source_name in effective.dependencies.keys() {
                     if !lock.dependencies.contains_key(source_name) {
                         errors.push(format!(
@@ -83,9 +75,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    // Check skill dependencies — every agent's declared skills must exist on disk.
-    // Uses discover_installed() to scan the actual filesystem, catching both
-    // mars-managed and user-created local agents/skills.
     'installed: {
         use std::collections::HashSet;
 
@@ -97,7 +86,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             }
         };
 
-        // Warn on legacy symlinks found in managed directories.
         for item in installed.agents.iter().chain(installed.skills.iter()) {
             if item
                 .path
@@ -132,7 +120,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .and_then(|layers| layers.config.package.as_ref())
             .map(|package| package.uses_providers.as_slice());
         for agent in &installed.agents {
-            // An unreadable agent file has no skills to check.
             let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
             for skill_name in skills {
                 let provided_here = provided.provides(&skill_name);
@@ -176,7 +163,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    // Check .mars/ gitignore as warning only.
     check_mars_gitignore(&ctx.project_root, &mut warnings);
     check_legacy_agents_directory(
         &ctx.project_root,
@@ -186,7 +172,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         &mut warnings,
     );
 
-    // Check explicitly managed native targets against lock checksums.
     if let Some(project_config) = &project_config {
         let divergence = check_target_divergence(
             &ctx.project_root,
@@ -204,8 +189,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     if errors.is_empty() { Ok(0) } else { Ok(2) }
 }
 
-/// Warn if a legacy `.agents/` tree remains but is no longer configured as an
-/// explicit target.
 fn check_legacy_agents_directory(
     project_root: &std::path::Path,
     settings: Option<&crate::config::Settings>,
@@ -237,9 +220,6 @@ fn check_legacy_agents_directory(
     }
 }
 
-/// Check if .mars/ is properly gitignored (D29).
-///
-/// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
 fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
     let mars_dir = project_root.join(".mars");
     if mars_dir.symlink_metadata().is_err() {
@@ -464,9 +444,6 @@ mod tests {
 
     use super::{check_legacy_agents_directory, check_target_divergence};
 
-    /// Returns (key, LockedItemV2) for insertion into LockFile.items.
-    ///
-    /// Creates output records for `.mars` (canonical) plus any additional targets.
     fn make_locked_agent(
         name: &str,
         dest_path: &str,

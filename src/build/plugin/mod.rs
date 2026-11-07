@@ -119,7 +119,6 @@ pub struct PluginBuildReport {
 
 #[derive(Debug, Serialize)]
 pub struct PluginTreeReport {
-    /// Generated tree key: the stage directory name and report identity.
     pub tree: &'static str,
     pub output: PathBuf,
     #[serde(flatten)]
@@ -133,7 +132,6 @@ pub struct StagedPluginBuild {
 }
 
 impl StagedPluginBuild {
-    /// Package-relative root files publication will write or delete.
     pub fn touched_root_files(&self) -> Vec<PathBuf> {
         self.root_files.touched_paths()
     }
@@ -501,7 +499,6 @@ fn fail_on_diagnostic_errors(diagnostics: &[Diagnostic]) -> Result<(), MarsError
     }
 }
 
-/// Hash package-owned build inputs without resolving or fetching dependencies.
 pub(crate) fn plugin_inputs_hash(package_root: &Path) -> Result<String, MarsError> {
     let mut diag = DiagnosticCollector::new();
     let prepared = crate::package_prepare::prepare_authored(

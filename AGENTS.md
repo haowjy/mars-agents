@@ -70,21 +70,6 @@ A restriction is lost when a harness can't express part of a profile. It shows i
 
 Few. Write one only for what the code can't show and a wrong edit would break silently, at the line it guards. No decision ids.
 
-## Architecture
-
-See `src/AGENTS.md` for the dependency graph and module index. Each `src/*/AGENTS.md`
-documents its own mental model, key rules, and anti-patterns.
-
-## Dev Workflow
-
-```bash
-cargo build
-cargo test
-cargo clippy
-```
-
-Integration tests under `tests/`.
-
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.

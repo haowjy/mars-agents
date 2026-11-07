@@ -1,4 +1,3 @@
-# Target sync TODO
+# Target sync follow-up
 
-- Removing a configured target prunes native agents but leaves skills. Define
-  one ownership-gated cleanup rule for every item kind.
+- Apply one ownership-gated cleanup rule to all item kinds when a configured target is removed; native agents are pruned but skills remain.

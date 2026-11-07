@@ -6,13 +6,11 @@ use crate::lock::{CANONICAL_TARGET_ROOT, LockFile, LockIndex, LockedItem};
 use crate::sync::target::{TargetItem, TargetState};
 use crate::types::ContentHash;
 
-/// The diff between current disk state and desired target state.
 #[derive(Debug, Clone)]
 pub struct SyncDiff {
     pub items: Vec<DiffEntry>,
 }
 
-/// A single diff entry — one of six cases from the merge matrix.
 #[derive(Debug, Clone)]
 pub enum DiffEntry {
     /// New item not in lock or on disk.
@@ -32,13 +30,6 @@ pub enum DiffEntry {
     LocalModified { target: TargetItem },
 }
 
-/// Compute the diff between current disk state + lock and target state.
-///
-/// Uses dual checksums from the lock file:
-/// - `source_checksum`: what the source provided
-/// - `installed_checksum`: what mars wrote to disk
-///
-/// Compares current disk hash against lock checksums to determine the diff entry variant.
 pub fn compute(
     root: &Path,
     lock: &LockFile,
@@ -48,17 +39,14 @@ pub fn compute(
     let mut items = Vec::new();
     let lock_index = LockIndex::new(lock);
 
-    // Process each target item
     for (_dest_key, target_item) in &target.items {
         if let Some(locked_item) =
             lock_index.find_output(CANONICAL_TARGET_ROOT, &target_item.dest_path)
         {
-            // Item exists in lock — compare checksums
             let effective_installed = target_item.expected_installed_hash()?;
             let source_changed = target_item.source_hash != locked_item.source_checksum
                 || effective_installed != locked_item.installed_checksum;
 
-            // Check disk hash against the expected baseline.
             // In --force mode, baseline is source_checksum so conflicted files
             // are treated as local modifications and get overwritten.
             let expected_disk_checksum = if force {
@@ -77,14 +65,11 @@ pub fn compute(
                     None
                 }
             } else {
-                // File was deleted locally — treat as if local changed to "nothing"
-                // In this case, we should reinstall it
                 None
             };
 
             match (source_changed, &local_changed) {
                 (false, None) => {
-                    // Neither changed → skip
                     if disk_path.exists() && target_item.source_name != locked_item.source {
                         // Identical bytes can still transfer ownership. A write outcome
                         // records the selected source and carries native claims forward.
@@ -98,33 +83,28 @@ pub fn compute(
                             locked: locked_item.clone(),
                         });
                     } else {
-                        // File was deleted but hashes match lock — reinstall
                         items.push(DiffEntry::Add {
                             target: target_item.clone(),
                         });
                     }
                 }
                 (true, None) => {
-                    // Source changed, local unchanged → clean update
                     items.push(DiffEntry::Update {
                         target: target_item.clone(),
                     });
                 }
                 (false, Some(_local_hash)) => {
-                    // Local changed, source unchanged → keep local
                     items.push(DiffEntry::LocalModified {
                         target: target_item.clone(),
                     });
                 }
                 (true, Some(_local_hash)) => {
-                    // Both changed → conflict
                     items.push(DiffEntry::Conflict {
                         target: target_item.clone(),
                     });
                 }
             }
         } else {
-            // Not in lock → new item
             items.push(DiffEntry::Add {
                 target: target_item.clone(),
             });
@@ -150,7 +130,6 @@ pub fn compute(
         }
     }
 
-    // Find orphans: items in lock but not in target
     for (dest_path, locked_item) in lock.canonical_flat_items() {
         if !target.items.contains_key(&dest_path) && !kept.contains(&dest_path) {
             items.push(DiffEntry::Orphan {

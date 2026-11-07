@@ -20,8 +20,6 @@ fn apply_subpath_traversal_rejection() {
     );
 }
 
-// ========== Resolution tests ==========
-
 #[test]
 fn transitive_override_does_not_collapse_conflicting_declared_identities() {
     let dir = TempDir::new().unwrap();
@@ -248,7 +246,6 @@ fn incompatible_constraints_produce_error() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // a requires shared >=2.0.0, b requires shared <1.0.0 — incompatible
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -331,13 +328,6 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
 
 // ========== RES-006 / RES-008: apply_subpath with None subpath ==========
 
-// ========== RES-009: manifest reader is called with package_root ==========
-
-/// RES-009: The resolver must pass `package_root` (not checkout_root) to
-/// the manifest reader.  We arrange a subpath dep whose checkout_root has
-/// no mars.toml but whose package_root (a subdirectory) does, then verify
-/// that the manifest is successfully discovered — proving package_root was
-/// used as the read base.
 #[test]
 fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let dir = TempDir::new().unwrap();
@@ -345,8 +335,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let package_root = checkout.join("plugins/foo");
     std::fs::create_dir_all(&package_root).unwrap();
 
-    // The manifest sits in package_root, NOT the checkout root, so a read from
-    // checkout_root finds none.
     let manifest = Manifest {
         package: PackageInfo {
             name: "foo".to_string(),
@@ -400,7 +388,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let node = graph.nodes.get("dep").expect("dep should be in graph");
-    // Manifest must be present — only possible if package_root was used
     assert!(
         node.manifest.is_some(),
         "manifest should be loaded from package_root; got None — checkout_root was likely used instead"
@@ -419,8 +406,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 // canonicalize to the same SourceId, preventing false-duplicate cache entries
 // and enabling correct deduplication in the resolver.
 
-/// Two direct deps with different names that both resolve to the same canonical URL
-/// are detected as a duplicate-identity conflict.
 #[test]
 fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     let dir = TempDir::new().unwrap();
@@ -428,14 +413,11 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     std::fs::create_dir_all(&tree).unwrap();
 
     let mut provider = MockProvider::new();
-    // Register versions for the SSH URL (used by spec of dep-a)
     provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
-    // Register versions for the HTTPS URL (used by spec of dep-b)
     provider.add_versions("https://example.com/org/shared.git", vec![(1, 0, 0)]);
     provider.add_source("dep-a", tree.clone(), None);
     provider.add_source("dep-b", tree, None);
 
-    // Both deps canonicalize to the same SourceId
     let canonical_url = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "https://example.com/org/shared.git",
     ));
@@ -481,11 +463,8 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     );
 }
 
-/// TRUE mismatches (different host or path) still produce errors — canonicalization
-/// does not collapse genuinely different repos into the same identity.
 #[test]
 fn different_host_or_path_does_not_produce_false_convergence() {
-    // Different hosts → different SourceIds
     let github_id = SourceId::git_with_subpath(
         SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo.git",
@@ -503,7 +482,6 @@ fn different_host_or_path_does_not_produce_false_convergence() {
         "Different hosts must produce distinct SourceIds"
     );
 
-    // Different paths on the same host → different SourceIds
     let repo_a_id = SourceId::git_with_subpath(
         SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-a.git",
@@ -541,14 +519,12 @@ fn restart_fresh_context_drops_removed_transitive_dependency_and_lock_entry() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_x).unwrap();
 
-    // A@v1 depends on X; A@v2 drops X.
     let manifest_a_v1 = make_manifest(
         "a",
         "1.0.0",
         vec![("x", "https://example.com/x.git", ">=1.0.0")],
     );
     let manifest_a_v2 = make_manifest("a", "2.0.0", vec![]);
-    // B contributes a late Latest constraint on A to force restart to v2.
     let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
 
     let mut provider = MockProvider::new();
@@ -603,14 +579,12 @@ fn restart_fresh_context_selects_new_transitive_dependency_items() {
     write_minimal_package_marker(&tree_y);
     write_agent(&tree_y, "y-agent", &[]);
 
-    // A@v1 has no deps; A@v2 introduces Y.
     let manifest_a_v1 = make_manifest("a", "1.0.0", vec![]);
     let manifest_a_v2 = make_manifest(
         "a",
         "2.0.0",
         vec![("y", "https://example.com/y.git", ">=1.0.0")],
     );
-    // Late Latest from B forces A to v2.
     let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
 
     let mut provider = MockProvider::new();
@@ -787,7 +761,6 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
-    // SourceId stores the canonical URL (no protocol, no .git suffix)
     assert_eq!(
         dep_node.source_id,
         SourceId::git_with_subpath(

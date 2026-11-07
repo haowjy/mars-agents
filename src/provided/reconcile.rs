@@ -10,7 +10,7 @@
 //! are one call to [`assess`], the second under the lock so another run's finished work is seen.
 //!
 //! Crash safety needs no journal: the record always covers every directory this run may write,
-//! each directory install is atomic, and the next run replans from the files on disk. A crash
+//! installs stage complete trees, and the next run replans from the files on disk. A crash
 //! anywhere after the pre-record leaves `digest = "pending"`, which the next run can never read
 //! as current, so a skill the host dropped meanwhile is still on record and still removed.
 
@@ -28,13 +28,11 @@ use super::lock::{PENDING_DIGEST, ProvidedLock, ProviderRecord};
 use super::spec::ProvideSpec;
 use super::{ProvideReport, Status};
 
-/// Install one provider's skills into `root`'s canonical store.
 pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, MarsError> {
     let spec = ProvideSpec::parse(raw_spec)?;
     let (entries, mut warnings) = entries::discover(&spec)?;
     let skills_dir = root.join(".mars").join("skills");
 
-    // Step 2: the fast path runs before the lock.
     if sync_pending(root) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
@@ -50,13 +48,11 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
         }
     }
 
-    // Step 3: never wait. A holder means someone else is already writing `.mars/`.
     let lock_path = root.join(".mars").join("sync.lock");
     let Some(_sync_lock) = FileLock::try_acquire(&lock_path)? else {
         return Ok(ProvideReport::without_record(Status::Busy, &spec, warnings));
     };
 
-    // Step 4: read ownership under the lock; another run may have finished in between.
     if sync_pending(root) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
@@ -71,17 +67,12 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     }
     let mut assessed = assess(root, &spec)?;
     warnings.extend(assessed.warning.take());
-    // This pass is about to apply, so it always plans; the unlocked pass skipped the hash only when
-    // the record was not this source's.
     let plan = plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?;
-    // A plan that writes nothing leaves both the record and the disk as they are, so a lingering
-    // shadow or collision does not rewrite `provided.lock` on every launch.
     if plan.writes_nothing(&entries, &assessed.previous, &spec) {
         return Ok(current_report(&spec, &assessed.previous, &plan, warnings));
     }
 
-    // Step 6: record every directory this run may write before writing any of them. `recorded` is
-    // the old record plus everything about to be written: replaces and keeps are already recorded.
+    // Record planned writes first so a crash retains authority to remove them.
     let mut pre_record: BTreeSet<String> = assessed.previous.skills.iter().cloned().collect();
     pre_record.extend(plan.recorded(&entries));
     assessed.record.set_provider(
@@ -94,7 +85,6 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     );
     assessed.record.save(root)?;
 
-    // Step 7: whole-directory installs, then removals of names no package claims.
     for index in plan.installs.iter().chain(&plan.replaces) {
         let skill = &entries.skills[*index];
         crate::fs::atomic_install_dir(&skill.dir, &skills_dir.join(&skill.name))?;
@@ -103,7 +93,6 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
         crate::platform::fs::safe_remove(&skills_dir.join(name))?;
     }
 
-    // Step 8.
     let skills = plan.recorded(&entries);
     assessed.record.set_provider(
         &spec.provider,
@@ -130,17 +119,12 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     })
 }
 
-/// One pass over the record and `mars.lock`: the record's previous entry for this provider is all
-/// a run needs to decide whether it is up to date, and to apply if it is not.
 struct Assessed {
     record: ProvidedLock,
     previous: ProviderRecord,
-    /// The writer's warning for a corrupt record this pass starts from empty.
     warning: Option<String>,
 }
 
-/// Read the record and this provider's previous entry.
-///
 /// The unlocked pass discards `warning`: a run that writes nothing prints nothing (JSON keeps it
 /// on the applied run that reports it).
 fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
@@ -156,8 +140,6 @@ fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
     })
 }
 
-/// The record was written for exactly this source: same version, same digest.
-///
 /// [`PENDING_DIGEST`] never equals a computed digest, so a record left by a crashed run always
 /// replans instead of being mistaken for current.
 fn matches_source(
@@ -168,7 +150,6 @@ fn matches_source(
     previous.version == spec.version && previous.digest == entries.digest
 }
 
-/// What each skill's state on disk calls for, against `mars.lock`.
 fn plan_against_disk(
     root: &Path,
     entries: &ProvidedEntries,
@@ -205,25 +186,20 @@ fn claimed(claims: &LockIndex, name: &str) -> bool {
     )
 }
 
-/// What to do with each provided skill, by the state of its destination.
-///
 /// Every decision here is a name Mars either owns or does not; nothing in the cycle deletes a
 /// file Mars did not create, which is why an unrecorded directory is reported, never replaced.
 /// Both the fast path and the planner read this one plan, so their answers cannot drift.
 #[derive(Default)]
 struct Plan {
-    /// Indexes into [`ProvidedEntries::skills`].
     installs: Vec<usize>,
     replaces: Vec<usize>,
     adopts: Vec<usize>,
     keeps: Vec<usize>,
-    /// Recorded names that leave the record and whose directories this run deletes.
     removals: Vec<String>,
     shadowed: Vec<String>,
     collisions: Vec<String>,
 }
 
-/// The names at `indexes`, in the order the planner placed them.
 fn names(entries: &ProvidedEntries, indexes: impl Iterator<Item = usize>) -> Vec<String> {
     indexes
         .map(|index| entries.skills[index].name.clone())
@@ -231,10 +207,6 @@ fn names(entries: &ProvidedEntries, indexes: impl Iterator<Item = usize>) -> Vec
 }
 
 impl Plan {
-    /// True when applying this plan would write neither `.mars/skills/` nor `provided.lock`: no
-    /// install, replace, adopt or removal, and the record it would leave equals the old one.
-    ///
-    /// This is the whole `up-to-date` condition on both paths.
     fn writes_nothing(
         &self,
         entries: &ProvidedEntries,
@@ -253,7 +225,6 @@ impl Plan {
             && self.recorded(entries) == recorded
     }
 
-    /// The names this provider's record lists after applying the plan.
     fn recorded(&self, entries: &ProvidedEntries) -> Vec<String> {
         let mut names = names(
             entries,

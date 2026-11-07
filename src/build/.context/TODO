@@ -1,7 +1,5 @@
-# Plugin build TODO
+# Plugin build follow-ups
 
-- Normalize line endings before comparing checkout bytes with sentinel hashes;
-  keep `.bat` and `.cmd` byte-faithful.
-- Plugin input fingerprints include gitignored files inside skill directories,
-  so a clean clone can disagree with the sentinel. Define an exclusion policy
-  or warn before adding a clean-clone freshness check.
+- Apply plugin line-ending normalization to the hand-edit check before comparing checkout bytes with sentinel hashes; keep `.bat` and `.cmd` byte-faithful.
+- Move sentinel serialization and writing from `src/build/plugin/output.rs` into `plugin_metadata` so one owner controls its format.
+- Define an exclusion policy or warn for author-gitignored files in skill directories: fingerprinting and shipping them can make a clean clone disagree with the sentinel.

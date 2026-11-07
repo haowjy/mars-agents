@@ -1,6 +1,4 @@
-# Compiler TODO
+# Compiler follow-ups
 
-- Decide whether dependency `exclude` filters MCP server names; currently the
-  filter still selects every server from that source.
-- Plan native-agent emissions once for reconciliation and compilation so
-  their destination and routing decisions cannot drift.
+- Decide whether dependency `exclude` filters should apply to MCP server names; they currently select every server.
+- Plan native-agent destinations once for reconciliation and compilation so their rules cannot drift.

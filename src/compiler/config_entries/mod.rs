@@ -26,15 +26,12 @@ use render::{RenderedHooks, lower_merge_outputs};
 pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
-    /// Generated hook files whose bytes this run wrote, as `(target_root, dest_path)`.
     pub rewritten_outputs: Vec<(String, String)>,
     /// MCP config files this run wrote or deleted, as `(target_root, file path)`.
     pub mcp_files_changed: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
-/// Lower the selected MCP servers for one target.
-///
 /// The caller owns eligibility checks, including whether an installed MCP
 /// directory is current, and supplies each item's directory token with it: the
 /// replacement for `${MARS_MCP_DIR}` in a server's command and arguments.
@@ -47,19 +44,6 @@ pub(crate) fn lower_mcp_servers(mcp: &[(String, &ParsedMcpItem)]) -> Vec<McpServ
         .collect()
 }
 
-/// Post-target-sync config-entry compilation: MCP servers and hooks.
-///
-/// MCP servers and hooks come from the target build's filter- and
-/// collision-resolved selection.
-///
-/// Then:
-/// 1. Run env-ref preflight (warn on missing vars)
-/// 2. Detect per-target-root MCP name collisions
-/// 3. Order hooks deterministically
-/// 4. For each target root, lower items; hooks are removed then appended via the
-///    adapter, MCP servers are reconciled in one pass per target file
-///
-/// All errors are non-fatal — emitted as diagnostics and compilation continues.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_config_entries(
     ctx: &MarsContext,
@@ -95,7 +79,6 @@ pub(crate) fn compile_config_entries(
         diag.warn_advisory("mcp-env", format!("MCP env check failed: {e}"));
     }
 
-    // Get the target registry.
     let registry = TargetRegistry::new();
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
@@ -138,7 +121,6 @@ pub(crate) fn compile_config_entries(
             .collect::<Vec<_>>();
         let mcp_servers = lower_mcp_servers(&mcp_entries);
 
-        // Preflight rendered every selected hook; place each by its target's placement.
         let mut merge_outputs = Vec::new();
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
@@ -157,7 +139,6 @@ pub(crate) fn compile_config_entries(
             }
         }
 
-        // A kept hook (see `sync::target::KeptHook`) stays as the last lock recorded it.
         let mut kept_records = BTreeMap::new();
         let mut kept_entries = Vec::new();
         for kept in applied.planned.targeted.target.kept_hooks() {
@@ -321,8 +302,6 @@ pub(crate) fn compile_config_entries(
                 );
             }
         }
-        // Preview the generated hook files a real sync would write: a missing file or one
-        // whose bytes differ from what would be rendered.
         let mut rewritten_outputs: Vec<(String, String)> = pending_file_writes
             .iter()
             .flat_map(|(target_root, files)| {
@@ -381,8 +360,6 @@ pub(crate) fn compile_config_entries(
                 diag,
             );
 
-    // File-mode native hooks are ordinary target outputs. Remove only exact paths
-    // owned by the old lock and no longer desired.
     for (target_root, paths) in file_hook_output_preserve_paths(old_lock) {
         for dest_path in paths {
             let pair = (target_root.clone(), dest_path.clone());
@@ -447,10 +424,8 @@ pub(crate) fn compile_config_entries(
     compiled
 }
 
-/// Per trust-gated target root: its hook file's display path and handler positions.
 type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;
 
-/// The handler positions of each managed target whose harness gates hooks on trust.
 fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots {
     target_roots
         .iter()
@@ -466,7 +441,6 @@ fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots
         .collect()
 }
 
-/// Say which hooks the harness will skip until the user trusts them again (D10).
 fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut DiagnosticCollector) {
     for (root, (file, positions)) in after {
         let Some((_, previous)) = before.get(root) else {
@@ -487,7 +461,6 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
     }
 }
 
-/// Remove the hook entries `operation` names. Shared by sync and `mars unlink`.
 pub(crate) fn remove_hooks(
     operation: RemovalOperation<'_>,
     project_root: &Path,
@@ -506,7 +479,6 @@ pub(crate) fn remove_hooks(
             |error| RemovalReport::failed(error, removal.prior_records.clone()),
             |()| RemovalReport::confirmed(),
         ),
-        // A file target records no merge entries.
         None => RemovalReport::confirmed(),
     };
     report.context(format!(
@@ -514,9 +486,6 @@ pub(crate) fn remove_hooks(
     ))
 }
 
-/// Report the stale entries a sync or `mars unlink` took off the books: the
-/// hooks the retention plan removed and the MCP servers `reconcile_mcp` did,
-/// as one line per target.
 pub(crate) fn report_removed(
     hooks: &BTreeMap<String, Vec<String>>,
     mcp: &BTreeMap<String, Vec<String>>,
@@ -594,8 +563,6 @@ fn reconcile_all_mcp(
     out
 }
 
-/// Reconcile `target_root`'s MCP file with `desired`. Shared by sync and
-/// `mars unlink` (`desired` empty).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile_mcp(
     registry: &TargetRegistry,
@@ -629,7 +596,6 @@ pub(crate) fn reconcile_mcp(
             changed: false,
         };
     };
-    // A target that takes no MCP servers has no file to hold a record.
     let Some(file) = adapter.mcp_file() else {
         return mcp_file::Reconciled {
             records: BTreeMap::new(),
@@ -778,18 +744,14 @@ fn emits_installed_copy(
     installed
 }
 
-/// The hook config file a merge target appends entries to; `None` for a file target and for
-/// a root with no hook mechanism.
 fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets::MergeFile> {
     mars_schema::hooks::targets::target(target_root)?.merge_file()
 }
 
-/// The path target sync installs `dir`'s copy at.
 fn installed_path(ctx: &MarsContext, dir: &PackageDir) -> PathBuf {
     ctx.project_root.join(dir.target()).join(dir.native())
 }
 
-/// The `${MARS_HOOK_DIR}` or `${MARS_MCP_DIR}` replacement for a native entry.
 fn installed_token(ctx: &MarsContext, dir: &PackageDir) -> String {
     installed_path(ctx, dir)
         .to_string_lossy()

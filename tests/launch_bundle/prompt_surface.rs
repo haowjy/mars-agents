@@ -493,8 +493,6 @@ Review code changes."#;
         .as_str()
         .expect("system instruction should be string");
 
-    // Skills are sorted by type priority (principle first, then guardrail, then reference)
-    // but without wrapper headings — each skill keeps its own `# Skill:` heading.
     let principle_index = system_instruction
         .find("# Skill: principle_a")
         .expect("system instruction should include principle skill");
@@ -508,12 +506,10 @@ Review code changes."#;
         .find("# Report")
         .expect("system instruction should include report block");
 
-    // Order: principle -> guardrail -> reference -> report
     assert!(principle_index < guardrail_index);
     assert!(guardrail_index < reference_a_index);
     assert!(reference_a_index < report_index);
 
-    // No principle bookend after report
     let after_report = &system_instruction[(report_index + "# Report".len())..];
     assert!(
         !after_report.contains("Principle body."),
@@ -649,7 +645,6 @@ Review code changes."#;
         .as_str()
         .expect("system instruction should be string");
 
-    // Assert structure (headings, spawn format, report contract), not prose copy.
     assert!(system_instruction.contains("# Agent Profile"));
     assert!(system_instruction.contains("Review code changes."));
     assert!(system_instruction.contains("# Skill: principle_a"));

@@ -9,7 +9,6 @@ use mars_schema::plugin_metadata::{PluginSentinel, SENTINEL_FILE};
 use super::spec::{PluginHarnessSpec, harness_specs, tree_for_root_file};
 use super::{configured_output_path, plugin_inputs_hash};
 
-/// Offline state of a configured plugin build and the repo-root files it owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginOutputState {
     pub directory: PluginDirectoryState,
@@ -45,7 +44,6 @@ pub enum PluginDirectoryState {
 }
 
 impl PluginDirectoryState {
-    /// A user-facing finding, or `None` when the directory is unchanged.
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Missing { path } => Some(format!(
@@ -76,7 +74,6 @@ pub enum PluginInputsState {
 }
 
 impl PluginInputsState {
-    /// A user-facing finding, or `None` when the input fingerprint is current.
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Current => None,
@@ -97,7 +94,6 @@ pub enum PluginBuilderState {
 }
 
 impl PluginBuilderState {
-    /// A user-facing finding, or `None` when the running Mars built the output.
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Current => None,
@@ -120,7 +116,6 @@ pub enum PluginVersionState {
 }
 
 impl PluginVersionState {
-    /// A user-facing finding, or `None` when the package and output versions agree.
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Current => None,
@@ -136,7 +131,6 @@ impl PluginVersionState {
     }
 }
 
-/// Ownership state for one package-relative generated root file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginRootFileState {
     Absent {
@@ -147,9 +141,7 @@ pub enum PluginRootFileState {
         path: PathBuf,
         recorded_hash: String,
     },
-    /// The bytes on disk are the previous build's output: publication died
-    /// between replacing the tree and rewriting this file, or a checkout
-    /// restored an older build. The build may finish the job.
+    /// Previous-build bytes remain owned after an interrupted publication or checkout.
     PreviousBuild {
         path: PathBuf,
         recorded_hash: String,
@@ -174,11 +166,7 @@ impl PluginRootFileState {
         }
     }
 
-    /// Hash of the Mars-owned bytes this inspection found on disk, if any.
-    ///
-    /// Today's output and the previous build's output are both Mars's own
-    /// bytes, so the build may replace or delete them, and a publication
-    /// records them as the bytes it replaces.
+    /// Current and previous build bytes are both Mars-owned.
     pub(super) fn disk_output_hash(&self) -> Option<&str> {
         match self {
             Self::RecordedUnchanged { recorded_hash, .. }
@@ -187,11 +175,6 @@ impl PluginRootFileState {
         }
     }
 
-    /// Whether Mars may replace this path with `bytes`.
-    ///
-    /// An absent path, a path still matching its record, and one still holding
-    /// the previous build's output are owned. A changed or unrecorded path is
-    /// accepted only when publishing would be byte-identical.
     pub(crate) fn allows_write(
         &self,
         package_root: &Path,
@@ -211,7 +194,6 @@ impl PluginRootFileState {
         })
     }
 
-    /// Whether Mars may delete this path when a harness is removed.
     pub(crate) fn allows_delete(&self, package_root: &Path) -> Result<bool, MarsError> {
         let current = root_file_hash(package_root, self.path())?;
         Ok(match current {
@@ -237,7 +219,6 @@ impl PluginRootFileState {
         }
     }
 
-    /// A user-facing finding, or `None` when the file is absent or unchanged.
     pub fn message(&self) -> Option<String> {
         match self {
             Self::Absent { .. } | Self::RecordedUnchanged { .. } => None,
@@ -258,7 +239,6 @@ impl PluginRootFileState {
     }
 }
 
-/// Inspect a configured plugin output without resolving dependencies.
 pub fn inspect(package_root: &Path) -> Result<PluginOutputState, MarsError> {
     let package_root = dunce::canonicalize(package_root).map_err(|source| MarsError::Io {
         operation: "resolve plugin package root".to_string(),
@@ -419,10 +399,7 @@ fn inspect_root_files(
         .map(|path| root_file_state(package_root, &path, recorded, previous))
         .collect::<Result<_, _>>()?;
 
-    // A path only the previous build recorded is one this build retired, or one
-    // whose write died. It stays in play only while its bytes are still that
-    // build's output: a user's own file at a retired path is not Mars's to
-    // touch or refuse, so a mismatch drops the path entirely.
+    // A retired path remains owned only while it holds previous-build bytes.
     if let Some(previous) = previous {
         for (path, previous_hash) in previous {
             if states.iter().any(|state| state.path() == Path::new(path)) {
@@ -462,10 +439,7 @@ fn root_file_state(
                 recorded_hash: hash,
             }
         }
-        // `previous` covers a publication that swapped the tree and sentinel
-        // but died before rewriting this root file, and a checkout that
-        // restored an older build: the bytes are Mars output either way, so the
-        // build may finish the job instead of refusing them as a hand edit.
+        // A tree swap can leave owned previous-build bytes before the root rewrite.
         RootPathState::Regular(hash) if recorded_hash(previous, path) == Some(hash.as_str()) => {
             PluginRootFileState::PreviousBuild {
                 path: relative,

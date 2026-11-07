@@ -65,7 +65,6 @@ impl ValidateDiagnostic {
     }
 }
 
-/// Run `mars validate`.
 pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
@@ -91,23 +90,18 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
             Err(err) => return Err(err),
         };
 
-    // Run the pipeline in dry-run mode (no writes).
-    // ValidationWarnings are included in report.diagnostics by finalize().
     let report = crate::sync::execute_validation(ctx, &request)?;
 
-    // Run compatibility preflight against the binary version and project setting.
     let binary_version = env!("CARGO_PKG_VERSION");
     let mut all_diagnostics: Vec<Diagnostic> = report.diagnostics.clone();
     if let Some(compat_diag) =
         crate::diagnostic::compatibility_preflight(binary_version, min_required.as_deref())
     {
-        // Compatibility errors are prepended so they appear first.
         all_diagnostics.insert(0, compat_diag);
     }
 
     all_diagnostics.extend(unknown_settings);
 
-    // Compute effective counts (--strict escalates warnings to errors).
     let error_count = all_diagnostics
         .iter()
         .filter(|d| effective_level(d.level, args.strict) == DiagnosticLevel::Error)
@@ -164,7 +158,6 @@ fn print_text_report(diagnostics: &[Diagnostic], strict: bool) {
     }
 }
 
-/// When `--strict` is active, escalate Warning to Error.
 fn effective_level(level: DiagnosticLevel, strict: bool) -> DiagnosticLevel {
     if strict && level == DiagnosticLevel::Warning {
         DiagnosticLevel::Error

@@ -1,9 +1,7 @@
-# Source discovery
+# Discovery
 
-Hidden directories are excluded from the convention walk so generated harness
-outputs and control directories do not become package content. A hidden foreign
-layout remains importable when explicitly selected as the dependency subpath.
-Other configured non-hidden output trees remain discoverable.
+`mars-schema` prepares agents and skills; binary discovery adds hooks and bootstrap documents. Do not introduce another agent or skill tree walk here.
 
-Hooks and bootstrap documents with the same `(kind, name)` collide within one
-source; there is no silent shadowing.
+Hooks are direct children of the package-root `hooks/`; bootstrap discovery uses the schema's bounded walk and selects the shallowest layer containing bootstrap documents. Duplicate names of the same discovered kind fail rather than silently shadowing each other.
+
+The walk excludes hidden directories and generated plugin trees so local execution surfaces cannot become package inputs. A foreign hidden layout remains importable by explicitly rooting a dependency at it. The configured plugin output directory is excluded even before its sentinel exists. `.mars-src` definitions override matching current-package definitions before staging.

@@ -215,8 +215,6 @@ pub(crate) struct PreparedRootedSource {
     pub hook_surface: crate::staging::HookSurfaceState,
 }
 
-/// Read one dependency exactly once without materializing it: `normalize` turns whatever the
-/// dependency is (a Mars package, a Claude plugin, a skill tree) into one schema v1 package.
 pub(crate) fn prepare_rooted(
     source_name: &crate::types::SourceName,
     rooted: crate::resolve::RootedSourceRef,
@@ -370,7 +368,6 @@ pub(crate) fn prepare_authored_for_migration(
     reported(root, source, prepared, diag)
 }
 
-/// `prepared` reported, or the error the tree's own reads hit.
 fn reported(
     root: &Path,
     source: DiskTreeSource,
@@ -422,11 +419,8 @@ pub(crate) fn prepare_project(
     Ok((prepared, manifest))
 }
 
-/// What a report is about, as its one-line summaries name it.
 pub(crate) enum Subject<'a> {
-    /// A package, named by its manifest; `mars migrate` runs in its repository.
     Package(&'a str),
-    /// The project's own `.mars-src` content.
     AuthoredSource,
 }
 
@@ -497,7 +491,6 @@ pub(crate) fn report_diagnostics(
     }
 }
 
-/// A project's own source file, by its real path.
 pub(crate) fn source_label(root: &Path) -> impl Fn(&str) -> String + '_ {
     move |relative| format!("source `{}`", root.join(relative).display())
 }
@@ -514,7 +507,6 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
         .to_string()
 }
 
-/// Prepare a real on-disk tree for graph fixtures, with no dependency entry (so no dialect hint).
 #[cfg(test)]
 pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<Prepared> {
     let config = crate::config::EffectiveConfig {

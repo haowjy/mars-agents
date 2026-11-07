@@ -42,7 +42,6 @@ fn handler_timeout_and_on_failure_fail_the_hook_for_both_origins() {
         let local = read(&bad(field), "h", Origin::Local);
         assert!(local.def.is_none(), "{field}");
         assert_eq!(local.diagnostics[0].code, "hook.handler", "{field}");
-        // A dependency's hook fails whole too, so the sync keeps its last good install.
         let dep = read(&bad(field), "h", Origin::Dependency);
         assert!(dep.def.is_none(), "{field}");
         assert_eq!(dep.diagnostics[0].code, "hook.handler", "{field}");
@@ -75,7 +74,6 @@ fn tokens() -> Tokens<'static> {
     }
 }
 
-/// A hook with one target table per `(root, unchecked)`, and `extra` top-level text.
 fn def_with(extra: &str, tables: &[(&str, bool)]) -> HookDef {
     let mut text = format!("{extra}\n");
     for (root, unchecked) in tables {
@@ -127,7 +125,6 @@ fn event_tables_match_supported_command_hook_targets() {
         assert!(targets::target(root).unwrap().is_file());
     }
     assert!(targets::target(".agents").is_none());
-    // Every Codex event is a Claude event, so a Claude-keyed table renders on both.
     assert!(
         codex
             .iter()
@@ -217,7 +214,6 @@ fn merge_refuses_unknown_events_unless_unchecked() {
     let loose = def_with("", &[(".codex", true)]);
     let merged = output(&loose, ".codex", Some(text), Origin::Local).unwrap();
     assert_eq!(merged.unchecked_events, ["Bogus"]);
-    // A dependency's unknown event is skipped; the project's is the error above.
     let skipped = output(&strict, ".codex", Some(text), Origin::Dependency).unwrap();
     assert_eq!(skipped.skipped_events, ["Bogus"]);
     assert!(skipped.events.is_empty());
@@ -230,7 +226,6 @@ fn merge_refuses_non_objects_and_non_arrays() {
     assert!(run("[]").is_err());
     assert!(run("nope").is_err());
     assert!(run(r#"{"Stop":{}}"#).is_err());
-    // A wrapper with another key is an event table, so `hooks` is an unknown event.
     assert!(run(r#"{"hooks":{},"Stop":[]}"#).is_err());
 }
 
@@ -302,7 +297,6 @@ fn a_native_hook_still_installs_on_a_skipped_target() {
     let managed = [".codex".to_string()];
     assert_eq!(def.select(&managed), [".codex"]);
     let out = output(&def, ".codex", Some(r#"{"Stop":[]}"#), Origin::Local).unwrap();
-    // Skipped: no generated PreToolUse. The native hook's own event is all there is.
     assert_eq!(out.events.keys().collect::<Vec<_>>(), ["Stop"]);
 }
 
@@ -315,11 +309,9 @@ fn a_native_hook_replaces_only_the_events_it_declares() {
     .unwrap();
     let native_hook = r#"{"PreToolUse":[],"Stop":[{"hooks":[]}]}"#;
     let out = output(&def, ".codex", Some(native_hook), Origin::Local).unwrap();
-    // The empty array is kept, so the caller sees the event turned off.
     assert_eq!(out.events["PreToolUse"], Vec::<OrderedValue>::new());
     assert_eq!(out.overrides, ["PreToolUse"]);
     assert!(out.events.contains_key("Stop"));
-    // The override check also needs a declared event: `Stop` is not in `[hooks]`.
     let untouched = output(&def, ".claude", None, Origin::Local).unwrap();
     assert_eq!(untouched.events.len(), 2);
     assert!(untouched.overrides.is_empty());
@@ -330,7 +322,6 @@ fn hooks_need_explicit_native_hook_names() {
     let got = read_local(&format!("{GUARD}\n[targets.\".codex\"]\n"));
     assert!(got.def.is_none());
     assert!(message(&got).contains("must name its `native-hook`"));
-    // Without `[hooks]` an empty table keeps today's meaning.
     assert!(read_local("[targets.\".codex\"]\n").def.is_some());
 }
 
@@ -361,7 +352,6 @@ fn unknown_events_are_strict_for_the_project_and_skipped_for_a_dependency() {
     assert!(!def.portable().unwrap().declares("FutureEvent"));
     assert!(def.portable().unwrap().declares("PreToolUse"));
 
-    // `unchecked = true` keeps it: Claude renders it, Codex reports it.
     let def = read_local(&format!("unchecked = true\n{text}"))
         .def
         .unwrap();
@@ -464,31 +454,35 @@ fn an_empty_file_target_table_needs_a_native_hook_for_both_origins() {
 }
 
 #[test]
-fn fragment_is_a_deprecated_alias_of_native_hook() {
-    let got = read_local("[targets.\".codex\"]\nfragment = \"old.json\"\n");
-    assert_eq!(
-        got.def
-            .as_ref()
-            .unwrap()
-            .native_hook(".codex")
-            .unwrap()
-            .file,
-        "old.json"
-    );
-    assert_eq!(got.diagnostics.len(), 1);
-    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
-    assert_eq!(got.diagnostics[0].severity, Severity::Warning);
-    assert!(message(&got).contains(".codex") && message(&got).contains("native-hook"));
-    // A dependency's hook warns the same way and still reads.
-    let got = read_dependency("[targets.\".codex\"]\nfragment = \"old.json\"\n");
-    assert!(got.def.is_some());
-    assert_eq!(got.diagnostics[0].code, "hook.fragment-deprecated");
+fn fragment_was_removed_for_both_origins() {
+    for (text, fix) in [
+        (
+            "[targets.\".codex\"]\nfragment = \"old.json\"\n",
+            "use `native-hook`",
+        ),
+        (
+            "[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n",
+            "delete it, `native-hook` is already set",
+        ),
+    ] {
+        for got in [read_local(text), read_dependency(text)] {
+            assert!(got.def.is_none());
+            assert_eq!(got.diagnostics.len(), 1);
+            assert_eq!(got.diagnostics[0].code, "field.removed");
+            assert_eq!(got.diagnostics[0].severity, Severity::Error);
+            assert_eq!(
+                message(&got),
+                format!("target `.codex`: `fragment` was removed in 0.28; {fix}")
+            );
+        }
+    }
 }
 
 #[test]
-fn native_hook_and_fragment_together_are_an_error() {
-    let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\nfragment = \"b.json\"\n");
-    assert!(got.def.is_none());
-    assert_eq!(got.diagnostics[0].code, "hook.native-hook-conflict");
-    assert!(message(&got).contains("keep one of `native-hook` or `fragment`"));
+fn native_hook_names_the_file_in_a_merge_target() {
+    let got = read_local("[targets.\".codex\"]\nnative-hook = \"a.json\"\n");
+    assert_eq!(
+        got.def.unwrap().native_hook(".codex").unwrap().file,
+        "a.json"
+    );
 }

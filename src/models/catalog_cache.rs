@@ -241,8 +241,6 @@ enum RefreshClaimDecision {
     },
 }
 
-/// Cohesive refresh context: policy and provider scope travel together.
-/// Snapshot reads/writes, claim lifecycle and worker dispatch are owned here.
 struct CatalogCache<'a> {
     mars_dir: &'a Path,
     ttl_hours: u32,
@@ -520,7 +518,6 @@ impl<'a> CatalogCache<'a> {
         let ttl_hours = self.ttl_hours;
         std::fs::create_dir_all(mars_dir)?;
 
-        // D1: apply MARS_OFFLINE coercion exactly once here.
         let effective_mode = if is_mars_offline() {
             RefreshMode::Offline
         } else {
@@ -646,7 +643,6 @@ fn offline_unavailable_reason(requested_mode: RefreshMode) -> String {
     }
 }
 
-/// Read models cache from `.mars/models-cache.json`.
 pub fn read_cache(mars_dir: &Path) -> Result<ModelsCache, MarsError> {
     read_snapshot(mars_dir).map(|snapshot| snapshot.cache)
 }

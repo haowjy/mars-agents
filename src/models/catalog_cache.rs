@@ -520,7 +520,7 @@ impl<'a> CatalogCache<'a> {
         let ttl_hours = self.ttl_hours;
         std::fs::create_dir_all(mars_dir)?;
 
-        // D1: apply MARS_OFFLINE coercion exactly once here.
+        // apply MARS_OFFLINE coercion exactly once here.
         let effective_mode = if is_mars_offline() {
             RefreshMode::Offline
         } else {

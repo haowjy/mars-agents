@@ -18,10 +18,8 @@ pub fn read(
     diag: &mut DiagnosticCollector,
     enforce_preparation_gate: bool,
 ) -> Result<ReaderIr, MarsError> {
-    // Phase 1: acquire sync lock, load and mutate config.
     let loaded = load_config(ctx, request, diag)?;
 
-    // Phase 2: resolve dependency graph + model aliases.
     let mut resolved = resolve_graph(ctx, loaded, request, diag)?;
 
     // Local package discovery — produces source paths only (no DestPath).

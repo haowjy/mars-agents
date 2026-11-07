@@ -1,4 +1,4 @@
-//! Phase 7: write the lock and build the `SyncReport`.
+//! Write the lock and build the `SyncReport`.
 
 use std::path::Path;
 
@@ -11,9 +11,7 @@ use crate::sync::kept_hooks;
 use crate::sync::{SyncReport, SyncRequest, SyncedState, recovery};
 use crate::types::MarsContext;
 
-/// Phase 7: Write lock file, construct SyncReport.
-///
-/// Lock is written regardless of target sync outcome (D21).
+/// Lock is written regardless of target sync outcome.
 pub(crate) fn finalize(
     ctx: &MarsContext,
     state: SyncedState,
@@ -33,7 +31,7 @@ pub(crate) fn finalize(
         .map(|out| (out.target_root.clone(), out.dest_path.clone()))
         .collect();
 
-    // Write lock file (D21 — regardless of target sync outcome).
+    // Write lock file (regardless of target sync outcome).
     if !request.options.dry_run {
         let dep_models = crate::models::declaration_ordered_dep_models(
             graph,

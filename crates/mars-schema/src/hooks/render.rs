@@ -1,5 +1,5 @@
 //! A portable hook rendered for one target: finished entries per event, and what was left
-//! out. Renderers emit only what the target's parser accepts (D17); they never pass Claude's
+//! out. Renderers emit only what the target's parser accepts; they never pass Claude's
 //! JSON through blindly.
 
 use std::collections::BTreeMap;

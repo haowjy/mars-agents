@@ -393,7 +393,7 @@ pub fn load_plugin_output(
 }
 
 /// Say a hook's native hook could not be loaded for a plugin build: an error for the project's
-/// own hook, a warning for a dependency's, which never fails the build (D19).
+/// own hook, a warning for a dependency's, which never fails the build.
 pub(crate) fn report_native_hook(
     item: &ParsedHookItem,
     error: &MarsError,
@@ -424,7 +424,7 @@ fn load<T>(
 
 /// Whether a dependency hook's native hook loads on every managed target it is installed for.
 /// `[hooks]` never fails to render, so it is left to preflight, which renders each hook once
-/// (D25); the tokens only change string values, so none are needed here.
+///; the tokens only change string values, so none are needed here.
 fn render_check(item: &ParsedHookItem, managed_targets: &[String]) -> Result<(), MarsError> {
     for root in item.def.select(managed_targets) {
         let Some(target) = hooks::targets::target(root) else {

@@ -456,8 +456,6 @@ mod tests {
         assert_eq!(checked_out, v200_commit);
     }
 
-    // ==================== is_github_host tests ====================
-
     #[test]
     fn is_github_host_accepts_supported_formats() {
         assert!(is_github_host("https://github.com/org/repo"));

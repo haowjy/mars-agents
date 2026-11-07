@@ -425,7 +425,7 @@ fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots
         .collect()
 }
 
-/// Say which hooks the harness will skip until the user trusts them again (D10).
+/// Say which hooks the harness will skip until the user trusts them again.
 fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut DiagnosticCollector) {
     for (root, (file, positions)) in after {
         let Some((_, previous)) = before.get(root) else {

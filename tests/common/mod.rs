@@ -14,7 +14,6 @@ use tempfile::tempdir;
 
 pub const API_PATH: &str = "/api.json";
 
-/// Create a local path source fixture with agents and skills.
 pub fn create_source(
     dir: &TempDir,
     name: &str,
@@ -97,7 +96,6 @@ pub fn portable_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Set up a minimal project with one local path source synced.
 pub fn setup_synced_project(
     dir: &TempDir,
     project_name: &str,

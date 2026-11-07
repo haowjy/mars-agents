@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use serde::Serialize;
 
-/// A diagnostic message from library code.
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,

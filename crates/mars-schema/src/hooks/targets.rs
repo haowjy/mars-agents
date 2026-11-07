@@ -1,4 +1,4 @@
-//! What each target root takes of a hook (D11): one [`Target`] row per root, holding where its
+//! What each target root takes of a hook: one [`Target`] row per root, holding where its
 //! hooks are placed (the merge file and its trust gate, or the file directory), the events it
 //! accepts, the harness version that table was last checked against, how `[hooks]` is
 //! rendered for it (for a TypeScript harness, its glue, limits and native hook contract), and
@@ -83,7 +83,7 @@ pub enum Placement {
 pub enum Rules {
     /// Claude takes the table as written.
     Claude,
-    /// Codex's parser: handlers and matchers it cannot run are left out (D17).
+    /// Codex's parser: handlers and matchers it cannot run are left out.
     Codex,
     /// Generated TypeScript for the harness (`hooks::typescript`).
     TypeScript(&'static Harness),
@@ -285,7 +285,7 @@ const PI_EVENTS: &[Event] = &[
 const CLAUDE_VERSION: &str = "Claude Code 2.1.312";
 
 /// What the Claude plugin tree's `hooks/hooks.json` must satisfy: Claude's events under
-/// Codex's handler rules, because Claude, Codex and Grok all read that one file (D21).
+/// Codex's handler rules, because Claude, Codex and Grok all read that one file.
 pub const PLUGIN_CLAUDE_TREE: Profile = Profile {
     events: CLAUDE_EVENTS,
     verified_against: Some(CLAUDE_VERSION),

@@ -26,10 +26,6 @@ use mars_schema::frontmatter::SkillsSpec;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
 
-// ---------------------------------------------------------------------------
-// Effective field access for target lowering
-// ---------------------------------------------------------------------------
-
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
     profile: &'a AgentProfile,
@@ -152,10 +148,6 @@ fn record_agent_invocation_lossiness(
         });
     }
 }
-
-// ---------------------------------------------------------------------------
-// Claude native artifact
-// ---------------------------------------------------------------------------
 
 /// Lower an agent profile to Claude-native markdown format.
 ///
@@ -920,10 +912,6 @@ pub fn lower_to_claude(
     )
 }
 
-// ---------------------------------------------------------------------------
-// Codex native artifact (TOML)
-// ---------------------------------------------------------------------------
-
 /// Lower an agent profile to Codex-native TOML format.
 ///
 /// Per agent-compilation-mapping.md V0 §5.4 and §10:
@@ -1076,10 +1064,6 @@ pub fn lower_to_codex(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Probe-backed markdown native artifacts
-// ---------------------------------------------------------------------------
-
 /// Lower an agent profile to OpenCode-native markdown format.
 pub fn lower_to_opencode(
     profile: &AgentProfile,
@@ -1117,10 +1101,6 @@ pub fn lower_to_cursor_with_model(
 pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel) -> LoweredOutput {
     lower_markdown_agent(HarnessId::Pi, &PI_AGENT_POLICY, profile, body, model_field)
 }
-
-// ---------------------------------------------------------------------------
-// Dispatch: lower for a given harness
-// ---------------------------------------------------------------------------
 
 /// Lower an agent to the native format for the given harness.
 ///

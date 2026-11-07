@@ -229,7 +229,7 @@ fn check_legacy_agents_directory(
     }
 }
 
-/// Check if .mars/ is properly gitignored (D29).
+/// Check if .mars/ is properly gitignored.
 ///
 /// Mars does NOT auto-edit .gitignore — it only warns via `mars doctor`.
 fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {

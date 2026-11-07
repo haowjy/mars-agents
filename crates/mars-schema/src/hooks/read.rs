@@ -1,4 +1,4 @@
-//! Reading a `hook.toml`: parse, validate by origin (D19), and build the [`HookDef`].
+//! Reading a `hook.toml`: parse, validate by origin, and build the [`HookDef`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};

@@ -1,5 +1,5 @@
 //! A dependency hook whose `hook.toml` fails validation keeps what the last sync installed
-//! (D19): the invalid hook is found in the old lock once the target state is complete, and
+//! The invalid hook is found in the old lock once the target state is complete, and
 //! `hook-invalid-kept` says what happened to it.
 
 use std::path::Path;

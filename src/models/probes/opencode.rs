@@ -121,7 +121,6 @@ fn strip_ansi(s: &str) -> String {
     result
 }
 
-/// Parse `opencode models` output into slug list.
 fn parse_models_output(stdout: &str) -> Vec<String> {
     stdout
         .lines()

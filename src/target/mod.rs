@@ -85,19 +85,11 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// return `None`.
     fn skill_variant_key(&self) -> Option<&str>;
 
-    // -----------------------------------------------------------------------
-    // Path resolution
-    // -----------------------------------------------------------------------
-
     /// Default destination path for an item of the given kind and name.
     ///
     /// Returns `None` if this target does not accept the item kind. The
     /// compiler MUST skip items for which this returns `None`.
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath>;
-
-    // -----------------------------------------------------------------------
-    // Config files
-    // -----------------------------------------------------------------------
 
     /// The file this harness reads MCP servers from and how entries render
     /// there; `None` when the target takes no MCP servers.

@@ -1219,10 +1219,6 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     Ok(0)
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Determine which layer provides an alias (consumer or dependency).
 fn determine_source(
     name: &str,

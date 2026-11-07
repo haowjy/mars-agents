@@ -449,10 +449,6 @@ const LOCK_VERSION: u32 = 3;
 /// Canonical materialization root for `.mars/` apply outcomes.
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
-// ---------------------------------------------------------------------------
-// Persisted wire formats.
-// ---------------------------------------------------------------------------
-
 /// Current wire format for Deserialize (mirrors `LockFile` but derives `Deserialize`).
 #[derive(Deserialize)]
 struct LockFileWire {
@@ -484,10 +480,6 @@ struct ConfigEntryRecordWire {
     #[serde(default)]
     emitted_json: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// Load / write
-// ---------------------------------------------------------------------------
 
 /// Load the lock file from the given root directory.
 ///
@@ -734,10 +726,6 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     })?;
     crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
 }
-
-// ---------------------------------------------------------------------------
-// Build
-// ---------------------------------------------------------------------------
 
 /// Build a new lock file from resolved graph + apply results.
 ///
@@ -1389,10 +1377,6 @@ fn remove_target_output(
     items.retain(|_, item| !item.outputs.is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 fn checksum_is_empty(checksum: &ContentHash) -> bool {
     checksum.as_ref().trim().is_empty()
 }
@@ -1432,10 +1416,6 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
 pub fn item_key(id: &ItemId) -> String {
     format!("{}/{}", id.kind, id.name)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

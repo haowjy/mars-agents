@@ -123,7 +123,7 @@ pub enum ResolutionMode {
 // Phase functions consume prior state by value (move semantics, no cloning).
 // ---------------------------------------------------------------------------
 
-/// Phase 1: Load and validate configuration under sync lock.
+/// Load and validate configuration under sync lock.
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
@@ -144,7 +144,6 @@ impl LoadedConfig {
     }
 }
 
-/// Phase 2: Resolved dependency graph.
 pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
@@ -154,26 +153,24 @@ pub(crate) struct ResolvedState {
     pub preparation: crate::platform::fs::PendingStagingGeneration,
 }
 
-/// Phase 3: Desired target state after discovery; the graph's selection already applied the filters.
+/// The graph's selection already applied the filters.
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
     pub warnings: Vec<ValidationWarning>,
 }
 
-/// Phase 4: Diff + plan ready for execution.
+/// Diff + plan ready for execution.
 pub(crate) struct PlannedState {
     pub targeted: TargetedState,
     pub plan: plan::SyncPlan,
 }
 
-/// Phase 5: Applied results.
 pub(crate) struct AppliedState {
     pub planned: PlannedState,
     pub applied: ApplyResult,
 }
 
-/// Phase 6: Target sync results.
 pub(crate) struct SyncedState {
     pub applied: AppliedState,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
@@ -229,11 +226,7 @@ pub(crate) fn execute_validation(
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
-// ---------------------------------------------------------------------------
-// Phase functions
-// ---------------------------------------------------------------------------
-
-/// Phase 1: Acquire sync lock, load config, apply mutations, merge effective config,
+/// Acquire sync lock, load config, apply mutations, merge effective config,
 /// and load the existing lock file.
 pub(crate) fn load_config(
     ctx: &MarsContext,
@@ -358,7 +351,7 @@ pub(crate) fn load_config(
     })
 }
 
-/// Phase 2: Validate upgrade targets, resolve the dependency graph.
+/// Validate upgrade targets, resolve the dependency graph.
 pub(crate) fn resolve_graph(
     ctx: &MarsContext,
     mut loaded: LoadedConfig,
@@ -460,7 +453,7 @@ pub(crate) struct BuiltTarget {
 /// `local_source` names the consumer's own package: it wins MCP name collisions
 /// silently. Sync's local package is `_self`; a plugin build's is its root package.
 ///
-/// A dependency hook whose `hook.toml` is invalid keeps what `old_lock` installed (D19); a
+/// A dependency hook whose `hook.toml` is invalid keeps what `old_lock` installed; a
 /// build with no previous install passes `None` and keeps nothing.
 pub(crate) fn build_target_state(
     graph: &crate::resolve::ResolvedGraph,
@@ -523,7 +516,7 @@ pub(crate) fn apply_target_renames(
     })
 }
 
-/// Phase 3: Build target state, handle collisions, rewrite frontmatter refs, validate.
+/// Build target state, handle collisions, rewrite frontmatter refs, validate.
 ///
 /// `local_items` are pre-discovered by the reader stage; no discovery is
 /// performed here so that dest-path assignment remains the only compiler
@@ -613,7 +606,6 @@ pub(crate) fn build_target(
     })
 }
 
-/// Phase 4: Compute diff, create plan.
 pub(crate) fn create_plan(
     ctx: &MarsContext,
     targeted: TargetedState,
@@ -673,7 +665,7 @@ pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError>
     Ok(())
 }
 
-/// Phase 5: Persist config if mutated, apply plan to .mars/ canonical store.
+/// Persist config if mutated, apply plan to .mars/ canonical store.
 pub(crate) fn apply_plan(
     ctx: &MarsContext,
     planned: PlannedState,
@@ -687,7 +679,7 @@ pub(crate) fn apply_plan(
     // Persist config/local only after validation gate and before apply.
     persist_pending_config_mutation(ctx, &planned.targeted.resolved.loaded, request)?;
 
-    // Apply plan to .mars/ canonical store (D25).
+    // Apply plan to .mars/ canonical store.
     // Content is written to .mars/agents/ and .mars/skills/, then
     // sync_targets() copies to all managed target directories.
     if !request.options.dry_run {
@@ -703,11 +695,11 @@ pub(crate) fn apply_plan(
     Ok(AppliedState { planned, applied })
 }
 
-/// Phase 6: Sync managed targets from .mars/ canonical store.
+/// Sync managed targets from .mars/ canonical store.
 ///
 /// Copies content from .mars/ to all configured target directories.
 /// Non-fatal — target sync errors are recorded as diagnostics.
-/// Lock is written regardless of target sync outcome (D21).
+/// Lock is written regardless of target sync outcome.
 pub(crate) fn sync_targets(
     ctx: &MarsContext,
     applied: AppliedState,

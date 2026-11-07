@@ -21,8 +21,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-// ========== Mock SourceProvider ==========
-
 /// Mock provider for testing the resolver without real git repos.
 pub(crate) struct MockProvider {
     /// url → sorted available versions
@@ -297,8 +295,6 @@ impl SourceFetcher for MockProvider {
         })
     }
 }
-
-// ========== Helper functions ==========
 
 fn make_config(sources: Vec<(&str, SourceSpec)>) -> EffectiveConfig {
     let mut map = IndexMap::new();

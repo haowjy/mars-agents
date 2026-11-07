@@ -7,7 +7,6 @@ use std::time::Duration;
 // DNS, redirects and body reads fit inside the 120-second refresh claim lease.
 pub(super) const CATALOG_HTTP_DEADLINE_SECS: u64 = 60;
 
-/// A single model entry in the cache.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedModel {
     pub id: String,

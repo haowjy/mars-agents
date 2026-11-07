@@ -127,7 +127,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
         "local agent in .mars/ should be a regular file copy"
     );
 
-    // External agent is also a regular file copy (D26)
+    // External agent is also a regular file copy
     assert!(
         !mars_external_agent
             .path()

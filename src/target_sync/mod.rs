@@ -58,7 +58,7 @@ pub struct TargetSyncContext<'a> {
 /// into the target directory.
 /// Cleans up orphaned items that are no longer in the apply outcomes.
 ///
-/// Target sync is non-fatal by default (D9) — errors per-target are recorded but don't
+/// Target sync is non-fatal by default — errors per-target are recorded but don't
 /// stop other targets from being synced.
 pub fn sync_managed_targets(
     project_root: &Path,
@@ -535,7 +535,7 @@ fn record_synced_output(
 
 /// Copy an item (file or directory) from .mars/ to a target directory.
 ///
-/// Follows symlinks on the source side (D26 — targets get file copies, not symlinks).
+/// Follows symlinks on the source side (targets get file copies, not symlinks).
 /// Uses shared atomic file operations.
 ///
 /// Returns `true` when bytes were written to `dest`, `false` when existing content

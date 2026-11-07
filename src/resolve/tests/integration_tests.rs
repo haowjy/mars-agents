@@ -63,8 +63,6 @@ fn apply_subpath_traversal_rejection() {
     );
 }
 
-// ========== Resolution tests ==========
-
 #[test]
 fn single_source_no_deps() {
     let dir = TempDir::new().unwrap();
@@ -940,9 +938,7 @@ fn local_path_source_resolves_transitive_path_dependencies() {
     assert!(graph.nodes.contains_key("planning"));
 }
 
-// ========== RES-006 / RES-008: apply_subpath with None subpath ==========
-
-/// RES-006 / RES-008: When no subpath is specified, checkout_root IS the
+/// When no subpath is specified, checkout_root IS the
 /// package_root and the resolver produces a RootedSourceRef where both
 /// fields point to the same directory.
 #[test]
@@ -953,9 +949,7 @@ fn apply_subpath_none_yields_checkout_as_package_root() {
     assert_eq!(rooted.package_root, dir.path());
 }
 
-// ========== RES-009: manifest reader is called with package_root ==========
-
-/// RES-009: The resolver must pass `package_root` (not checkout_root) to
+/// The resolver must pass `package_root` (not checkout_root) to
 /// the manifest reader.  We arrange a subpath dep whose checkout_root has
 /// no mars.toml but whose package_root (a subdirectory) does, then verify
 /// that the manifest is successfully discovered — proving package_root was
@@ -1031,9 +1025,7 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     assert_eq!(node.rooted_ref.checkout_root, checkout);
 }
 
-// ========== RES-005: single fetch for same URL, multiple subpaths ==========
-
-/// RES-005: Two dependencies at different subpaths of the same git URL
+/// Two dependencies at different subpaths of the same git URL
 /// must not trigger a second fetch.  In our resolver the fetch is keyed by
 /// (source name, URL) so two DISTINCT dep names pointing to the same URL
 /// but different subpaths each call fetch_git_version once — but the test
@@ -1119,9 +1111,7 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     );
 }
 
-// ========== RES-011: transitive dep with no subpath gets None identity ==========
-
-/// RES-011 contrast: a transitive dep whose manifest entry has NO subpath
+/// a transitive dep whose manifest entry has NO subpath
 /// should produce a source identity with subpath = None (not inherit from
 /// the parent).
 #[test]
@@ -1182,7 +1172,6 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     assert_eq!(dep_node.rooted_ref.checkout_root, tree_dep);
 }
 
-// ========== URL Identity Convergence Tests ==========
 //
 // These tests verify that SSH and HTTPS URL forms of the same repository
 // canonicalize to the same SourceId, preventing false-duplicate cache entries
@@ -1395,7 +1384,6 @@ fn different_host_or_path_does_not_produce_false_convergence() {
     );
 }
 
-// ========== Re-resolution order-independence tests ==========
 //
 // When a transitive dep is resolved under a partial constraint set and a later
 // intermediary adds a `Latest` constraint, the already-`Resolved` package must be

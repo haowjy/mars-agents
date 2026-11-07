@@ -1,7 +1,5 @@
 use super::*;
 
-// ========== parse_constraint tests ==========
-
 #[test]
 fn parse_none_is_latest() {
     assert!(matches!(parse_constraint(None), Constraint::Latest));
@@ -1426,12 +1424,10 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
 
-// ========== EARS R1–R15: resolver lock semantics ==========
-
-// R1: Direct dep with locked version satisfying constraint uses the locked version (lock replay).
+// Direct dep with locked version satisfying constraint uses the locked version (lock replay).
 // Relies on existing test `locked_version_preferred_when_satisfies_constraint` above.
 
-// R2: Frozen + transitive dep with unreachable locked commit → hard error.
+// Frozen + transitive dep with unreachable locked commit → hard error.
 #[test]
 fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     let dir = TempDir::new().unwrap();
@@ -1494,7 +1490,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     );
 }
 
-// R3: Transitive deps replay the consumer lock in normal sync.
+// Transitive deps replay the consumer lock in normal sync.
 #[test]
 fn r3_transitive_dep_replays_consumer_lock() {
     let dir = TempDir::new().unwrap();
@@ -1684,7 +1680,7 @@ fn transitive_locked_commit_unreachable_falls_back_in_normal_sync() {
     );
 }
 
-// R5: --frozen replays the full graph from lock, including transitive deps.
+// --frozen replays the full graph from lock, including transitive deps.
 #[test]
 fn r5_frozen_replays_transitive_from_lock() {
     let dir = TempDir::new().unwrap();
@@ -1752,27 +1748,27 @@ fn r5_frozen_replays_transitive_from_lock() {
     );
 }
 
-// R7: Direct dep without --frozen prefers locked version when constraint is satisfied.
+// Direct dep without --frozen prefers locked version when constraint is satisfied.
 // Covered by `locked_version_preferred_when_satisfies_constraint` above.
 
-// R8: `mars upgrade <source>` maximizes only the named source; others keep lock-preferred/latest-compatible behavior.
+// `mars upgrade <source>` maximizes only the named source; others keep lock-preferred/latest-compatible behavior.
 // Covered by `maximize_with_specific_targets` above.
 
-// R9: `mars upgrade` (no targets) maximizes all directs.
+// `mars upgrade` (no targets) maximizes all directs.
 // Covered by `maximize_mode_picks_newest` above.
 
-// R6: Lock records all resolved packages (direct + transitive) on first write; re-sync replays them.
+// Lock records all resolved packages (direct + transitive) on first write; re-sync replays them.
 // Covered by `upgrade_then_sync_keeps_upgraded_transitive_lock_and_content` in `tests/sync_behavior.rs`.
 
-// R10: A source listed as both direct and transitive replays the lock regardless of encounter order.
+// A source listed as both direct and transitive replays the lock regardless of encounter order.
 
-// R11: Multi-intermediary empty constraint intersection → error naming constraints and sources.
+// Multi-intermediary empty constraint intersection → error naming constraints and sources.
 // Covered by `latest_constraint_does_not_skip_sibling_semver_validation` above.
 
-// R12: RefPin overrides semver version selection.
+// RefPin overrides semver version selection.
 // Covered by `branch_ref_resolves_without_semver` above.
 
-// R13: Multiple different RefPins for the same source conflict.
+// Multiple different RefPins for the same source conflict.
 #[test]
 fn r13_multiple_refpins_conflict() {
     // Two direct deps that both depend on `shared` via different RefPin constraints.
@@ -1818,7 +1814,7 @@ fn r13_multiple_refpins_conflict() {
     );
 }
 
-// R14: Local path source — no version resolution, lock is irrelevant.
+// Local path source — no version resolution, lock is irrelevant.
 #[test]
 fn r14_local_path_source_ignores_lock() {
     let dir = TempDir::new().unwrap();
@@ -1856,7 +1852,7 @@ fn r14_local_path_source_ignores_lock() {
     );
 }
 
-// R15: Transitive constraint from a manifest validates against an already-resolved direct dep.
+// Transitive constraint from a manifest validates against an already-resolved direct dep.
 #[test]
 fn r15_transitive_constraint_validates_against_resolved_direct() {
     let dir = TempDir::new().unwrap();

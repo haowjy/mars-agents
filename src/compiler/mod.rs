@@ -89,13 +89,11 @@ fn compile_inner(
     diag: &mut DiagnosticCollector,
     enforce_diagnostic_gate: bool,
 ) -> Result<SyncReport, MarsError> {
-    // Phase 3: assign dest paths, handle collisions, rewrite frontmatter refs.
     let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
     }
-    // Phase 4: diff + plan.
     let planned = create_plan(ctx, targeted, request, diag)?;
 
     // Frozen gate: no pending changes allowed.
@@ -110,7 +108,6 @@ fn compile_inner(
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
     }
-    // Phase 5: persist config mutations, apply plan to canonical store.
     let mut applied = apply_plan(ctx, planned, request)?;
     if !request.options.dry_run {
         let pending = applied
@@ -134,7 +131,7 @@ fn compile_inner(
         }
     }
 
-    // Phase 3.2 / 3.3: Native agent surfaces — scan once; reconcile + compile after target sync.
+    // Scan native agent surfaces once; reconcile and compile after target sync.
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         effective_settings.meridian_agent_copy(),
@@ -169,7 +166,7 @@ fn compile_inner(
         });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
 
-    // Phase 6: install canonical content before emitting config that refers to it.
+    // Install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
     let old_lock = &synced.applied.planned.targeted.resolved.loaded.old_lock;
     let outcomes = &synced.applied.applied.outcomes;
@@ -238,7 +235,6 @@ fn compile_inner(
         diag,
     );
 
-    // Phase 7: write lock file, build report.
     finalize(ctx, synced, request, diag)
 }
 

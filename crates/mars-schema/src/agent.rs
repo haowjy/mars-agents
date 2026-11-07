@@ -86,10 +86,6 @@ impl LoweredField {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Field enums
-// ---------------------------------------------------------------------------
-
 /// Agent execution mode — how the agent is launched.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -236,10 +232,6 @@ impl<'de> serde::Deserialize<'de> for EffortLevel {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AgentProfile — the fully parsed frontmatter
-// ---------------------------------------------------------------------------
-
 /// Strongly-typed representation of an agent profile's frontmatter.
 ///
 /// Parsed from YAML frontmatter by [`read`].
@@ -306,9 +298,6 @@ impl AgentProfile {
             })
     }
 }
-// ---------------------------------------------------------------------------
-// Validation warnings/errors
-// ---------------------------------------------------------------------------
 
 fn push_agent_invalid(
     diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>,

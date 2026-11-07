@@ -34,10 +34,6 @@ pub use catalog_cache::{
 };
 pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
 
-// ---------------------------------------------------------------------------
-// Core types
-// ---------------------------------------------------------------------------
-
 /// A model alias — either pinned to a specific model ID or auto-resolved
 /// against the models cache at resolution time.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -325,10 +321,6 @@ impl<'de> Deserialize<'de> for ModelAlias {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Models cache
-// ---------------------------------------------------------------------------
-
 /// Provider/model slugs from the models.dev catalog for harness routing comparisons.
 pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
     cache
@@ -420,10 +412,6 @@ pub fn merged_runtime_aliases(
     }
     merged
 }
-
-// ---------------------------------------------------------------------------
-// Auto-resolve algorithm
-// ---------------------------------------------------------------------------
 
 /// Resolve an auto-resolve spec against the models cache.
 ///
@@ -743,10 +731,6 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
     m
 }
 
-// ---------------------------------------------------------------------------
-// Dependency-tree merge
-// ---------------------------------------------------------------------------
-
 /// Info about a resolved dependency's model config.
 pub struct ResolvedDepModels {
     pub source_name: String,
@@ -1031,10 +1015,6 @@ pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<St
     }
     (model_name.to_string(), Some(provider.to_ascii_lowercase()))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

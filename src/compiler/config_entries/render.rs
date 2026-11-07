@@ -205,7 +205,7 @@ pub(crate) fn preflight_config_entries(
 }
 
 /// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took (D10). The project's own hooks warn, each skip once. A dependency's
+/// was selected there, and for a hook no target took. The project's own hooks warn, each skip once. A dependency's
 /// hooks are the consumer's to accept, not fix: one summary line per sync.
 fn report_skips(
     targeted: &crate::sync::TargetedState,

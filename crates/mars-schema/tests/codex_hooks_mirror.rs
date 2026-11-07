@@ -265,7 +265,7 @@ fn every_rendered_codex_document_loads_with_no_handler_skipped() {
     assert_eq!(pre[0].hooks.len(), 2);
 }
 
-/// The Claude plugin tree's `hooks.json` is read by Codex too (D21): what `[hooks]` and a
+/// The Claude plugin tree's `hooks.json` is read by Codex too: what `[hooks]` and a
 /// Claude native hook put there must load with no handler skipped, and keep Claude's events.
 #[test]
 fn the_claude_plugin_tree_loads_in_codex_with_claude_events_kept() {

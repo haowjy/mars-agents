@@ -65,7 +65,6 @@ struct ParsedHttpUrl {
     path_segments: Vec<String>,
 }
 
-/// Parse a source specifier into a normalized structured value.
 pub fn parse(input: &str) -> Result<ParsedSourceSpec, ParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

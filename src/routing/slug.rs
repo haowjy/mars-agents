@@ -7,7 +7,6 @@ pub struct SlugParts<'a> {
     pub full: &'a str,
 }
 
-/// Parse a slug string into provider/model_id parts.
 /// Uses split_once('/') — provider is everything before first '/',
 /// model_id is everything after (may contain more '/' for nested slugs).
 /// Returns None for empty provider or empty model_id.

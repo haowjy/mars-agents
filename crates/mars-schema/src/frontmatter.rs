@@ -164,17 +164,14 @@ impl Frontmatter {
         }
     }
 
-    /// Read the `name` field if present.
     pub fn name(&self) -> Option<&str> {
         self.get("name").and_then(Value::as_str)
     }
 
-    /// Read any YAML field by key.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.yaml.get(yaml_key(key))
     }
 
-    /// Mutably read a YAML field by key.
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
         self.yaml.get_mut(yaml_key(key))
     }
@@ -189,7 +186,6 @@ impl Frontmatter {
         self.body = body;
     }
 
-    /// Whether this document contains frontmatter delimiters.
     pub fn has_frontmatter(&self) -> bool {
         self.has_frontmatter
     }
@@ -213,7 +209,6 @@ impl Frontmatter {
         self.yaml.insert(yaml_key(key), value);
     }
 
-    /// Remove a top-level frontmatter field.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.yaml.shift_remove(yaml_key(key))
     }

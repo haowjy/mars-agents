@@ -638,8 +638,8 @@ fn fingerprint_authored_file_from(
         }
     })?;
     let bytes = std::fs::read(source_path)?;
-    let normalized = std::str::from_utf8(&bytes).map_or_else(
-        |_| std::borrow::Cow::Borrowed(bytes.as_slice()),
+    let normalized = std::str::from_utf8(&bytes).map_or(
+        std::borrow::Cow::Borrowed(bytes.as_slice()),
         |content| {
             std::borrow::Cow::Owned(
                 content

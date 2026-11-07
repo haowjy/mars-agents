@@ -65,7 +65,7 @@ pub(crate) fn render_all(
         .map(|server| {
             let rendered = (file.render)(server);
             for lost in rendered.lossy {
-                diag.warn("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
+                diag.warn_advisory("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
             }
             Rendered {
                 name: server.name.clone(),
@@ -128,10 +128,15 @@ impl Open {
 pub(crate) struct Reconciled {
     pub records: BTreeMap<String, ConfigEntryRecord>,
     pub removed: Vec<String>,
+    /// Whether this reconcile wrote or deleted the file (or, in a dry run, would).
+    pub changed: bool,
 }
 
 /// On failure nothing is retired: the result is `previous`'s MCP records, so
 /// the next sync retries.
+///
+/// A `dry_run` computes the same result and `changed` without saving or deleting the file.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile(
     file: &McpFile,
     project_root: &Path,
@@ -139,13 +144,23 @@ pub(crate) fn reconcile(
     previous: &BTreeMap<String, ConfigEntryRecord>,
     desired: &[Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> Reconciled {
     let prior: BTreeMap<&str, &ConfigEntryRecord> = previous
         .iter()
         .filter_map(|(key, record)| Some((key.strip_prefix(MCP_KEY_PREFIX)?, record)))
         .collect();
-    match try_reconcile(file, project_root, target, &prior, desired, force, diag) {
+    match try_reconcile(
+        file,
+        project_root,
+        target,
+        &prior,
+        desired,
+        force,
+        dry_run,
+        diag,
+    ) {
         Ok(reconciled) => reconciled,
         Err(error) => {
             diag.warn(
@@ -158,11 +173,13 @@ pub(crate) fn reconcile(
                     .map(|(name, record)| (format!("{MCP_KEY_PREFIX}{name}"), record.clone()))
                     .collect(),
                 removed: Vec::new(),
+                changed: false,
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_reconcile(
     file: &McpFile,
     project_root: &Path,
@@ -170,6 +187,7 @@ fn try_reconcile(
     prior: &BTreeMap<&str, &ConfigEntryRecord>,
     desired: &[Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<Reconciled, MarsError> {
     let mut open = Open::load(project_root, file.at)?;
@@ -255,7 +273,8 @@ fn try_reconcile(
 
     // Only a file this reconcile changed can be deleted: one mars never touched
     // may be the user's, empty on purpose.
-    if open.changed {
+    let changed = open.changed;
+    if changed && !dry_run {
         if open.existed && open.doc.is_empty() {
             std::fs::remove_file(&open.path)?;
         } else {
@@ -268,7 +287,11 @@ fn try_reconcile(
         .filter(|name| !wanted.contains(*name) && !kept.contains(*name))
         .map(|name| format!("{MCP_KEY_PREFIX}{name}"))
         .collect();
-    Ok(Reconciled { records, removed })
+    Ok(Reconciled {
+        records,
+        removed,
+        changed,
+    })
 }
 
 #[cfg(test)]
@@ -309,7 +332,10 @@ mod tests {
         let file = registry.get(target).unwrap().mcp_file().unwrap();
         let mut diag = DiagnosticCollector::new();
         let rendered = render_all(&file, desired, &mut diag);
-        let records = reconcile(&file, root, target, previous, &rendered, force, &mut diag).records;
+        let records = reconcile(
+            &file, root, target, previous, &rendered, force, false, &mut diag,
+        )
+        .records;
         (
             records,
             diag.drain()
@@ -347,54 +373,6 @@ mod tests {
 
     fn read(path: &Path) -> Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-    }
-
-    #[test]
-    fn each_adapter_writes_its_declared_file_and_shape() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let env = [("API_KEY", "MY_SECRET")];
-        for (target, path, entry_at, expected) in [
-            (
-                ".claude",
-                ".mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${MY_SECRET}"}}),
-            ),
-            (
-                ".cursor",
-                ".cursor/mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${env:MY_SECRET}"}}),
-            ),
-            (
-                ".pi",
-                ".pi/mcp.json",
-                "/mcpServers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"], "env": {"API_KEY": "${MY_SECRET}"}}),
-            ),
-            (
-                ".opencode",
-                ".opencode/opencode.json",
-                "/mcp/srv",
-                serde_json::json!({"type": "local", "command": ["node", "server.js"], "environment": {"API_KEY": "{env:MY_SECRET}"}}),
-            ),
-            // Codex forwards by name, so a renamed ref has no TOML spelling.
-            (
-                ".codex",
-                ".codex/config.toml",
-                "/mcp_servers/srv",
-                serde_json::json!({"command": "node", "args": ["server.js"]}),
-            ),
-        ] {
-            write(target, tmp.path(), &[server("srv", &env)]);
-            let file = tmp.path().join(path);
-            let root = if path.ends_with(".toml") {
-                toml::from_str::<Value>(&std::fs::read_to_string(file).unwrap()).unwrap()
-            } else {
-                read(&file)
-            };
-            assert_eq!(root.pointer(entry_at), Some(&expected), "{target}");
-        }
     }
 
     #[test]

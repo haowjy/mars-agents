@@ -111,11 +111,11 @@ pub(crate) fn finalize(
         ) {
             Ok((_, outcome)) => {
                 if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                    diag.warn("models-cache-refresh", warning);
+                    diag.warn_advisory("models-cache-refresh", warning);
                 }
             }
             Err(err) => {
-                diag.warn(
+                diag.warn_advisory(
                     "models-cache-refresh",
                     format!("failed to refresh models cache: {err}"),
                 );
@@ -147,6 +147,7 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
         hook_files_rewritten: state.rewritten_hook_files,
+        mcp_files_changed: state.mcp_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })
@@ -212,8 +213,7 @@ fn retry_tombstone_removals(
                 .join(&output.target_root)
                 .join(output.dest_path.as_str());
             let result = if matches!(item.kind, ItemKind::Agent)
-                || (matches!(item.kind, ItemKind::Hook)
-                    && !output.dest_path.as_str().starts_with("hooks/"))
+                || crate::lock::is_generated_hook_file(item.kind, output.dest_path.as_str())
             {
                 match std::fs::remove_file(&path) {
                     Ok(()) => Ok(()),

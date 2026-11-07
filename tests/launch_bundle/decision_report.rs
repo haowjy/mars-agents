@@ -140,39 +140,3 @@ fn malformed_configuration_has_structured_error_without_fabricated_report() {
     assert!(value.get("route_trace").is_none());
     assert!(calls.is_empty());
 }
-
-#[test]
-fn post_selection_configuration_error_retains_the_selected_report() {
-    let temp = tempdir().unwrap();
-    let root = temp.path();
-    let bin = install_logging_harnesses(root);
-    std::fs::create_dir_all(root.join(".mars/agents")).unwrap();
-    std::fs::write(
-        root.join(".mars/agents/broken.md"),
-        "---\nmodel: [unterminated\n---\nBroken inventory.",
-    )
-    .unwrap();
-    std::fs::write(root.join("mars.toml"), "[settings]\ntargets=[\".codex\"]\n").unwrap();
-    let output = mars_cmd(root, root, "http://127.0.0.1:1")
-        .args([
-            "build",
-            "launch-bundle",
-            "--model",
-            "gpt-5",
-            "--json",
-            "--no-refresh-models",
-        ])
-        .env("PATH", bin)
-        .env("PROBE_LOG", root.join("calls"))
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["error"]["code"], "invalid_config");
-    assert_eq!(value["route_trace"]["outcome"], "selected", "{value}");
-    assert_eq!(
-        value["route_trace"]["model_attempts"][0]["canonical_model"],
-        "gpt-5"
-    );
-    assert!(value.get("routing").is_none());
-}

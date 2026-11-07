@@ -20,6 +20,41 @@ pub fn print_warnings(warnings: &[String]) {
     }
 }
 
+/// One row of the `mars agents` / `mars skills` list table.
+pub struct CatalogRow<'a> {
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub model_invocable: bool,
+    pub scope: &'a str,
+    pub description: &'a str,
+}
+
+/// Print the `NAME <kind> M-INV SCOPE DESCRIPTION` table shared by `mars agents` and
+/// `mars skills`; `kind_header` is `MODE` or `TYPE`.
+pub fn print_catalog_table(rows: &[CatalogRow<'_>], kind_header: &str, empty: &str) {
+    if rows.is_empty() {
+        println!("  {empty}");
+        return;
+    }
+    let width = |header: &str, f: fn(&CatalogRow<'_>) -> usize| {
+        rows.iter().map(f).max().unwrap_or(0).max(header.len())
+    };
+    let name_w = width("NAME", |r| r.name.len());
+    let kind_w = width(kind_header, |r| r.kind.len());
+    let scope_w = width("SCOPE", |r| r.scope.len());
+    println!(
+        "{:<name_w$}  {:<kind_w$}  {:<5}  {:<scope_w$}  DESCRIPTION",
+        "NAME", kind_header, "M-INV", "SCOPE"
+    );
+    for r in rows {
+        let inv = if r.model_invocable { "yes" } else { "no" };
+        println!(
+            "{:<name_w$}  {:<kind_w$}  {:<5}  {:<scope_w$}  {}",
+            r.name, r.kind, inv, r.scope, r.description
+        );
+    }
+}
+
 /// Color only a terminal: `ColorChoice::Auto` checks `TERM` and `NO_COLOR` but not whether the
 /// stream is a terminal, so piped output carried raw escape codes.
 ///
@@ -142,11 +177,11 @@ pub fn print_catalog(
     }
 }
 
-pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool) {
+pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool, show_info: bool) {
     if json {
         print_sync_report_json(report);
     } else {
-        print_sync_report_human(report, no_upgrade_hint);
+        print_sync_report_human(report, no_upgrade_hint, show_info);
     }
 }
 
@@ -179,6 +214,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: usize,
         native_removed: usize,
         hook_files_rewritten: usize,
+        mcp_files_changed: usize,
         upgrades_available: usize,
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
@@ -225,6 +261,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
+        mcp_files_changed: report.mcp_files_changed.len(),
         upgrades_available: report.upgrades_available,
         targets,
         diagnostics: report.diagnostics.clone(),
@@ -234,7 +271,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
-fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
+/// Info diagnostics print only when `show_info` is set; JSON output keeps them all.
+fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info: bool) {
     if let Some(halt) = &report.recovery_halt {
         let mut stderr = stderr_stream();
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
@@ -256,6 +294,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         }
         let _ = writeln!(stderr, "  {}", halt.next_step);
         for diagnostic in &report.diagnostics {
+            if !show_info && diagnostic.level == crate::diagnostic::DiagnosticLevel::Info {
+                continue;
+            }
             let _ = writeln!(stderr, "  {diagnostic}");
         }
         return;
@@ -305,6 +346,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         let _ = writeln!(stdout, "{target_root}/{dest_path} (generated hook file)");
     }
 
+    let mcp_files = report.mcp_files_changed.len();
+    for (target_root, file) in &report.mcp_files_changed {
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+        let _ = write!(stdout, "  ~ ");
+        let _ = stdout.reset();
+        let _ = writeln!(stdout, "{file} (MCP servers, {target_root})");
+    }
+
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
     if installed > 0 {
@@ -349,6 +398,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
             let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
         }
     }
+    if mcp_files > 0 {
+        let noun = if mcp_files == 1 { "file" } else { "files" };
+        if dry {
+            let _ = writeln!(stdout, "  would update {mcp_files} MCP config {noun}");
+        } else {
+            let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+        }
+    }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
@@ -360,15 +417,27 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool) {
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
+        && mcp_files == 0
+        && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
+        // `--diff` compares the items and the config entries it previews, not every file a
+        // real sync rewrites, so it cannot promise the project is up to date.
+        let line = if dry {
+            "no pending changes found"
+        } else {
+            "already up to date"
+        };
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-        let _ = writeln!(stdout, "  already up to date");
+        let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
     }
 
     // Print diagnostics to stderr so machine-readable stdout remains stable.
     let mut stderr = stderr_stream();
     for diag in &report.diagnostics {
+        if !show_info && diag.level == crate::diagnostic::DiagnosticLevel::Info {
+            continue;
+        }
         let color = match diag.level {
             crate::diagnostic::DiagnosticLevel::Error => Color::Red,
             crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,
@@ -602,6 +671,7 @@ mod tests {
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
+            mcp_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
         }

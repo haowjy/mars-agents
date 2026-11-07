@@ -2,10 +2,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
-use crate::build::inventory::build_inventory_prompt;
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
-use crate::error::MarsError;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
@@ -13,7 +11,6 @@ const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant
 pub struct PromptCompilation {
     pub system_instruction: String,
     pub supplemental_documents: Vec<SupplementalDoc>,
-    pub inventory_prompt: String,
     pub loaded_skills: Vec<LoadedSkill>,
     pub available_skills: Vec<AvailableSkill>,
     pub missing_skills: Vec<String>,
@@ -45,7 +42,6 @@ enum AvailableSkillOutcome {
     Missing,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_prompt_surface(
     content_roots: &ContentRoots,
     agent_body: &str,
@@ -54,9 +50,7 @@ pub(crate) fn compile_prompt_surface(
     harness_id: &str,
     selected_model_token: &str,
     canonical_model_id: &str,
-    subagents_filter: &[String],
-    fanout_agents: &[String],
-) -> Result<PromptCompilation, MarsError> {
+) -> PromptCompilation {
     let _ = (selected_model_token, canonical_model_id);
 
     let requested_load_skills = requested_skill_order(&profile_skills.load, extra_skills);
@@ -128,30 +122,21 @@ pub(crate) fn compile_prompt_surface(
         }
     }
 
-    let inventory_prompt = build_inventory_prompt(
-        content_roots,
-        subagents_filter,
-        harness_id,
-        fanout_agents,
-        &mut warnings,
-    )?;
     let system_instruction = compose_system_instruction(
         agent_body,
         &supplemental_documents,
         &available_skills,
-        &inventory_prompt,
         REPORT_INSTRUCTION,
     );
 
-    Ok(PromptCompilation {
+    PromptCompilation {
         system_instruction,
         supplemental_documents,
-        inventory_prompt,
         loaded_skills,
         available_skills,
         missing_skills,
         warnings,
-    })
+    }
 }
 
 fn requested_skill_order(profile_skills: &[String], extra_skills: &[String]) -> Vec<String> {
@@ -334,7 +319,6 @@ fn compose_system_instruction(
     agent_body: &str,
     supplemental_documents: &[SupplementalDoc],
     available_skills: &[AvailableSkill],
-    inventory_prompt: &str,
     report_instruction: &str,
 ) -> String {
     let mut blocks: Vec<String> = Vec::new();
@@ -344,7 +328,10 @@ fn compose_system_instruction(
         blocks.push(format!("# Agent Profile\n\n{body}"));
     }
 
-    // Each skill supplies its own heading; wrappers would alter the Markdown hierarchy.
+    // Auto-loaded skills: full content, already sorted by type priority
+    // (principles first, then guardrails, then others).
+    // Each skill has its own `# Skill: name` heading — no intermediate
+    // wrapper headings that would break markdown hierarchy.
     for doc in supplemental_documents {
         let content = doc.content.trim();
         if !content.is_empty() {
@@ -352,6 +339,8 @@ fn compose_system_instruction(
         }
     }
 
+    // Available skills: names only, grouped by type. Meridian renders descriptions
+    // itself, so the two formats are independent.
     if !available_skills.is_empty() {
         let mut avail_block = String::from(
             "# Available Skills\n\nNot yet loaded. Load proactively when the task fits.",
@@ -421,11 +410,6 @@ fn compose_system_instruction(
             }
         }
         blocks.push(avail_block);
-    }
-
-    let inventory = inventory_prompt.trim();
-    if !inventory.is_empty() {
-        blocks.push(inventory.to_string());
     }
 
     blocks.push(report_instruction.to_string());

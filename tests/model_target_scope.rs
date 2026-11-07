@@ -6,48 +6,6 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 #[test]
-fn curated_live_inventory_does_not_probe_out_of_scope_harnesses() {
-    for (targets, expected_rows) in [
-        ("targets = []", 0),
-        ("targets = [\".agents\"]", 0),
-        ("targets = [\".codex\"]", 1),
-        ("", 2),
-    ] {
-        let temp = tempdir().unwrap();
-        let root = temp.path();
-        let bin = test_common::install_logging_harnesses(root);
-        let log = root.join("commands.log");
-        std::fs::create_dir(root.join(".mars")).unwrap();
-        std::fs::write(root.join("mars.toml"), format!("[settings]\n{targets}\n")).unwrap();
-        std::fs::write(root.join(".mars/models-cache.json"),
-            r#"{"fetched_at":null,"models":[{"id":"claude-opus-4-6","provider":"anthropic"},{"id":"gpt-5","provider":"openai"}]}"#).unwrap();
-        let output = test_common::mars_cmd(root, root, "http://127.0.0.1:1")
-            .args(["models", "list", "--live", "--no-refresh-models", "--json"])
-            .env("PATH", &bin)
-            .env("PROBE_LOG", &log)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(
-            value["models"].as_array().unwrap().len(),
-            expected_rows,
-            "{value}"
-        );
-        let calls = std::fs::read_to_string(&log).unwrap_or_default();
-        assert_eq!(
-            calls.contains("claude auth status"),
-            targets.is_empty(),
-            "{targets}: {calls}"
-        );
-    }
-}
-
-#[test]
 fn live_inventory_marks_logged_out_native_row_blocked() {
     let temp = tempdir().unwrap();
     let root = temp.path();

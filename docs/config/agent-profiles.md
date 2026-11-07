@@ -361,7 +361,7 @@ it does not produce a lossiness warning. See
 | Required | no |
 | Default | empty |
 
-The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and uses it during prompt assembly to filter the spawnable-agent **inventory** injected into the system prompt — only listed agents are advertised as spawn options. Meridian reads the same list at spawn time to scope the agent's spawnable roster.
+The agents this agent is allowed to spawn. `subagents` is a first-class parsed field: mars preserves it in the `.mars/` canonical artifact and reports it in `mars agents --json`. Meridian reads that list to scope the agent's spawnable roster.
 
 Like `model-policies`, `subagents` is Meridian-oriented metadata — preserved in `.mars/` for runtime consumers, with no harness-native field equivalent.
 
@@ -387,7 +387,8 @@ launch bundle and lowers agent files; the author never writes a harness spelling
 
 `tools` is a map. A rule states a grant or a denial and leaves everything else to the harness.
 Add `'*': deny` to make the map an allowlist: only the capabilities it allows remain. A
-capability that has only scoped allows (`bash(rg *)`) then runs only those commands.
+scoped allow (`bash(rg *)`) only pre-approves the calls it matches and restricts nothing; to
+limit a capability, write `bash: deny` beside the scoped allows.
 
 A list (`tools: [read, grep]`), the scalar spellings (`tools: allow`, `tools: Read, Grep`) and
 `disallowed-tools` are errors in schema 1. A denial is `tools: {agent: deny}`.
@@ -456,7 +457,7 @@ from package `mcp/<name>/mcp.toml` files and are installed by `mars sync`.
 
 Per-harness target-native passthrough table. Mars writes each harness's block into that harness's native file, and passes the block matching the resolved harness to the launch bundle's `execution_policy.native_config`. Nested keys are target-native: Mars validates only that the block is a mapping of serializable values.
 
-Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace a field Mars lowers itself; it is dropped with a warning.
+Top-level Mars fields remain the semantic controls for routing, prompt assembly, tool policy, skills, and execution policy. A key inside `harness-overrides.<harness>` does not replace a field Mars lowers itself; it is dropped, and [the sync reports it](agent-compilation.md#harness-override-passthrough) when the key can carry a restriction; `mars sync --verbose` shows every dropped key.
 
 ```yaml
 harness-overrides:
@@ -513,8 +514,7 @@ not merged because they resolve to the same model. Overlay/global rules provide
 settings, not additional profile fallback candidates. Empty overrides stay valid, and a
 rule with no `override` is a candidate-only entry.
 
-Inventory labels these rules as declared backups, with `(model ID)` marking literal
-selectors. They describe automatic fallback, not equivalent explicit overrides:
+These rules describe automatic fallback, not equivalent explicit overrides:
 `--model TOKEN` resolves an alias named `TOKEN` before treating it as a model ID.
 
 **Guide.** `mars models prompting @agent` lists each rule that has a `when`, in declaration order, ahead of the model alias's own `prompting` text.

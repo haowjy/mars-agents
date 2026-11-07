@@ -38,7 +38,7 @@ pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<
             args.path.display()
         ));
     }
-    output::print_sync_report(&report, json, true);
+    output::print_sync_report(&report, json, true, false);
 
     Ok(if report.recovery_halt.is_some() { 2 } else { 0 })
 }

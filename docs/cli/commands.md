@@ -136,6 +136,8 @@ This is the core operation. It runs the full [sync pipeline](../internals/sync-p
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
+The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)` and counts them as `updated N MCP config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the count as `mcp_files_changed`. `--diff` previews them as `would update N MCP config files`. `already up to date` prints when the sync changed none of the installed items, hook files and MCP files above and raised no warning. A native agent file the sync recreates because you deleted it is not counted, so that sync can print the line too. The exceptions are advisory warnings, which say nothing about whether the sync reached its state: lossiness notes, unset env vars, unknown hook events, skipped or renamed names, and package format or version notices. Any other warning, such as a failed write or an entry Mars left in place because it was edited by hand, withholds the line. A sync that rewrites a hand-edited hook file, native agent or skill copy also warns, so it does not print the line either. `--diff` does not look at every file a real sync rewrites, so with nothing pending it prints `no pending changes found`, not `already up to date`. `--diff` also shows the MCP warnings a real sync would, such as a hand-edited server it would leave alone; `mars validate` does not.
+
 ---
 
 ## `mars upgrade`
@@ -216,6 +218,35 @@ Default view shows name + description from frontmatter (the YAML metadata block 
 
 ---
 
+## `mars agents` and `mars skills`
+
+Inspect the installed agents or skills, after variants and overrides are applied.
+
+```bash
+mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars agents show NAME
+mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars skills show NAME
+```
+
+| Flag | Description |
+|---|---|
+| `--mode MODE` | Agents only: `primary` or `subagent` |
+| `--type TYPE` | Skills only: match `metadata.type` exactly |
+| `--model-invocable` | Only items a model may pick for itself |
+| `--source NAME` | Filter by dependency name |
+| `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
+
+The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
+
+- `native-harnesses`: the harnesses the last `mars sync` installed the agent into natively.
+- `fanout`: `true` when `[settings.meridian.fanout].agents` names it, so Meridian launches it even where it is native.
+- `subagents`: the profile's list of agents it may spawn.
+
+`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+
+---
+
 ## `mars why`
 
 Explain why an item is installed.
@@ -276,6 +307,8 @@ mars adopt <path> [--dry-run]
 - Skill directories (containing `SKILL.md`) are moved to `.mars-src/skills/<name>/`
 - Runs `mars sync` so the item is immediately installed back through the normal pipeline
 - Same-filesystem only in MVP; the target directory must be on the same filesystem as the project root
+
+A relative `path` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects.
 
 `mars adopt` works in any project — `[package]` in `mars.toml` is not required.
 
@@ -490,7 +523,7 @@ Model guide for coder:
 - model-glob `gpt-*`: for small edits
 ```
 
-Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. The Agent inventory in a launch bundle marks Agents that have a guide with `mars models prompting @name`. See [`when`](../config/schema-v1.md#model-policies).
+Each line is the rule's `match` kind and value, then its `when` text. `--json` returns `ref`, `ref_kind` (`agent` or `alias`), `agent_name`, `model_alias`, `model_name`, `found` and `prompting`. An unknown reference exits 1. See [`when`](../config/schema-v1.md#model-policies).
 
 ### `mars models resolve`
 
@@ -606,7 +639,7 @@ Checks:
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
 - Target health: each managed target has the expected files with correct content
-- Target divergence: detects missing and locally modified files in targets, suggests `mars sync --force` or `mars repair`
+- Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
 Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](../dev/troubleshooting.md).
 
@@ -741,10 +774,12 @@ installs in that package's own checkout: its items plus dependencies under its o
 `[dependencies]` filters, renames, and visibility rules.
 
 ```bash
-mars build plugin [PATH] [--out <dir>]
+mars build plugin [PATH] [--out <dir>] [--verbose]
 ```
 
-`PATH` defaults to the detected project root. With an explicit path the command can run outside
+`PATH` defaults to the detected project root. A relative `PATH` resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against that root. `--verbose` lists every field a tree's agents do
+not carry; by default only what you wrote and can fix is reported (see
+[lossiness](../config/agent-compilation.md#lossiness-model)). With an explicit path the command can run outside
 a Mars project. The build uses only `mars.toml` publish state: it does not read `mars.local.toml`,
 the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or installed harness
 model catalogs.

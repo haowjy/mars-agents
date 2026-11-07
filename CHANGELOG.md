@@ -7,6 +7,69 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-11-07
+
+### Changed
+- Mars no longer treats a scoped allow as a restriction; it only pre-approves the calls it matches. `mars sync` stops warning that an agent "loses restrictions (shell)" when its `tools` has scoped allows such as `bash(rg *)` and no plain `bash` rule. This reverses the report added in 0.27.2 (#329). A `bash: deny` beside a scoped allow, and a `'*': deny` allowlist, are still reported where the target can't carry them. Where a target's unscoped deny blocks the scoped allows beside it, `--verbose` now records those allows.
+
+## [0.27.3] - 2026-11-07
+
+### Fixed
+- `doctor` reports a missing `.mars/` store alongside its other findings instead of exiting on it alone.
+- `approval: confirm` writes `approval_policy = "on-request"` in Codex agent files. Codex has dropped `"untrusted"`.
+- `mars sync` counts merged hook files such as `.codex/hooks.json` as written. `mars sync --diff` now previews them, and previews native skill copies that a real sync would repair.
+
+## [0.27.2] - 2026-11-06
+
+### Fixed
+- `mars sync`, `add`, `upgrade`, `check`, `init` and `build plugin` print one line for the project when an agent loses a restriction. It lists the agents, the targets and the kinds lost as three separate sets, so it stays true for any mix. For example:
+  ```
+  warning: 5 agents (`asker`, `net`, `sbx` and 2 more) and project setting `default-network` lose restrictions across .claude, .codex and .pi (shell, MCP, network, permission) that the target does not apply; run `mars sync --verbose` for the rules per item and target
+  ```
+  The command in the line is the one you ran (`mars check --verbose`, `mars build plugin --verbose`). Closes #318.
+- The kind follows the rule on every target, Claude included: a `bash: ask` is a shell loss, an `mcp(...)` `ask` an MCP loss, an `edit: deny` beside a `bash(rm *)` deny reports both, and an allow list that grants `bash` is a tool loss only.
+- A capability with only scoped allows (`bash(rg *)` and no plain `bash`) is recorded as a lost shell restriction on every target, Claude included. It was never reported. Closes #329.
+- Only a restriction prints by default. `model-invocable: false`, a `harness-overrides` key that carries no permission (`mode`, `developer_instructions`, an unknown key) and `default_network = "allow"` are listed under `--verbose`. A `harness-overrides` key that carries permissions (`sandbox_mode`, `approval_policy`, `permission`, `permissions`, `permission-mode`, `tools`, `disallowed-tools`) prints by default as a permission loss. `build plugin` gains `--verbose`.
+- A project `[settings]` network key (`default_network`, `network-allow`, `network-deny`) is part of the same line, and `mars check` reports it as `sync` does. It replaces the separate `project-setting-dropped` warning.
+- Contains #323:
+  - `mars add` of an MCP-only package, a project-root `mcp/` entry, and any sync that edits or removes an MCP server list each MCP config file Mars wrote and no longer print `already up to date`; `sync --diff` previews them as `would update N MCP config files`. `sync --json` gains `mcp_files_changed`.
+  - `already up to date` prints only when the sync wrote nothing and raised no warning other than advisory ones (lossiness notes, unset env vars, unknown hook events, package format notices). A failed write or a hand-edited file left in place withholds it. `sync --diff` prints `no pending changes found` instead.
+  - `sync --diff` shows the MCP warnings a real sync would, and reports a hand-edited native agent as `would repair diverged native agent`. `mars validate` and `validate --strict` stay quiet about both.
+  - A dependency whose `mcp.toml` fails to scan no longer deletes the MCP servers the last sync installed.
+  - `mars validate` warns about each unknown key in `[settings]` (`unknown-settings-key`) and prints `validate: no errors, N warning(s)` when it has warnings.
+  - `mars adopt PATH --root ROOT` and `mars build plugin PATH --root ROOT` resolve a relative `PATH` against the `--root` project when it does not exist in the working directory.
+
+## [0.27.1] - 2026-11-06
+
+### Fixed
+- An empty `.agents/` directory is no longer reported. One with content says Mars does not touch it and to check that nothing in it is yours or tracked by git before removing it.
+- `target ... has stale config entries` says to run `mars sync`.
+- `source X collides with unmanaged path` leads with moving your copy out of `.mars/` (`.mars-src/` for an agent, skill or bootstrap doc you want to keep) and then warns that `mars sync --force` replaces every colliding path in the project and discards local edits, with `mars sync --force --diff` to preview. The `--force` clause is dropped where it cannot work.
+- A local hook collision says to move the path.
+- `mars doctor` in a project that has `mars.toml` but no `.mars/` says there is no compiled store yet and to run `mars sync` (same error, same exit code 3).
+- `package.bootstrap` in a package's `mars.toml` says Mars does not read it and finds bootstrap docs in `bootstrap/<name>/BOOTSTRAP.md`. Part of #317.
+- `mars doctor` no longer reports generated hook files (`.pi/extensions/mars-<name>.hooks.ts`, `.opencode/plugins/mars-<name>.hooks.ts`) as "divergent in target ... failed to hash ... Not a directory" on a clean install. Closes #128.
+- `mars doctor` no longer calls an item it could not read a local modification: it says "could not check target item" or "wrong kind of file" with the reason. Its closing line follows what plain `sync` does per kind: an edited native agent or skill is overwritten by the next `mars sync` (copy the edit into its source first), an edited hook needs `mars sync --force` (project-wide, which the text says), a missing item needs `mars sync`, and nothing else is overwritten.
+
+## [0.27.0] - 2026-11-02
+
+### Added
+- `mars agents list --json` rows report `subagents`, `model-invocable`, `native-harnesses` (the harnesses the last sync installed the agent into natively) and `fanout` (named in `[settings.meridian.fanout].agents`). `mars agents show` reports the same, plus `user-invocable`.
+- `mars agents --model-invocable` lists only agents a model may pick, and the table gains the `M-INV` column, as in `mars skills`.
+
+### Changed
+- An agent without `mode` reports `subagent` instead of `""`, and `--mode subagent` now matches it.
+- `mars agents` fails when the effective config can't be read, as `mars build launch-bundle` does.
+
+### Removed
+- The launch bundle no longer carries the agent inventory: `prompt_surface.inventory_prompt` and the `# Meridian Agents` block in `system_instruction` are gone. Meridian lists agents itself with `meridian spawn subagents`.
+
+## [0.26.2] - 2026-10-31
+
+### Changed
+- `mars sync` and `mars upgrade` print `info` diagnostics only with `--verbose`. The default human report keeps warnings and errors; `--json` still carries every diagnostic.
+- The `codex-hooks-need-trust` warning now says what to do: open Codex and run `/hooks` to review and trust the named handlers, which Codex skips until then.
+
 ## [0.26.1] - 2026-10-29
 
 ### Fixed

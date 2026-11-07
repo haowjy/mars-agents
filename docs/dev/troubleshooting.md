@@ -19,7 +19,7 @@ mars doctor
 | Config-lock consistency | Every dependency in config has a lock entry |
 | Skill references | Every agent's declared skill deps exist on disk |
 | Legacy item symlinks | Symlinked agents and skills in `.mars/` are reported for normalization |
-| Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree |
+| Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree that has content (an empty one is not reported) |
 | Target divergence | Each locked item's target copy matches lock checksum |
 
 ### Exit codes
@@ -40,7 +40,16 @@ mars doctor
 
 ### Target divergence
 
-Doctor checks each managed target directory against the lock's expected checksums. Missing files and files with unexpected content are reported as warnings with suggestions to run `mars sync --force` or `mars repair` to restore canonical state.
+Doctor checks each managed target directory against the lock's expected checksums. It sorts each item by why the comparison failed:
+
+| Report | Meaning | Fix |
+|---|---|---|
+| `divergent in target: ... (local modifications)` | The item exists and its content differs from what Mars installed | An edited native agent or skill (`... the next sync overwrites them`): plain `mars sync` overwrites your edit, so copy it into the source first. An edited hook (`... sync keeps them`): `mars sync --force` resets it, and it resets every diverged item in the project |
+| `missing in target: ...` | The item is gone | `mars sync` restores it |
+| `wrong kind of file in target: ...` | A file sits where Mars installed a directory, a directory where it installed a file, or a symlink to nothing is there | Move or delete it, then `mars sync`. `--force` cannot replace a directory with a file |
+| `could not check target item: ... (<reason>)` | Mars could not read the item to compare (for example a permission error) | Fix the cause the message names, then run `mars doctor` again |
+
+A generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts` under `.pi/extensions/` or `.opencode/plugins/`) is one file, and the lock records its plain file hash.
 
 ## `mars repair`
 
@@ -102,9 +111,9 @@ leaves the original evidence on disk.
 ### "collides with unmanaged path"
 
 A managed item would overwrite a file that Mars doesn't own. Options:
-- Move the unmanaged file out of the way
+- Move the unmanaged file out of `.mars/` and sync again; an agent, skill or bootstrap doc you want to keep goes in `.mars-src/`, where it shadows the package's
 - Rename the managed item: `mars rename agents/conflict.md agents/other-name.md`
-- Use `--force` with a command that supports deliberate adoption; repair does not run a special collision-removal retry loop
+- `mars sync --force` replaces every colliding path in the project and discards local edits to managed items, so preview it with `mars sync --force --diff` (it cannot replace a directory where a file goes, and does not apply to a local hook). Use `--force` only for deliberate adoption; repair does not run a special collision-removal retry loop
 
 ### Missing files on disk
 

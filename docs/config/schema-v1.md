@@ -169,7 +169,7 @@ model-policies:
 
 - **`match`** holds exactly one of `alias` (the alias the model was chosen through), `model` (the concrete model ID) or `model-glob` (a glob over the concrete model ID).
 - **`override`** may set `effort`, `sandbox`, `approval` and `network`. Any other key, such as `harness`, is an error, and so are the host sets `network-allow` and `network-deny`: a rule picks the mode, and the hosts come from the Agent, the consumer and the command line.
-- **`when`** is one non-empty line saying when this model is a good choice for this Agent. It is guidance for the caller, not a condition Mars evaluates. `mars models prompting @agent` prints each rule's `when`, and the Agent inventory in the system prompt marks an Agent that has a guide. `mars check` warns when a rule's `alias` is not defined.
+- **`when`** is one non-empty line saying when this model is a good choice for this Agent. It is guidance for the caller, not a condition Mars evaluates. `mars models prompting @agent` prints each rule's `when`. `mars check` warns when a rule's `alias` is not defined.
 - **`no-fallback`** keeps a rule from being a launch backup. See [Agent profiles](agent-profiles.md#model-policies).
 
 **First match wins; there is no merging.** Mars looks for the first rule that matches the chosen model: the consumer's `[agents.<name>]` rules first, then the Agent's own, then `[[settings.model-policies]]`. Only that rule's `override` applies. A field the rule does not set falls through to the next layer below.
@@ -192,7 +192,7 @@ So the Agent's own policy wins over its top-level field: top-level `effort` is t
 
 `harness-overrides.<name>` holds configuration that one consumer owns, on an Agent or a skill. Mars checks only that it is a map of serializable values and keeps it in the installed file. It does two things with a harness block:
 
-- **Native file.** The block for a harness is written into that harness's own Agent or skill file (frontmatter for Markdown, top-level keys for Codex TOML), and into that harness's plugin tree. No other harness sees it. A key Mars lowers itself (`model`, `tools`, `effort`, `description` and the rest) keeps Mars's value; the override is dropped with a warning that names it.
+- **Native file.** The block for a harness is written into that harness's own Agent or skill file (frontmatter for Markdown, top-level keys for Codex TOML), and into that harness's plugin tree. No other harness sees it. A key Mars lowers itself (`model`, `tools`, `effort`, `description` and the rest) keeps Mars's value; the override is dropped. On an Agent, `mars sync` reports a dropped key that carries permissions (`sandbox_mode`, `permission`, `disallowed-tools`, …), and `mars sync --verbose` names every dropped key.
 - **Launch bundle.** The block for the resolved harness reaches the launcher as `execution_policy.native_config`.
 
 It never replaces a top-level field of the same name.

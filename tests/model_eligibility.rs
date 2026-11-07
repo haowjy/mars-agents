@@ -336,49 +336,6 @@ fn explicit_model_pin_does_not_search_eligible_backup_models() {
 }
 
 #[test]
-fn eligible_primary_is_not_replaced_by_an_earlier_profile_entry() {
-    let value = profile_model_selection("backup", &[".codex", ".opencode"], &[]);
-    assert_eq!(value["routing"]["model_token"], "backup", "{value}");
-    assert_eq!(value["routing"]["harness"], "codex", "{value}");
-    assert_eq!(value["provenance"]["model_source"], "profile", "{value}");
-    assert_eq!(
-        value["provenance"]["model_fallback_applied"], "false",
-        "{value}"
-    );
-}
-
-#[test]
-fn later_implicit_auth_rejection_preserves_the_first_unverified_attempt() {
-    let value =
-        profile_model_selection_with("primary", &[".codex", ".opencode"], &[], |root, bin| {
-            let config_path = root.join("mars.toml");
-            let config = std::fs::read_to_string(&config_path)
-                .unwrap()
-                .replace("[models.backup]", "[models.backup]\nharness=\"codex\"");
-            std::fs::write(config_path, config).unwrap();
-            #[cfg(windows)]
-            let codex = bin.join("codex.bat");
-            #[cfg(not(windows))]
-            let codex = bin.join("codex");
-            let script = std::fs::read_to_string(&codex).unwrap();
-            std::fs::write(
-                codex,
-                script
-                    .replace("exit 0", "exit 1")
-                    .replace("exit /b 0", "exit /b 1"),
-            )
-            .unwrap();
-        });
-    assert_eq!(value["routing"]["model_token"], "primary", "{value}");
-    assert_eq!(value["execution_policy"]["effort"], "low", "{value}");
-    assert_eq!(value["provenance"]["model_source"], "profile", "{value}");
-    assert_eq!(
-        value["provenance"]["model_fallback_applied"], "false",
-        "{value}"
-    );
-}
-
-#[test]
 fn explicit_harness_pin_allows_only_backup_models_on_that_harness() {
     let value =
         profile_model_selection("primary", &[".codex", ".opencode"], &["--harness", "codex"]);

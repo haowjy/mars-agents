@@ -45,16 +45,30 @@ residue in the primary checkout is how drift starts.
 - `.cursor` is unmaintained: existing support stays, but it isn't tested or extended.
 - `.pi` is under active design/development.
 
-## Critical Invariants
+## Invariants
 
-- **Mars never deletes files it didn't create.** Per-target lock ownership gates all removals.
-- **Atomic writes** — tmp+rename for config, lock, and installed files.
-- **Resolve first, then act** — zero mutations if any error during resolution.
-- **Builtin model aliases are fallback-only** — `opus`, `sonnet`, `haiku`,
-  `codex`, `gpt`, and `gemini` appear only when packages and consumer config
-  both provide no aliases.
-- **Windows is first-class** — no POSIX-only assumptions.
-- **No VCS dependency** — walk to filesystem root via `Path::parent()`, not `.git`.
+These hold however the work is done. Change one only as its own visible step, never to get a task passing. Everything else in this file is a current choice, open to rewriting when evidence shows something better.
+
+| Invariant | Check |
+|---|---|
+| User content is never overwritten or deleted without authorization. Anything Mars owns is authorized, so source wins on a file Mars manages. | `tests/self_conflicts.rs`, `tests/config_entries/ownership.rs` |
+| Mars never acts beyond what was authorized: it reads only the sources and config it was given, and a package can't reach outside its own root or write outside the destination | Partial: archive and bootstrap escape tests |
+| Private content never reaches the wrong recipient: exported metadata carries no agent or skill bodies, and imported servers get no credentials Claude would withhold | Partial: `tests/validate_and_export.rs` |
+| A lost restriction that changes what an agent can do is shown by default. Every other lost field is available under `--verbose`. Nothing is dropped without a record. | None yet |
+
+A restriction is lost when a harness can't express part of a profile. It shows in default `sync`, `check` and `build plugin` output, not at launch.
+
+## Contracts
+
+- **Atomic writes:** tmp+rename for config, lock, and installed files.
+- **Resolve first, then act:** zero mutations if any error during resolution.
+- **Builtin model aliases are fallback-only:** `opus`, `sonnet`, `haiku`, `codex`, `gpt`, and `gemini` appear only when packages and consumer config both provide no aliases.
+- **Windows is first-class:** no POSIX-only assumptions.
+- **No VCS dependency:** walk to filesystem root via `Path::parent()`, not `.git`.
+
+## Comments
+
+Few. Write one only for what the code can't show and a wrong edit would break silently, at the line it guards. No decision ids.
 
 ## Git Hooks
 
@@ -85,37 +99,35 @@ release heading to `CHANGELOG.md`. Check it locally with
 | `release:skip` | No release |
 
 **Minor and major releases collect on `release/v<X>.<Y>.0`.** Every PR merged to `main`
-with `release:minor`/`release:major` cuts its own release, so minor and major changes never
-merge to `main` piece by piece, even when one starts as a single PR. Each one goes to the open
-release branch, and any other minor or major change made before it ships joins the same
-branch. Patch-level changes still merge to `main` on their own:
-1. Create `release/v<X>.<Y>.0` from `main` if it doesn't exist (`release/v<X>.0.0` for a
-   major) and push it. Once the first part has merged, open its PR to `main` as a draft. It
-   carries the release label, the combined changelog and upgrade notes, and the whole-change
-   review.
-2. Point each part's PR at the release branch. Merging there releases nothing, so those PRs
-   need no label. Copy their changelog sections into the release PR's `## Changelog`: a
-   release reads only the bodies of PRs merged into `main`, so a part PR's notes never reach
-   `CHANGELOG.md` on their own.
-3. The agent leading the release merges its part PRs into the release branch once each
-   passes its own review and CI, without asking. Merging the release PR to `main` needs
-   Jimmy's approval.
-4. When the last part lands and the full gate passes, merge the release PR once.
-
-Work that must release on its own (e.g. a Mars release a Meridian change waits on) gets its
-own release; decide that when planning, not at merge time. meridian-cli's
-`docs/releasing.md` ("Minor and major releases collect on a release branch") has the same
-process.
+with `release:minor`/`release:major` cuts its own release, so a minor or major change goes
+to the open release branch (create it from `main` if none is open), and only that branch's
+PR to `main` carries the label. Patch-level changes merge to `main` on their own. Follow
+meridian-cli's [release-branch procedure](https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch)
+for the steps: part PRs, the combined changelog, and who merges what.
 
 ## Releasing
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.
 
 **Straight to `main` without approval:** docs-only changes and tiny, obvious bug fixes. Every
-other merge to `main` needs Jimmy's approval in the current conversation.
+other merge to `main` needs Jimmy's approval in the current conversation, unless `CLAUDE.md`
+grants your model more.
+
+A fix restores intended behavior; changing what users are meant to see is a feature. A big
+refactor, reorganization or architecture change needs Jimmy's approval first, quoted in
+its issue or PR; another agent's report of that approval doesn't count. Before a merge, CI
+is green, the regressions the change could cause are tested, and the PR body is reread
+against the final diff, with evidence from the commit being merged. A big fix or refactor
+also needs an independent review. A merge can release, so take the label with care:
+`release:patch` publishes to users, and a change with no user effect takes `release:skip`.
+
+Big means impact, not size: a change is big when it crosses a boundary others depend on.
+That is the CLI's commands, flags or output, `mars.toml` or `mars.lock`, the package format, what a sync writes into a target, or an invariant above. A change that looks narrow but alters behavior others rely on is big
+too; when unsure, call it big.
 
 **Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 
-**`CHANGELOG.md` `[Unreleased]` is only an empty anchor.** Never write entries there: the release walks the merged PRs' `## Changelog` sections since the last `release: v` commit and renders them under the new version heading. A `release:skip` merge, a failed or cancelled run, and two merges in one push keep their notes — the next release, automatic or manual, collects them.
+`CHANGELOG.md` `[Unreleased]` is only an empty anchor. The release collects PR
+notes since the last `release: v` commit, including skipped or failed releases.
 
 **Note:** `mars version` is for prompt packages only. For mars-agents itself, use the CI release flow. See `.github/workflows/README.md` for the step order, the manual backfill path, and the remedy when a merged PR body fails the notes gate.

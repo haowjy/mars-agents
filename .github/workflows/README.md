@@ -10,8 +10,8 @@
 
 ## PR Body Gate
 
-`pr-body.yml` runs on pull requests and skips drafts: it fires on open, edit,
-synchronize, reopen and ready-for-review. One step runs
+`pr-body.yml` runs on pull requests: it fires on open, edit, synchronize, reopen,
+ready-for-review and label changes. Its changelog step skips drafts; it runs
 `python3 scripts/changelog-notes.py validate` on the PR body's `## Changelog`
 section, then compares the branch's `CHANGELOG.md` with the base branch's copy:
 
@@ -19,6 +19,10 @@ section, then compares the branch's `CHANGELOG.md` with the base branch's copy:
 - The PR adding content under `## [Unreleased]` fails; removing it passes.
 - The PR adding a release heading (`## [X]`, including a second
   `## [Unreleased]`) fails; a typo fix inside a released section passes.
+
+Its `release-branch` job runs on drafts too: a PR to `main` labeled `release:minor` or
+`release:major` fails unless its head is a `release/*` branch. Those labels cut a release
+on merge, so only a release branch's PR carries them.
 
 The gate is a PR lint: `main` has no required checks, by the owner's choice, so a
 red gate warns and doesn't block the merge. A bad body that merges anyway fails

@@ -144,6 +144,7 @@ fn remove_owned_target_content(
         Some(&previous),
         &[],
         false,
+        false,
         &mut diagnostics,
     );
     crate::compiler::config_entries::report_removed(

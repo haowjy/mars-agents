@@ -24,7 +24,6 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
         },
     },
     dropped_agent_fields: &["hooks", "mcpServers", "permissionMode", "initialPrompt"],
-    approximate_lowers_to_dropped: false,
     agents: Some(apply_agent_policy),
     native_model_aliases: NATIVE_MODEL_ALIASES,
     plugin_root: PluginRoot::Token("${CLAUDE_PLUGIN_ROOT}"),
@@ -72,7 +71,7 @@ fn write_plugin_mcp_json(
         let rendered = render(&server.transport, Flavor::Plugin);
         if harnesses.iter().any(|harness| harness.key == "codex") {
             for lost in rendered.lossy {
-                diag.warn("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
+                diag.warn_advisory("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
             }
         }
         mcp_servers.insert(server.name.clone(), rendered.value);

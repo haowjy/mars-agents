@@ -118,7 +118,7 @@ pub(crate) fn warn_config_dangles_after_rename(
         if installed.contains(&(kind, name.to_string())) {
             return;
         }
-        diag.warn(
+        diag.warn_advisory(
             "config-rename-dangle",
             format!(
                 "`{name}` in {location} no longer matches an installed {kind} after rename (now: {}); update the config",

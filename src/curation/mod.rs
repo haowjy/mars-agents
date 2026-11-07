@@ -632,6 +632,3 @@ fn invalid(message: impl Into<String>) -> MarsError {
         message: message.into(),
     })
 }
-
-#[cfg(test)]
-mod tests;

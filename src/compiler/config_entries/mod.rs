@@ -27,6 +27,8 @@ pub(crate) struct ConfigEntryCompilation {
     pub records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     pub emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub rewritten_outputs: Vec<(String, String)>,
+    /// MCP config files this run wrote or deleted, as `(target_root, file path)`.
+    pub mcp_files_changed: Vec<(String, String)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -51,6 +53,7 @@ pub(crate) fn compile_config_entries(
     rendered_hooks: &RenderedHooks,
     dry_run: bool,
     force: bool,
+    preview_warnings: bool,
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
     use crate::compiler::mcp::check_env_refs;
@@ -73,7 +76,7 @@ pub(crate) fn compile_config_entries(
         .cloned()
         .collect::<Vec<_>>();
     if let Err(e) = check_env_refs(&selected_mcp, false, diag) {
-        diag.warn("mcp-env", format!("MCP env check failed: {e}"));
+        diag.warn_advisory("mcp-env", format!("MCP env check failed: {e}"));
     }
 
     let registry = TargetRegistry::new();
@@ -188,6 +191,29 @@ pub(crate) fn compile_config_entries(
             .mcp_file()
             .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
             .unwrap_or_default();
+        let mut rendered = rendered;
+        if applied.planned.targeted.target.mcp_scan_failed() {
+            // Which source a recorded server came from is not recorded, so every server the
+            // last sync installed and this one did not select stays.
+            for (key, record) in old_lock
+                .config_entries
+                .get(target_root)
+                .into_iter()
+                .flatten()
+            {
+                let Some(name) = key.strip_prefix(MCP_KEY_PREFIX) else {
+                    continue;
+                };
+                if rendered.iter().all(|server| server.key() != *key)
+                    && let Ok(value) = serde_json::from_str(&record.emitted_json)
+                {
+                    rendered.push(mcp_file::Rendered {
+                        name: name.to_string(),
+                        value,
+                    });
+                }
+            }
+        }
         let target_records: BTreeMap<_, _> = rendered
             .iter()
             .map(|server| (server.key(), server.record()))
@@ -225,50 +251,6 @@ pub(crate) fn compile_config_entries(
         .old_lock
         .config_entries;
 
-    if dry_run {
-        for (target_root, records) in previous_records {
-            let stale: Vec<&str> = records
-                .keys()
-                .filter(|key| {
-                    !desired_records
-                        .get(target_root)
-                        .is_some_and(|desired| desired.contains_key(*key))
-                })
-                .map(String::as_str)
-                .collect();
-            if !stale.is_empty() {
-                diag.warn(
-                    "stale-config-entry",
-                    format!(
-                        "target `{target_root}` has stale config entries: {}",
-                        stale.join(", ")
-                    ),
-                );
-            }
-        }
-        let rewritten_outputs = pending_file_writes
-            .iter()
-            .flat_map(|(target_root, files)| {
-                files.iter().filter_map(move |(_, relative, content)| {
-                    let path = ctx.project_root.join(target_root).join(relative);
-                    let current = std::fs::read(path).ok();
-                    (current.as_deref() != Some(content.as_bytes()))
-                        .then(|| (target_root.clone(), relative.clone()))
-                })
-            })
-            .collect();
-        return ConfigEntryCompilation {
-            records: desired_records,
-            emitted_outputs,
-            rewritten_outputs,
-            removed_outputs,
-        };
-    }
-
-    // Codex skips a hook it has not been told to trust, keyed on its position in the file;
-    // `hooks.json` before this sync is what the user last reviewed.
-    let trust_before = trust_snapshots(ctx, &target_roots);
-
     // A target whose hook entries equal what the lock records, and whose file still holds
     // them in the order they would be written, is left alone: removing and re-appending them
     // would rewrite the file and move entries (Codex keys its trust on entry position). A file
@@ -298,6 +280,74 @@ pub(crate) fn compile_config_entries(
             unchanged_records.insert(target_root, desired);
         }
     }
+    if dry_run {
+        for (target_root, records) in previous_records {
+            let stale: Vec<&str> = records
+                .keys()
+                .filter(|key| {
+                    !desired_records
+                        .get(target_root)
+                        .is_some_and(|desired| desired.contains_key(*key))
+                })
+                .map(String::as_str)
+                .collect();
+            if !stale.is_empty() {
+                diag.warn_advisory(
+                    "stale-config-entry",
+                    format!(
+                        "target `{target_root}` has stale config entries: {} — run `{}` to remove them",
+                        stale.join(", "),
+                        crate::types::managed_cmd("mars sync"),
+                    ),
+                );
+            }
+        }
+        let mut rewritten_outputs: Vec<(String, String)> = pending_file_writes
+            .iter()
+            .flat_map(|(target_root, files)| {
+                files.iter().filter_map(move |(_, relative, content)| {
+                    let path = ctx.project_root.join(target_root).join(relative);
+                    let current = std::fs::read(path).ok();
+                    (current.as_deref() != Some(content.as_bytes()))
+                        .then(|| (target_root.clone(), relative.clone()))
+                })
+            })
+            .collect();
+        // A merged hook file that is not already as a real sync would leave it is rewritten.
+        rewritten_outputs.extend(pending_hooks.keys().filter_map(|target_root| {
+            merge_file(target_root).map(|merge| (target_root.clone(), merge.file.to_string()))
+        }));
+        // Preview the MCP files a real sync would write. A dry run has no real pass after
+        // this one, so its warnings are the ones `--diff` shows; other dry runs drop them.
+        let mut scratch = DiagnosticCollector::new();
+        let preview_diag = if preview_warnings {
+            &mut *diag
+        } else {
+            &mut scratch
+        };
+        let mcp_files_changed = reconcile_all_mcp(
+            &registry,
+            &ctx.project_root,
+            previous_records,
+            &desired_mcp,
+            force,
+            true,
+            preview_diag,
+        )
+        .files_changed;
+        return ConfigEntryCompilation {
+            records: desired_records,
+            emitted_outputs,
+            rewritten_outputs,
+            mcp_files_changed,
+            removed_outputs,
+        };
+    }
+
+    // Codex skips a hook it has not been told to trust, keyed on its position in the file;
+    // `hooks.json` before this sync is what the user last reviewed.
+    let trust_before = trust_snapshots(ctx, &target_roots);
+
     let to_remove: BTreeMap<_, _> = previous_records
         .iter()
         .filter(|(target_root, _)| !unchanged_records.contains_key(*target_root))
@@ -333,27 +383,19 @@ pub(crate) fn compile_config_entries(
         }
     }
 
-    let mut mcp_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> = BTreeMap::new();
-    let mut mcp_removed: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for target_root in previous_records
-        .keys()
-        .chain(desired_mcp.keys())
-        .collect::<BTreeSet<_>>()
-    {
-        let reconciled = reconcile_mcp(
-            &registry,
-            &ctx.project_root,
-            target_root,
-            previous_records.get(target_root),
-            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
-            force,
-            diag,
-        );
-        if !reconciled.records.is_empty() {
-            mcp_records.insert(target_root.clone(), reconciled.records);
-        }
-        mcp_removed.insert(target_root.clone(), reconciled.removed);
-    }
+    let McpReconciliation {
+        records: mcp_records,
+        removed: mcp_removed,
+        files_changed: mcp_files_changed,
+    } = reconcile_all_mcp(
+        &registry,
+        &ctx.project_root,
+        previous_records,
+        &desired_mcp,
+        force,
+        false,
+        diag,
+    );
     report_removed(retention.removed_keys(), &mcp_removed, diag);
 
     let mut compiled = apply_replacement_writes(
@@ -370,6 +412,7 @@ pub(crate) fn compile_config_entries(
         emitted_outputs,
         removed_outputs,
     );
+    compiled.mcp_files_changed = mcp_files_changed;
     for (target_root, records) in mcp_records {
         compiled
             .records
@@ -407,10 +450,10 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
         if changed.is_empty() {
             continue;
         }
-        diag.warn(
+        diag.warn_advisory(
             "codex-hooks-need-trust",
             format!(
-                "`{file}` has {} new or moved hook handler(s) ({}); `{root}` skips them until you review them in its `/hooks` screen",
+                "`{file}` has {} new or moved hook handler(s) ({}); open Codex and run `/hooks` to review and trust them. Codex skips them until then",
                 changed.len(),
                 changed.join(", ")
             ),
@@ -468,6 +511,59 @@ pub(crate) fn report_removed(
     }
 }
 
+struct McpReconciliation {
+    records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    removed: BTreeMap<String, Vec<String>>,
+    /// `(target_root, file path)` of each file written or deleted (or, in a dry run, to be).
+    files_changed: Vec<(String, String)>,
+}
+
+/// MCP servers are reconciled per target file: a target no longer managed still gets its
+/// stale servers removed.
+fn reconcile_all_mcp(
+    registry: &TargetRegistry,
+    project_root: &Path,
+    previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    desired_mcp: &BTreeMap<String, Vec<mcp_file::Rendered>>,
+    force: bool,
+    dry_run: bool,
+    diag: &mut DiagnosticCollector,
+) -> McpReconciliation {
+    let mut out = McpReconciliation {
+        records: BTreeMap::new(),
+        removed: BTreeMap::new(),
+        files_changed: Vec::new(),
+    };
+    for target_root in previous_records
+        .keys()
+        .chain(desired_mcp.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let reconciled = reconcile_mcp(
+            registry,
+            project_root,
+            target_root,
+            previous_records.get(target_root),
+            desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
+            force,
+            dry_run,
+            diag,
+        );
+        if !reconciled.records.is_empty() {
+            out.records.insert(target_root.clone(), reconciled.records);
+        }
+        out.removed.insert(target_root.clone(), reconciled.removed);
+        if reconciled.changed
+            && let Some(file) = registry.get(target_root).and_then(|a| a.mcp_file())
+        {
+            out.files_changed
+                .push((target_root.clone(), file.at.path.to_string()));
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reconcile_mcp(
     registry: &TargetRegistry,
     project_root: &Path,
@@ -475,6 +571,7 @@ pub(crate) fn reconcile_mcp(
     previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
     desired: &[mcp_file::Rendered],
     force: bool,
+    dry_run: bool,
     diag: &mut DiagnosticCollector,
 ) -> mcp_file::Reconciled {
     let no_records = BTreeMap::new();
@@ -496,12 +593,14 @@ pub(crate) fn reconcile_mcp(
         return mcp_file::Reconciled {
             records: retained,
             removed: Vec::new(),
+            changed: false,
         };
     };
     let Some(file) = adapter.mcp_file() else {
         return mcp_file::Reconciled {
             records: BTreeMap::new(),
             removed: Vec::new(),
+            changed: false,
         };
     };
     mcp_file::reconcile(
@@ -511,6 +610,7 @@ pub(crate) fn reconcile_mcp(
         previous,
         desired,
         force,
+        dry_run,
         diag,
     )
 }
@@ -533,6 +633,7 @@ fn apply_replacement_writes(
     // Write desired hooks only after every removal has completed. Removal
     // cleared the target's recorded hooks, so a failed write leaves no record.
     let mut written_records = unchanged_records;
+    let mut rewritten_outputs = Vec::new();
     for (target_root, hooks) in pending_hooks {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -547,6 +648,7 @@ fn apply_replacement_writes(
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);
+        rewritten_outputs.push((target_root.clone(), merge.file.to_string()));
         if let Err(error) =
             crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
         {
@@ -569,7 +671,6 @@ fn apply_replacement_writes(
             );
     }
 
-    let mut rewritten_outputs = Vec::new();
     for (target_root, files) in pending_file_writes {
         let Some(permit) = retention.write_permit(&target_root) else {
             diag.info(
@@ -602,6 +703,7 @@ fn apply_replacement_writes(
         records,
         emitted_outputs,
         rewritten_outputs,
+        mcp_files_changed: Vec::new(),
         removed_outputs,
     }
 }

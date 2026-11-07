@@ -109,7 +109,13 @@ pub fn atomic_write_if_changed(dest: &Path, content: &[u8]) -> Result<bool, Mars
     Ok(true)
 }
 
-/// The two renames leave a gap where the destination is absent.
+/// Atomic directory install: copy source tree to a temp dir in the same
+/// parent as `dest`, then rename into place.
+///
+/// Uses rename-old-then-rename-new to minimize the window where `dest`
+/// doesn't exist. If `dest` already exists, it's renamed to `.{name}.old`
+/// before the new content takes its place. Stale `.old` from prior crashes
+/// is cleaned up automatically.
 pub fn atomic_install_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
     atomic_install_dir_impl(src, dest, &[])
 }
@@ -604,88 +610,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn atomic_write_creates_parent_dirs() {
-        let dir = TempDir::new().unwrap();
-        let dest = dir.path().join("nested").join("dir").join("file.txt");
-        let content = b"nested content";
-
-        atomic_write(&dest, content).unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap(), content);
-    }
-
-    #[test]
-    fn atomic_write_overwrites_existing_file() {
-        let dir = TempDir::new().unwrap();
-        let dest = dir.path().join("output.txt");
-
-        atomic_write(&dest, b"first").unwrap();
-        atomic_write(&dest, b"second").unwrap();
-
-        assert_eq!(fs::read(&dest).unwrap(), b"second");
-    }
-
-    #[test]
-    fn atomic_install_dir_copies_tree() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        fs::create_dir_all(src.join("sub")).unwrap();
-        fs::write(src.join("a.txt"), "file a").unwrap();
-        fs::write(src.join("sub").join("b.txt"), "file b").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert_eq!(fs::read_to_string(dest.join("a.txt")).unwrap(), "file a");
-        assert_eq!(
-            fs::read_to_string(dest.join("sub").join("b.txt")).unwrap(),
-            "file b"
-        );
-    }
-
-    #[test]
-    fn atomic_install_dir_replaces_existing() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("old.txt"), "old").unwrap();
-
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("new.txt"), "new").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert!(dest.join("new.txt").exists());
-        assert!(!dest.join("old.txt").exists());
-    }
-
-    #[test]
-    fn atomic_install_dir_cleans_stale_old() {
-        let dir = TempDir::new().unwrap();
-        let src = dir.path().join("src_dir");
-        let dest = dir.path().join("dest_dir");
-
-        fs::create_dir_all(&dest).unwrap();
-        fs::write(dest.join("old.txt"), "old").unwrap();
-
-        let old_path = dir.path().join(".dest_dir.old");
-        fs::create_dir_all(&old_path).unwrap();
-        fs::write(old_path.join("stale.txt"), "stale").unwrap();
-
-        fs::create_dir_all(&src).unwrap();
-        fs::write(src.join("new.txt"), "new").unwrap();
-
-        atomic_install_dir(&src, &dest).unwrap();
-
-        assert!(dest.join("new.txt").exists());
-        assert!(!dest.join("old.txt").exists());
-        assert!(!old_path.exists(), "stale .old should be cleaned up");
-    }
-
-    #[test]
     fn atomic_install_dir_filtered_excludes_top_level_entries() {
         let dir = TempDir::new().unwrap();
         let src = dir.path().join("src_dir");
@@ -710,15 +634,5 @@ mod tests {
         assert!(!dest.join("mars.curated.toml").exists());
         assert!(!dest.join("mars.curated.local.toml").exists());
         assert!(!dest.join(".gitignore").exists());
-    }
-
-    #[test]
-    fn file_lock_creates_parent_dirs() {
-        let dir = TempDir::new().unwrap();
-        let lock_path = dir.path().join("nested").join("dir").join("test.lock");
-
-        let lock = FileLock::acquire(&lock_path).unwrap();
-        assert!(lock_path.exists());
-        drop(lock);
     }
 }

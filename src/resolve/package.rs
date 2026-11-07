@@ -293,7 +293,7 @@ pub(crate) fn resolve_package_bottom_up(
             .into());
         };
         exclusions.insert((pending_src.name.clone(), version), failures.clone());
-        diag.warn(
+        diag.warn_advisory(
             "requires-mars-fallback",
             format!(
                 "skipping `{}` {label}: {}; required by {}",
@@ -321,7 +321,7 @@ pub(crate) fn resolve_package_bottom_up(
             .and_then(|source| source.version.as_deref())
             .is_some_and(|version| version.trim_start_matches('v') == locked_version)
     {
-        diag.warn(
+        diag.warn_advisory(
             "requires-mars-lock-fallback",
             format!(
                 "locked `{}` {locked_version} is engine-incompatible ({}); selected {} instead",

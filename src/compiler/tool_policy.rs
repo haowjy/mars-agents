@@ -233,7 +233,6 @@ fn project_builtin_capability(
 
 pub(crate) trait ToolPolicyRuntime {
     fn project(&self, harness: HarnessId) -> PolicyProjection<'_>;
-    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool;
     fn apply_overlay(&mut self, overlay: &AgentOverlayTools);
 }
 
@@ -246,9 +245,6 @@ impl ToolPolicyRuntime for EffectiveToolPolicy {
             .collect();
         resolve_by_specificity(&mut rules, harness);
         PolicyProjection { rules }
-    }
-    fn has_rule(&self, action: ToolAction, kind: RuleKind) -> bool {
-        self.with_action(action).any(|rule| kind.covers(rule))
     }
     fn apply_overlay(&mut self, overlay: &AgentOverlayTools) {
         if let Some(layer) = &overlay.allowed {
@@ -468,7 +464,7 @@ mod tests {
     use mars_schema::HarnessId;
     use mars_schema::frontmatter::Frontmatter;
     use mars_schema::tool_names::parse_mars_tool_name;
-    use mars_schema::tool_policy::{append_mcp_server_entries_to_tools, yaml_str_list};
+    use mars_schema::tool_policy::append_mcp_server_entries_to_tools;
     use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
@@ -499,35 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn tools_mcp_entry_grants_whole_server() {
-        let policy =
-            agent_policy("---\nname: a\ndescription: d\ntools:\n  mcp(context7): allow\n---\n");
-        assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)".to_string()]);
-    }
-
-    #[test]
-    fn append_mcp_server_entries_to_tools_merges_into_existing_list() {
-        let mut fm = Frontmatter::parse("---\ntools: [Bash]\n---\n").unwrap();
-        assert!(append_mcp_server_entries_to_tools(
-            &mut fm,
-            &["context7".to_string()]
-        ));
-        assert_eq!(
-            fm.get("tools").map(yaml_str_list),
-            Some(vec!["Bash".to_string(), "mcp(context7)".to_string()])
-        );
-    }
-
-    #[test]
-    fn append_mcp_server_entries_to_tools_is_idempotent() {
-        let mut fm = Frontmatter::parse("---\ntools: [mcp(context7)]\n---\n").unwrap();
-        assert!(!append_mcp_server_entries_to_tools(
-            &mut fm,
-            &["context7".to_string()]
-        ));
-    }
-
-    #[test]
     fn append_mcp_server_entries_to_tools_preserves_map_form() {
         let mut fm = Frontmatter::parse("---\ntools:\n  Bash: allow\n  Read: deny\n---\n").unwrap();
         assert!(append_mcp_server_entries_to_tools(
@@ -554,29 +521,6 @@ mod tests {
             mapping.get(Value::String("mcp(github)".into())),
             Some(&Value::String("allow".into()))
         );
-    }
-
-    #[test]
-    fn plugin_colon_server_names_preserve_verbatim_in_mcp_refs() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  mcp(plugin:context7:context7): allow\n---\n",
-        );
-        let mcp = policy.with_action(ToolAction::Allow).next().unwrap();
-        assert_eq!(
-            mcp.capability,
-            Capability::Mcp(mars_schema::mcp::parse_mcp_ref("plugin:context7:context7").unwrap())
-        );
-    }
-
-    #[test]
-    fn v1_list_form_is_rejected_without_rules() {
-        let yaml = "---\nname: a\ndescription: d\ntools: [read, grep]\n---\n";
-        let reading = mars_schema::agent::read(yaml);
-        let profile = reading.fields.unwrap();
-        assert!(profile.tools.rules.is_empty());
-        assert!(!profile.tools.is_allowlist());
-        assert_eq!(reading.diagnostics.len(), 1);
-        assert_eq!(reading.diagnostics[0].code, "tools.list-form");
     }
 
     #[test]

@@ -7,6 +7,14 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-07
+
+### Upgrade notes
+- `hook.toml` target tables no longer read `fragment` (deprecated in 0.26). Rename it to `native-hook`. A dependency that still sets it keeps its last good install and warns. See [native hooks](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#native-hooks).
+
+### Removed
+- The `fragment` key in `hook.toml` target tables. Your own hook fails the sync with `field.removed`; a dependency's hook warns `hook-invalid-kept` and keeps the last sync's install. `hook-fragment-deprecated`, `hook.native-hook-conflict` and `plugin-hook-fragment-dropped` are gone.
+
 ## [0.27.4] - 2026-11-07
 
 ### Changed

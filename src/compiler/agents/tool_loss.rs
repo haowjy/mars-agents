@@ -48,26 +48,6 @@ fn is_file_write(rule: &ToolRule) -> bool {
     )
 }
 
-/// Capabilities whose only allows are scoped (`bash(rg *)` with no plain `bash` rule): the agent
-/// may run only those, which no file can say without restricting every other tool too.
-fn scoped_allow_only(tools: &EffectiveToolPolicy) -> Vec<&ToolRule> {
-    let mut only: Vec<&ToolRule> = Vec::new();
-    for rule in &tools.rules {
-        if rule.action == ToolAction::Allow
-            && rule.pattern.is_some()
-            && matches!(rule.capability, Capability::Builtin(_))
-            && !only.iter().any(|seen| seen.capability == rule.capability)
-            && !tools
-                .rules
-                .iter()
-                .any(|other| other.capability == rule.capability && other.pattern.is_none())
-        {
-            only.push(rule);
-        }
-    }
-    only
-}
-
 /// Every restriction `tools` places on the agent that `carries` cannot write, one field per
 /// kind lost. A plain grant loses nothing and records nothing.
 pub(super) fn losses(
@@ -79,6 +59,7 @@ pub(super) fn losses(
     let projection = tools.project(harness);
     let mut lost: Vec<(Lost, String)> = Vec::new();
     let mut covered: Vec<String> = Vec::new();
+    let mut shadowed: Vec<String> = Vec::new();
 
     for (rule, projected) in projection.rules() {
         // Only a target that writes names has a naming gap worth reporting.
@@ -99,6 +80,21 @@ pub(super) fn losses(
                         DenyCarry::All => true,
                     };
                 if carried {
+                    // The file's unscoped deny blocks the capability outright, so the scoped
+                    // allows beside it are not written anywhere in this file.
+                    if rule.pattern.is_none() {
+                        shadowed.extend(
+                            tools
+                                .rules
+                                .iter()
+                                .filter(|other| {
+                                    other.action == ToolAction::Allow
+                                        && other.pattern.is_some()
+                                        && other.capability == rule.capability
+                                })
+                                .map(|other| format!("allow {}", other.render())),
+                        );
+                    }
                     continue;
                 }
                 if carries.writes_covered && is_file_write(rule) {
@@ -113,17 +109,8 @@ pub(super) fn losses(
     }
 
     let allowlist_carried = carries.allowlist && !allowed_natives(&projection).is_empty();
-    if tools.is_allowlist() {
-        if !allowlist_carried {
-            record_allowlist_loss(tools, &mut lost);
-        }
-    } else {
-        for rule in scoped_allow_only(tools) {
-            lost.push((
-                rule_loss(rule),
-                format!("allow {} (only this)", rule.render()),
-            ));
-        }
+    if tools.is_allowlist() && !allowlist_carried {
+        record_allowlist_loss(tools, &mut lost);
     }
     let mut fields: Vec<LossyField> = [Lost::Shell, Lost::Tool, Lost::Mcp]
         .into_iter()
@@ -150,6 +137,15 @@ pub(super) fn losses(
             target: target.into(),
             classification: Lossiness::Quiet {
                 why: "the read-only sandbox written to this file already blocks file writes",
+            },
+        });
+    }
+    if !shadowed.is_empty() {
+        fields.push(LossyField {
+            field: format!("tools ({})", shadowed.join(", ")),
+            target: target.into(),
+            classification: Lossiness::Quiet {
+                why: "an unscoped deny of the same tool in this file blocks the scoped allows",
             },
         });
     }

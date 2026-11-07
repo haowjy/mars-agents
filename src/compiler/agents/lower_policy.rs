@@ -15,7 +15,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 ///
 /// Launch-time fields (approval, sandbox, mode where not emitted, model-policies, …) are
 /// classified [`Lossiness::MeridianOnly`]: Meridian applies them at spawn. A restriction the
-/// native file cannot carry (a tool deny, `ask`, an allow list, a capability's scoped allows, an
+/// native file cannot carry (a tool deny, `ask`, an allow list, an
 /// MCP deny, a network limit, an overridden policy key) is [`Lossiness::Dropped`] with the kind it
 /// costs, and prints by default: the target runs the agent with what the author withheld. Quiet
 /// needs a reason ([`Lossiness::Quiet`]): a `deny` of file writes on Codex when the agent's
@@ -486,8 +486,7 @@ impl<'a> AgentLoweringCtx<'a> {
         // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
         // inherits every tool. So only an allowlist can lower to it: a map-form grant
         // (`tools: {bash: allow}`) says "allow this", not "only this", and emitting it would
-        // strip the agent of every tool the map did not name. The same holds for a scoped allow
-        // (`bash(rg *): allow`): `ToolRules` records it as lost.
+        // strip the agent of every tool the map did not name.
         if self.eff.tools.is_allowlist() && !allowed.is_empty() {
             self.yaml.insert(
                 yk("tools"),

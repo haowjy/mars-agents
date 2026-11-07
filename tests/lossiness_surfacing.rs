@@ -223,3 +223,47 @@ fn check_verbose_surfaces_meridian_only_detail() {
         .success()
         .stderr(predicate::str::contains(LOSSINESS_VERBOSE_SNIPPET));
 }
+
+/// Sync an agent whose `tools` is `tools_yaml` to `.claude` and `.codex`; returns (stderr, verbose stderr).
+fn sync_tools_agent(tools_yaml: &str) -> (String, String) {
+    let dir = TempDir::new().unwrap();
+    let agent = format!("---\nname: a\ndescription: a\ntools:\n{tools_yaml}---\n# Body\n");
+    let source = create_source(&dir, "base", &[("a", &agent)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".claude\", \".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+    let run = |extra: &[&str]| {
+        let out = mars()
+            .arg("sync")
+            .args(extra)
+            .args(["--root", project.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stderr).unwrap()
+    };
+    (run(&[]), run(&["--verbose"]))
+}
+
+#[test]
+fn scoped_bash_allow_is_not_a_lost_restriction() {
+    let (quiet, verbose) = sync_tools_agent("  \"bash(rg *)\": allow\n");
+    assert!(!quiet.contains("loses restrictions"), "{quiet}");
+    assert!(!verbose.contains("only this"), "{verbose}");
+
+    let (quiet, verbose) = sync_tools_agent("  \"bash(rg *)\": allow\n  bash: deny\n");
+    assert!(
+        quiet.contains("loses restrictions") && quiet.contains(".codex"),
+        "{quiet}"
+    );
+    assert!(
+        verbose.contains("allow bash(rg *)"),
+        "shadowed allow recorded on .claude: {verbose}"
+    );
+}

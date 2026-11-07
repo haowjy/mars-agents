@@ -387,7 +387,8 @@ launch bundle and lowers agent files; the author never writes a harness spelling
 
 `tools` is a map. A rule states a grant or a denial and leaves everything else to the harness.
 Add `'*': deny` to make the map an allowlist: only the capabilities it allows remain. A
-capability that has only scoped allows (`bash(rg *)`) then runs only those commands.
+scoped allow (`bash(rg *)`) only pre-approves the calls it matches and restricts nothing; to
+limit a capability, write `bash: deny` beside the scoped allows.
 
 A list (`tools: [read, grep]`), the scalar spellings (`tools: allow`, `tools: Read, Grep`) and
 `disallowed-tools` are errors in schema 1. A denial is `tools: {agent: deny}`.

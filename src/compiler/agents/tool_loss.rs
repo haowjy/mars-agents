@@ -48,26 +48,6 @@ fn is_file_write(rule: &ToolRule) -> bool {
     )
 }
 
-/// Capabilities whose only allows are scoped (`bash(rg *)` with no plain `bash` rule): the agent
-/// may run only those, which no file can say without restricting every other tool too.
-fn scoped_allow_only(tools: &EffectiveToolPolicy) -> Vec<&ToolRule> {
-    let mut only: Vec<&ToolRule> = Vec::new();
-    for rule in &tools.rules {
-        if rule.action == ToolAction::Allow
-            && rule.pattern.is_some()
-            && matches!(rule.capability, Capability::Builtin(_))
-            && !only.iter().any(|seen| seen.capability == rule.capability)
-            && !tools
-                .rules
-                .iter()
-                .any(|other| other.capability == rule.capability && other.pattern.is_none())
-        {
-            only.push(rule);
-        }
-    }
-    only
-}
-
 /// Every restriction `tools` places on the agent that `carries` cannot write, one field per
 /// kind lost. A plain grant loses nothing and records nothing.
 pub(super) fn losses(
@@ -113,17 +93,8 @@ pub(super) fn losses(
     }
 
     let allowlist_carried = carries.allowlist && !allowed_natives(&projection).is_empty();
-    if tools.is_allowlist() {
-        if !allowlist_carried {
-            record_allowlist_loss(tools, &mut lost);
-        }
-    } else {
-        for rule in scoped_allow_only(tools) {
-            lost.push((
-                rule_loss(rule),
-                format!("allow {} (only this)", rule.render()),
-            ));
-        }
+    if tools.is_allowlist() && !allowlist_carried {
+        record_allowlist_loss(tools, &mut lost);
     }
     let mut fields: Vec<LossyField> = [Lost::Shell, Lost::Tool, Lost::Mcp]
         .into_iter()

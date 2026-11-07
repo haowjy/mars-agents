@@ -140,7 +140,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
 | `tools` denials | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
-| `tools` `ask` rules, an allowlist with nothing allowed, `bash(rg *)` allowed with no plain `bash` | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
+| `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
 | `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
@@ -517,7 +517,7 @@ What counts:
 
 | Kind | Lost when |
 |---|---|
-| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, an allow list that does not grant `bash`, or `bash(rg *)` allowed with no plain `bash` rule (on every target, Claude included) |
+| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` |
 | tool | any other tool deny, `ask` or allow list the file cannot carry, such as `workflow: deny` or `edit: deny` |
 | MCP | an MCP `ask`, or a deny the target does not write |
 | network | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting; the project's `default_network` (anything but `allow`), `network-allow` and `network-deny` in `[settings]` once a Codex agent is written, listed as `project setting` |

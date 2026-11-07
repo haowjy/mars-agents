@@ -133,7 +133,6 @@ fn locked_version_preferred_when_satisfies_constraint() {
         git_spec("https://example.com/a.git", Some("^1.0")),
     )]);
 
-    // Lock file says v1.1.0
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
@@ -150,7 +149,6 @@ fn locked_version_preferred_when_satisfies_constraint() {
 
     let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
     let node = &graph.nodes["a"];
-    // Should prefer locked version 1.1.0 over unlocked latest-compatible 1.2.0.
     assert_eq!(node.resolved_ref.version, Some(Version::new(1, 1, 0)));
     assert_eq!(node.resolved_ref.commit.as_deref(), Some("abc"));
     assert_eq!(provider.list_versions_count("https://example.com/a.git"), 0);
@@ -189,7 +187,6 @@ fn locked_version_ignored_when_constraint_changed() {
 
     let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
     let node = &graph.nodes["a"];
-    // Locked version doesn't satisfy ^2.0, so latest-compatible picks 2.1.0.
     assert_eq!(node.resolved_ref.version, Some(Version::new(2, 1, 0)));
 }
 
@@ -370,7 +367,6 @@ fn latest_resolves_to_newest() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let node = &graph.nodes["a"];
-    // "latest" should pick the newest available version.
     assert_eq!(node.resolved_ref.version, Some(Version::new(3, 0, 0)));
 }
 
@@ -425,10 +421,6 @@ fn latest_and_semver_constraints_re_resolve_to_intersection() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // a uses "latest" for shared → maximize → 2.0.0 (available: 1.0.0, 2.0.0).
-    // b uses "^1.0" (= >=1.0.0, <2.0.0) → 2.0.0 doesn't satisfy <2.0.0, triggering
-    // re-resolution.  Combined: Latest (maximize) ∩ ^1.0 → satisfying = [1.0.0] →
-    // maximize picks 1.0.0.  Both constraints are jointly satisfiable.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -534,7 +526,6 @@ fn v2_resolves_to_major_range() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let node = &graph.nodes["a"];
-    // v2 → >=2.0.0, <3.0.0, latest-compatible picks 2.5.0
     assert_eq!(node.resolved_ref.version, Some(Version::new(2, 5, 0)));
 }
 
@@ -798,7 +789,6 @@ fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
     let mut provider = MockProvider::new();
     provider.add_source("a", tree, None);
 
-    // Config changed from main -> release, but lock still records main.
     let config = make_config(vec![(
         "a",
         git_spec("https://example.com/a.git", Some("release")),
@@ -1093,7 +1083,6 @@ fn no_available_versions_falls_back_to_head() {
     std::fs::create_dir_all(&tree).unwrap();
 
     let mut provider = MockProvider::new();
-    // No versions registered → empty list
     provider.add_source("a", tree, None);
 
     let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
@@ -1424,10 +1413,6 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
     assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
 }
 
-// Direct dep with locked version satisfying constraint uses the locked version (lock replay).
-// Relies on existing test `locked_version_preferred_when_satisfies_constraint` above.
-
-// Frozen + transitive dep with unreachable locked commit → hard error.
 #[test]
 fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     let dir = TempDir::new().unwrap();
@@ -1482,7 +1467,6 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     );
 
     let options = ResolveOptions::frozen();
-    // With frozen, transitive deps also consult the lock → unreachable commit → error.
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(
         matches!(result, Err(MarsError::LockedCommitUnreachable { .. })),
@@ -1490,7 +1474,6 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     );
 }
 
-// Transitive deps replay the consumer lock in normal sync.
 #[test]
 fn r3_transitive_dep_replays_consumer_lock() {
     let dir = TempDir::new().unwrap();
@@ -1519,7 +1502,6 @@ fn r3_transitive_dep_replays_consumer_lock() {
         git_spec("https://example.com/a.git", Some("v1.0.0")),
     )]);
 
-    // Lock records shared@v1.2.0, and shared is transitive.
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
@@ -1547,13 +1529,11 @@ fn r3_transitive_dep_replays_consumer_lock() {
     );
 
     let graph = resolve(&config, &provider, Some(&lock), &default_options()).unwrap();
-    // Transitive lock is replayed in normal sync.
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 2, 0)),
         "transitive lock version v1.2.0 must be preserved"
     );
-    // Locked commit should be replayed when version matches lock.
     let commits = provider.seen_preferred_commits();
     let shared_preferred = commits.last().cloned().flatten();
     assert_eq!(
@@ -1680,7 +1660,6 @@ fn transitive_locked_commit_unreachable_falls_back_in_normal_sync() {
     );
 }
 
-// --frozen replays the full graph from lock, including transitive deps.
 #[test]
 fn r5_frozen_replays_transitive_from_lock() {
     let dir = TempDir::new().unwrap();
@@ -1735,7 +1714,6 @@ fn r5_frozen_replays_transitive_from_lock() {
 
     let options = ResolveOptions::frozen();
     let graph = resolve(&config, &provider, Some(&lock), &options).unwrap();
-    // With frozen, transitive lock is respected → shared@v1.1.0 with locked commit.
     assert_eq!(
         graph.nodes["shared"].resolved_ref.version,
         Some(Version::new(1, 1, 0)),
@@ -1748,31 +1726,8 @@ fn r5_frozen_replays_transitive_from_lock() {
     );
 }
 
-// Direct dep without --frozen prefers locked version when constraint is satisfied.
-// Covered by `locked_version_preferred_when_satisfies_constraint` above.
-
-// `mars upgrade <source>` maximizes only the named source; others keep lock-preferred/latest-compatible behavior.
-// Covered by `maximize_with_specific_targets` above.
-
-// `mars upgrade` (no targets) maximizes all directs.
-// Covered by `maximize_mode_picks_newest` above.
-
-// Lock records all resolved packages (direct + transitive) on first write; re-sync replays them.
-// Covered by `upgrade_then_sync_keeps_upgraded_transitive_lock_and_content` in `tests/sync_behavior.rs`.
-
-// A source listed as both direct and transitive replays the lock regardless of encounter order.
-
-// Multi-intermediary empty constraint intersection → error naming constraints and sources.
-// Covered by `latest_constraint_does_not_skip_sibling_semver_validation` above.
-
-// RefPin overrides semver version selection.
-// Covered by `branch_ref_resolves_without_semver` above.
-
-// Multiple different RefPins for the same source conflict.
 #[test]
 fn r13_multiple_refpins_conflict() {
-    // Two direct deps that both depend on `shared` via different RefPin constraints.
-    // Because resolve_git_source short-circuits on first RefPin, the first encountered wins.
     let dir = TempDir::new().unwrap();
     let tree_a = dir.path().join("a");
     let tree_b = dir.path().join("b");
@@ -1795,7 +1750,6 @@ fn r13_multiple_refpins_conflict() {
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
     provider.add_versions("https://example.com/b.git", vec![(1, 0, 0)]);
-    // shared has no semver tags → goes through ref path
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
@@ -1805,7 +1759,6 @@ fn r13_multiple_refpins_conflict() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // Two different pins on one package are a conflict, whichever declaration meets them first.
     let error = resolve(&config, &provider, None, &default_options()).unwrap_err();
     let message = error.to_string();
     assert!(
@@ -1814,7 +1767,6 @@ fn r13_multiple_refpins_conflict() {
     );
 }
 
-// Local path source — no version resolution, lock is irrelevant.
 #[test]
 fn r14_local_path_source_ignores_lock() {
     let dir = TempDir::new().unwrap();
@@ -1826,7 +1778,6 @@ fn r14_local_path_source_ignores_lock() {
 
     let config = make_config(vec![("local", SourceSpec::Path(tree.clone()))]);
 
-    // Lock records a version for `local`, but path sources ignore it.
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "local".into(),
@@ -1852,7 +1803,6 @@ fn r14_local_path_source_ignores_lock() {
     );
 }
 
-// Transitive constraint from a manifest validates against an already-resolved direct dep.
 #[test]
 fn r15_transitive_constraint_validates_against_resolved_direct() {
     let dir = TempDir::new().unwrap();
@@ -1861,7 +1811,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // `a` requires shared ^2.0, but the direct dep pins shared to v1.x.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -1877,7 +1826,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("shared", tree_shared, None);
 
-    // Direct dep pins shared to ^1.0 (only v1.x satisfies this).
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
         (
@@ -1886,7 +1834,6 @@ fn r15_transitive_constraint_validates_against_resolved_direct() {
         ),
     ]);
 
-    // `a`'s manifest requires ^2.0 which conflicts with direct ^1.0 → resolution error.
     let result = resolve(&config, &provider, None, &default_options());
     assert!(
         result.is_err(),

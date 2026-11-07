@@ -33,7 +33,6 @@ fn init_twice_is_idempotent() {
         .assert()
         .success();
 
-    // Second init should succeed (idempotent) with info message
     mars()
         .args(["init", "--root", dir.path().to_str().unwrap()])
         .assert()
@@ -51,7 +50,6 @@ fn add_local_source_and_sync() {
         &[("planning", "# Planning skill")],
     );
 
-    // Init
     let mars_dir = dir.child("project").child(".mars");
     mars()
         .args([
@@ -62,7 +60,6 @@ fn add_local_source_and_sync() {
         .assert()
         .success();
 
-    // Add
     mars()
         .args([
             "add",
@@ -73,7 +70,6 @@ fn add_local_source_and_sync() {
         .assert()
         .success();
 
-    // Verify files installed
     assert!(mars_dir.child("agents").child("coder.md").exists());
     assert!(
         mars_dir
@@ -83,7 +79,6 @@ fn add_local_source_and_sync() {
             .exists()
     );
 
-    // Verify lock file exists
     assert!(dir.child("project").child("mars.lock").exists());
 }
 
@@ -183,7 +178,6 @@ fn remove_prunes_files() {
 
     assert!(mars_dir.child("agents").child("coder.md").exists());
 
-    // Remove the source
     mars()
         .args([
             "remove",
@@ -194,7 +188,6 @@ fn remove_prunes_files() {
         .assert()
         .success();
 
-    // File should be pruned
     assert!(!mars_dir.child("agents").child("coder.md").exists());
 }
 
@@ -228,7 +221,6 @@ fn list_shows_installed_items() {
         .assert()
         .success();
 
-    // Catalog view (default)
     mars()
         .args([
             "list",
@@ -241,7 +233,6 @@ fn list_shows_installed_items() {
         .stdout(predicate::str::contains("AGENTS"))
         .stdout(predicate::str::contains("SKILLS"));
 
-    // Status view
     mars()
         .args([
             "list",
@@ -303,7 +294,6 @@ fn root_discovery_from_subdir() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("agent", "# Agent")], &[]);
 
-    // Init and add
     let _agents_dir = dir.child("project").child(".agents");
     mars()
         .args([
@@ -324,11 +314,9 @@ fn root_discovery_from_subdir() {
         .assert()
         .success();
 
-    // Create a subdirectory
     let subdir = dir.child("project").child("subdir").child("deep");
     subdir.create_dir_all().unwrap();
 
-    // Run list from the subdirectory — should find .agents/ by walking up
     mars()
         .args(["list"])
         .current_dir(subdir.path())
@@ -362,7 +350,6 @@ fn json_output_valid() {
         .assert()
         .success();
 
-    // List with --json
     let output = mars()
         .args([
             "list",
@@ -374,7 +361,6 @@ fn json_output_valid() {
         .unwrap();
 
     let stdout = String::from_utf8(output.stdout).unwrap();
-    // Should be valid JSON with agents/skills keys
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert!(parsed.is_object());
     assert!(parsed.get("agents").is_some());
@@ -383,7 +369,6 @@ fn json_output_valid() {
     assert!(!agents.is_empty());
     assert!(agents[0].get("name").is_some());
 
-    // Status JSON should still return array format
     let output = mars()
         .args([
             "list",

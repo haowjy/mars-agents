@@ -15,8 +15,6 @@ struct Case {
     indent: usize,
 }
 
-/// Splice `emitted` in as the value of a key at column `indent`, nested under parent keys at
-/// columns 0, 2, ...; the value then reads back at `x-test` (and `k` for each level below).
 fn splice(emitted: &str, indent: usize) -> String {
     let mut text = String::from("---\nname: probe\n");
     for level in 0..=indent / 2 {
@@ -109,7 +107,6 @@ fn rewrite_block_refuses_duplicate_keys() {
     assert!(mars_schema::edit::rewrite_block(&pairs).is_err());
 }
 
-/// Nested mapping order survives read → rewrite_block → read, and emission.
 #[test]
 fn nested_key_order_survives() {
     let source = "---\nz: 1\ntools:\n  write: allow\n  \"*\": deny\n  bash: ask\nharness-overrides:\n  meridian-flow:\n    zeta: {b: 1, a: 2}\n    alpha: [{y: 1, x: 2}]\n---\nb\n";

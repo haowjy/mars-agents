@@ -99,8 +99,6 @@ impl ContentRoots {
         self.find_file(Path::new("skills").join(skill).join("SKILL.md"))
     }
 
-    /// Return installed items of `kind` that remain visible after layering.
-    ///
     /// The primary lock is authoritative and load failures remain fatal. A
     /// fallback lock is optional state, so an unreadable or corrupt one yields
     /// a warning and causes that entire layer to be skipped.

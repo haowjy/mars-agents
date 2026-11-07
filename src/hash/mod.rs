@@ -6,17 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::error::MarsError;
 use mars_schema::item::ItemKind;
 
-/// Compute SHA-256 of a file or directory (for skills).
-///
-/// For agents (single `.md` file): SHA-256 of file content.
-/// For directories (skills, hooks, MCP server files): SHA-256 of sorted
-/// `(relative_path, file_hash)` pairs — deterministic regardless of filesystem ordering.
-///
 /// A bootstrap doc is hashed as its directory (`bootstrap/<name>/`), whether the caller holds
 /// that directory or its `BOOTSTRAP.md`, so an installed doc's path hashes the way the lock
 /// recorded it.
-///
-/// Output format: `"sha256:<64-char-hex>"`.
 pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     match kind {
         ItemKind::Agent => {
@@ -31,7 +23,6 @@ pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     }
 }
 
-/// Compute hash for a skill directory while excluding selected top-level entries.
 pub fn compute_skill_hash_filtered(
     dir: &Path,
     excluded_top_level: &[&str],
@@ -39,7 +30,6 @@ pub fn compute_skill_hash_filtered(
     compute_dir_hash_filtered(dir, excluded_top_level)
 }
 
-/// Compute a skill tree hash with one file's installed bytes substituted.
 pub(crate) fn compute_skill_hash_with_override(
     dir: &Path,
     relative_path: &str,
@@ -60,9 +50,6 @@ pub(crate) fn compute_skill_hash_with_override(
     Ok(hash_file_manifest(entries))
 }
 
-/// Compute SHA-256 of raw bytes.
-///
-/// Returns `"sha256:<64-char-lowercase-hex>"`.
 pub fn hash_bytes(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
@@ -70,12 +57,6 @@ pub fn hash_bytes(content: &[u8]) -> String {
     format!("sha256:{:064x}", digest)
 }
 
-/// Compute a deterministic hash for a directory by:
-/// 1. Walking all files recursively
-/// 2. Collecting (relative_path, file_sha256) pairs
-/// 3. Sorting lexicographically by path
-/// 4. Concatenating "path:hash\n" strings
-/// 5. SHA-256 of the concatenated result
 pub(crate) fn compute_dir_hash(dir: &Path) -> Result<String, MarsError> {
     compute_dir_hash_filtered(dir, &[])
 }
@@ -86,7 +67,6 @@ fn compute_dir_hash_filtered(dir: &Path, excluded_top_level: &[&str]) -> Result<
     Ok(hash_file_manifest(entries))
 }
 
-/// Hash `(relative path, file hash)` entries using the directory-hash format.
 pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -101,7 +81,6 @@ pub(crate) fn hash_file_manifest(mut entries: Vec<(String, String)>) -> String {
     hash_bytes(manifest.as_bytes())
 }
 
-/// Hash every regular file below `root`, rejecting indirection and special files.
 pub(crate) fn strict_file_hashes(
     root: &Path,
     excluded_top_level: &[&str],
@@ -140,7 +119,6 @@ pub(crate) fn portable_relative(root: &Path, path: &Path) -> Option<String> {
         .map(|components| components.join("/"))
 }
 
-/// Recursively collect (relative_path, hash) pairs for all files in a directory.
 fn collect_file_hashes(
     root: &Path,
     current: &Path,
@@ -176,7 +154,6 @@ fn collect_file_hashes(
                     ),
                 });
             }
-            // Build forward-slash relative path from components for cross-platform determinism
             let rel_path = portable_relative(root, &path)
                 .unwrap_or_else(|| rel_path.to_string_lossy().replace('\\', "/"));
             let content = fs::read(&path).map_err(|error| MarsError::io("read", &path, error))?;
@@ -223,7 +200,6 @@ mod tests {
         let hash = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
         assert!(hash.starts_with("sha256:"));
 
-        // Verify determinism: same content → same hash
         let hash2 = compute_hash(&skill_dir, ItemKind::Skill).unwrap();
         assert_eq!(hash, hash2);
     }
@@ -233,14 +209,12 @@ mod tests {
         let dir1 = TempDir::new().unwrap();
         let skill1 = dir1.path().join("skill");
         fs::create_dir_all(&skill1).unwrap();
-        // Create files in order: a, b
         fs::write(skill1.join("a.md"), "content a").unwrap();
         fs::write(skill1.join("b.md"), "content b").unwrap();
 
         let dir2 = TempDir::new().unwrap();
         let skill2 = dir2.path().join("skill");
         fs::create_dir_all(&skill2).unwrap();
-        // Create files in reverse order: b, a
         fs::write(skill2.join("b.md"), "content b").unwrap();
         fs::write(skill2.join("a.md"), "content a").unwrap();
 

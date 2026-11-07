@@ -56,16 +56,13 @@ pub struct AddArgs {
     pub ignore_requires_meridian: bool,
 }
 
-/// Parsed dependency specifier.
 #[derive(Debug)]
 struct ParsedDependency {
     name: SourceName,
     entry: Entry,
 }
 
-/// Run `mars add`.
 pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    // Validate: filters require exactly one source
     let has_filters = !args.agents.is_empty()
         || !args.skills.is_empty()
         || !args.exclude.is_empty()
@@ -90,7 +87,6 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
 
     let filter_config = build_filter_config(args);
 
-    // Build mutations for all sources
     let mutations: Vec<(SourceName, Entry)> = args
         .sources
         .iter()
@@ -115,8 +111,6 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         })
         .collect::<Result<Vec<_>, MarsError>>()?;
 
-    // For single source, use direct mutation path
-    // For multi-source, apply mutations sequentially then run one sync
     if mutations.len() == 1 {
         let (name, entry) = mutations.into_iter().next().unwrap();
 
@@ -145,7 +139,6 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         return Ok(0);
     }
 
-    // Multi-source: send one batch mutation through sync pipeline.
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::BatchUpsert(mutations)),
@@ -168,7 +161,6 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
     Ok(0)
 }
 
-/// Build FilterConfig from CLI args.
 fn build_filter_config(args: &AddArgs) -> FilterConfig {
     FilterConfig {
         agents: if args.agents.is_empty() {
@@ -207,14 +199,6 @@ fn build_filter_config(args: &AddArgs) -> FilterConfig {
     }
 }
 
-/// Parse a dependency specifier string into a name + Entry.
-///
-/// Formats:
-/// - `owner/repo` → GitHub shorthand (no `.` in first segment, exactly one `/`)
-/// - `owner/repo@version` → GitHub shorthand with version
-/// - `github.com/owner/repo` → full git URL
-/// - `https://github.com/owner/repo.git` → full git URL
-/// - `./path` or `../path` or `/absolute` → local path
 fn parse_dependency_specifier(
     spec: &str,
     explicit_subpath: Option<&str>,

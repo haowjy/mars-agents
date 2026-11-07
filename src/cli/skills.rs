@@ -57,7 +57,6 @@ pub enum SkillsCommand {
     },
 }
 
-/// Run `mars skills`.
 pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(SkillsCommand::List) => run_list(args, ctx, json),

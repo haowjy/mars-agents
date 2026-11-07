@@ -11,7 +11,6 @@ use mars_schema::dependency::{Entry, RawEntry};
 use mars_schema::filter::FilterConfig;
 use mars_schema::names::{ItemName, RenameMap};
 
-/// Config mutation to apply atomically under flock.
 #[derive(Debug, Clone)]
 pub enum ConfigMutation {
     /// Add or update a dependency in mars.toml.
@@ -33,7 +32,6 @@ pub enum ConfigMutation {
     },
 }
 
-/// Metadata captured when `UpsertDependency` mutates an existing/new dependency.
 #[derive(Debug, Clone)]
 pub struct DependencyUpsertChange {
     pub name: SourceName,
@@ -139,7 +137,6 @@ fn apply_dependency_upsert(
         let old_version = existing.version.clone();
         let old_filter = existing.filter.clone();
 
-        // Merge: update location fields, preserve user customizations
         let location = RawEntry::from(entry);
         // A bare `github.com/org/repo` the user wrote stays as written: the entry carries it
         // spelled with `https://`, the same repository.
@@ -198,7 +195,6 @@ mod tests {
     #[test]
     fn apply_mutation_atomic_filter_replacement() {
         let mut config = Config::default();
-        // First add with agents filter
         let entry1 = Entry {
             version: Some("v1".into()),
             filter: FilterConfig {
@@ -217,7 +213,6 @@ mod tests {
         .unwrap();
         assert!(config.dependencies["base"].filter.agents.is_some());
 
-        // Re-add with only_skills — should atomically replace, clearing agents
         let entry2 = Entry {
             version: Some("v1".into()),
             filter: FilterConfig {
@@ -246,7 +241,6 @@ mod tests {
     #[test]
     fn apply_mutation_preserves_filters_on_version_bump() {
         let mut config = Config::default();
-        // Add with agents filter
         let entry1 = Entry {
             version: Some("v1".into()),
             filter: FilterConfig {
@@ -264,7 +258,6 @@ mod tests {
         )
         .unwrap();
 
-        // Re-add with no filter (version bump only)
         let entry2 = Entry {
             version: Some("v2".into()),
             ..Entry::git("https://github.com/org/base.git")
@@ -310,7 +303,6 @@ mod tests {
         )
         .unwrap();
 
-        // Re-add with different filter — rename should be preserved
         let entry2 = Entry {
             filter: FilterConfig {
                 only_skills: true,

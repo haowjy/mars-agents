@@ -1,14 +1,3 @@
-/// `.claude` target adapter.
-///
-/// Handles MCP server registration in the project-root `.mcp.json` and hook
-/// binding in `.claude/settings.local.json`.
-///
-/// Claude-native lowering:
-/// - MCP: writes `<project>/.mcp.json` (mcpServers section)
-/// - Hooks: writes to `settings.local.json` (hooks section). Hook commands
-///   carry machine-local cache paths, so they belong in the gitignored
-///   `settings.local.json` rather than the committed `settings.json`.
-/// - Env references: rendered as `${VAR_NAME}` for Claude Desktop config compat
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
@@ -29,7 +18,6 @@ impl TargetAdapter for ClaudeAdapter {
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
         match kind {
             ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),
-            // Agent, Hook, McpServer, BootstrapDoc routing is deferred.
             _ => None,
         }
     }

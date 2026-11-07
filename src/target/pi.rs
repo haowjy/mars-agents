@@ -1,11 +1,3 @@
-/// `.pi` target adapter.
-///
-/// Handles MCP server registration for the Pi harness.
-///
-/// Pi-native lowering:
-/// - MCP: writes `.pi/mcp.json` (`mcpServers` section) with `${VAR}` env
-///   interpolation. Pi reads project MCP servers only from trusted projects.
-/// - Hooks: whole-file extensions.
 use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 
@@ -30,6 +22,7 @@ impl TargetAdapter for PiAdapter {
         }
     }
 
+    // Pi reads project MCP servers only from trusted projects.
     fn mcp_file(&self) -> Option<McpFile> {
         Some(McpFile {
             at: McpLocation {

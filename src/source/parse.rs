@@ -4,7 +4,6 @@ use crate::platform::path_syntax::classify_local_source;
 use crate::types::SourceUrl;
 use mars_schema::names::SourceSubpath;
 
-/// Classification of source input syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceFormat {
     LocalPath,
@@ -16,7 +15,6 @@ pub enum SourceFormat {
     GenericGit,
 }
 
-/// Structured result of parsing a CLI source specifier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSourceSpec {
     pub format: SourceFormat,
@@ -28,7 +26,6 @@ pub struct ParsedSourceSpec {
     pub name: String,
 }
 
-/// Errors raised while parsing a source specifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ParseError {
     #[error(
@@ -567,7 +564,6 @@ fn derive_path_name(path: &Path, subpath: Option<&SourceSubpath>) -> Result<Stri
         .rsplit(['/', '\\'])
         .find(|s| !s.is_empty())
         .map(|s| {
-            // Strip drive letter prefix (e.g. "C:agents" → "agents")
             if s.len() >= 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':' {
                 &s[2..]
             } else {
@@ -629,7 +625,6 @@ fn collect_non_empty_segments(input: &str) -> Vec<String> {
         .collect()
 }
 
-/// Extract hostname from a URL-like git source string.
 pub fn extract_hostname(input: &str) -> Option<String> {
     if mars_schema::git_url::is_ssh_shorthand(input) {
         let (user_host, path) = input.split_once(':')?;
@@ -664,7 +659,6 @@ mod tests {
         assert_eq!(parsed.format, SourceFormat::LocalPath);
         assert_eq!(parsed.path.as_deref(), Some(Path::new("packages\\agents")));
         assert!(parsed.url.is_none());
-        // Name is the last path component, not the full path
         assert_eq!(parsed.name, "agents");
     }
 
@@ -674,7 +668,6 @@ mod tests {
         assert_eq!(parsed.format, SourceFormat::LocalPath);
         assert_eq!(parsed.path.as_deref(), Some(Path::new("C:agents")));
         assert!(parsed.url.is_none());
-        // Name is the last path component, not the drive-relative form
         assert_eq!(parsed.name, "agents");
     }
 

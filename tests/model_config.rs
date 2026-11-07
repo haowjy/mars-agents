@@ -1,5 +1,3 @@
-// qa-validated: capability-cache-resolver-invalid-harness-packages
-
 mod common;
 
 use httpmock::prelude::*;

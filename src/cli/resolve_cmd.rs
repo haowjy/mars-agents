@@ -15,7 +15,6 @@ pub struct ResolveArgs {
     pub file: Option<PathBuf>,
 }
 
-/// Run `mars resolve`.
 pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
     let lock_path = mars_dir.join("sync.lock");
@@ -26,7 +25,6 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let mut still_conflicted = Vec::new();
 
     let items_to_check: Vec<DestPath> = if let Some(file) = &args.file {
-        // Check specific file
         let rel_input = if file.is_absolute() {
             file.strip_prefix(&mars_dir).map_or_else(
                 |_| file.to_string_lossy().to_string(),
@@ -48,7 +46,6 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             });
         }
     } else {
-        // Check all items
         lock.all_output_dest_paths().cloned().collect()
     };
 
@@ -58,13 +55,11 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             continue;
         }
 
-        // Check for conflict markers
         if super::conflict_markers::file_has_conflict_markers(&disk_path) {
             still_conflicted.push(dest_path_str.clone());
             continue;
         }
 
-        // File has no conflict markers — update lock checksums in the matching output record.
         'outer: for item_v2 in lock.items.values_mut() {
             for output in &mut item_v2.outputs {
                 if &output.dest_path == dest_path_str {
@@ -82,7 +77,6 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    // Write updated lock
     if !resolved_files.is_empty() {
         crate::lock::write(&ctx.project_root, &lock)?;
     }

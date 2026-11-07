@@ -85,7 +85,6 @@ fn single_source_no_deps() {
     assert_eq!(graph.order.len(), 1);
     assert_eq!(graph.order[0], "a");
 
-    // Latest-compatible: should pick 1.1.0 (newest satisfying)
     let node = &graph.nodes["a"];
     assert_eq!(node.resolved_ref.version, Some(Version::new(1, 1, 0)));
 }
@@ -113,7 +112,6 @@ fn two_sources_no_deps() {
 
     assert_eq!(graph.nodes.len(), 2);
     assert_eq!(graph.order.len(), 2);
-    // Both should be in the order (either order is valid since no deps)
     assert!(graph.order.contains(&"a".into()));
     assert!(graph.order.contains(&"b".into()));
 }
@@ -204,16 +202,13 @@ fn source_with_transitive_dep() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
-    // Should have both 'a' and 'dep'
     assert_eq!(graph.nodes.len(), 2);
     assert!(graph.nodes.contains_key("a"));
     assert!(graph.nodes.contains_key("dep"));
 
-    // Dep should be resolved to newest satisfying >=0.5.0 → 1.0.0
     let dep_node = &graph.nodes["dep"];
     assert_eq!(dep_node.resolved_ref.version, Some(Version::new(1, 0, 0)));
 
-    // Resolver output order is deterministic alphabetical.
     assert_eq!(graph.order, vec!["a", "dep"]);
 }
 
@@ -424,7 +419,6 @@ fn transitive_dep_propagates_subpath_into_source_identity() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     let dep_node = graph.nodes.get("dep").expect("dep should be resolved");
-    // SourceId stores the canonical URL (no protocol, no .git suffix)
     assert_eq!(
         dep_node.source_id,
         SourceId::git_with_subpath(
@@ -448,8 +442,6 @@ fn compatible_constraints_from_two_dependents() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // Both a and b depend on shared with the same constraint.
-    // The resolved version must satisfy both.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -480,7 +472,6 @@ fn compatible_constraints_from_two_dependents() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     assert_eq!(graph.nodes.len(), 3);
-    // Latest-compatible with >=1.0.0 from both → picks 2.0.0 (newest satisfying all)
     let shared_node = &graph.nodes["shared"];
     assert_eq!(
         shared_node.resolved_ref.version,
@@ -498,8 +489,6 @@ fn narrower_second_constraint_upgrades_latest_compatible_selection() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // a requires shared >=1.0.0, b requires shared >=1.5.0.
-    // Combined constraints select the newest satisfying version: 2.0.0.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -546,7 +535,6 @@ fn incompatible_constraints_produce_error() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // a requires shared >=2.0.0, b requires shared <1.0.0 — incompatible
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -591,7 +579,6 @@ fn cycle_does_not_error() {
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_b).unwrap();
 
-    // a depends on b, b depends on a → cycle
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -673,8 +660,6 @@ fn different_second_constraint_re_resolves_to_satisfying_version() {
     write_minimal_package_marker(&tree_shared);
     write_skill(&tree_shared, "common");
 
-    // a requires shared >=1.0.0.
-    // b requires shared >=2.0.0 — latest-compatible with combined constraints is 2.0.0.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -760,9 +745,6 @@ fn latest_and_pinned_revisit_re_resolves_to_pinned_version() {
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
     ]);
 
-    // a (Latest) is processed first: maximize → 2.0.0.
-    // b arrives with exact =1.0.0 — 2.0.0 does not satisfy it, so re-resolution runs.
-    // Combined: Latest (maximize) ∩ =1.0.0 → only 1.0.0 satisfies, maximize picks it.
     let graph = resolve(&config, &provider, None, &default_options())
         .expect("Latest + exact-pin are jointly satisfiable by 1.0.0; should not error");
     assert_eq!(
@@ -938,9 +920,6 @@ fn local_path_source_resolves_transitive_path_dependencies() {
     assert!(graph.nodes.contains_key("planning"));
 }
 
-/// When no subpath is specified, checkout_root IS the
-/// package_root and the resolver produces a RootedSourceRef where both
-/// fields point to the same directory.
 #[test]
 fn apply_subpath_none_yields_checkout_as_package_root() {
     let dir = TempDir::new().unwrap();
@@ -949,11 +928,6 @@ fn apply_subpath_none_yields_checkout_as_package_root() {
     assert_eq!(rooted.package_root, dir.path());
 }
 
-/// The resolver must pass `package_root` (not checkout_root) to
-/// the manifest reader.  We arrange a subpath dep whose checkout_root has
-/// no mars.toml but whose package_root (a subdirectory) does, then verify
-/// that the manifest is successfully discovered — proving package_root was
-/// used as the read base.
 #[test]
 fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let dir = TempDir::new().unwrap();
@@ -961,8 +935,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     let package_root = checkout.join("plugins/foo");
     std::fs::create_dir_all(&package_root).unwrap();
 
-    // The manifest sits in package_root, NOT the checkout root, so a read from
-    // checkout_root finds none.
     let manifest = Manifest {
         package: PackageInfo {
             name: "foo".to_string(),
@@ -1016,7 +988,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
 
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     let node = graph.nodes.get("dep").expect("dep should be in graph");
-    // Manifest must be present — only possible if package_root was used
     assert!(
         node.manifest.is_some(),
         "manifest should be loaded from package_root; got None — checkout_root was likely used instead"
@@ -1025,14 +996,6 @@ fn resolver_reads_manifest_from_package_root_not_checkout_root() {
     assert_eq!(node.rooted_ref.checkout_root, checkout);
 }
 
-/// Two dependencies at different subpaths of the same git URL
-/// must not trigger a second fetch.  In our resolver the fetch is keyed by
-/// (source name, URL) so two DISTINCT dep names pointing to the same URL
-/// but different subpaths each call fetch_git_version once — but the test
-/// verifies they both resolve successfully with distinct package_roots,
-/// which is the observable contract from the resolver's perspective
-/// (cache sharing is a source-layer concern; here we verify no error is
-/// raised and both roots are distinct).
 #[test]
 fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
     let dir = TempDir::new().unwrap();
@@ -1101,19 +1064,14 @@ fn two_subpaths_same_url_resolve_to_distinct_package_roots() {
 
     let node_a = graph.nodes.get("dep-a").expect("dep-a should be resolved");
     let node_b = graph.nodes.get("dep-b").expect("dep-b should be resolved");
-    // Each gets its own distinct package_root
     assert_eq!(node_a.rooted_ref.package_root, pkg_a);
     assert_eq!(node_b.rooted_ref.package_root, pkg_b);
-    // checkout_roots differ because MockProvider returns different trees per name
     assert_ne!(
         node_a.rooted_ref.package_root,
         node_b.rooted_ref.package_root
     );
 }
 
-/// a transitive dep whose manifest entry has NO subpath
-/// should produce a source identity with subpath = None (not inherit from
-/// the parent).
 #[test]
 fn transitive_dep_without_subpath_has_none_in_source_identity() {
     let dir = TempDir::new().unwrap();
@@ -1122,7 +1080,6 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_dep).unwrap();
 
-    // 'a' depends on 'dep' with NO subpath declared
     let mut manifest_deps = IndexMap::new();
     manifest_deps.insert(
         "dep".to_string(),
@@ -1161,23 +1118,14 @@ fn transitive_dep_without_subpath_has_none_in_source_identity() {
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
 
     let dep_node = graph.nodes.get("dep").expect("dep should be in graph");
-    // No subpath declared → identity must have subpath = None
-    // SourceId stores the canonical URL (no protocol, no .git suffix)
     assert_eq!(
         dep_node.source_id,
         SourceId::git_with_subpath(SourceUrl::from("example.com/dep"), None)
     );
-    // package_root equals checkout_root when subpath is None
     assert_eq!(dep_node.rooted_ref.package_root, tree_dep);
     assert_eq!(dep_node.rooted_ref.checkout_root, tree_dep);
 }
 
-//
-// These tests verify that SSH and HTTPS URL forms of the same repository
-// canonicalize to the same SourceId, preventing false-duplicate cache entries
-// and enabling correct deduplication in the resolver.
-
-/// SSH and HTTPS forms of the same repo produce equal canonical SourceIds.
 #[test]
 fn ssh_and_https_url_forms_have_same_canonical_source_id() {
     let ssh_id = SourceId::git_with_subpath(
@@ -1198,8 +1146,6 @@ fn ssh_and_https_url_forms_have_same_canonical_source_id() {
     );
 }
 
-/// Two direct deps with different names that both resolve to the same canonical URL
-/// are detected as a duplicate-identity conflict.
 #[test]
 fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     let dir = TempDir::new().unwrap();
@@ -1207,14 +1153,11 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     std::fs::create_dir_all(&tree).unwrap();
 
     let mut provider = MockProvider::new();
-    // Register versions for the SSH URL (used by spec of dep-a)
     provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
-    // Register versions for the HTTPS URL (used by spec of dep-b)
     provider.add_versions("https://example.com/org/shared.git", vec![(1, 0, 0)]);
     provider.add_source("dep-a", tree.clone(), None);
     provider.add_source("dep-b", tree, None);
 
-    // Both deps canonicalize to the same SourceId
     let canonical_url = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "https://example.com/org/shared.git",
     ));
@@ -1260,8 +1203,6 @@ fn ssh_and_https_direct_deps_same_repo_detected_as_duplicate() {
     );
 }
 
-/// A transitive dep declared with HTTPS form converges with a direct dep declared
-/// with SSH form of the same repo — no SourceIdentityMismatch is raised.
 #[test]
 fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     let dir = TempDir::new().unwrap();
@@ -1270,7 +1211,6 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     std::fs::create_dir_all(&tree_a).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // Manifest for "a" declares "shared" with HTTPS URL form
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -1279,15 +1219,10 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
 
     let mut provider = MockProvider::new();
     provider.add_versions("https://example.com/a.git", vec![(1, 0, 0)]);
-    // SSH URL form — used by the direct dep's spec for version resolution
     provider.add_versions("git@example.com:org/shared.git", vec![(1, 0, 0)]);
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("shared", tree_shared, None);
 
-    // Direct dep "shared" uses SSH URL, but stores the canonical SourceId.
-    // SSH form: git@example.com:org/shared.git → canonical: example.com/org/shared
-    // HTTPS form: https://example.com/org/shared.git → canonical: example.com/org/shared
-    // Both are the same canonical, so the resolver should not raise SourceIdentityMismatch.
     let ssh_canonical = SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
         "git@example.com:org/shared.git",
     ));
@@ -1334,7 +1269,6 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
         skills: indexmap::IndexMap::new(),
     };
 
-    // Resolution must succeed — SSH and HTTPS forms of the same repo converge.
     let graph = resolve(&config, &provider, None, &default_options()).unwrap();
     assert!(
         graph.nodes.contains_key("shared"),
@@ -1343,11 +1277,8 @@ fn transitive_dep_https_converges_with_direct_dep_ssh_same_canonical() {
     assert!(graph.nodes.contains_key("a"), "a should be resolved");
 }
 
-/// TRUE mismatches (different host or path) still produce errors — canonicalization
-/// does not collapse genuinely different repos into the same identity.
 #[test]
 fn different_host_or_path_does_not_produce_false_convergence() {
-    // Different hosts → different SourceIds
     let github_id = SourceId::git_with_subpath(
         SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo.git",
@@ -1365,7 +1296,6 @@ fn different_host_or_path_does_not_produce_false_convergence() {
         "Different hosts must produce distinct SourceIds"
     );
 
-    // Different paths on the same host → different SourceIds
     let repo_a_id = SourceId::git_with_subpath(
         SourceUrl::from(mars_schema::git_url::canonicalize_git_url(
             "https://github.com/org/repo-a.git",
@@ -1384,14 +1314,6 @@ fn different_host_or_path_does_not_produce_false_convergence() {
     );
 }
 
-//
-// When a transitive dep is resolved under a partial constraint set and a later
-// intermediary adds a `Latest` constraint, the already-`Resolved` package must be
-// re-resolved against the full accumulated constraints so the final version is
-// order-independent.
-
-/// Primary regression: `a` is processed first, then `b` adds a late `Latest`
-/// constraint on `shared`. The final version must remain order-independent.
 #[test]
 fn transitive_latest_constraint_upgrades_already_resolved_version() {
     let dir = TempDir::new().unwrap();
@@ -1402,7 +1324,6 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_shared).unwrap();
 
-    // `a` depends on `shared` with a semver bound.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -1412,7 +1333,6 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
             ">=1.0.0, <2.0.0",
         )],
     );
-    // `b` depends on `shared` with no version constraint → Latest → maximize.
     let manifest_b = make_manifest(
         "b",
         "1.0.0",
@@ -1427,8 +1347,6 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
 
-    // `a` appears first in config; `b` contributes a late Latest constraint.
-    // The result must still be 1.2.0.
     let config = make_config(vec![
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
@@ -1445,10 +1363,6 @@ fn transitive_latest_constraint_upgrades_already_resolved_version() {
     );
 }
 
-/// Symmetric case: `b` is processed first (Latest → 1.2.0), then `a` adds
-/// `>=1.0.0, <2.0.0`.  Since 1.2.0 already satisfies the semver bound, re-resolution
-/// should keep `shared` at 1.2.0.  Verifies order-independence — the result must
-/// match the primary regression test above.
 #[test]
 fn transitive_latest_constraint_order_independent_b_first() {
     let dir = TempDir::new().unwrap();
@@ -1482,8 +1396,6 @@ fn transitive_latest_constraint_order_independent_b_first() {
     provider.add_source("b", tree_b, Some(manifest_b));
     provider.add_source("shared", tree_shared, None);
 
-    // `b` first: Latest selects 1.2.0.  `a` arrives with `>=1.0.0, <2.0.0` which
-    // 1.2.0 satisfies — no version change, no re-resolution needed, stays at 1.2.0.
     let config = make_config(vec![
         ("b", git_spec("https://example.com/b.git", Some("v1.0.0"))),
         ("a", git_spec("https://example.com/a.git", Some("v1.0.0"))),
@@ -1512,14 +1424,12 @@ fn restart_fresh_context_drops_removed_transitive_dependency_and_lock_entry() {
     std::fs::create_dir_all(&tree_b).unwrap();
     std::fs::create_dir_all(&tree_x).unwrap();
 
-    // A@v1 depends on X; A@v2 drops X.
     let manifest_a_v1 = make_manifest(
         "a",
         "1.0.0",
         vec![("x", "https://example.com/x.git", ">=1.0.0")],
     );
     let manifest_a_v2 = make_manifest("a", "2.0.0", vec![]);
-    // B contributes a late Latest constraint on A to force restart to v2.
     let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
 
     let mut provider = MockProvider::new();
@@ -1580,9 +1490,6 @@ fn restart_fresh_context_drops_removed_transitive_engine_fallback() {
         std::fs::create_dir_all(tree).unwrap();
     }
 
-    // A resolves shared@v1 first; that version depends on X, whose newest version
-    // is engine-incompatible. B then contributes Latest for shared, restarting at
-    // shared@v2, which no longer depends on X.
     let manifest_a = make_manifest(
         "a",
         "1.0.0",
@@ -1672,14 +1579,12 @@ fn restart_fresh_context_selects_new_transitive_dependency_items() {
     write_minimal_package_marker(&tree_y);
     write_agent(&tree_y, "y-agent", &[]);
 
-    // A@v1 has no deps; A@v2 introduces Y.
     let manifest_a_v1 = make_manifest("a", "1.0.0", vec![]);
     let manifest_a_v2 = make_manifest(
         "a",
         "2.0.0",
         vec![("y", "https://example.com/y.git", ">=1.0.0")],
     );
-    // Late Latest from B forces A to v2.
     let manifest_b = make_manifest("b", "1.0.0", vec![("a", "https://example.com/a.git", "")]);
 
     let mut provider = MockProvider::new();

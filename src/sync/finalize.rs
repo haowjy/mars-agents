@@ -11,7 +11,6 @@ use crate::sync::kept_hooks;
 use crate::sync::{SyncReport, SyncRequest, SyncedState, recovery};
 use crate::types::MarsContext;
 
-/// Lock is written regardless of target sync outcome.
 pub(crate) fn finalize(
     ctx: &MarsContext,
     state: SyncedState,
@@ -86,9 +85,6 @@ pub(crate) fn finalize(
         }
         recovery::complete(project_root)?;
 
-        // Best-effort models cache refresh: ensure the catalog covers any
-        // new aliases we're about to persist. Sync never aborts on refresh
-        // failure — warn and continue.
         let mars_path = ctx.project_root.join(".mars");
         let settings = &state
             .applied

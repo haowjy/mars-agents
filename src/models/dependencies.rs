@@ -14,14 +14,12 @@ pub(crate) fn declaration_ordered_dep_models(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
 ) -> Vec<ResolvedDepModels> {
-    // Declaration positions for direct deps in consumer mars.toml.
     let mut decl_pos: HashMap<SourceName, usize> = HashMap::new();
     for (idx, name) in config.dependencies.keys().enumerate() {
         decl_pos.insert(name.clone(), idx);
     }
 
-    // Propagate declaration position to transitives: a transitive dependency
-    // takes the minimum position among all direct dependencies that reach it.
+    // Inherit the earliest direct sponsor so alias precedence follows consumer order.
     for (idx, sponsor) in config.dependencies.keys().enumerate() {
         let Some(sponsor_node) = graph.nodes.get(sponsor) else {
             continue;
@@ -46,8 +44,7 @@ pub(crate) fn declaration_ordered_dep_models(
         }
     }
 
-    // Build Kahn structures using dependency edges:
-    // dep -> dependent (name depends on dep).
+    // Edges run from dependency to dependent so dependencies sort first.
     let mut in_degree: HashMap<SourceName, usize> = HashMap::new();
     let mut adjacency: HashMap<SourceName, Vec<SourceName>> = HashMap::new();
 
@@ -90,8 +87,7 @@ pub(crate) fn declaration_ordered_dep_models(
         }
     }
 
-    // Graph should already be acyclic from resolver; this keeps behavior
-    // deterministic if that invariant is ever violated.
+    // Cyclic dependency graphs are allowed; use graph order when topological sorting fails.
     let ordered_names: Vec<SourceName> = if ordered.len() == graph.nodes.len() {
         ordered
     } else {
@@ -252,7 +248,6 @@ mod tests {
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
-        // Direct siblings follow consumer declaration order, not graph insertion order.
         let config = effective_config_with_decl_order(&["b", "a"]);
 
         let dep_models = declaration_ordered_dep_models(&graph, &config);
@@ -313,7 +308,6 @@ mod tests {
             version_constraints: std::collections::HashMap::new(),
             unreadable_hook_surfaces: std::collections::BTreeMap::new(),
         };
-        // D is declared after A, but topological ordering must still emit D first.
         let config = effective_config_with_decl_order(&["a", "d"]);
 
         let dep_models = declaration_ordered_dep_models(&graph, &config);

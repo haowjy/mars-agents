@@ -1,6 +1,3 @@
-// qa-validated: harness-order-settings-audit
-// qa-validated: capability-cache-resolver-routing-gaps
-
 use super::common::{selected_attempt, setup_bundle_project};
 use crate::test_common::{API_PATH, fresh_fetched_at, mars_cmd, sample_catalog_json, write_cache};
 use assert_fs::TempDir;

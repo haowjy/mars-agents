@@ -34,8 +34,6 @@ pub use catalog_cache::{
 };
 pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
 
-/// A model alias — either pinned to a specific model ID or auto-resolved
-/// against the models cache at resolution time.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ModelAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,22 +63,18 @@ impl ModelAlias {
     }
 }
 
-/// How a model alias resolves to a concrete model ID.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelSpec {
-    /// Explicit model ID — no resolution needed.
     Pinned {
         model: String,
         provider: Option<String>,
     },
-    /// Explicit model ID for resolution, plus discovery filters for list/all views.
     PinnedWithMatch {
         model: String,
         provider: Option<String>,
         match_patterns: Vec<String>,
         exclude_patterns: Vec<String>,
     },
-    /// Pattern-based resolution against models cache.
     AutoResolve {
         provider: Option<String>,
         match_patterns: Vec<String>,
@@ -88,7 +82,6 @@ pub enum ModelSpec {
     },
 }
 
-/// How the harness was determined.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessSource {
@@ -97,7 +90,6 @@ pub enum HarnessSource {
     Unavailable,
 }
 
-/// Fully resolved model alias — everything a consumer needs to launch.
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedAlias {
     pub name: String,
@@ -120,7 +112,6 @@ pub struct ResolvedAlias {
     pub availability: Option<ModelAvailability>,
 }
 
-// Custom Serialize for ModelSpec to flatten into parent
 impl Serialize for ModelSpec {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
@@ -187,7 +178,6 @@ impl Serialize for ModelSpec {
     }
 }
 
-/// Raw deserialization helper — distinguished by field presence.
 #[derive(Debug, Deserialize)]
 struct RawModelAlias {
     harness: Option<String>,
@@ -203,10 +193,8 @@ struct RawModelAlias {
     autocompact: Option<toml::Value>,
     #[serde(default)]
     autocompact_pct: Option<toml::Value>,
-    // Pinned mode
     #[serde(default)]
     model: Option<String>,
-    // AutoResolve mode
     #[serde(default)]
     provider: Option<String>,
     #[serde(default, rename = "match")]
@@ -321,7 +309,6 @@ impl<'de> Deserialize<'de> for ModelAlias {
     }
 }
 
-/// Provider/model slugs from the models.dev catalog for harness routing comparisons.
 pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
     cache
         .models
@@ -336,7 +323,6 @@ pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
         .collect()
 }
 
-/// Catalog + harness probe refresh intent from CLI flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelsRefreshControl {
     pub catalog_mode: RefreshMode,
@@ -413,15 +399,6 @@ pub fn merged_runtime_aliases(
     merged
 }
 
-/// Resolve an auto-resolve spec against the models cache.
-///
-/// Algorithm:
-/// 1. Filter by provider (case-insensitive) when specified
-/// 2. All match patterns must hit (AND)
-/// 3. No exclude patterns may hit (OR)
-/// 4. Skip entries ending with `-latest` (synthetic aliases)
-/// 5. Sort by newest release_date, then shortest ID, then lexical ID
-/// 6. Return all candidates
 pub fn auto_resolve_all<'a>(
     provider: Option<&str>,
     match_patterns: &[String],
@@ -449,7 +426,6 @@ pub fn auto_resolve_all<'a>(
         })
         .collect();
 
-    // Sort: newest release_date first, then shortest ID, then lexical ID.
     candidates.sort_by(|a, b| {
         let date_cmp = b
             .release_date
@@ -464,15 +440,6 @@ pub fn auto_resolve_all<'a>(
     candidates
 }
 
-/// Resolve an auto-resolve spec against the models cache.
-///
-/// Algorithm:
-/// 1. Filter by provider (case-insensitive) when specified
-/// 2. All match patterns must hit (AND)
-/// 3. No exclude patterns may hit (OR)
-/// 4. Skip entries ending with `-latest` (synthetic aliases)
-/// 5. Sort by newest release_date, then shortest ID, then lexical ID
-/// 6. Pick first
 pub fn auto_resolve(
     provider: Option<&str>,
     match_patterns: &[String],
@@ -618,20 +585,15 @@ pub(crate) fn alias_prefix_base<'a>(
         .map(|(_, alias)| alias)
 }
 
-/// Simple glob matching: `*` matches any sequence of characters.
-/// Everything else is literal. Case-sensitive.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
-    // Split pattern on '*' and match segments in order
     let segments: Vec<&str> = pattern.split('*').collect();
 
     if segments.len() == 1 {
-        // No wildcards — exact match
         return pattern == text;
     }
 
     let mut pos = 0;
 
-    // First segment must be a prefix
     if let Some(first) = segments.first()
         && !first.is_empty()
     {
@@ -641,7 +603,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
         pos = first.len();
     }
 
-    // Last segment must be a suffix
     if let Some(last) = segments.last()
         && !last.is_empty()
         && !text[pos..].ends_with(last)
@@ -649,7 +610,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
         return false;
     }
 
-    // Middle segments must appear in order
     let end = if let Some(last) = segments.last() {
         if !last.is_empty() {
             text.len() - last.len()
@@ -674,12 +634,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     pos <= end
 }
 
-// ---------------------------------------------------------------------------
-// Builtin aliases — bare convenience mappings, no descriptions
-// ---------------------------------------------------------------------------
-
-/// Minimal builtin aliases so common model names work out of the box.
-/// Suppressed as soon as consumer or dependency aliases exist.
 pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
     let mut m = IndexMap::new();
     let add = |m: &mut IndexMap<String, ModelAlias>,
@@ -731,18 +685,11 @@ pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {
     m
 }
 
-/// Info about a resolved dependency's model config.
 pub struct ResolvedDepModels {
     pub source_name: String,
     pub models: IndexMap<String, ModelAlias>,
 }
 
-/// Merge model aliases from dependency tree.
-///
-/// Precedence: consumer > deps (declaration order).
-/// Builtins appear only when consumer and dependency aliases are both empty.
-/// When two deps define the same alias, first in declaration order wins
-/// with a diagnostic warning.
 pub fn merge_model_config(
     consumer: &IndexMap<String, ModelAlias>,
     deps: &[ResolvedDepModels],
@@ -762,19 +709,15 @@ pub fn merge_model_config(
         IndexMap::new()
     };
 
-    // Track which dep won each alias
     let mut dep_provided: std::collections::HashMap<String, DepWinner> =
         std::collections::HashMap::new();
 
-    // Dependencies: first dep wins on conflicts
     for dep in deps {
         for (name, alias) in &dep.models {
             if consumer.contains_key(name) {
-                // Consumer will override — skip dep's version silently
                 continue;
             }
             if let Some(winner) = dep_provided.get(name) {
-                // Two deps define same alias — first dep wins, warn
                 let message = if let Some(cache) = cache {
                     let (winner_formatted, winner_model_id) =
                         format_alias_resolution_for_diag(&winner.alias, &winner.source_name, cache);
@@ -814,17 +757,12 @@ pub fn merge_model_config(
         }
     }
 
-    // Consumer config overrides dependency aliases.
     for (name, alias) in consumer {
         merged.insert(name.clone(), alias.clone());
     }
 
     merged
 }
-/// Resolve aliases without any harness detection or probe/auth checks.
-///
-/// This is intended for static list views where only alias -> model/provider
-/// resolution is needed.
 pub fn resolve_all_static(
     aliases: &IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
@@ -837,7 +775,6 @@ pub fn resolve_all_static(
         .collect()
 }
 
-/// Resolve model identity only; callers supply scoped routing evidence separately.
 pub fn resolve_one_static(
     name: &str,
     aliases: &IndexMap<String, ModelAlias>,
@@ -861,17 +798,10 @@ pub fn resolve_one_static(
     })
 }
 
-/// Resolve a concrete model id for one alias.
-///
-/// Used by build-time launch routing so model resolution logic stays shared
-/// with `mars models resolve`.
 pub fn resolve_model_id_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
     resolve_model_and_provider(alias, cache).map(|(model_id, _provider)| model_id)
 }
 
-/// Resolve provider identity for one alias.
-///
-/// Returns `None` when provider cannot be inferred.
 pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Option<String> {
     let provider = resolve_model_and_provider(alias, cache)
         .map(|(_model_id, provider)| provider)
@@ -967,8 +897,6 @@ fn format_alias_resolution_for_diag(
     }
 }
 
-/// Best-effort provider inference from model ID prefixes.
-/// Returns None for unrecognized patterns.
 pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
     let id = model_id.to_lowercase();
     if id.starts_with("claude-") {
@@ -1000,9 +928,6 @@ pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
     None
 }
 
-/// Split a token shaped like `provider/model` into `(model, provider_constraint)`.
-///
-/// Returns `(trimmed_token, None)` when the token is not a valid constrained slug.
 pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<String>) {
     let trimmed = token.trim();
     let Some((provider, model_name)) = trimmed.split_once('/') else {
@@ -1019,8 +944,6 @@ pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -- glob_match tests --
 
     #[test]
     fn glob_match_boundaries() {
@@ -1050,8 +973,6 @@ mod tests {
             );
         }
     }
-
-    // -- auto_resolve tests --
 
     fn make_cache(models: Vec<(&str, &str, Option<&str>)>) -> ModelsCache {
         ModelsCache {
@@ -1089,7 +1010,6 @@ mod tests {
             &[],
             &cache,
         );
-        // Newest date wins
         assert_eq!(result, Some("claude-opus-4-20250514".to_string()));
     }
 
@@ -1123,7 +1043,6 @@ mod tests {
             &[],
             &cache,
         );
-        // Should skip -latest even though it has a newer date
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
@@ -1177,7 +1096,6 @@ mod tests {
             &[],
             &cache,
         );
-        // Same date — shorter ID wins
         assert_eq!(result, Some("claude-opus-4".to_string()));
     }
 
@@ -1194,7 +1112,6 @@ mod tests {
             &[],
             &cache,
         );
-        // Same date + same length — lexical ID wins for deterministic ordering.
         assert_eq!(result, Some("claude-opus-4-a".to_string()));
     }
 
@@ -1220,8 +1137,6 @@ mod tests {
             vec!["claude-opus-4-6", "claude-opus-4-6-long", "claude-opus-4-5"]
         );
     }
-
-    // -- merge_model_config tests --
 
     fn pinned_alias(harness: Option<&str>, model: &str) -> ModelAlias {
         ModelAlias {
@@ -1283,7 +1198,6 @@ mod tests {
     fn merge_empty_returns_builtins() {
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[], &mut diag, None);
-        // Empty consumer + no deps = builtins only
         assert!(merged.contains_key("opus"));
         assert!(merged.contains_key("sonnet"));
         assert!(merged.contains_key("codex"));
@@ -1380,7 +1294,6 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         let merged = merge_model_config(&IndexMap::new(), &[dep1, dep2], &mut diag, None);
-        // First dep wins
         assert_eq!(
             merged.get("custom").unwrap().spec,
             ModelSpec::Pinned {
@@ -1388,7 +1301,6 @@ mod tests {
                 provider: None
             }
         );
-        // Should have warned
         let warnings = diag.drain();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "model-alias-conflict");
@@ -1693,8 +1605,6 @@ mod tests {
         let resolved = resolve_model_and_provider(&alias, &cache).unwrap();
         assert_eq!(resolved, ("gpt-5".to_string(), "openai".to_string()));
     }
-
-    // -- serde roundtrip tests --
 
     #[test]
     fn harness_source_serializes_snake_case() {
@@ -2025,7 +1935,6 @@ model = "gpt-5"
 
     #[test]
     fn model_alias_autocompact_out_of_range_errors() {
-        // autocompact_pct out of range (>100) is a hard error
         let toml_str = r#"
 [models.opus]
 provider = "Anthropic"
@@ -2160,7 +2069,6 @@ autocompact = 4294967295
 
     #[test]
     fn model_alias_autocompact_overflow_errors() {
-        // 4294967296 == u32::MAX + 1 — should be rejected
         let toml_str = r#"
 [models.opus]
 model = "claude-opus-4-6"

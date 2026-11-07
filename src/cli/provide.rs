@@ -21,8 +21,6 @@ pub struct ProvideArgs {
     pub spec: String,
 }
 
-/// Run `mars provide`.
-///
 /// `root` is the global `--root`. The walk-up that finds the project must not escape it: a host
 /// names the root it wants filled, and silently filling a parent's `.mars/` instead would leave
 /// the host reading a copy it did not ask for.
@@ -79,8 +77,6 @@ fn print_report(report: &ProvideReport) {
     }
 }
 
-/// The warnings for names this run left alone, derived from the reported names so plain text and
-/// `--json` cannot disagree about which names they are.
 fn leftover_warnings(report: &ProvideReport) -> Vec<String> {
     let shadowed = report.shadowed.iter().map(|name| {
         format!(

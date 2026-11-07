@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 
-/// Top-level source entries excluded when installing flat skill repositories.
 pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
     ".git",
     ".mars",
@@ -17,7 +16,6 @@ pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
     ".gitignore",
 ];
 
-/// Resolve symlinks in the existing prefix of a path while retaining its missing tail.
 pub(crate) fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsError> {
     let absolute = std::path::absolute(path)?;
     let mut normalized = PathBuf::new();
@@ -63,12 +61,9 @@ pub(crate) fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsE
     }
 }
 
-/// Atomic file write: write to temp file in same directory, then rename.
-///
 /// The rename is atomic on POSIX. Temp files are in the same directory
 /// as the destination to guarantee same-filesystem atomic rename.
 pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
-    // Ensure parent directory exists
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -87,7 +82,6 @@ pub fn atomic_write(dest: &Path, content: &[u8]) -> Result<(), MarsError> {
     Ok(())
 }
 
-/// Atomically replace a copied file's bytes without changing its permissions.
 pub(crate) fn atomic_write_preserving_permissions(
     dest: &Path,
     content: &[u8],
@@ -100,9 +94,6 @@ pub(crate) fn atomic_write_preserving_permissions(
     Ok(())
 }
 
-/// Atomically write a regular file unless its bytes are already identical.
-///
-/// Returns `true` when a write occurred. Symlinks and non-regular destinations
 /// are always replaced rather than treated as managed output.
 pub fn atomic_write_if_changed(dest: &Path, content: &[u8]) -> Result<bool, MarsError> {
     let unchanged = dest
@@ -118,18 +109,11 @@ pub fn atomic_write_if_changed(dest: &Path, content: &[u8]) -> Result<bool, Mars
     Ok(true)
 }
 
-/// Atomic directory install: copy source tree to a temp dir in the same
-/// parent as `dest`, then rename into place.
-///
-/// Uses rename-old-then-rename-new to minimize the window where `dest`
-/// doesn't exist. If `dest` already exists, it's renamed to `.{name}.old`
-/// before the new content takes its place. Stale `.old` from prior crashes
-/// is cleaned up automatically.
+/// The two renames leave a gap where the destination is absent.
 pub fn atomic_install_dir(src: &Path, dest: &Path) -> Result<(), MarsError> {
     atomic_install_dir_impl(src, dest, &[])
 }
 
-/// Atomic directory install with optional top-level source entry exclusions.
 pub fn atomic_install_dir_filtered(
     src: &Path,
     dest: &Path,
@@ -158,25 +142,19 @@ fn install_prepared_temp_dir(tmp_dir: tempfile::TempDir, dest: &Path) -> Result<
     let tmp_path = tmp_dir.keep();
 
     if dest.exists() {
-        // Step 1: Rename old to .old (old content still accessible)
         let old_path = parent.join(format!(
             ".{}.old",
             dest.file_name().unwrap_or_default().to_string_lossy()
         ));
-        // Clean up stale .old from a prior crash
         if old_path.exists() {
             fs::remove_dir_all(&old_path)?;
         }
-        // Atomic: old content moves to .old, dest slot is free
         fs::rename(dest, &old_path)?;
-        // Atomic: new content takes dest slot
         if let Err(e) = fs::rename(&tmp_path, dest) {
-            // Rollback: move old content back
             let _ = fs::rename(&old_path, dest);
             let _ = fs::remove_dir_all(&tmp_path);
             return Err(e.into());
         }
-        // Cleanup: remove old content (non-critical)
         let _ = fs::remove_dir_all(&old_path);
     } else {
         fs::rename(&tmp_path, dest)?;
@@ -185,7 +163,6 @@ fn install_prepared_temp_dir(tmp_dir: tempfile::TempDir, dest: &Path) -> Result<
     Ok(())
 }
 
-/// Recursively copy a directory tree.
 fn copy_dir_recursive(
     src: &Path,
     dest: &Path,
@@ -222,7 +199,6 @@ fn copy_dir_recursive(
     Ok(())
 }
 
-/// Copy a derived regular tree while omitting selected relative subtrees.
 pub(crate) fn copy_dir_filtered(
     src: &Path,
     dest: &Path,
@@ -257,8 +233,6 @@ pub(crate) enum AuthoredSymlinkPolicy<'a> {
     ConfineTo(&'a Path),
 }
 
-/// Walk one authored source tree in deterministic parent-before-child order.
-///
 /// Generated plugin trees are source-boundary metadata, so this is deliberately
 /// separate from general copy/hash primitives, which remain byte-faithful.
 pub(crate) fn authored_tree_entries(
@@ -306,8 +280,6 @@ pub(crate) fn authored_tree_entries(
     Ok(entries)
 }
 
-/// Resolve one authored file for publication without following it outside the
-/// package that owns it.
 pub(crate) fn strict_authored_file(
     package_root: &Path,
     source_path: &Path,
@@ -493,25 +465,17 @@ pub fn clear_readonly(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Advisory file lock (flock) for concurrent access.
-///
-/// Prevents concurrent `mars sync` from corrupting state.
-/// The lock is held start-to-end — acquired before fetching and held through completion.
-/// Dropping the `FileLock` closes the fd, which releases the advisory lock.
 pub struct FileLock {
     _fd: fs::File,
 }
 
 impl FileLock {
-    /// Acquire an advisory file lock, blocking until available.
     pub fn acquire(lock_path: &Path) -> Result<Self, MarsError> {
         let file = Self::open_lock_file(lock_path)?;
         platform::lock_exclusive(&file)?;
         Ok(FileLock { _fd: file })
     }
 
-    /// Acquire the same lock without waiting.
-    ///
     /// `Ok(None)` means another holder has it. Every other failure is an error:
     /// a caller that reads a broken lock file as contention cannot tell the two
     /// apart and silently skips its work forever.
@@ -528,8 +492,6 @@ impl FileLock {
         }
     }
 
-    /// Acquire the lock of a lock file that already exists, without creating it.
-    ///
     /// A reader that must not add the lock file to the project (a dry run) uses
     /// this to serialize only with an owner that already created it. `None`
     /// means no lock file existed, so no writer holds the resource.
@@ -555,7 +517,6 @@ impl FileLock {
         Ok(Some(FileLock { _fd: file }))
     }
 
-    /// Open (or create) the lock file, creating parent dirs if needed.
     fn open_lock_file(lock_path: &Path) -> Result<fs::File, MarsError> {
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent)?;
@@ -622,7 +583,6 @@ mod platform {
         error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32)
     }
 
-    /// Lock the whole file at offset 0, the range every Mars lock uses.
     fn lock(file: &fs::File, flags: u32) -> std::io::Result<()> {
         let handle = file.as_raw_handle() as HANDLE;
         // SAFETY: zero-initialized OVERLAPPED is accepted by LockFileEx for
@@ -671,7 +631,6 @@ mod tests {
         let src = dir.path().join("src_dir");
         let dest = dir.path().join("dest_dir");
 
-        // Create source tree
         fs::create_dir_all(src.join("sub")).unwrap();
         fs::write(src.join("a.txt"), "file a").unwrap();
         fs::write(src.join("sub").join("b.txt"), "file b").unwrap();
@@ -691,11 +650,9 @@ mod tests {
         let src = dir.path().join("src_dir");
         let dest = dir.path().join("dest_dir");
 
-        // Create initial dest
         fs::create_dir_all(&dest).unwrap();
         fs::write(dest.join("old.txt"), "old").unwrap();
 
-        // Create source
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("new.txt"), "new").unwrap();
 
@@ -711,16 +668,13 @@ mod tests {
         let src = dir.path().join("src_dir");
         let dest = dir.path().join("dest_dir");
 
-        // Create initial dest
         fs::create_dir_all(&dest).unwrap();
         fs::write(dest.join("old.txt"), "old").unwrap();
 
-        // Create stale .old from a prior crash
         let old_path = dir.path().join(".dest_dir.old");
         fs::create_dir_all(&old_path).unwrap();
         fs::write(old_path.join("stale.txt"), "stale").unwrap();
 
-        // Create source
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("new.txt"), "new").unwrap();
 

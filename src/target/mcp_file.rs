@@ -20,15 +20,12 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::ConfigEntryRecord;
 
-/// A file and the format of its MCP section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct McpLocation {
-    /// Path relative to the project root.
     pub path: &'static str,
     pub format: SectionFormat,
 }
 
-/// Where a harness reads MCP servers and how an entry renders there.
 #[derive(Debug, Clone, Copy)]
 pub struct McpFile {
     pub at: McpLocation,
@@ -40,8 +37,6 @@ pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
     render(&server.transport, Flavor::Claude)
 }
 
-/// One server rendered for its adapter: the native value mars writes and
-/// records. Rendered once, where the server is lowered.
 #[derive(Debug, Clone)]
 pub(crate) struct Rendered {
     pub name: String,
@@ -53,7 +48,6 @@ impl Rendered {
         format!("{MCP_KEY_PREFIX}{}", self.name)
     }
 
-    /// The lock record: the canonical JSON of what is written.
     pub(crate) fn record(&self) -> ConfigEntryRecord {
         ConfigEntryRecord {
             emitted_json: self.value.to_string(),
@@ -61,7 +55,6 @@ impl Rendered {
     }
 }
 
-/// Render `servers` for `file`, warning about what the native shape could not carry.
 pub(crate) fn render_all(
     file: &McpFile,
     servers: &[McpServerEntry],
@@ -82,13 +75,9 @@ pub(crate) fn render_all(
         .collect()
 }
 
-/// What a lock record says about an entry found on disk.
 pub(crate) enum Ownership {
-    /// No record: the entry is the user's.
     Unowned,
-    /// It equals what mars last wrote.
     Owned,
-    /// Mars wrote it, and it has changed since.
     Edited,
 }
 
@@ -103,18 +92,13 @@ pub(crate) fn ownership(record: Option<&ConfigEntryRecord>, current: &Value) -> 
     }
 }
 
-/// Check the file at `path` parses and has the shape `location` expects, before
-/// anything is written over it.
 pub(crate) fn validate(location: &McpLocation, path: &Path) -> Result<(), MarsError> {
     Doc::load(path, location.format).map(|_| ())
 }
 
-/// The file being edited: loaded once, saved at most once. A file that does not
-/// exist loads as an empty document.
 struct Open {
     path: PathBuf,
     doc: Doc,
-    /// The file was there to load.
     existed: bool,
     changed: bool,
 }
@@ -141,23 +125,11 @@ impl Open {
     }
 }
 
-/// What a reconcile leaves: the records the lock should hold, and the keys of
-/// the stale entries it took off the file's books (removed, or already gone).
 pub(crate) struct Reconciled {
     pub records: BTreeMap<String, ConfigEntryRecord>,
     pub removed: Vec<String>,
 }
 
-/// Bring `file` to `desired`: remove what the lock owns and mars no longer
-/// wants, write what it wants, and return exactly the records the lock should
-/// now hold. Each file is loaded once and saved at most once.
-///
-/// This is the one place an MCP entry is replaced or removed. An entry is
-/// mars's to touch only if the lock owns it and it still equals what mars wrote
-/// ([`Ownership::Owned`]). An edited entry stays, with a warning; a same-named
-/// entry the lock does not own stays too, until `--force` adopts it. The file is
-/// deleted when this reconcile leaves it holding nothing but an empty section.
-///
 /// On failure nothing is retired: the result is `previous`'s MCP records, so
 /// the next sync retries.
 pub(crate) fn reconcile(
@@ -204,7 +176,6 @@ fn try_reconcile(
     let wanted: BTreeSet<&str> = desired.iter().map(|server| server.name.as_str()).collect();
     let mut kept = BTreeSet::new();
 
-    // Records first: what the lock owns and mars no longer wants goes.
     for (&name, &record) in prior {
         if wanted.contains(name) {
             continue;
@@ -278,7 +249,6 @@ fn try_reconcile(
             }
             records.insert(server.key(), server.record());
         } else if let Some(record) = recorded {
-            // Still on disk as the lock recorded it.
             records.insert(server.key(), record.clone());
         }
     }

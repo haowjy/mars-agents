@@ -20,7 +20,6 @@ struct OutdatedEntry {
     latest: String,
 }
 
-/// Run `mars outdated`.
 pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let lock = crate::lock::load(&ctx.project_root)?;
     let config = crate::config::load(&ctx.project_root)?;
@@ -110,7 +109,6 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
         };
 
         if versions.is_empty() {
-            // Untagged repo — compare locked commit vs current HEAD
             let current_head = crate::source::git::ls_remote_head(fetch_url.as_ref())
                 .map(|sha| {
                     if sha.len() >= 12 {
@@ -140,7 +138,6 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             continue;
         }
 
-        // Find latest version overall
         let latest = versions
             .iter()
             .max_by(|a, b| a.version.cmp(&b.version))

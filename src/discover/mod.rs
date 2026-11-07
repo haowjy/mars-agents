@@ -28,11 +28,9 @@ const HOOKS_DIR_NAME: &str = "hooks";
 const BOOTSTRAP_DIR_NAME: &str = "bootstrap";
 const MANIFEST_BOOTSTRAP_KEYS: &[&str] = &["bootstrapDocs", "bootstrap_docs"];
 
-/// An item discovered in a source tree by filesystem convention.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredItem {
     pub id: ItemId,
-    /// Path within source tree (relative), e.g. "agents/coder.md" or "skills/planning".
     pub source_path: PathBuf,
 }
 
@@ -58,8 +56,6 @@ fn convention_layer(relative_root: &Path) -> usize {
     relative_root.components().count()
 }
 
-/// The name selection knows a hook by: its `name`, else its directory's. A `hook.toml` that
-/// does not parse is known by its directory.
 pub(crate) fn hook_slug(hook_toml: &str, dir_name: &str) -> String {
     toml::from_str::<toml::Value>(hook_toml)
         .ok()
@@ -102,8 +98,6 @@ fn scan_hook_dir(
     Ok(())
 }
 
-/// Return package-root hook directories in stable order.
-///
 /// Hooks are deliberately a package-root-only convention. Unlike agents and
 /// skills, nested `hooks/` containers are not independent package layers.
 pub(crate) fn discover_hook_directories(
@@ -177,7 +171,6 @@ fn scan_declared_bootstrap_path(
 ) -> Result<(), MarsError> {
     let mut visited = HashSet::new();
     let candidate = package_root.join(declared_path);
-    // A declared file is judged by the directory it sits in.
     let judged = if candidate.is_dir() {
         declared_path
     } else {
@@ -207,7 +200,6 @@ fn scan_declared_bootstrap_path(
     Ok(())
 }
 
-/// A relative path as the `/`-separated name `mars-schema` trees use.
 fn tree_path(path: &Path) -> String {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
@@ -246,7 +238,6 @@ fn register_bootstrap_doc(
     Ok(())
 }
 
-/// Bootstrap docs a plugin manifest declares with `bootstrapDocs`.
 fn declared_bootstrap_items(
     package_root: &Path,
     tree: &DiskTreeSource,
@@ -260,9 +251,6 @@ fn declared_bootstrap_items(
     Ok(dedupe_items_by_path(items))
 }
 
-/// Discover only binary-owned bootstrap document surfaces from an authored tree: the
-/// `bootstrap/` containers the schema crate's bounded walk reaches, grounded to the shallowest
-/// layer, plus the documents a plugin manifest declares.
 pub(crate) fn discover_bootstrap_surfaces(
     package_root: &Path,
     diag: &mut DiagnosticCollector,
@@ -332,8 +320,6 @@ pub(crate) fn discover_binary_owned_items(
     finalize_items(source_name.unwrap_or("unknown-source"), items)
 }
 
-/// The item for a prepared Agent or skill, located at `path`: the definition's output path in
-/// the materialized layout, or its source path in the authored one.
 pub(crate) fn definition_item(
     definition: &mars_schema::prepare::PreparedDefinition,
     path: &str,
@@ -357,8 +343,6 @@ pub(crate) fn definition_item(
     }
 }
 
-/// Every item of a materialized package: Agents and skills from its prepared result, and the
-/// binary-owned kinds from the tree.
 pub(crate) fn package_items(
     package_root: &Path,
     source_name: Option<&str>,

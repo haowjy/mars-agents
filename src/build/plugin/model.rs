@@ -15,7 +15,6 @@ pub(super) struct ResolvedModel {
     pub fallback: Option<ModelFallbackReason>,
 }
 
-/// Resolve a package-authored model token without catalogs, caches, or host probes.
 pub(super) fn resolve_model(
     token: Option<&str>,
     harness: HarnessId,

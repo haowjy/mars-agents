@@ -66,7 +66,6 @@ pub(crate) fn materialize_prepared_rooted(
     ))
 }
 
-/// Materialize a completely prepared graph after its diagnostic gate.
 pub(crate) fn materialize_prepared_graph(
     graph: &mut crate::resolve::ResolvedGraph,
     effective: &crate::config::EffectiveConfig,
@@ -159,8 +158,6 @@ fn materialize_prepared_tree(
         }
         fs::write(output, &server.normalized_bytes)?;
     }
-    // Hooks, bootstrap documents, MCP server directories and foreign source
-    // manifests remain binary-owned package surfaces.
     for relative in ["hooks", "mcp"] {
         copy_authored_subtree(authored_root, Path::new(relative), destination, diag)?;
     }

@@ -74,8 +74,6 @@ for (const g of ["tool", "session", "permission"]) ctx[g] = { hook: async (n, fn
 await mod.default.setup(ctx);
 "#;
 
-/// Loads the generated OpenCode file in node with a fake `ctx`, runs `script` (which sees the
-/// registered `hooks` by name) and returns what it prints. `None` when node is not installed.
 fn run_opencode(hook_toml: &str, script: &str) -> Option<String> {
     use std::process::Command;
     let read = hooks::read(hook_toml, "perm", Origin::Local);
@@ -150,7 +148,6 @@ console.log(e.effect);"#,
 
 #[test]
 fn opencode_patch_is_an_edit_with_the_patch_as_command() {
-    // The hook echoes its stdin, so the block reason shows `tool_name` and `tool_input`.
     let toml = "[[hooks.PreToolUse]]\nmatcher = \"Edit|Write\"\n\
                 [[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"cat >&2; exit 2\"\n";
     let Some(out) = run_opencode(
@@ -167,8 +164,6 @@ fn opencode_patch_is_an_edit_with_the_patch_as_command() {
     assert_eq!(seen["tool_input"]["command"], "*** Begin Patch");
 }
 
-/// Runs a `PreToolUse` Bash hook for each command in `commands` and prints `blocked` or
-/// `allowed` for each.
 fn opencode_bash_verdicts(hook_toml: &str, commands: &[&str]) -> Option<Vec<String>> {
     let script = format!(
         r#"for (const command of {commands:?}) {{
@@ -217,7 +212,6 @@ console.log(existsSync("alive") ? "child survived" : "child gone");"#,
     assert_eq!(lines, ["blocked", "child gone"]);
 }
 
-/// Claude never times out a handler marked `async`: this one outlives its `timeout`.
 #[test]
 fn an_async_hook_outlives_its_timeout() {
     let toml = "[[hooks.PreToolUse]]\nmatcher = \"Bash\"\n\

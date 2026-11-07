@@ -7,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The case directories of one fixture suite, sorted.
 pub fn cases(suite: &str) -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
@@ -34,12 +33,10 @@ pub fn assert_file(expected: &Path, actual: &str) {
     assert_eq!(actual, want, "fixture {}", expected.display());
 }
 
-/// Pretty JSON with a trailing newline, the on-disk form of `expected.json`.
 pub fn pretty(value: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(value).unwrap() + "\n"
 }
 
-/// The in-memory package tree under `root`.
 pub fn load_tree(root: &Path) -> mars_schema::tree::FileTree {
     let mut files = Vec::new();
     collect_files(root, root, &mut files);

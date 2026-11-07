@@ -17,12 +17,8 @@ use crate::sync::package_dir::PackageDir;
 use crate::types::{ContentHash, DestPath, SourceName};
 use mars_schema::names::{ItemName, RenameMap};
 
-/// What the `.mars/` canonical store should look like after sync.
-///
-/// Built from the resolved graph's selection.
 #[derive(Debug, Clone)]
 pub struct TargetState {
-    /// Keyed by dest_path (relative to `.mars/`).
     pub items: IndexMap<DestPath, TargetItem>,
     // Selection is intent, not proof of installation. Keep it when an unmanaged
     // canonical path prunes `items` so post-sync lowering can report the missing winner.
@@ -31,7 +27,6 @@ pub struct TargetState {
     // Every hook that passed the package filters and visibility, kept even when no managed
     // target takes it: plugin diagnostics and the sync's skip report need that omission.
     accepted_hooks: Vec<crate::compiler::hooks::ParsedHookItem>,
-    // Dependency hooks standing on what the last lock installed (see `kept_hooks`).
     pub(super) kept_hooks: Vec<KeptHook>,
 }
 
@@ -41,8 +36,6 @@ struct SelectedHook {
     item: crate::compiler::hooks::ParsedHookItem,
 }
 
-/// One target's winning MCP server. A server that names its own directory also
-/// has a target-scoped directory item in `TargetState::items`.
 #[derive(Debug, Clone)]
 struct SelectedMcp {
     dir: PackageDir,
@@ -83,7 +76,6 @@ impl TargetState {
         &self.accepted_hooks
     }
 
-    /// Record a local hook as accepted; dependency hooks are recorded as they are collected.
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
         self.accepted_hooks.push(hook.clone());
     }
@@ -148,10 +140,6 @@ impl TargetState {
             .map(|selected| (&selected.dir, &selected.item))
     }
 
-    /// Resolve MCP name collisions once per target, before installation and
-    /// config lowering. Each surviving server carries its directory item with
-    /// it, so the files, config entry, lock ownership and pruning all name the
-    /// same winner.
     pub(crate) fn resolve_mcp_collisions(
         &mut self,
         managed_targets: &[String],
@@ -162,7 +150,6 @@ impl TargetState {
 
         let candidates = std::mem::take(&mut self.selected_mcp);
         let mut resolved = Vec::with_capacity(candidates.len());
-        // One source directory can win on several targets; hash it once.
         let mut source_hashes: HashMap<PathBuf, ContentHash> = HashMap::new();
         for target_root in managed_targets {
             let winners = resolve_mcp_collisions_for_target(
@@ -208,8 +195,6 @@ impl TargetState {
         Ok(())
     }
 
-    /// Select a server for the managed targets that write MCP config;
-    /// `targets` must already be limited to those.
     pub(crate) fn select_mcp(
         &mut self,
         item: crate::compiler::mcp::ParsedMcpItem,
@@ -240,25 +225,18 @@ impl TargetState {
     }
 }
 
-/// A single item in the desired target state.
 #[derive(Debug, Clone)]
 pub struct TargetItem {
     pub id: ItemId,
     pub source_name: SourceName,
-    /// Path to content in fetched source tree.
     pub source_path: PathBuf,
-    /// Relative path under `.mars/` (reflects rename if any).
     pub dest_path: DestPath,
-    /// SHA-256 of source content.
     pub source_hash: ContentHash,
-    /// True when this item comes from root-level `SKILL.md` flat skill discovery.
     pub is_flat_skill: bool,
-    /// Optional in-memory content override after frontmatter rewrites.
     pub rewritten_content: Option<String>,
 }
 
 impl TargetItem {
-    /// Hash of the bytes/tree mars intends to install after in-memory rewrites.
     pub(crate) fn expected_installed_hash(&self) -> Result<ContentHash, MarsError> {
         let Some(content) = &self.rewritten_content else {
             return Ok(self.source_hash.clone());
@@ -280,7 +258,6 @@ impl TargetItem {
     }
 }
 
-/// Explicit skill rename that changes the installed skill name.
 #[derive(Debug, Clone)]
 pub struct ExplicitRename {
     pub original_name: ItemName,
@@ -289,7 +266,6 @@ pub struct ExplicitRename {
     pub kind: ItemKind,
 }
 
-/// Automatic rename applied when multiple sources target the same destination.
 #[derive(Debug, Clone)]
 pub struct CollisionRename {
     pub original_name: ItemName,
@@ -298,8 +274,6 @@ pub struct CollisionRename {
     pub kind: ItemKind,
 }
 
-/// The target state, the renames that shaped it, and the dependency hooks whose `hook.toml`
-/// is invalid, for the caller to settle once the state is complete (see `kept_hooks::settle`).
 pub(crate) type CollectedTarget = (
     TargetState,
     Vec<ExplicitRename>,
@@ -328,8 +302,6 @@ pub(crate) fn build_with_collisions_and_diag(
     let mut explicit_renames = Vec::new();
     let managed_target_roots = config.settings.managed_targets();
     let mcp_target_roots = mcp_config_targets(&managed_target_roots);
-    // Hooks and MCP share shortest graph distance as their precedence key.
-    // Keeping one definition avoids a second meaning of dependency depth.
     let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
@@ -539,8 +511,6 @@ pub(crate) fn build_with_collisions_and_diag(
     Ok((target, explicit_renames, collision_renames, invalid_hooks))
 }
 
-/// Managed targets whose adapter writes an MCP config file. Only these get a
-/// server's directory or config entry.
 pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
     let registry = crate::target::TargetRegistry::new();
     managed_targets
@@ -579,9 +549,6 @@ pub(crate) fn hook_target_items(
         .collect())
 }
 
-/// One target's copy of a package-owned directory. Hooks and MCP server
-/// directories share this constructor so copying, lock ownership, and pruning
-/// behave the same way.
 pub(crate) fn package_dir_target_item(
     dir: &PackageDir,
     source_dir: &Path,
@@ -672,18 +639,12 @@ fn rename_destination_collisions(
     Ok(renames)
 }
 
-/// Existing on-disk destination that is not lock-managed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnmanagedCollision {
     pub source_name: SourceName,
     pub path: DestPath,
 }
 
-/// Detect target installs that would overwrite unmanaged on-disk content.
-///
-/// If a target destination already exists but Mars does not own it (`mars.lock` claims it or a
-/// provider installed it), treat it as user-authored content and report it as a collision so
-/// callers can skip installation while leaving existing files untouched.
 pub(crate) fn check_unmanaged_collisions(
     install_target: &Path,
     owns: &Ownership,
@@ -701,7 +662,6 @@ pub(crate) fn check_unmanaged_collisions(
         .collect()
 }
 
-/// Whether installing one item would overwrite content Mars does not own.
 fn unmanaged_collision(
     install_target: &Path,
     owns: &Ownership,
@@ -726,10 +686,6 @@ fn unmanaged_collision(
     !matches_install
 }
 
-/// Item kinds whose installed destination is derived from the item's own name.
-///
-/// Hooks and MCP servers install as target-scoped package directories whose
-/// paths `PackageDir` owns, so no rename names their destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RenamableKind {
     Agent,
@@ -778,7 +734,6 @@ fn apply_item_rename(
     ))
 }
 
-/// Construct the default destination path for an item.
 /// Uses string formatting to guarantee forward slashes on all platforms.
 pub(crate) fn default_dest_path(kind: RenamableKind, name: &str) -> DestPath {
     let path_str = match kind {
@@ -786,7 +741,6 @@ pub(crate) fn default_dest_path(kind: RenamableKind, name: &str) -> DestPath {
         RenamableKind::Skill => format!("skills/{name}"),
         RenamableKind::BootstrapDoc => format!("bootstrap/{name}/BOOTSTRAP.md"),
     };
-    // Safe: internal paths constructed from validated item names
     DestPath::new(path_str).expect("internal default path is always valid")
 }
 
@@ -795,7 +749,6 @@ fn parse_rename_dest(
     rename_value: &str,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
-    // Normalize backslashes to forward slashes for cross-platform handling
     let normalized = rename_value.replace('\\', "/");
     let has_prefix = normalized.starts_with("agents/")
         || normalized.starts_with("skills/")

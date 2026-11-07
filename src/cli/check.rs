@@ -170,8 +170,6 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 /// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
 
-/// The `requires-mars` floor this package needs and does not set: the highest of the floors
-/// its declarations call for.
 fn requires_mars_warning(
     prepared: &mars_schema::prepare::Prepared,
     lens: &crate::resolve::PublishLens,
@@ -349,12 +347,10 @@ fn check_prepared(
                     }
                 }
             }
-            // A prepared definition is an Agent or a skill, as its `kind` says.
             Reading::Manifest(_) => {}
         }
     }
 
-    // A package preparation could not read has already said why.
     let readable = !matches!(
         prepared.classification,
         Classification::Invalid | Classification::SchemaNewer { .. }
@@ -386,7 +382,6 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     Ok(report)
 }
 
-/// Check if mars.toml has `[package]` and at least one `[dependencies]` entry.
 ///
 /// Both are required to trigger graph-backed validation: `[package]` indicates
 /// this is a publishable source package, and `[dependencies]` means there are
@@ -397,8 +392,6 @@ fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
         .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty())
 }
 
-/// Report the skill refs of the package's Agents that installing it would not find.
-///
 /// Check answers with install's rule: the package is the root of one selection over its resolved
 /// `[dependencies]`, selected whole, and its Agents' refs resolve through the package, its
 /// dependencies and the rest of the graph. It judges a ref by the package alone and ignores
@@ -466,7 +459,6 @@ fn check_skill_refs(
     }
 }
 
-/// The packages a ref was looked up in (this package first), with the versions that resolved.
 fn format_searched_packages(searched: &[String], graph: &crate::resolve::ResolvedGraph) -> String {
     std::iter::once("(this package)".to_string())
         .chain(searched.iter().map(|name| {
@@ -508,7 +500,6 @@ mod tests {
         std::fs::write(agents.join(format!("{filename}.md")), content).unwrap();
     }
 
-    /// Create a minimal path-dep source package with the given skills.
     fn write_dep_package(path: &Path, name: &str, version: &str, skills: &[&str]) {
         std::fs::create_dir_all(path).unwrap();
         std::fs::write(
@@ -530,8 +521,6 @@ mod tests {
     fn toml_path(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
     }
-
-    // ── Structural checks (unchanged) ─────────────────────────────────
 
     #[cfg(unix)]
     #[test]
@@ -602,11 +591,8 @@ mod tests {
         assert_eq!(code, 0);
     }
 
-    // ── P3: No [dependencies] → local-only path, external refs are warnings ──
-
     #[test]
     fn check_no_dependencies_warns_for_external_skill() {
-        // No mars.toml → has_package_dependencies returns false → warning path.
         let dir = TempDir::new().unwrap();
         write_agent(dir.path(), "coder", &["missing-skill"]);
 
@@ -630,7 +616,6 @@ mod tests {
     #[test]
     fn check_errors_for_malformed_agent_model_policy() {
         let dir = TempDir::new().unwrap();
-        // Only an authored schema v1 package is refused for its fields.
         std::fs::write(
             dir.path().join("mars.toml"),
             "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n",
@@ -651,19 +636,12 @@ mod tests {
         );
     }
 
-    // ── P1 + P4 + P9: [dependencies] present, resolution fails → error with hint ─
-
     #[test]
     fn check_with_unresolvable_dep_fails_closed_with_remediation_hint() {
-        // P1: mars.toml with [dependencies] triggers graph resolution.
-        // P4: resolution fails (non-existent path) → fail-closed error.
-        // P9: error message includes remediation ("mars version --force").
         let dir = TempDir::new().unwrap();
         write_agent(dir.path(), "coder", &["some-skill"]);
         std::fs::write(
             dir.path().join("mars.toml"),
-            // [package] required to trigger graph-backed validation.
-            // Absolute path that does not exist — resolution must fail.
             "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
         )
         .unwrap();
@@ -680,16 +658,11 @@ mod tests {
         );
     }
 
-    // ── P2 + P8: [dependencies] resolve, skill missing from graph → error ────────
-
     #[test]
     fn check_missing_skill_in_resolved_graph_is_error() {
-        // P2: skill not in graph → error (not warning).
-        // P8: error message includes agent name, skill name, searched packages.
         let dir = TempDir::new().unwrap();
         let dep_dir = TempDir::new().unwrap();
 
-        // Path dep provides "provided-skill", NOT "missing-skill".
         write_dep_package(dep_dir.path(), "dep-pkg", "0.1.0", &["provided-skill"]);
 
         write_agent(dir.path(), "coder", &["missing-skill"]);
@@ -709,7 +682,6 @@ mod tests {
             report.errors
         );
         let joined = report.errors.join("\n");
-        // P8: error includes agent name, skill name, searched packages, and remediation.
         assert!(
             joined.contains("coder"),
             "error must name the agent: {joined}"
@@ -726,7 +698,6 @@ mod tests {
             joined.contains("hint:"),
             "error must include remediation guidance: {joined}"
         );
-        // Warnings must NOT contain missing-skill (it is now an error).
         let has_warning = report.warnings.iter().any(|w| w.contains("missing-skill"));
         assert!(
             !has_warning,
@@ -735,11 +706,8 @@ mod tests {
         );
     }
 
-    // ── Skill provided by path dep passes (graph-backed success) ─────────────────
-
     #[test]
     fn check_skill_provided_by_path_dep_passes() {
-        // When the skill is found in a resolved path dependency, no error.
         let dir = TempDir::new().unwrap();
         let dep_dir = TempDir::new().unwrap();
 
@@ -762,18 +730,13 @@ mod tests {
         );
     }
 
-    // ── Fix 2: Local config leakage — local-dependencies must not satisfy refs ────
-
     #[test]
     fn check_local_dependency_skill_does_not_satisfy_ref() {
-        // Skills from [local-dependencies] are dev-only and must not satisfy
-        // skill references in the publish gate check.
         let dir = TempDir::new().unwrap();
         let local_dep_dir = TempDir::new().unwrap();
 
         write_dep_package(local_dep_dir.path(), "local-dep", "0.1.0", &["local-skill"]);
         write_agent(dir.path(), "coder", &["local-skill"]);
-        // [package] + [local-dependencies] only, no [dependencies]
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
@@ -783,12 +746,7 @@ mod tests {
         )
         .unwrap();
 
-        // has_package_dependencies checks config.dependencies (not local_dependencies),
-        // so this will be false → falls through to local-only warning path.
-        // That's the correct behavior: local-only validation, external ref → warning.
         let report = super::check_dir(dir.path()).unwrap();
-        // local-skill is not in the local package, so it should warn (not error)
-        // since we're in local-only mode (no [dependencies]).
         let has_warning = report.warnings.iter().any(|w| w.contains("local-skill"));
         assert!(
             has_warning,
@@ -799,22 +757,16 @@ mod tests {
 
     #[test]
     fn check_local_dep_skill_not_available_when_regular_dep_present() {
-        // Fix 2 code path: [dependencies] is non-empty (triggers graph resolution),
-        // skill is only in [local-dependencies]. Before the fix, local-deps were included
-        // in the resolved graph and could silently satisfy refs. After the fix, they are
-        // stripped and the missing skill is correctly flagged as an error.
         let dir = TempDir::new().unwrap();
         let regular_dep_dir = TempDir::new().unwrap();
         let local_dep_dir = TempDir::new().unwrap();
 
-        // Regular dep provides an unrelated skill — exists only to satisfy has_package_dependencies.
         write_dep_package(
             regular_dep_dir.path(),
             "regular-dep",
             "0.1.0",
             &["unrelated-skill"],
         );
-        // Local dep has the skill the agent references.
         write_dep_package(
             local_dep_dir.path(),
             "local-dep",

@@ -1,6 +1,3 @@
-// qa-validated: launch-bundle-blocker-audit
-// qa-validated: harness-order-settings-audit
-// qa-validated: capability-cache-resolver-routing-gaps
 #[path = "common/mod.rs"]
 mod test_common;
 

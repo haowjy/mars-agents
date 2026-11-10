@@ -12,7 +12,10 @@ targets, a copy proceeds only with an installed checksum claim or `--force`, and
 delete needs a matching record (`src/surface_ownership/mod.rs`). MCP and hook entries
 are removed or replaced only when recorded and unchanged (`src/target/mcp_file.rs`,
 `hook_file.rs`). A pre-write journal (`.mars/pending-canonical.json`) publishes
-ownership to the lock before it is removed. Rules: `docs/internals/lock-file.md`
+ownership to the lock before it is removed. An installed file you edited is a current
+choice, not covered by the invariant: the edit is kept until the package changes that
+file, then the package's version wins with a `conflict-overwrite` warning (`--force`
+replaces it at once). Lasting changes belong in `.mars-src/`. Rules: `docs/internals/lock-file.md`
 (Canonical Ownership) and `docs/internals/conflicts.md`.
 
 **Checked by** `tests/self_conflicts.rs`, `tests/config_entries/` (ownership, MCP and
@@ -20,8 +23,7 @@ hooks), `tests/sync_recovery.rs`, `tests/sync_behavior.rs`, and the compile-fail
 in `tests/write_capability_compile_fail.rs`: a pending-deletion record exposes no
 installed checksum.
 
-**Gaps.** A managed file with only local changes is kept, not replaced
-(`src/sync/plan.rs`, `KeepLocal`). Nothing tests the `.mars/provided.lock` half or
+**Gaps.** Nothing tests the `.mars/provided.lock` half or
 `mars provide`. The journal doesn't cover native and config outputs, so an
 interrupted write there has no recovery. Three ownership predicates exist on purpose
 (`LockIndex`, `Ownership`, `surface_ownership`); don't merge them.

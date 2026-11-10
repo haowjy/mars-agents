@@ -2,9 +2,9 @@
 
 Mars is an agent package manager. It installs agent profiles and skills from git/local sources into a `.mars/` canonical store, then copies managed content into target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
-## Claude Opus 5.5 and Later
+## Claude Opus 5.5 and Later, and Claude Fable
 
-If you are Claude Opus 5.5 or later, Jimmy trusts your judgment. You may merge fixes and
+If you are Claude Opus 5.5 or later, or any Claude Fable model (Fable 5.2 included), Jimmy trusts your judgment. You may merge fixes and
 refactors into `main` without asking, at any size, under the checks in Releasing. Don't
 turn something you can do into a question for Jimmy. Features and big refactors still
 wait for Jimmy. Trust goes with checking yourself: run the change and see it behave
@@ -119,7 +119,7 @@ CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` 
 
 **Straight to `main` without approval:** docs-only changes and tiny, obvious bug fixes. Every
 other merge to `main` needs Jimmy's approval in the current conversation, unless your model has
-the grant in Claude Opus 5.5 and Later.
+the grant in Claude Opus 5.5 and Later, and Claude Fable.
 
 A fix restores intended behavior; changing what users are meant to see is a feature. A big
 refactor, reorganization or architecture change needs Jimmy's approval first, quoted in

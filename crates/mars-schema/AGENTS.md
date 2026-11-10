@@ -1,10 +1,9 @@
 # mars-schema
 
-This crate reads, validates, translates and edits package data without host I/O. The
-binary owns filesystem and network access, orchestration, consumer configuration and
-target lowering. Keep the crate usable on `wasm32-unknown-unknown`: the same rules and
-serialized results are used by the CLI and JavaScript callers. Share types and rules
-across those callers rather than making a second binary-side copy.
+Package data reading, validation, translation and editing without host I/O; the binary
+owns filesystem, network, orchestration, consumer config and target lowering. Keep the
+crate usable on `wasm32-unknown-unknown`: the CLI and JavaScript callers share its types
+and rules, so never add a binary-side copy.
 
 ## Reading and preparation
 

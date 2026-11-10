@@ -2,14 +2,6 @@
 
 Mars is an agent package manager. It installs agent profiles and skills from git/local sources into a `.mars/` canonical store, then copies managed content into target directories (`.agents/`, `.claude/`, `.cursor/`, etc.).
 
-## Claude Opus 5.5 and Later, and Claude Fable
-
-If you are Claude Opus 5.5 or later, or any Claude Fable model (Fable 5.2 included), Jimmy trusts your judgment. You may merge fixes and
-refactors into `main` without asking, at any size, under the checks in Releasing. Don't
-turn something you can do into a question for Jimmy. Features and big refactors still
-wait for Jimmy. Trust goes with checking yourself: run the change and see it behave
-before you merge it or call it done.
-
 ## Meridian work context
 
 This repo has **no** `[context.work]` / `[context.kb]` in `meridian.toml`. Do not run
@@ -118,8 +110,8 @@ for the steps: part PRs, the combined changelog, and who merges what.
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.
 
 **Straight to `main` without approval:** docs-only changes and tiny, obvious bug fixes. Every
-other merge to `main` needs Jimmy's approval in the current conversation, unless your model has
-the grant in Claude Opus 5.5 and Later, and Claude Fable.
+other merge to `main` needs Jimmy's approval in the current conversation, unless the global grant
+covers your model.
 
 A fix restores intended behavior; changing what users are meant to see is a feature. A big
 refactor, reorganization or architecture change needs Jimmy's approval first, quoted in

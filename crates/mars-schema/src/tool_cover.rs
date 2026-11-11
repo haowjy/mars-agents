@@ -15,6 +15,7 @@
 //!   other are disjoint. This is what Pi's `globMatches`, Codex's `_glob_matches` and
 //!   OpenCode's `Wildcard.match` agree on once `?` (a wildcard on OpenCode, a literal on
 //!   the others), `\` (OpenCode reads it as `/`) and any other `*` are excluded.
+//! - `skill` names with no wildcard character: two different ones are disjoint.
 //! - An MCP server key covers its tools; `*` is a whole segment.
 //!
 //! Path capabilities are always `Unknown` for two different scopes: Pi anchors and
@@ -108,6 +109,9 @@ fn builtin_relation(x: &str, y: &str, a: ToolKey<'_>, b: ToolKey<'_>) -> Relatio
             (None, Some(_)) => Relation::Covers,
             (Some(_), None) => Relation::CoveredBy,
             (Some(p), Some(q)) if x == "bash" => bash_relation(p, q),
+            // A skill name with no wildcard character names one skill, and every harness
+            // compares it whole.
+            (Some(p), Some(q)) if x == "skill" && is_plain(p) && is_plain(q) => Relation::Disjoint,
             _ => Relation::Unknown,
         };
     }
@@ -139,10 +143,15 @@ enum BashPattern<'a> {
     Other,
 }
 
+/// No character any of the matchers reads as a wildcard or an escape.
+fn is_plain(text: &str) -> bool {
+    !text.contains(['*', '?', '\\', '\n', '\r'])
+}
+
 fn bash_pattern(pattern: &str) -> BashPattern<'_> {
     let wildcards = pattern.matches('*').count();
     let literal = pattern.strip_suffix('*').unwrap_or(pattern);
-    let plain = !literal.contains(['*', '?', '\\', '\n', '\r']);
+    let plain = is_plain(literal);
     match (wildcards, pattern.ends_with('*'), plain) {
         (0, _, true) => BashPattern::Literal(pattern),
         (1, true, true) => BashPattern::Prefix(literal),
@@ -291,7 +300,8 @@ mod tests {
             ("read(src/a)", "read(src/b)", Unknown),
             ("write(src/**)", "write(docs/**)", Unknown),
             ("grep(src/**)", "grep(src/a/**)", Unknown),
-            ("skill(init)", "skill(review)", Unknown),
+            ("skill(init)", "skill(review)", Disjoint),
+            ("skill(init)", "skill(re*)", Unknown),
             (
                 "web_fetch(domain:a.com)",
                 "web_fetch(domain:b.com)",

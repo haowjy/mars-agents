@@ -1,0 +1,142 @@
+{
+  "classification": {
+    "kind": "mars-legacy"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "edited",
+      "paths": [
+        [
+          "package",
+          "schema"
+        ]
+      ]
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "runner",
+      "source_path": "agents/runner.md",
+      "output_path": "agents/runner.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "runner"
+          ],
+          [
+            "description",
+            "Runs things"
+          ]
+        ],
+        "fields": {
+          "name": "runner",
+          "description": "Runs things",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "edited",
+        "paths": [
+          [
+            "effort"
+          ],
+          [
+            "mode"
+          ],
+          [
+            "sandbox"
+          ]
+        ]
+      }
+    }
+  ],
+  "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "runner",
+        "output_path": "agents/runner.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {},
+  "changes": {
+    "agents/runner.md": [
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "effort"
+        ],
+        "message": "agent `runner`: `effort: 3` ignored (not a string); use none, low, medium, high, xhigh or max"
+      },
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "mode"
+        ],
+        "message": "agent `runner`: `mode: 1` ignored (not a string); use primary or subagent"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "sandbox"
+        ],
+        "message": "agent `runner` lost the restriction `sandbox`: it was dropped, because no harness reads it. Schema v1 does not accept it (`sandbox` must be a string); use default, read-only, workspace-write or danger-full-access"
+      }
+    ]
+  }
+}

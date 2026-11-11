@@ -249,6 +249,7 @@ fn resolve_bundle_tools(
                     .as_ref()
                     .map(|by| format!("never applies: `{by}` covers it"))
                     .or_else(|| projected.note().map(str::to_string)),
+                covered_by: projected.covered_by.clone(),
             }
         })
         .collect();

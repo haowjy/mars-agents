@@ -947,10 +947,11 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule is also empty when a stricter rule covers it or owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `Write`, `NotebookEdit` and the `write` allow none, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
+| `covered_by` | Present only when a stricter rule wins every call this rule would match, or every name it has on this harness: `{"action": "deny", "key": "bash(uname *)"}`, the covering rule as its author wrote it. The rule never applies, and `native` and `native_tools` are empty. Test for it with this field, not with an empty `native`. A reader that ignores it stays safe: a covered rule carries no native name to emit. Omitted when the rule is not covered |
 | `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, or why a stricter rule left it no native name. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
 
 **`tools.set_aside`** is always `[]`. It listed the rules a project-wide deny covers; those now
-stay in `rules` with empty `native` and `native_tools` and a `note` naming the stricter rule
+stay in `rules` with empty `native` and `native_tools`, a `covered_by` and a `note` naming the stricter rule
 (see [Project-wide tool rules](../config/mars-toml.md#project-wide-tool-rules)). It stays for one
 release so a reader of the field keeps working.
 

@@ -65,18 +65,32 @@ pub(crate) fn effective_tools(
 }
 
 /// [`effective_tools`] for an agent side the caller already holds: `agent_rules` stand in for
-/// the profile's and the overlay's rules, with their origins kept. The current `overlay` still
-/// lifts the project-wide rules for the keys its rule entries name, as in [`effective_tools`]:
-/// that exemption is consumer configuration, not part of what the caller stored.
+/// the profile's and the overlay's rules, with their origins kept. The current `overlay` lifts the
+/// project-wide rule for a key only when `agent_rules` hold an `Overlay` rule with the same key
+/// and action as the overlay's entry. An exemption added or changed since the caller stored its
+/// rules would otherwise drop the project rule without the rule that replaces it; the project
+/// rule then joins and the strictest decides.
 pub(crate) fn effective_tools_for_rules(
     project: &ToolRuleMap,
     agent_rules: Vec<ToolRule>,
     overlay: Option<&AgentOverlayTools>,
 ) -> EffectiveToolPolicy {
+    let exempt: Vec<ParsedToolName> = overlay
+        .into_iter()
+        .flat_map(|overlay| overlay.rules.iter())
+        .filter(|(name, action)| {
+            agent_rules.iter().any(|held| {
+                held.origin == RuleOrigin::Overlay
+                    && held.action == *action
+                    && parsed_key(held) == *name.parsed()
+            })
+        })
+        .map(|(name, _)| name.parsed().clone())
+        .collect();
     join_project(
         project,
         EffectiveToolPolicy { rules: agent_rules },
-        |rule| overlay_names(overlay, rule),
+        |rule| exempt.contains(&parsed_key(rule)),
     )
 }
 
@@ -228,6 +242,7 @@ fn overlay_rules(names: &[OverlayToolName], action: ToolAction) -> Vec<ToolRule>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mars_schema::tool_names::parse_mars_tool_name;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
         let reading = mars_schema::agent::read(yaml);
@@ -275,6 +290,31 @@ mod tests {
             .map(|(index, by)| format!("{} / {}", by.render(), policy.rules[index].render()))
             .collect();
         (show(&policy), pairs)
+    }
+
+    #[test]
+    fn supplied_rules_lift_a_project_rule_only_with_the_matching_overlay_rule() {
+        let project: ToolRuleMap = toml::from_str("'bash(rm *)' = 'ask'").unwrap();
+        let overlay: AgentOverlayTools = toml::from_str("'bash(rm *)' = 'deny'").unwrap();
+        let rule = |action, origin| {
+            let parsed = parse_mars_tool_name("bash(rm *)").unwrap();
+            ToolRule::from_parsed(parsed, action).with_origin(origin)
+        };
+        let run = |rules: Vec<ToolRule>| {
+            show(&effective_tools_for_rules(&project, rules, Some(&overlay)))
+        };
+        // Stored before the overlay entry existed: the project rule still applies.
+        assert_eq!(run(vec![]), ["ask:bash(rm *)@project"]);
+        // Stored with another action for the key: the project rule still applies.
+        assert_eq!(
+            run(vec![rule(ToolAction::Allow, RuleOrigin::Overlay)]),
+            ["allow:bash(rm *)@overlay", "ask:bash(rm *)@project"]
+        );
+        // Stored with the same overlay rule: the project rule is lifted.
+        assert_eq!(
+            run(vec![rule(ToolAction::Deny, RuleOrigin::Overlay)]),
+            ["deny:bash(rm *)@overlay"]
+        );
     }
 
     #[test]

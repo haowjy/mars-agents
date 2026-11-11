@@ -157,15 +157,12 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 ### Project-wide tool rules in agent files
 
 `mars sync` writes each agent's rules after joining the project's `[settings.tools]` denies
-and the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules). A
-project-wide deny reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a
-permission entry when it is unscoped, like the agent's own denies; the other targets carry none.
-An agent allow or ask that a project-wide deny covers by key is left out of the file and out of
-`tools.rules` in the bundle, and the bundle lists it under `tools.set_aside` with the deny that
-covers it (`{capability, pattern, action, origin, by}`). A pair whose keys may overlap, so Mars
-cannot tell either way, keeps both rules; the bundle puts a `note` on the project-wide rule for
-every harness but Claude, and `mars sync` warns once for the project (`tool-rule-unsettled`). When
-the rule also has a note of its own, such as an overlap, the bundle carries both, joined with `; `.
+and the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules). An
+unscoped project-wide deny reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a
+permission entry, like the agent's own denies; the other targets carry none. An agent allow or
+ask that a deny covers is left out of the file and moves to `tools.set_aside` in the bundle; a
+pair Mars cannot settle keeps both rules. See
+[Set-aside rules and unsettled pairs](mars-toml.md#set-aside-rules-and-unsettled-pairs).
 
 ### Tool name projection
 
@@ -567,10 +564,12 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
 `mars validate` also prints three `info` notes about tool rules, which `--strict` leaves alone:
-each agent allow or ask a project-wide deny set aside, one line per rule naming its agents (`tool-rule-set-aside`), each profile with
-an unscoped deny or ask beside an allow it covers (`tool-rule-form-changes`; that allow stops
-working in a later release, when a deny covers every allow of its tool), and each
-`[agents.<name>.tools]` that still uses `allowed` or `disallowed` (`tool-overlay-lists-deprecated`).
+
+| Code | What it lists |
+|---|---|
+| `tool-rule-set-aside` | each agent allow or ask a project-wide deny set aside, one line per rule naming its agents (see [Set-aside rules](mars-toml.md#set-aside-rules-and-unsettled-pairs)) |
+| `tool-rule-form-changes` | each profile with an unscoped deny or ask beside an allow it covers. In a release after 0.29.0 the strictest matching rule wins (deny, then ask, then allow), and that allow stops working |
+| `tool-overlay-lists-deprecated` | each `[agents.<name>.tools]` that still uses `allowed` or `disallowed` |
 
 `mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 

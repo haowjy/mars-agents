@@ -4,7 +4,16 @@ Use the schema's prepared results rather than rediscovering definitions.
 
 Standalone emission writes each agent to each managed harness, omitting an unresolved native model so the harness uses its default. Meridian-managed emission can suppress or select native agent copies. Reconciliation compares prior claims with the exact desired output set, including removed dependencies and renamed agents: current source names alone can't identify stale outputs. See [target ownership](../target_sync/.context/CONTEXT.md).
 
-Build an agent's tool rules only through `effective_tools`: the launch bundle, native files and the plugin build share it, so they can't disagree. It also joins the project-wide `[settings.tools]` denies, which restrict every agent and widen none: the plugin build and `mars check` pass an empty map, since those rules belong to one project and not to a package. Use `EffectiveToolPolicy::project` for native permissions and available tools. Unsupported permissions must not broaden access; bundle rule status records the gap and sync reports author-facing lossiness. A scoped allow grants that scope; it doesn't make an allowlist. See [MCP projection](.context/CONTEXT.md).
+Build an agent's tool rules only through `effective_tools` (`effective_tools.rs`): the launch bundle (`build/mod.rs`), native files (`native_agents.rs`) and the plugin build share it, so they can't disagree. Its first argument is the project-wide `[settings.tools]` map: denies that restrict every agent and widen none. The plugin build and `mars check` pass `ToolRuleMap::default()`, since those rules belong to one project and not to a package.
+
+Use `EffectiveToolPolicy::project` (the projection of a policy to native permissions and available tools, unrelated to project-wide rules) for native permissions and available tools. Unsupported permissions must not broaden access; bundle rule status records the gap and sync reports author-facing lossiness. A scoped allow grants that scope; it doesn't make an allowlist. See [MCP projection](.context/CONTEXT.md) for MCP refs.
+
+Four rules a change here can break without a test failing:
+
+- `ToolRule.origin` stays outside `PartialEq` and rule identity. A profile rule and a project rule with the same key and action must fold into one rule; comparing origin would duplicate it.
+- `tool_cover::relation` returns `Unknown` for anything it cannot prove. A wrong `Covers` drops an allow, which loses access silently; `Unknown` keeps both rules and warns.
+- `*` rules are never settled. Every enforcer ranks a named key above `*`, so a project-wide deny already wins over an agent's `*` rule; settling it would drop the allowlist.
+- `{ replace }` never clears a project-wide rule or an overlay rule entry. It clears the profile's rules only; otherwise a user's replace would lift a project-wide deny.
 
 Harness overrides cannot replace fields owned by lowering. OpenCode permissions merge with Mars deny rules, which win. Native hooks and MCP config come from the selected target state and are withheld when their required directory wasn't installed; see [sync](../sync/AGENTS.md).
 

@@ -226,6 +226,11 @@ fn check_verbose_surfaces_meridian_only_detail() {
 
 /// Sync an agent whose `tools` is `tools_yaml` to `.claude` and `.codex`; returns (stderr, verbose stderr).
 fn sync_tools_agent(tools_yaml: &str) -> (String, String) {
+    sync_tools_agent_in_project(tools_yaml, "")
+}
+
+/// As [`sync_tools_agent`], with `extra_toml` appended to the project's `mars.toml`.
+fn sync_tools_agent_in_project(tools_yaml: &str, extra_toml: &str) -> (String, String) {
     let dir = TempDir::new().unwrap();
     let agent = format!("---\nname: a\ndescription: a\ntools:\n{tools_yaml}---\n# Body\n");
     let source = create_source(&dir, "base", &[("a", &agent)], &[]);
@@ -234,7 +239,7 @@ fn sync_tools_agent(tools_yaml: &str) -> (String, String) {
     project
         .child("mars.toml")
         .write_str(&format!(
-            "[settings]\ntargets = [\".claude\", \".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n",
+            "[settings]\ntargets = [\".claude\", \".codex\"]\nagent_emission = \"always\"\n\n[dependencies.base]\npath = \"{}\"\n{extra_toml}",
             source.display().to_string().replace('\\', "/")
         ))
         .unwrap();
@@ -265,5 +270,29 @@ fn scoped_bash_allow_is_not_a_lost_restriction() {
     assert!(
         verbose.contains("allow bash(rg *)"),
         "shadowed allow recorded on .claude: {verbose}"
+    );
+}
+
+#[test]
+fn a_project_wide_deny_a_target_cannot_carry_is_one_project_loss() {
+    // The profile's own `pkill` deny and the project's are one rule, lost once for the project.
+    let (quiet, verbose) = sync_tools_agent_in_project(
+        "  bash: allow\n  \"bash(pkill -f:*)\": deny\n",
+        "\n[settings.tools]\n\"bash(pkill -f *)\" = \"deny\"\n",
+    );
+    assert!(
+        quiet.contains("project setting `tools.bash(pkill -f *)`"),
+        "{quiet}"
+    );
+    assert_eq!(
+        verbose
+            .matches("project `tools.bash(pkill -f *)`: 1 field dropped for .codex")
+            .count(),
+        1,
+        "{verbose}"
+    );
+    assert!(
+        !verbose.contains("agent `a`: 1 field dropped for .codex (tools (deny bash(pkill"),
+        "the agent's own record no longer carries it: {verbose}"
     );
 }

@@ -63,17 +63,20 @@
       {
         "capability": "write",
         "pattern": null,
-        "action": "allow"
+        "action": "allow",
+        "origin": "profile"
       },
       {
         "capability": "*",
         "pattern": null,
-        "action": "deny"
+        "action": "deny",
+        "origin": "profile"
       },
       {
         "capability": "bash",
         "pattern": null,
-        "action": "ask"
+        "action": "ask",
+        "origin": "profile"
       }
     ],
     "harness-overrides": {

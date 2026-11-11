@@ -64,12 +64,14 @@
             {
               "capability": "read",
               "pattern": null,
-              "action": "allow"
+              "action": "allow",
+              "origin": "profile"
             },
             {
               "capability": "write",
               "pattern": null,
-              "action": "deny"
+              "action": "deny",
+              "origin": "profile"
             }
           ],
           "harness-overrides": {

@@ -206,6 +206,7 @@ pub(super) fn lower_skill_with_policy(
     LoweredOutput {
         bytes: render(yaml, body),
         lossy_fields,
+        project_losses: Vec::new(),
         siblings,
     }
 }

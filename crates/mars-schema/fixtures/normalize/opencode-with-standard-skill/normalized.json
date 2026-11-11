@@ -107,7 +107,8 @@
                   {
                     "capability": "write",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {

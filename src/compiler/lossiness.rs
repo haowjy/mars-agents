@@ -77,12 +77,23 @@ pub struct LoweredSibling {
     pub bytes: Vec<u8>,
 }
 
+/// A restriction that belongs to the project (a `[settings.tools]` rule), not to the agent being
+/// lowered, found while lowering it. `key` names the project setting.
+#[derive(Debug, Clone)]
+pub struct ProjectLoss {
+    pub key: String,
+    pub field: LossyField,
+}
+
 /// Output from a single lowering pass.
 pub struct LoweredOutput {
     /// Serialized bytes for the native artifact.
     pub bytes: Vec<u8>,
     /// Lossiness findings for fields that were dropped or approximated.
     pub lossy_fields: Vec<LossyField>,
+    /// What the target leaves out of the project-wide tool rules, which the per-agent
+    /// `lossy_fields` do not carry.
+    pub project_losses: Vec<ProjectLoss>,
     /// Extra files written next to the primary artifact (skills only today).
     pub siblings: Vec<LoweredSibling>,
 }

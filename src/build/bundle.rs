@@ -113,10 +113,23 @@ pub struct SupplementalDoc {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
     pub rules: Vec<ToolRuleSpec>,
+    /// Agent allows and asks a project-wide deny covers, left out of `rules`. Omitted when
+    /// there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub set_aside: Vec<SetAsideSpec>,
     pub capability_natives: BTreeMap<String, CapabilityNativeSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
+}
+
+/// A rule left out of `tools.rules` because a project-wide deny covers it: the rule's own
+/// `{capability, pattern, action, origin}`, and `by`, the rule that covers it.
+#[derive(Debug, Clone, Serialize)]
+pub struct SetAsideSpec {
+    #[serde(flatten)]
+    pub rule: ToolRule,
+    pub by: ToolRule,
 }
 
 /// How the resolved harness spells one capability that a launcher may gate independently of
@@ -130,7 +143,7 @@ pub struct CapabilityNativeSpec {
 }
 
 /// One tool-policy statement as the resolved harness spells it: the rule's own
-/// `{capability, pattern, action}` (see [`ToolRule`]'s serialization) plus the names.
+/// `{capability, pattern, action, origin}` (see [`ToolRule`]'s serialization) plus the names.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolRuleSpec {
     #[serde(flatten)]
@@ -153,9 +166,10 @@ pub struct ToolRuleSpec {
     /// gap: Mars adds nothing to `warnings[]`. Present when `native_status` is `unknown` (the
     /// reason Mars could not name the rule, for example "codex loads skills by reading files;
     /// no switch") and on a `known` rule whose projection has broader effects or whose native
-    /// permission is shared with another rule.
+    /// permission is shared with another rule, or a project-wide deny an agent rule may override.
+    /// Every note that applies, joined with `; `.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

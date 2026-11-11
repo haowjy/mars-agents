@@ -99,7 +99,8 @@
                   {
                     "capability": "bash",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {},
@@ -185,57 +186,68 @@
                   {
                     "capability": "*",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   },
                   {
                     "capability": "read",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "grep",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "bash",
                     "pattern": "git status *",
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "agent",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "mcp",
                     "pattern": "github/get_issue",
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "mcp",
                     "pattern": "github/*",
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "mcp",
                     "pattern": "docs/*",
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "write",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   },
                   {
                     "capability": "bash",
                     "pattern": "rm *",
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   },
                   {
                     "capability": "agent",
                     "pattern": "untrusted",
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {
@@ -314,17 +326,20 @@
                   {
                     "capability": "*",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   },
                   {
                     "capability": "read",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "edit",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {},
@@ -384,17 +399,20 @@
                   {
                     "capability": "read",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "grep",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "web_search",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {},

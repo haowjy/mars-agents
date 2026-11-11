@@ -474,3 +474,41 @@ fn validate_json_reports_malformed_skill_frontmatter_error() {
         "expected malformed skill frontmatter error: {stdout}"
     );
 }
+
+#[test]
+fn validate_reports_an_allow_a_project_wide_deny_covers_at_info_level() {
+    let dir = TempDir::new().unwrap();
+    let agent_content =
+        "---\nname: writer\ndescription: writes\ntools:\n  write: allow\n---\n# Writer";
+    let project = setup_synced_project(&dir, "proj", "src", &[("writer", agent_content)], &[]);
+    let manifest = project.join("mars.toml");
+    let mut text = fs::read_to_string(&manifest).unwrap();
+    text.push_str("\n[settings.tools]\nedit = \"deny\"\n");
+    fs::write(&manifest, text).unwrap();
+
+    let output = offline_mars(dir.path())
+        .args([
+            "validate",
+            "--strict",
+            "--json",
+            "--root",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let set_aside: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["code"] == "tool-rule-set-aside")
+        .collect();
+    assert_eq!(set_aside.len(), 1, "{report}");
+    assert_eq!(set_aside[0]["level"], "info", "--strict leaves info alone");
+    assert!(
+        set_aside[0]["message"].as_str().unwrap().contains(
+            "`allow write` is set aside because the project-wide `deny edit` covers it, in 1 agent: writer"
+        ),
+        "{report}"
+    );
+}

@@ -35,10 +35,12 @@ pub mod mcp;
 pub mod mcp_server;
 pub mod mcp_servers;
 pub mod provider;
+pub mod tool_cover;
 pub mod tool_names;
 pub mod tool_natives;
 
 pub mod tool_policy;
+pub mod tool_rule_map;
 
 pub mod model_policy;
 pub mod names;

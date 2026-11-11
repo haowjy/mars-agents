@@ -9,6 +9,7 @@ pub mod agent_copy;
 /// Agent-profile schema parser, routing prepass, and per-target lowering.
 pub mod agents;
 pub mod config_entries;
+pub(crate) mod effective_tools;
 /// Typed native harness descriptor table shared by compiler lowering lanes.
 pub(crate) mod harness_descriptor;
 pub mod hooks;
@@ -22,6 +23,7 @@ pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
+pub(crate) mod tool_notices;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
@@ -45,8 +47,8 @@ pub(crate) fn warn_unknown_visibility(
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub(crate) use native_agents::{
-    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, effective_native_profile,
-    materialize_native_agents_after_link,
+    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, ToolConfig, effective_native_profile,
+    installed_agent_tools, materialize_native_agents_after_link,
 };
 pub use native_agents::{
     native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,
@@ -232,7 +234,10 @@ fn compile_inner(
         &native_reconcile_ctx,
         &agent_surface_policy,
         &mars_agent_scan,
-        &loaded.effective.agents,
+        native_agents::ToolConfig {
+            agent_overlays: &loaded.effective.agents,
+            project_tools: &loaded.effective.settings.tools,
+        },
         native_compile_ctx.as_ref(),
         native_model_router.as_mut(),
         diag,

@@ -29,6 +29,7 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
     };
     let mut local: LocalConfig = super::parse_without_removed_visibility(&content, &path)?;
     super::validate_agent_overlays(&path, &local.agents)?;
+    super::validate_project_tools(&path, local.settings.tools.as_ref())?;
     // A user-wide override would point every project at a local checkout unseen.
     if !local.overrides.is_empty() {
         return Err(ConfigError::Invalid {

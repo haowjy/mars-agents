@@ -1,18 +1,20 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
-use crate::compiler::tool_policy::ToolPolicyRuntime;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
+use super::effective_tools::{Settlement, effective_tools};
+use super::lossiness::{Lossiness, LossyField, ProjectLoss};
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{ModelAlias, ModelSpec, ModelsCache};
 use mars_schema::model_policy::ModelPolicyMatchType;
+use mars_schema::tool_rule_map::ToolRuleMap;
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
 pub(crate) type RemovedNativeOutput = (String, String);
@@ -70,7 +72,17 @@ pub(crate) struct MarsCanonicalAgent {
     /// The consumer's `[agents.<name>]` overlay, already merged into `profile` except for
     /// the scalar layers that outrank model policies.
     pub overlay: Option<crate::config::AgentOverlay>,
+    /// What the project-wide denies did to the agent's allows and asks.
+    pub settlement: Settlement,
     pub body: String,
+}
+
+/// The configured layers that shape an agent's native profile: its `[agents.<name>]`
+/// overlay and the project-wide tool rules.
+#[derive(Clone, Copy)]
+pub(crate) struct ToolConfig<'a> {
+    pub agent_overlays: &'a indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    pub project_tools: &'a ToolRuleMap,
 }
 
 pub(crate) struct MarsAgentScan {
@@ -606,6 +618,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             canonical_dest_path,
             profile,
             overlay: None,
+            settlement: Settlement::default(),
             body,
         });
     }
@@ -763,6 +776,7 @@ pub(crate) fn compile_native_agents<'a>(
         options: &ctx.options,
     };
     let mut records = Vec::new();
+    let mut project_losses = ProjectLosses::default();
     let mut codex_emitted = false;
 
     // `mars_agents` carry already overlay-resolved profiles (resolved once in
@@ -794,9 +808,11 @@ pub(crate) fn compile_native_agents<'a>(
                 &emit_ctx,
                 diag,
                 &mut records,
+                &mut project_losses,
             );
         }
     }
+    project_losses.record(diag);
 
     // Native Codex files carry no network setting, and a project default is not any one
     // Agent's, so it is recorded once for the target.
@@ -823,11 +839,19 @@ pub(crate) fn compile_native_agents<'a>(
 pub(crate) fn effective_native_profile(
     profile: &mars_schema::agent::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
-) -> mars_schema::agent::AgentProfile {
-    let Some(overlay) = overlay else {
-        return profile.clone();
-    };
+    project_tools: &ToolRuleMap,
+) -> (mars_schema::agent::AgentProfile, Settlement) {
     let mut effective = profile.clone();
+    let tools = effective_tools(
+        project_tools,
+        &profile.tools,
+        overlay.map(|overlay| &overlay.tools),
+    );
+    effective.tools = tools.policy;
+    let settlement = tools.settlement;
+    let Some(overlay) = overlay else {
+        return (effective, settlement);
+    };
     effective.model =
         crate::config::overlay_then_profile_model(Some(overlay), profile.model.as_deref())
             .map(|model| model.to_string());
@@ -852,8 +876,7 @@ pub(crate) fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    effective.tools.apply_overlay(&overlay.tools);
-    effective
+    (effective, settlement)
 }
 
 /// An agent's native profile with the consumer overlay whose scalar layers outrank its
@@ -937,11 +960,38 @@ pub(crate) fn qualifying_agent_emissions(
     }
 }
 
+/// What each target's files leave out of the project-wide tool rules, found across all agents
+/// and recorded once per target and rule. A loss any agent suffers loudly stays loud, so a
+/// read-only agent that covers a lost `edit` deny quietly does not hide the others.
+#[derive(Default)]
+struct ProjectLosses(BTreeMap<(String, String), LossyField>);
+
+impl ProjectLosses {
+    fn add(&mut self, loss: ProjectLoss) {
+        let seen = self
+            .0
+            .entry((loss.field.target.clone(), loss.key))
+            .or_insert(loss.field.clone());
+        if matches!(seen.classification, Lossiness::Quiet { .. })
+            && matches!(loss.field.classification, Lossiness::Dropped(_))
+        {
+            *seen = loss.field;
+        }
+    }
+
+    fn record(self, diag: &mut DiagnosticCollector) {
+        for ((_, key), field) in self.0 {
+            diag.record_lossy_fields("project", &key, &[field]);
+        }
+    }
+}
+
 fn emit_lowered_native_agent(
     agent: &NativeAgentEmit<'_>,
     ctx: &NativeAgentEmitCtx<'_>,
     diag: &mut DiagnosticCollector,
     records: &mut Vec<CompiledNativeOutput>,
+    project_losses: &mut ProjectLosses,
 ) {
     use crate::compiler::agents::lower::lower_for_harness_with_model;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
@@ -997,6 +1047,9 @@ fn emit_lowered_native_agent(
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report.
     diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
+    for loss in lowered.project_losses {
+        project_losses.add(loss);
+    }
 
     let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
     let existing_bytes = native_path
@@ -1126,7 +1179,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     reconcile_ctx: &NativeAgentReconcileCtx<'_>,
     policy: &AgentSurfacePolicy,
     scan: &MarsAgentScan,
-    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    tool_config: ToolConfig<'_>,
     compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
     mut model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
@@ -1134,7 +1187,8 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).
-    let resolved = resolve_native_agent_profiles(&scan.agents, agent_overlays);
+    let resolved = resolve_native_agent_profiles(&scan.agents, tool_config);
+    warn_unsettled(&resolved, compile_ctx, diag);
     let desired = desired_native_agent_outputs(
         policy,
         &resolved,
@@ -1162,22 +1216,128 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     (compiled_native_outputs, removed_native_outputs)
 }
 
+/// Each installed agent's name, tool rules and what the project-wide denies did to them, for
+/// `mars validate`.
+pub(crate) fn installed_agent_tools(
+    mars_dir: &Path,
+    config: ToolConfig<'_>,
+    diag: &mut DiagnosticCollector,
+) -> Vec<(
+    String,
+    mars_schema::tool_policy::EffectiveToolPolicy,
+    Settlement,
+)> {
+    let scan = scan_mars_agents(mars_dir, diag);
+    let mut agents: Vec<_> = resolve_native_agent_profiles(&scan.agents, config)
+        .into_iter()
+        .map(|agent| (agent.agent_name, agent.profile.tools, agent.settlement))
+        .collect();
+    agents.sort_by(|a, b| a.0.cmp(&b.0));
+    agents
+}
+
+/// One roll-up line for every project-wide deny that an agent rule of overlapping scope may
+/// override. Claude settles it (every deny before any allow), so only the other configured
+/// targets can be affected; with none, there is nothing to say.
+fn warn_unsettled(
+    resolved: &[MarsCanonicalAgent],
+    compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
+    diag: &mut DiagnosticCollector,
+) {
+    use mars_schema::HarnessId;
+
+    let Some(ctx) = compile_ctx else { return };
+    let targets: Vec<&str> = ctx
+        .configured_emit_harnesses
+        .iter()
+        .filter(|harness| **harness != HarnessId::Claude)
+        .filter(|harness| {
+            ctx.harness_scope
+                .is_none_or(|scope| scope.contains(harness))
+        })
+        .map(|harness| crate::harness::registry::descriptor(*harness).default_target)
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+
+    // (project-wide rule, agent rule) -> agents holding the pair.
+    let mut pairs: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+    for agent in resolved {
+        for pair in &agent.settlement.unsettled {
+            let key = (
+                format!("deny {}", pair.project.render()),
+                format!("{} {}", pair.agent.action.as_str(), pair.agent.render()),
+            );
+            let agents = pairs.entry(key).or_default();
+            if !agents.contains(&agent.agent_name.as_str()) {
+                agents.push(&agent.agent_name);
+            }
+        }
+    }
+    for agents in pairs.values_mut() {
+        agents.sort_unstable();
+    }
+    let Some(((project, agent_rule), agents)) = pairs.iter().next() else {
+        return;
+    };
+    let rest = if pairs.len() > 1 {
+        match pairs.len() - 1 {
+            1 => " and 1 more pair".to_string(),
+            n => format!(" and {n} more pairs"),
+        }
+    } else {
+        String::new()
+    };
+    let hint = if diag.verbose() {
+        ""
+    } else {
+        "; `mars sync --verbose` lists every pair"
+    };
+    diag.warn(
+        "tool-rule-unsettled",
+        format!(
+            "project-wide `{project}` may not hold on {} against `{agent_rule}` in {} ({} {}){rest}: the keys may overlap, and outside Claude the agent's rule can outrank the deny. Narrow one key, or state the exemption in `[agents.<name>.tools]`{hint}",
+            targets.join(", "),
+            agents.join(", "),
+            agents.len(),
+            if agents.len() == 1 { "agent" } else { "agents" },
+        ),
+    );
+    if diag.verbose() {
+        for ((project, agent_rule), agents) in &pairs {
+            diag.info(
+                "tool-rule-unsettled",
+                format!("`{project}` against `{agent_rule}`: {}", agents.join(", ")),
+            );
+        }
+    }
+}
+
 /// Apply each agent's overlay over its canonical profile, yielding agents whose
 /// `profile` is the effective native profile. Single source of overlay merging
 /// for the native lifecycle (routing, description, invocation axes, tool policy).
 fn resolve_native_agent_profiles(
     mars_agents: &[MarsCanonicalAgent],
-    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    config: ToolConfig<'_>,
 ) -> Vec<MarsCanonicalAgent> {
+    let ToolConfig {
+        agent_overlays,
+        project_tools,
+    } = config;
     mars_agents
         .iter()
         .map(|agent| {
-            let profile =
-                effective_native_profile(&agent.profile, agent_overlays.get(&agent.agent_name));
+            let (profile, settlement) = effective_native_profile(
+                &agent.profile,
+                agent_overlays.get(&agent.agent_name),
+                project_tools,
+            );
             MarsCanonicalAgent {
                 agent_name: agent.agent_name.clone(),
                 canonical_dest_path: agent.canonical_dest_path.clone(),
                 profile,
+                settlement,
                 overlay: agent_overlays.get(&agent.agent_name).cloned(),
                 body: agent.body.clone(),
             }
@@ -1267,7 +1427,10 @@ pub(crate) fn materialize_native_agents_after_link(
         &reconcile_ctx,
         &policy,
         &mars_agent_scan,
-        &input.effective.agents,
+        ToolConfig {
+            agent_overlays: &input.effective.agents,
+            project_tools: &input.effective.settings.tools,
+        },
         compile_ctx.as_ref(),
         model_router.as_mut(),
         diag,

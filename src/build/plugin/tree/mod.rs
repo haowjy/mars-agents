@@ -12,6 +12,7 @@ use crate::target::McpServerEntry;
 use crate::types::SourceName;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
+use mars_schema::tool_rule_map::ToolRuleMap;
 
 use super::PluginComponents;
 use super::metadata::PackageMetadata;
@@ -451,7 +452,10 @@ fn lower_agent(
         .then(|| agent_overlay_name(item, input.collision_renames))
         .and_then(|name| input.agent_overlays.get(name));
     let body_refs = body_reference_map(item, input, installed_skills);
-    let mut effective = crate::compiler::effective_native_profile(&profile, overlay);
+    // A plugin is the package author's, built from its `mars.toml` as published: the
+    // author's own project-wide rules are not part of it.
+    let (mut effective, _) =
+        crate::compiler::effective_native_profile(&profile, overlay, &ToolRuleMap::default());
     qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_model(
         effective.model.as_deref(),

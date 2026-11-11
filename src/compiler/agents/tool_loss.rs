@@ -4,11 +4,11 @@
 //! [`Carries`] says what its file can write. [`losses`] joins them, so no target guesses a kind
 //! from a lowered field.
 
-use crate::compiler::lossiness::{Lossiness, LossyField, Lost};
+use crate::compiler::lossiness::{Lossiness, LossyField, Lost, ProjectLoss};
 use crate::compiler::tool_policy::{PolicyProjection, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::tool_names::Capability;
-use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
+use mars_schema::tool_policy::{EffectiveToolPolicy, RuleOrigin, ToolAction, ToolRule};
 
 /// How much of the deny side a target's file can write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,18 +48,28 @@ fn is_file_write(rule: &ToolRule) -> bool {
     )
 }
 
-/// Every restriction `tools` places on the agent that `carries` cannot write, one field per
-/// kind lost. A plain grant loses nothing and records nothing.
+/// What a target's file leaves out of an agent's tool rules.
+pub(super) struct ToolLosses {
+    /// The agent's own restrictions, one field per kind lost.
+    pub agent: Vec<LossyField>,
+    /// Project-wide restrictions (`[settings.tools]`): the project's, not any one agent's, so
+    /// the caller records each once per target.
+    pub project: Vec<ProjectLoss>,
+}
+
+/// Every restriction `tools` places on the agent that `carries` cannot write. A plain grant
+/// loses nothing and records nothing.
 pub(super) fn losses(
     tools: &EffectiveToolPolicy,
     harness: HarnessId,
     target: &str,
     carries: Carries,
-) -> Vec<LossyField> {
+) -> ToolLosses {
     let projection = tools.project(harness);
     let mut lost: Vec<(Lost, String)> = Vec::new();
     let mut covered: Vec<String> = Vec::new();
     let mut shadowed: Vec<String> = Vec::new();
+    let mut project: Vec<ProjectLoss> = Vec::new();
 
     for (rule, projected) in projection.rules() {
         // Only a target that writes names has a naming gap worth reporting.
@@ -98,12 +108,12 @@ pub(super) fn losses(
                     continue;
                 }
                 if carries.writes_covered && is_file_write(rule) {
-                    covered.push(label());
+                    covered_by_sandbox(rule, label(), target, &mut covered, &mut project);
                 } else {
-                    lost.push((rule_loss(rule), label()));
+                    lose(rule, label(), target, &mut lost, &mut project);
                 }
             }
-            ToolAction::Ask => lost.push((rule_loss(rule), label())),
+            ToolAction::Ask => lose(rule, label(), target, &mut lost, &mut project),
             _ => {}
         }
     }
@@ -136,7 +146,7 @@ pub(super) fn losses(
             field: format!("tools ({})", covered.join(", ")),
             target: target.into(),
             classification: Lossiness::Quiet {
-                why: "the read-only sandbox written to this file already blocks file writes",
+                why: SANDBOX_COVERS_WRITES,
             },
         });
     }
@@ -159,8 +169,68 @@ pub(super) fn losses(
             classification: remainder,
         });
     }
-    fields
+    ToolLosses {
+        agent: fields,
+        project,
+    }
 }
+
+/// The project key a [`ProjectLoss`] is named by, as in `[settings.tools]`.
+fn project_key(rule: &ToolRule) -> String {
+    format!("tools.{}", rule.render())
+}
+
+/// A project-wide rule's loss is recorded once for the project; the label of any other rule
+/// comes back for the agent's own record.
+fn agent_label(
+    rule: &ToolRule,
+    label: String,
+    target: &str,
+    classification: Lossiness,
+    project: &mut Vec<ProjectLoss>,
+) -> Option<String> {
+    if rule.origin != RuleOrigin::Project {
+        return Some(label);
+    }
+    project.push(ProjectLoss {
+        key: project_key(rule),
+        field: LossyField {
+            field: label,
+            target: target.into(),
+            classification,
+        },
+    });
+    None
+}
+
+fn lose(
+    rule: &ToolRule,
+    label: String,
+    target: &str,
+    lost: &mut Vec<(Lost, String)>,
+    project: &mut Vec<ProjectLoss>,
+) {
+    let loss = rule_loss(rule);
+    if let Some(label) = agent_label(rule, label, target, Lossiness::Dropped(loss), project) {
+        lost.push((loss, label));
+    }
+}
+
+fn covered_by_sandbox(
+    rule: &ToolRule,
+    label: String,
+    target: &str,
+    covered: &mut Vec<String>,
+    project: &mut Vec<ProjectLoss>,
+) {
+    let quiet = Lossiness::Quiet {
+        why: SANDBOX_COVERS_WRITES,
+    };
+    covered.extend(agent_label(rule, label, target, quiet, project));
+}
+
+const SANDBOX_COVERS_WRITES: &str =
+    "the read-only sandbox written to this file already blocks file writes";
 
 fn allowed_natives(projection: &PolicyProjection<'_>) -> Vec<String> {
     projection.natives(

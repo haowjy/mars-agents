@@ -77,15 +77,19 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
-    // Load config to get min_mars_version for compatibility preflight and the unknown
-    // `[settings]` keys that only validate reports. This is a lightweight read that doesn't
+    // Load config to get min_mars_version for compatibility preflight and the notes that only
+    // validate reports (unknown `[settings]` keys, tool rules set aside or about to change). This is a lightweight read that doesn't
     // acquire the sync lock.
-    let (min_required, unknown_settings) =
+    let (min_required, config_notes) =
         match crate::config::load_project_config_layers(&ctx.project_root) {
-            Ok(loaded) => (
-                loaded.effective.settings.min_mars_version.clone(),
-                crate::config::unknown_settings_diagnostics(&loaded),
-            ),
+            Ok(loaded) => {
+                let mut notes = crate::config::unknown_settings_diagnostics(&loaded);
+                notes.extend(crate::compiler::tool_notices::tool_rule_notices(
+                    &ctx.project_root,
+                    &loaded,
+                ));
+                (loaded.effective.settings.min_mars_version.clone(), notes)
+            }
             Err(MarsError::Config(ConfigError::NotFound { .. })) => (None, Vec::new()),
             Err(err) => return Err(err),
         };
@@ -100,7 +104,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         all_diagnostics.insert(0, compat_diag);
     }
 
-    all_diagnostics.extend(unknown_settings);
+    all_diagnostics.extend(config_notes);
 
     let error_count = all_diagnostics
         .iter()

@@ -6,7 +6,8 @@ use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_yaml::Value;
 
 /// What a rule does when its capability (and pattern) match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolAction {
     Allow,
     Deny,
@@ -32,18 +33,54 @@ impl ToolAction {
     }
 }
 
+/// Where a rule came from. It is not part of a rule's identity: two rules with the same
+/// capability, pattern and action are one rule whatever their origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RuleOrigin {
+    /// The agent's or skill's own profile.
+    #[default]
+    Profile,
+    /// `allowed` / `disallowed` or a rule map in an `[agents.<name>.tools]` overlay.
+    Overlay,
+    /// `[settings.tools]`, which holds for every agent.
+    Project,
+}
+
+impl RuleOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Overlay => "overlay",
+            Self::Project => "project",
+        }
+    }
+}
+
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
 ///
 /// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
 /// one is the consuming harness's call, and [`EffectiveToolPolicy::project`] settles only
 /// capabilities one harness tool cannot tell apart.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ToolRule {
     pub capability: Capability,
     /// Scope inside `capability(...)`. `None` for `*` and `mcp`, whose scope is the capability.
     pub pattern: Option<String>,
     pub action: ToolAction,
+    pub origin: RuleOrigin,
 }
+
+/// Equality ignores `origin`: `merge_permission_set` and `push_unique` rely on it to fold a
+/// rule that two layers both state into one.
+impl PartialEq for ToolRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.capability == other.capability
+            && self.pattern == other.pattern
+            && self.action == other.action
+    }
+}
+
+impl Eq for ToolRule {}
 
 impl ToolRule {
     pub fn from_parsed(parsed: ParsedToolName, action: ToolAction) -> Self {
@@ -51,7 +88,13 @@ impl ToolRule {
             capability: parsed.capability,
             pattern: parsed.pattern,
             action,
+            origin: RuleOrigin::Profile,
         }
+    }
+
+    pub fn with_origin(mut self, origin: RuleOrigin) -> Self {
+        self.origin = origin;
+        self
     }
 
     pub fn is_wildcard(&self) -> bool {
@@ -80,7 +123,7 @@ impl ToolRule {
 }
 
 /// The rule's wire shape, shared by the launch bundle's `tools.rules` and `agents show --json`:
-/// `{capability, pattern, action}`. `capability` is `*` for "every other tool" and
+/// `{capability, pattern, action, origin}`. `capability` is `*` for "every other tool" and
 /// `mcp` for an MCP ref, whose `pattern` is its `server/tool`.
 impl Serialize for ToolRule {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -88,6 +131,7 @@ impl Serialize for ToolRule {
         map.serialize_entry("capability", self.capability.name())?;
         map.serialize_entry("pattern", &self.wire_pattern())?;
         map.serialize_entry("action", self.action.as_str())?;
+        map.serialize_entry("origin", self.origin.as_str())?;
         map.end()
     }
 }
@@ -120,13 +164,16 @@ impl EffectiveToolPolicy {
             .iter()
             .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
     }
+    /// Add `rule` unless an equal one is there. A `Project` rule takes over the origin of the
+    /// equal rule it meets; otherwise the first origin stays.
     pub fn push_unique(&mut self, rule: ToolRule) {
-        if !self.rules.iter().any(|existing| {
-            existing.capability == rule.capability
-                && existing.pattern == rule.pattern
-                && existing.action == rule.action
-        }) {
-            self.rules.push(rule);
+        match self.rules.iter_mut().find(|existing| **existing == rule) {
+            Some(existing) => {
+                if rule.origin == RuleOrigin::Project {
+                    existing.origin = RuleOrigin::Project;
+                }
+            }
+            None => self.rules.push(rule),
         }
     }
 }
@@ -332,3 +379,33 @@ fn permission_replace_entries(value: &Value) -> Option<&Value> {
 }
 
 const ACTIONS_ALLOWED: &str = "allow, deny, or ask";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(origin: RuleOrigin) -> ToolRule {
+        ToolRule {
+            capability: Capability::Builtin("bash"),
+            pattern: Some("git push *".into()),
+            action: ToolAction::Deny,
+            origin,
+        }
+    }
+
+    #[test]
+    fn origin_is_not_part_of_identity() {
+        assert_eq!(rule(RuleOrigin::Profile), rule(RuleOrigin::Project));
+
+        let mut policy = EffectiveToolPolicy::default();
+        policy.push_unique(rule(RuleOrigin::Profile));
+        policy.push_unique(rule(RuleOrigin::Overlay));
+        assert_eq!(policy.rules.len(), 1);
+        assert_eq!(policy.rules[0].origin, RuleOrigin::Profile);
+        policy.push_unique(rule(RuleOrigin::Project));
+        assert_eq!(policy.rules.len(), 1);
+        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
+        policy.push_unique(rule(RuleOrigin::Profile));
+        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
+    }
+}

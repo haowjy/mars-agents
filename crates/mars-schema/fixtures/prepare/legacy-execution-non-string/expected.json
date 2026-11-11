@@ -88,6 +88,9 @@
             "effort"
           ],
           [
+            "mode"
+          ],
+          [
             "sandbox"
           ]
         ]
@@ -116,15 +119,23 @@
         "path": [
           "effort"
         ],
-        "message": "agent `runner`: `effort: 3` is not a string, so Mars ignored it and the harness default (or a lower layer) applies; write one of: none, low, medium, high, xhigh, max"
+        "message": "agent `runner`: `effort: 3` ignored (not a string); use none, low, medium, high, xhigh or max"
       },
       {
         "code": "field.execution-ignored",
         "severity": "warning",
         "path": [
+          "mode"
+        ],
+        "message": "agent `runner`: `mode: 1` ignored (not a string); use primary or subagent"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
           "sandbox"
         ],
-        "message": "agent `runner`: `sandbox: false` is not a string, so Mars ignored it and the harness default (or a lower layer) applies, which leaves the agent less restricted than the file says; write one of: default, read-only, workspace-write, danger-full-access"
+        "message": "agent `runner` lost the restriction `sandbox`: it was dropped, because no harness reads it. Schema v1 does not accept it (`sandbox` must be a string); use default, read-only, workspace-write or danger-full-access"
       }
     ]
   }

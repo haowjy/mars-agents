@@ -15,7 +15,10 @@
 //!   `network`, `network-deny`) is
 //!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
 //!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
-//!   (`Prepared::surfaced_changes`).
+//!   (`Prepared::lost_restrictions`).
+//! - A top-level `effort`, `mode` or `harness` that is not a string restricts nothing, so it is an
+//!   ordinary change ([`EXECUTION_IGNORED`]) that is listed once. A non-string `sandbox`,
+//!   `approval` or `network` stays a lost restriction, with the allowed values added.
 
 use std::cmp::Ordering;
 
@@ -36,8 +39,8 @@ const KEPT_KEYS: &[&str] = &["name", "description", "harness-overrides"];
 /// The code of the change that records a lost restriction.
 pub(crate) const RESTRICTION_LOST: &str = "field.restriction-lost";
 
-/// The code of the change that records an execution field written as something other than a
-/// string and ignored for it.
+/// The code of the change that records an execution field that restricts nothing (`effort`,
+/// `harness`, `mode`) written as something other than a string and ignored for it.
 pub(crate) const EXECUTION_IGNORED: &str = "field.execution-ignored";
 
 /// Execution fields (in a profile, or in a model policy's `override`) and what each accepts.
@@ -260,7 +263,7 @@ fn reason(key: &str, value: Option<&Value>, destination: Destination<'_>, read: 
 }
 
 /// Reports what the guard did: a change per piece set aside, coded [`RESTRICTION_LOST`] when it
-/// was a restriction.
+/// was a restriction and [`EXECUTION_IGNORED`] for a non-string `effort`, `mode` or `harness`.
 struct Report<'a> {
     agent: String,
     changes: &'a mut Vec<SchemaDiagnostic>,
@@ -278,37 +281,37 @@ impl Report<'_> {
         why: &str,
     ) {
         let shown = path_text(path);
-        let allowed = match path.last() {
-            Some(PathSegment::Key(key)) if !value.is_string() => execution_allowed(key),
+        // Only a top-level execution field written as a non-string; a nested key of the same name
+        // (`tools.effort`) is an ordinary set-aside.
+        let allowed = match path {
+            [PathSegment::Key(key)] if !value.is_string() => execution_allowed(key),
             _ => None,
-        };
-        let (code, message) = match (allowed, lost) {
-            (Some(allowed), lost) => (
-                EXECUTION_IGNORED,
+        }
+        .map(|allowed| match allowed.rsplit_once(", ") {
+            Some((rest, last)) => format!("{rest} or {last}"),
+            None => allowed.to_owned(),
+        });
+        let (code, message) = match (lost, allowed) {
+            (Some(lost), allowed) => (
+                RESTRICTION_LOST,
                 format!(
-                    "{}: `{shown}: {}` is not a string, so Mars ignored it and the harness default (or a lower layer) applies{}; write one of: {allowed}",
+                    "{} lost the restriction {lost}: {what}. Schema v1 does not accept it ({why}){}",
                     self.agent,
-                    crate::ordered::plain(value),
-                    if lost.is_some() {
-                        ", which leaves the agent less restricted than the file says"
-                    } else {
-                        ""
-                    },
+                    allowed.map_or(String::new(), |allowed| format!("; use {allowed}")),
                 ),
             ),
-            (None, lost) => match lost {
-                Some(lost) => (
-                    RESTRICTION_LOST,
-                    format!(
-                        "{} lost the restriction {lost}: {what}. Schema v1 does not accept it ({why})",
-                        self.agent
-                    ),
+            (None, Some(allowed)) => (
+                EXECUTION_IGNORED,
+                format!(
+                    "{}: `{shown}: {}` ignored (not a string); use {allowed}",
+                    self.agent,
+                    crate::ordered::plain(value),
                 ),
-                None => (
-                    "field.set-aside",
-                    format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
-                ),
-            },
+            ),
+            (None, None) => (
+                "field.set-aside",
+                format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
+            ),
         };
         self.changes.push(SchemaDiagnostic::new(
             code,

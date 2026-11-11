@@ -195,19 +195,13 @@ pub(crate) fn selection_facts(
 
 impl Prepared {
     /// The changes that lost a restriction (a `deny` or `ask` tool entry, `permission`,
-    /// `sandbox`, `approval`) or ignored an execution field written as a non-string, by source
-    /// path. Unlike the rest of `changes`, a caller reports these on every run: each leaves an
-    /// agent running differently from what its file says.
-    pub fn surfaced_changes(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
+    /// `sandbox`, `approval`), by source path. Unlike the rest of `changes`, a caller reports
+    /// these on every run: each leaves an agent less restricted than its file says.
+    pub fn lost_restrictions(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
         self.changes.iter().flat_map(|(path, changes)| {
             changes
                 .iter()
-                .filter(|change| {
-                    matches!(
-                        change.code.as_str(),
-                        crate::set_aside::RESTRICTION_LOST | crate::set_aside::EXECUTION_IGNORED
-                    )
-                })
+                .filter(|change| change.code == crate::set_aside::RESTRICTION_LOST)
                 .map(move |change| (path.as_str(), change))
         })
     }

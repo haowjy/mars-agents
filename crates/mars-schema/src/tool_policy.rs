@@ -6,7 +6,8 @@ use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_yaml::Value;
 
 /// What a rule does when its capability (and pattern) match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolAction {
     Allow,
     Deny,

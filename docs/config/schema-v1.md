@@ -70,6 +70,8 @@ Field-by-field behaviour is in [Agent profiles](agent-profiles.md).
 
 A schema 1 file that carries one of these is an error (`field.removed`) naming the replacement. [`mars migrate`](migrating-to-schema-v1.md) applies the replacement where one can be applied mechanically.
 
+The same key table serves the consumer tables of `mars.toml`, `mars.local.toml` and the user `config.toml`: `autocompact`, `autocompact_pct`, `model_invocable`, `user_invocable`, `network_allow`, `network_deny` and a skill's `tools` are removed there too, and an unknown key warns, as it does here. See [Keys Mars does not read](mars-toml.md#keys-mars-does-not-read).
+
 | Removed | Replace with |
 |---|---|
 | `disallowed-tools` | `tools: {<capability>: deny}` |

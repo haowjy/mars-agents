@@ -56,8 +56,14 @@ and rules, so never add a binary-side copy.
 
 `keys::KEYS` is the one table of config keys: which surfaces a key appears on, the Mars
 that first read it (`since`), whether a value restricts, and whether it is current, an
-alias, deprecated or removed, with the advice or rewrite. Add a new key as a row and
-nowhere else: no removed-key list, version-floor constant or per-key check beside the
-table. A reader asks `keys::removed_key`, `keys::removals`, `keys::dropped_keys` or
-`keys::since`. `Removal::warns_on` records the surfaces that still warn where others
-error; it exists to keep behavior unchanged until the surfaces agree, so don't add to it.
+alias, deprecated, removed (with advice, and a rewrite `mars migrate` applies: drop,
+rename or a value) or `Elsewhere` (a key that belongs in a project's files, which the
+user config warns about and drops). Add a new key as a row and nowhere else: no
+removed-key list, version-floor constant or per-key check beside the table. A reader asks
+`keys::removed_key`, `keys::removals`, `keys::dropped_keys`, `keys::elsewhere_key` or
+`keys::since`.
+
+A removed key is an error on every surface the row lists, a key no row names is a warning
+(`diagnostic::unknown_key_message`, one text for packages and consumer config), and an
+unknown value is an error. Don't give one surface a different answer for the same key. The
+consumer config reader is `src/config/read.rs`; see `src/config/AGENTS.md`.

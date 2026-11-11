@@ -339,9 +339,35 @@ impl<'de> Deserialize<'de> for ModelPolicyRule {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = serde_yaml::Value::deserialize(deserializer)?;
-        parse_model_policy_rule_value(&value)
-            .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
+        /// Takes the keys a rule reads and hands every other value to serde as ignored, so a
+        /// reader that reports ignored keys sees an unknown field of a rule.
+        struct RuleVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for RuleVisitor {
+            type Value = ModelPolicyRule;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a model policy rule mapping")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut rule = serde_yaml::Mapping::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if matches!(key.as_str(), "match" | "override" | "no-fallback" | "when") {
+                        rule.insert(key.into(), map.next_value::<serde_yaml::Value>()?);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                parse_model_policy_rule_value(&serde_yaml::Value::Mapping(rule))
+                    .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
+            }
+        }
+
+        deserializer.deserialize_map(RuleVisitor)
     }
 }
 

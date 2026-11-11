@@ -558,12 +558,11 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-`mars validate` also prints two `info` notes about tool rules, which `--strict` leaves alone:
+`mars validate` also prints one `info` note about tool rules, which `--strict` leaves alone:
 
 | Code | What it lists |
 |---|---|
 | `tool-rule-covered` | each allow or ask a stricter rule covers, so it never applies, one line per rule and covering rule naming its agents (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)) |
-| `tool-overlay-lists-deprecated` | each `[agents.<name>.tools]` that still uses `allowed` or `disallowed` |
 
 `mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 

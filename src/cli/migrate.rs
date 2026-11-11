@@ -42,20 +42,31 @@ struct PendingWrite {
     fully_rewritten: bool,
 }
 
-pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let root = &ctx.project_root;
+pub fn run(args: &MigrateArgs, explicit_root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
+    let root = &super::find_project_root(&match explicit_root {
+        Some(root) => root.to_path_buf(),
+        None => std::env::current_dir()?,
+    })?;
+    let consumer_config = migrate_consumer_config(root)?;
     let manifest = std::fs::read(root.join("mars.toml"))?;
     let (authored_root, context) = project_authored_root(root, Some(&manifest));
     let consumer = context == PrepareContext::AuthoredLocal;
 
     if !authored_root.is_dir() {
-        if consumer && !json {
+        if consumer && !json && consumer_config.is_untouched() {
             output::print_info(&format!(
                 "nothing to migrate: {} is consumer configuration, not a package; dependencies migrate in their own repositories",
                 root.display()
             ));
         }
-        return report(args.check, Vec::new(), Vec::new(), Vec::new(), json);
+        return finish(
+            args.check,
+            consumer_config,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            json,
+        );
     }
 
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
@@ -68,12 +79,98 @@ pub fn run(args: &MigrateArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let (pending, warnings) = pending_writes(root, &authored_root, &prepared, !consumer)?;
     let dropped = dropped_keys(root, &authored_root, &prepared);
 
-    if !args.check {
+    finish(
+        args.check,
+        consumer_config,
+        pending,
+        dropped,
+        warnings,
+        json,
+    )
+}
+
+/// The consumer config files' share of the migration, before anything is written.
+struct ConsumerConfig {
+    pending: Vec<PendingWrite>,
+    changes: Vec<Notice>,
+    left: Vec<Notice>,
+}
+
+impl ConsumerConfig {
+    fn is_untouched(&self) -> bool {
+        self.pending.is_empty() && self.changes.is_empty() && self.left.is_empty()
+    }
+}
+
+/// Apply the key table's rewrites to `mars.toml`, `mars.local.toml` and the user `config.toml`.
+/// The tool lists need each agent's installed profile, so they wait for a synced project.
+fn migrate_consumer_config(root: &Path) -> Result<ConsumerConfig, MarsError> {
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let no_overlays = indexmap::IndexMap::new();
+    let no_rules = mars_schema::tool_rule_map::ToolRuleMap::default();
+    let profiles = crate::compiler::installed_agent_tools(
+        &root.join(".mars"),
+        crate::compiler::ToolConfig {
+            agent_overlays: &no_overlays,
+            project_tools: &no_rules,
+        },
+        &mut diag,
+    )
+    .into_iter()
+    .collect();
+    let user_config = crate::platform::config::mars_config_dir().map(|dir| dir.join("config.toml"));
+    let outcome =
+        crate::config::migrations::consumer::migrate(root, user_config.as_deref(), &profiles)?;
+    let notice = |code: &str, notice: crate::config::migrations::consumer::Notice| Notice {
+        file: notice.file,
+        code: code.to_string(),
+        message: notice.message,
+    };
+    Ok(ConsumerConfig {
+        pending: outcome
+            .rewritten
+            .into_iter()
+            .map(|file| PendingWrite {
+                relative: file.file,
+                path: file.path,
+                bytes: file.text.into_bytes(),
+                fully_rewritten: false,
+            })
+            .collect(),
+        changes: outcome
+            .changes
+            .into_iter()
+            .map(|change| notice("config.rewritten", change))
+            .collect(),
+        left: outcome
+            .left
+            .into_iter()
+            .map(|left| notice("config.left", left))
+            .collect(),
+    })
+}
+
+/// Write what is pending (unless this is a check) and report. Config left for the author
+/// makes the exit code 1: the next load of it fails.
+fn finish(
+    check: bool,
+    consumer: ConsumerConfig,
+    mut pending: Vec<PendingWrite>,
+    mut dropped: Vec<Notice>,
+    mut warnings: Vec<Notice>,
+    json: bool,
+) -> Result<i32, MarsError> {
+    let left = !consumer.left.is_empty();
+    pending.extend(consumer.pending);
+    dropped.extend(consumer.changes);
+    warnings.extend(consumer.left);
+    if !check {
         for file in &pending {
             crate::platform::fs::atomic_write_file(&file.path, &file.bytes)?;
         }
     }
-    report(args.check, pending, dropped, warnings, json)
+    let code = report(check, pending, dropped, warnings, json)?;
+    Ok(code.max(i32::from(left)))
 }
 
 /// The upgrade's diagnostics are what upgrading removed (legacy keys, skill tool rules);

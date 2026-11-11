@@ -127,11 +127,6 @@ pub fn build_launch_bundle(
         ),
     };
     profile.tools = effective_tools;
-    if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
-        effective_project_config.settings.meridian_agent_copy(),
-    ) {
-        warnings.push(message);
-    }
     let lock = crate::lock::load_for_runtime_aliases(&ctx.project_root)?;
     let runtime_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,

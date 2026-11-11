@@ -55,7 +55,7 @@
         "package",
         "__proto__"
       ],
-      "message": "unknown package field `__proto__` is preserved"
+      "message": "[package] unknown key `__proto__` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -64,7 +64,7 @@
         "package",
         "alpha"
       ],
-      "message": "unknown package field `alpha` is preserved"
+      "message": "[package] unknown key `alpha` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -73,7 +73,7 @@
         "package",
         "big"
       ],
-      "message": "unknown package field `big` is preserved"
+      "message": "[package] unknown key `big` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -82,7 +82,7 @@
         "package",
         "meta"
       ],
-      "message": "unknown package field `meta` is preserved"
+      "message": "[package] unknown key `meta` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -91,7 +91,7 @@
         "package",
         "nan-value"
       ],
-      "message": "unknown package field `nan-value` is preserved"
+      "message": "[package] unknown key `nan-value` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -100,7 +100,7 @@
         "package",
         "table"
       ],
-      "message": "unknown package field `table` is preserved"
+      "message": "[package] unknown key `table` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -109,7 +109,7 @@
         "package",
         "when"
       ],
-      "message": "unknown package field `when` is preserved"
+      "message": "[package] unknown key `when` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "field.unknown",
@@ -118,7 +118,7 @@
         "package",
         "zeta"
       ],
-      "message": "unknown package field `zeta` is preserved"
+      "message": "[package] unknown key `zeta` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "toml.non-json-value",

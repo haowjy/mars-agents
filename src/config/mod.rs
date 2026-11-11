@@ -160,7 +160,7 @@ pub struct AgentOverlayTools {
     /// Entries that replace the same key in the profile and in `[settings.tools]`.
     #[serde(flatten, default, skip_serializing_if = "ToolRuleMap::is_empty")]
     pub rules: ToolRuleMap,
-    /// Keys Mars does not read here (a retired `mcp`); kept so a stale one can be reported.
+    /// Keys Mars does not read here; kept so they save back as written. A removed `mcp` fails the load.
     #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
@@ -967,11 +967,6 @@ fn stale_overlay_warnings(
                 stale(format!("[agents.{name}] `{key}`"));
             }
         }
-        if overlay.tools.unknown.contains_key("mcp") {
-            stale(format!(
-                "[agents.{name}.tools] `mcp` (put MCP grants in `allowed` as \"mcp(server)\")"
-            ));
-        }
     }
     warnings
 }
@@ -1006,13 +1001,23 @@ pub(crate) fn validate_project_tools(
 }
 
 /// `approval` and `sandbox` in an overlay take the same values as in an Agent file (`effort` is
-/// typed, so an invalid one fails when `mars.toml` is read).
+/// typed, so an invalid one fails when `mars.toml` is read). The removed `tools.mcp` list fails
+/// here, so all three config files reject it.
 fn validate_agent_overlays(
     file: &Path,
     agents: &IndexMap<String, AgentOverlay>,
 ) -> Result<(), MarsError> {
     use mars_schema::agent::{ApprovalMode, SandboxMode};
     for (name, overlay) in agents {
+        if overlay.tools.unknown.contains_key("mcp") {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "{}: [agents.{name}.tools] `mcp` was removed; put MCP grants in `allowed` as \"mcp(server)\"",
+                    file.display()
+                ),
+            }
+            .into());
+        }
         let values = [
             (
                 "approval",
@@ -1805,7 +1810,7 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn overlay_tools_table_splits_lists_rules_and_stale_keys() {
+    fn overlay_tools_table_splits_lists_rules_and_rejects_removed_mcp() {
         let config: Config = toml::from_str(
             "[agents.a.tools]\nallowed = [\"bash\"]\nweb = \"ask\"\n\"*\" = \"deny\"\nmcp = [\"x\"]\n",
         )
@@ -1814,6 +1819,14 @@ override = { effort = "high" }
         assert!(tools.allowed.is_some());
         assert_eq!(rule_keys(&tools.rules), ["web=ask", "*=deny"]);
         assert!(tools.unknown.contains_key("mcp"));
+        let error = validate_agent_overlays(Path::new("mars.toml"), &config.agents)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("mars.toml: [agents.a.tools] `mcp` was removed")
+                && error.contains("mcp(server)"),
+            "{error}"
+        );
         // What the user wrote saves back as written.
         let saved = toml::to_string(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);

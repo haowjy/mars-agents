@@ -100,7 +100,7 @@ Review code changes."#;
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         bundle["tools"]["allowed"],
-        serde_json::json!(["bash", "read", "edit", "websearch", "webfetch"])
+        serde_json::json!(["bash", "read", "websearch", "webfetch"])
     );
     assert_eq!(
         bundle["tools"]["disallowed"],
@@ -569,7 +569,7 @@ Review code changes."#;
     assert_eq!(bundle["tools"]["disallowed"], serde_json::json!([]));
 }
 
-/// The shape of the shipped `prompt-tester`: no editing, but writing files is fine.
+/// `edit: deny` beside `write: allow`: a deny of `edit` covers `write`.
 const NO_EDIT_BUT_WRITE_AGENT: &str = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -583,60 +583,35 @@ tools:
 Test prompts."#;
 
 #[test]
-fn bundle_resolves_a_narrow_rule_over_a_broad_one_and_notes_where_it_cannot() {
-    // Claude and Pi tell `write` from `edit`: the narrow allow wins the shared tool.
-    for (harness, allowed, denied) in [("claude", "Write", "Edit"), ("pi", "write", "edit")] {
+fn bundle_denies_a_write_that_an_edit_deny_covers_on_every_harness() {
+    // The deny wins the shared name; the allow keeps nothing and says why.
+    for (harness, written) in [
+        ("claude", "Write"),
+        ("pi", "write"),
+        ("codex", "apply_patch"),
+    ] {
         let bundle = bundle_for(NO_EDIT_BUT_WRITE_AGENT, harness);
         let allowed_list = bundle["tools"]["allowed"].as_array().unwrap();
         let disallowed_list = bundle["tools"]["disallowed"].as_array().unwrap();
         assert!(
-            allowed_list.contains(&serde_json::json!(allowed)),
+            !allowed_list.contains(&serde_json::json!(written)),
             "{harness}"
         );
         assert!(
-            !disallowed_list.contains(&serde_json::json!(allowed)),
+            disallowed_list.contains(&serde_json::json!(written)),
             "{harness}"
         );
+        let write = rule(&bundle, "write", None);
+        assert_eq!(write["native"], serde_json::json!([]), "{harness}");
+        assert_eq!(write["native_tools"], serde_json::json!([]), "{harness}");
         assert!(
-            disallowed_list.contains(&serde_json::json!(denied)),
-            "{harness}"
-        );
-        assert!(rule(&bundle, "write", None)["note"].is_null(), "{harness}");
-        assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");
-        assert_eq!(
-            rule(&bundle, "write", None)["native_tools"],
-            serde_json::json!([allowed]),
-            "{harness}"
-        );
-    }
-    let claude = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "claude");
-    assert_eq!(
-        rule(&claude, "edit", None)["native"],
-        serde_json::json!(["Edit", "NotebookEdit"])
-    );
-    assert_eq!(
-        rule(&claude, "edit", None)["native_tools"],
-        serde_json::json!(["Edit", "NotebookEdit"])
-    );
-
-    // Codex edits and writes through `apply_patch` alone, so Mars cannot pick: both rules say the
-    // harness decides, and the launch gets no warning.
-    let codex = bundle_for(NO_EDIT_BUT_WRITE_AGENT, "codex");
-    for capability in ["write", "edit"] {
-        let overlapping = rule(&codex, capability, None);
-        assert_eq!(overlapping["native_status"], "known");
-        assert_eq!(
-            overlapping["native_tools"],
-            serde_json::json!(["apply_patch"])
-        );
-        assert!(
-            overlapping["note"]
+            write["note"]
                 .as_str()
-                .is_some_and(|note| note.contains("the harness decides")),
-            "{overlapping}"
+                .is_some_and(|note| note.contains("covers it")),
+            "{harness}"
         );
+        assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");
     }
-    assert_eq!(codex["warnings"], serde_json::json!([]));
 }
 
 #[test]

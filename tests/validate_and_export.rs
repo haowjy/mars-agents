@@ -476,7 +476,7 @@ fn validate_json_reports_malformed_skill_frontmatter_error() {
 }
 
 #[test]
-fn validate_reports_an_allow_a_project_wide_deny_covers_at_info_level() {
+fn validate_reports_an_allow_a_stricter_rule_covers_at_info_level() {
     let dir = TempDir::new().unwrap();
     let agent_content =
         "---\nname: writer\ndescription: writes\ntools:\n  write: allow\n---\n# Writer";
@@ -497,18 +497,19 @@ fn validate_reports_an_allow_a_project_wide_deny_covers_at_info_level() {
         .output()
         .unwrap();
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let set_aside: Vec<_> = report["diagnostics"]
+    let covered: Vec<_> = report["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|d| d["code"] == "tool-rule-set-aside")
+        .filter(|d| d["code"] == "tool-rule-covered")
         .collect();
-    assert_eq!(set_aside.len(), 1, "{report}");
-    assert_eq!(set_aside[0]["level"], "info", "--strict leaves info alone");
+    assert_eq!(covered.len(), 1, "{report}");
+    assert_eq!(covered[0]["level"], "info", "--strict leaves info alone");
     assert!(
-        set_aside[0]["message"].as_str().unwrap().contains(
-            "`allow write` is set aside because the project-wide `deny edit` covers it, in 1 agent: writer"
-        ),
+        covered[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("`allow write` never applies: `deny edit` covers it, in 1 agent: writer"),
         "{report}"
     );
 }

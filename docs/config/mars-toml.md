@@ -416,31 +416,44 @@ Mars warns when another ignored key looks network-related and lists these accept
 
 ### Project-wide tool rules
 
-`[settings.tools]` maps tool keys to `"deny"` for every agent in the project, and for a launch
-with no agent. It takes the keys of a profile's `tools:` map (`bash(pkill -f *)`, `edit`,
-`read(secret/**)`, `mcp(github)`), with the same normalization.
+`[settings.tools]` maps tool keys to `"allow"`, `"ask"` or `"deny"` for every agent in the
+project, and for a launch with no agent. It takes the keys of a profile's `tools:` map
+(`bash(pkill -f *)`, `edit`, `read(secret/**)`, `mcp(github)`), with the same normalization.
 
 ```toml
 [settings.tools]
 "bash(pkill -f *)" = "deny"
 "bash(killall *)" = "deny"
+"bash(git push *)" = "ask"
 ```
 
-- **Deny only.** `allow`, `ask` and `*` fail the load, naming the file and key. For `allow` and
-  `ask` Mars 0.29.0 prints "only `deny` is accepted in this release; `allow` and `ask` arrive in
-  the next". A release after 0.29.0 is expected to accept them, and then the strictest matching
-  rule wins (deny, then `ask`, then `allow`) on every harness, so how narrow a pattern is stops
-  mattering. `*` stays refused: `approval` is already the default for calls no rule matches. A package cannot ship `[settings]`, so no installed package adds or removes one of
-  these. A skill's own tool fields are not affected.
-- **Restrict, never widen.** The rules join each agent's own. An agent allow or ask that a
-  project-wide deny covers by key is set aside, because some harnesses let a narrower allow beat
-  a broader deny: `bash = "deny"` sets aside a profile's `bash(rg *): allow`, `edit = "deny"` sets
-  aside `write: allow`, and `"bash(git *)" = "deny"` sets aside `bash(git status *): allow`. Mars
-  sets an allow aside only when the two keys prove it (the `edit` and `web` capabilities cover
-  `write` and `notebook`, `web_search` and `web_fetch`; for `bash`, a literal ending in one `*`
-  covers every pattern that starts with it). When the keys might overlap and Mars cannot tell
-  (`read(secret/**)` against `read(src/**)`), both rules stay, and `mars sync` warns for the
-  agent and key pair.
+- **One precedence.** Of the rules that match a call, the strictest wins on every harness: deny,
+  then `ask`, then `allow`. How narrow a pattern is never matters, so a profile's
+  `bash(git status *): allow` does not beat a project-wide `"bash(git *)" = "deny"`, and
+  `bash: deny` beside `bash(rg *): allow` turns Bash off. `*` is refused in `[settings.tools]`,
+  naming the file and key: `approval` is already the default for calls no rule matches.
+  A package cannot ship `[settings]`, so no installed package adds or removes one of these. A
+  skill's own tool fields are not affected.
+- **Restrict, never widen.** The rules join each agent's own, and an agent keeps every rule it
+  wrote. A project-wide `deny` joins every agent. A project-wide `allow` only decides what the
+  agent left open, so Mars drops it for an agent that has a `'*'` rule (an allowlist, or
+  `'*': ask`): it never gives a tool an allowlist closes, and never quiets a prompt the profile
+  asks for. A project-wide `ask` joins every agent too, except an allowlist agent (`'*': deny`):
+  there it asks only where the agent allows. For each allow the agent writes, a project `ask`
+  that the allow covers joins as written; one that covers the allow, or that Mars cannot compare
+  to it, becomes an `ask` on the agent allow's own key (origin `project`). A pattern Mars
+  cannot compare (`bash(*--force*)`, anything with a `*` but the last character) puts an `ask`
+  on every scoped Bash allow of every allowlist agent, and an `ask` is a refusal in a spawn.
+  Someone who wants one agent widened writes it in `[agents.<name>.tools]`, which names the
+  agent.
+- **Covered rules stay.** A rule a stricter rule covers by key never applies, as a project
+  `bash = "deny"` against a profile's `bash(rg *): allow`, or a profile's own `edit: deny` beside
+  `write: allow`. Mars keeps it in the agent's rules and the launch bundle with no native name
+  and a `note` naming the stricter rule, and `mars validate` prints one `info` line per pair
+  (`tool-rule-covered`). Covering is decided only where the keys prove it (the `edit` and `web`
+  capabilities cover `write` and `notebook`, `web_search` and `web_fetch`; for `bash`, a literal
+  ending in one `*` covers every pattern that starts with it). A pair the keys cannot settle
+  (`read(secret/**)` against `read(src/**)`) is not recorded: each harness matches the real call.
 - **The same rule in a profile and here is one rule.** A profile that already denies
   `bash(pkill -f *)` and a project that denies the same key give one rule, labelled
   `origin: "project"` in the launch bundle.
@@ -465,32 +478,14 @@ with no agent. It takes the keys of a profile's `tools:` map (`bash(pkill -f *)`
     launches through Meridian.
   - `mars check`, `mars init` and the plugin build never apply these rules, since they preview
     or build a package for other projects.
-  - Set-aside rules and unsettled pairs are described next.
 
-#### Set-aside rules and unsettled pairs
-
-This section is the one definition of both terms; the other pages link here.
-
-- **Set aside.** An agent allow or ask that a project-wide deny covers by key is dropped from
-  the agent's rules, because it is not a lost restriction. `mars sync` says nothing about it.
-  `mars validate` prints one `info` line per rule naming its agents (`tool-rule-set-aside`;
-  `--strict` leaves `info` alone), and the launch bundle lists each under
-  [`tools.set_aside`](../cli/commands.md#mars-build-launch-bundle).
-- **Unsettled.** When Mars cannot tell from the keys whether a project-wide deny covers an
-  agent allow or ask (a path scope on both sides, say), both rules stay in the agent's rules.
-  `mars sync` says nothing about the pair: no other target's agent file writes an allow for it and Claude checks every deny first, so
-  the deny's fate on each target is already in the sync line about restrictions a target
-  loses. The pair matters in a launch through Meridian, where the launch bundle's
-  project-wide rule carries a `note` on every harness but Claude, joined with `; ` to any
-  note the rule already has. Two skill rules (`skill(init)`, `skill(review)`) whose names
-  have no wildcard character are never a pair.
-
-- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]`
-  and rule entries without a word, so the deny does nothing there. A project that relies on a
-  project-wide deny must make sure everyone's Mars is new enough. Set
-  `min_mars_version = "0.29.0"` or higher: a Mars that meets it fails `mars sync` and
-  `mars build launch-bundle` on an older Mars. A binary released before this check was added
-  still ignores it.
+- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and rule entries without a
+  word, so the deny does nothing there. A Mars from 0.29.0 up to 0.30.0 accepts only `deny` and
+  fails the load on `allow` or `ask`, and applies the older precedence (a longer or narrower
+  allow can beat a deny). A project that relies on a project-wide rule must make sure everyone's
+  Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars that meets it fails
+  `mars sync` and `mars build launch-bundle` on an older Mars. A binary released before this
+  check was added still ignores it.
 
 ### User config
 

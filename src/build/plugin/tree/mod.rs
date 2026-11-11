@@ -454,7 +454,7 @@ fn lower_agent(
     let body_refs = body_reference_map(item, input, installed_skills);
     // A plugin is the package author's, built from its `mars.toml` as published: the
     // author's own project-wide rules are not part of it.
-    let (mut effective, _) =
+    let mut effective =
         crate::compiler::effective_native_profile(&profile, overlay, &ToolRuleMap::default());
     qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_model(

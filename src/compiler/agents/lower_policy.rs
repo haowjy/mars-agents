@@ -475,7 +475,6 @@ impl<'a> AgentLoweringCtx<'a> {
                 classification: Lossiness::Approximate { note },
             });
         }
-        let overlaps = projection.overlaps();
 
         // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
         // inherits every tool. So only an allowlist can lower to it: a map-form grant
@@ -492,15 +491,6 @@ impl<'a> AgentLoweringCtx<'a> {
                 yk("disallowed-tools"),
                 serde_yaml::Value::Sequence(disallowed.iter().map(|tool| yv(tool)).collect()),
             );
-        }
-        if !overlaps.is_empty() {
-            self.lossy.push(LossyField {
-                field: format!("tools ({} both allowed and denied)", overlaps.join(", ")),
-                target: target.into(),
-                classification: Lossiness::Approximate {
-                    note: "Claude applies the deny",
-                },
-            });
         }
     }
 

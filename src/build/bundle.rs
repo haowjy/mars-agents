@@ -113,23 +113,13 @@ pub struct SupplementalDoc {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
     pub rules: Vec<ToolRuleSpec>,
-    /// Agent allows and asks a project-wide deny covers, left out of `rules`. Omitted when
-    /// there are none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub set_aside: Vec<SetAsideSpec>,
+    /// Always `[]`: it listed the rules a project-wide deny covers, which now stay in `rules`
+    /// with a `note`. Kept for one release so a reader of the field still finds it.
+    pub set_aside: Vec<serde_json::Value>,
     pub capability_natives: BTreeMap<String, CapabilityNativeSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
-}
-
-/// A rule left out of `tools.rules` because a project-wide deny covers it: the rule's own
-/// `{capability, pattern, action, origin}`, and `by`, the rule that covers it.
-#[derive(Debug, Clone, Serialize)]
-pub struct SetAsideSpec {
-    #[serde(flatten)]
-    pub rule: ToolRule,
-    pub by: ToolRule,
 }
 
 /// How the resolved harness spells one capability that a launcher may gate independently of

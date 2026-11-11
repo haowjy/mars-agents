@@ -2,12 +2,13 @@
 //!
 //! Canonical Mars profiles express tool gating with a `tools:` action map (`rule: allow`,
 //! `deny` or `ask`), whole-server or per-tool MCP grants being `mcp(...)` keys in it.
-//! [`parse_tool_policy`] reads them once into an [`EffectiveToolPolicy`]: one list
+//! `mars_schema::agent::read` reads them once into an [`EffectiveToolPolicy`]: one list
 //! of [`ToolRule`]s that the profile stores, a `mars.toml` overlay edits, and
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
 //! and the launch bundle all read that projection; nothing else turns a rule into native
 //! permission names or unscoped harness tool names.
 
+use crate::compiler::effective_tools::covered;
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use mars_schema::HarnessId;
 use mars_schema::tool_names::{Capability, is_mcp_wire_token, render_scoped};
@@ -17,8 +18,8 @@ use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
 /// Whether Mars can name a rule's tools on a harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeStatus {
-    /// Mars knows the native name(s). Specificity or action precedence can leave this rule no
-    /// surviving name when another rule owns the same permission.
+    /// Mars knows the native name(s). A stricter rule on the same native name can leave this
+    /// rule no surviving name.
     Known,
     /// The harness has no such tool, so there is nothing to allow or deny.
     Absent,
@@ -88,6 +89,8 @@ pub(crate) struct ProjectedRule {
     /// A harness-specific consequence of this projection that callers must surface even when
     /// the native name is known.
     note: Option<&'static str>,
+    /// The stricter rule (`deny bash`) that covers this one, which then names no native tool.
+    pub covered_by: Option<String>,
 }
 
 impl ProjectedRule {
@@ -96,6 +99,7 @@ impl ProjectedRule {
             bindings,
             status: Some(NativeStatus::Known),
             note,
+            covered_by: None,
         }
     }
 
@@ -104,6 +108,7 @@ impl ProjectedRule {
             bindings: Vec::new(),
             status: Some(status),
             note: None,
+            covered_by: None,
         }
     }
 
@@ -155,6 +160,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
             bindings: Vec::new(),
             status: None,
             note: None,
+            covered_by: None,
         },
         Capability::Mcp(mcp_ref) => match project_mcp_ref(mcp_ref, harness) {
             McpProjection::Token(token) => {
@@ -240,7 +246,12 @@ impl ToolPolicyRuntime for EffectiveToolPolicy {
             .iter()
             .map(|rule| (rule, project_rule(rule, harness)))
             .collect();
-        resolve_by_specificity(&mut rules, harness);
+        keep_strictest_per_native(&mut rules);
+        for (index, by) in covered(self) {
+            let projected = &mut rules[index].1;
+            projected.bindings.clear();
+            projected.covered_by = Some(format!("{} {}", by.action.as_str(), by.render()));
+        }
         PolicyProjection { rules }
     }
 }
@@ -264,18 +275,8 @@ impl RuleKind {
     }
 }
 
-/// The bundle `note` on a rule whose native tool another rule, of the opposite action, also
-/// names (see [`PolicyProjection::overlaps`]).
-pub(crate) const OVERLAP_NOTE: &str =
-    "another rule allows or denies the same native tool; the harness decides which wins";
-
-/// The bundle `note` on a project-wide deny that an agent rule of overlapping scope may
-/// override: Mars could not tell from the keys whether the deny covers it (see
-/// `effective_tools`), and every harness but Claude lets a scoped allow beat an unscoped deny
-/// or a longer pattern beat a shorter one.
-pub(crate) const UNSETTLED_NOTE: &str = "an agent rule with an overlapping scope may override this project-wide deny; Mars could not tell from the keys which applies";
-
-const CLAUDE_SCOPED_PRECEDENCE_NOTE: &str = "a stricter scoped rule controls the same Claude permission and wins (deny, then ask, then allow); this rule is left out";
+/// The `note` on a rule that lost a native name to a stricter rule on the same name.
+const STRICTER_RULE_NOTE: &str = "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out";
 
 /// A policy's rules spelled for one harness, in profile order.
 pub(crate) struct PolicyProjection<'a> {
@@ -318,99 +319,27 @@ impl<'a> PolicyProjection<'a> {
             .filter_map(ProjectedRule::gap)
             .collect()
     }
-
-    /// Native names that an allow rule and a deny rule both still name after
-    /// [`resolve_by_specificity`]: two capabilities one harness tool cannot tell apart
-    /// (`write` and `edit` on Codex). The harness decides which wins; a deny usually does.
-    /// [`OVERLAP_NOTE`] is the bundle's word for it.
-    pub fn overlaps(&self) -> Vec<String> {
-        let named = |action| -> Vec<&String> {
-            self.rules
-                .iter()
-                .filter(|(rule, _)| rule.action == action)
-                .flat_map(|(_, projected)| projected.native_names())
-                .collect()
-        };
-        let allowed = named(ToolAction::Allow);
-        let mut overlaps: Vec<String> = Vec::new();
-        for native in named(ToolAction::Deny) {
-            if allowed.contains(&native) && !overlaps.contains(native) {
-                overlaps.push(native.clone());
-            }
-        }
-        overlaps
-    }
 }
 
-/// Let a rule on a narrower capability win over a broader one for the natives they share.
-///
-/// `edit: deny` with `write: allow` means "no edits, but writing is fine". On Claude `edit`
-/// covers `Edit`, `Write` and `NotebookEdit`, so projecting both rules as written would put
-/// `Write` in the allow and the deny list, where the deny wins. A capability is narrower when
-/// the natives it names are a strict subset of the other's, and the rules disagree on the
-/// action. Capabilities a harness cannot tell apart (equal sets) stay in conflict: see
-/// [`PolicyProjection::overlaps`]. The exception is equal scoped Claude permissions, whose
-/// documented deny → ask → allow order selects the stricter action. Scoped rules compare by
-/// their rendered `name(pattern)`, so a scope never narrows an unscoped rule and the harness's
-/// own path-pattern precedence applies.
-fn resolve_by_specificity(rules: &mut [(&ToolRule, ProjectedRule)], harness: HarnessId) {
-    let takes_part = |rule: &ToolRule| !rule.is_wildcard() && !rule.is_mcp();
-    let narrower: Vec<Option<(ToolAction, Vec<String>)>> = rules
+/// Of the rules that name one native permission, the strictest action keeps it (deny, then ask,
+/// then allow), as Claude's own lists do. `edit: deny` beside `write: allow` leaves the allow
+/// no `Write` on Claude and no `write` on Pi; capabilities a harness cannot tell apart
+/// (`write` and `edit` on Codex) resolve the same way. A rule that loses a name gets a note.
+fn keep_strictest_per_native(rules: &mut [(&ToolRule, ProjectedRule)]) {
+    let named: Vec<(ToolAction, Vec<String>)> = rules
         .iter()
-        .map(|(rule, projected)| {
-            (takes_part(rule) && !projected.bindings.is_empty())
-                .then(|| (rule.action, projected.native()))
-        })
+        .map(|(rule, projected)| (rule.action, projected.native()))
         .collect();
-
     for (rule, projected) in rules.iter_mut() {
-        if !takes_part(rule) {
-            continue;
-        }
-        let broad = projected.native();
+        let before = projected.bindings.len();
         projected.retain_native(|native| {
-            !narrower.iter().flatten().any(|(action, natives)| {
-                *action != rule.action
-                    && natives.len() < broad.len()
-                    && natives.iter().all(|name| broad.contains(name))
-                    && natives.contains(native)
+            !named.iter().any(|(action, names)| {
+                action.strictness() > rule.action.strictness() && names.contains(native)
             })
         });
-    }
-
-    // Claude's file permission categories intentionally collapse scoped capabilities:
-    // `write(p)` and `edit(p)` both become `Edit(p)`, while `glob(p)` and `grep(p)` both become
-    // `Read(p)`. Claude evaluates matching actions as deny, then ask, then allow. Resolve that
-    // documented order here so every downstream representation carries the same winner.
-    if harness == HarnessId::Claude {
-        let scoped: Vec<(ToolAction, bool, Vec<String>)> = rules
-            .iter()
-            .map(|(rule, projected)| (rule.action, rule.pattern.is_some(), projected.native()))
-            .collect();
-        for (rule, projected) in rules.iter_mut() {
-            if rule.pattern.is_none() {
-                continue;
-            }
-            let before = projected.bindings.len();
-            projected.retain_native(|native| {
-                !scoped.iter().any(|(action, is_scoped, names)| {
-                    *is_scoped
-                        && action_strictness(*action) > action_strictness(rule.action)
-                        && names.contains(native)
-                })
-            });
-            if projected.bindings.len() != before {
-                projected.note = Some(CLAUDE_SCOPED_PRECEDENCE_NOTE);
-            }
+        if projected.bindings.len() != before {
+            projected.note = Some(STRICTER_RULE_NOTE);
         }
-    }
-}
-
-fn action_strictness(action: ToolAction) -> u8 {
-    match action {
-        ToolAction::Allow => 0,
-        ToolAction::Ask => 1,
-        ToolAction::Deny => 2,
     }
 }
 
@@ -498,27 +427,65 @@ mod tests {
     }
 
     #[test]
-    fn narrower_capability_wins_over_broader_for_the_natives_they_share() {
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n  notebook: deny\n---\n",
+    fn the_strictest_action_keeps_each_native_name_on_every_harness() {
+        // (rules, harness, the allow rule's surviving names, the deny rule's)
+        type Row = (
+            &'static str,
+            &'static str,
+            HarnessId,
+            &'static [&'static str],
+            &'static [&'static str],
         );
-        let claude = policy.project(HarnessId::Claude);
-        assert_eq!(claude.rules()[0].1.native(), ["Edit", "NotebookEdit"]);
-        assert_eq!(claude.rules()[0].1.native_tools(), ["Edit", "NotebookEdit"]);
-        assert_eq!(claude.rules()[1].1.native(), ["Write"]);
-        assert_eq!(claude.rules()[1].1.native_tools(), ["Write"]);
-        assert!(policy.project(HarnessId::Claude).overlaps().is_empty());
-        // Pi names `edit` and `write` as separate tools too.
-        assert!(policy.project(HarnessId::Pi).overlaps().is_empty());
-    }
-
-    #[test]
-    fn capabilities_a_harness_cannot_tell_apart_stay_in_conflict() {
-        // Codex edits files through `apply_patch` alone, so `write` and `edit` share it exactly.
-        let policy = agent_policy(
-            "---\nname: a\ndescription: d\ntools:\n  edit: deny\n  write: allow\n---\n",
-        );
-        assert_eq!(policy.project(HarnessId::Codex).overlaps(), ["apply_patch"]);
+        let rows: &[Row] = &[
+            (
+                "edit",
+                "write",
+                HarnessId::Claude,
+                &[],
+                &["Edit", "Write", "NotebookEdit"],
+            ),
+            (
+                "edit",
+                "notebook",
+                HarnessId::Claude,
+                &[],
+                &["Edit", "Write", "NotebookEdit"],
+            ),
+            ("edit", "write", HarnessId::Pi, &[], &["edit", "write"]),
+            ("edit", "write", HarnessId::Codex, &[], &["apply_patch"]),
+            ("edit", "write", HarnessId::OpenCode, &[], &["edit"]),
+            (
+                "web",
+                "web_fetch",
+                HarnessId::Claude,
+                &[],
+                &["WebSearch", "WebFetch"],
+            ),
+            (
+                "web",
+                "web_search",
+                HarnessId::Claude,
+                &[],
+                &["WebSearch", "WebFetch"],
+            ),
+        ];
+        for (deny, allow, harness, allowed, denied) in rows {
+            let policy = agent_policy(&format!(
+                "---\nname: a\ndescription: d\ntools:\n  {deny}: deny\n  {allow}: allow\n---\n"
+            ));
+            let projection = policy.project(*harness);
+            assert_eq!(
+                projection.rules()[1].1.native(),
+                *allowed,
+                "{deny}/{allow} {harness:?}"
+            );
+            assert!(projection.rules()[1].1.note().is_some());
+            assert_eq!(
+                projection.rules()[0].1.native(),
+                *denied,
+                "{deny}/{allow} {harness:?}"
+            );
+        }
     }
 
     #[test]
@@ -529,7 +496,6 @@ mod tests {
         let projection = policy.project(HarnessId::Claude);
         assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
         assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
-        assert!(projection.overlaps().is_empty());
     }
 
     #[test]
@@ -641,7 +607,6 @@ mod tests {
                 .note()
                 .is_some_and(|note| note.contains("deny, then ask, then allow"))
         );
-        assert!(projection.overlaps().is_empty());
     }
 
     #[test]

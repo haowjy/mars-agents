@@ -484,7 +484,7 @@ pub(crate) fn apply_target_renames(
             diag.warn_advisory("rewrite-warning", warning);
         }
     }
-    package_tools::fold(&mut target, graph, local_tools);
+    package_tools::fold(&mut target, graph, local_tools, diag);
 
     Ok(PreparedTarget {
         target,

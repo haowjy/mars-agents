@@ -174,16 +174,13 @@ impl EffectiveToolPolicy {
             .iter()
             .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
     }
-    /// Add `rule` unless an equal one is there. A `Project` rule takes over the origin of the
-    /// equal rule it meets; otherwise the first origin stays.
+    /// Add `rule` unless an equal one is there. The first rule's origin stays: consumers act on
+    /// origin (a continued session replaces `Project` rules with the current ones, and the
+    /// platform `task` opt-out reads only profile and overlay rules), and the rule already
+    /// held says what the copy would.
     pub fn push_unique(&mut self, rule: ToolRule) {
-        match self.rules.iter_mut().find(|existing| **existing == rule) {
-            Some(existing) => {
-                if rule.origin == RuleOrigin::Project {
-                    existing.origin = RuleOrigin::Project;
-                }
-            }
-            None => self.rules.push(rule),
+        if !self.rules.contains(&rule) {
+            self.rules.push(rule);
         }
     }
 }
@@ -414,8 +411,6 @@ mod tests {
         assert_eq!(policy.rules[0].origin, RuleOrigin::Profile);
         policy.push_unique(rule(RuleOrigin::Project));
         assert_eq!(policy.rules.len(), 1);
-        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
-        policy.push_unique(rule(RuleOrigin::Profile));
-        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
+        assert_eq!(policy.rules[0].origin, RuleOrigin::Profile);
     }
 }

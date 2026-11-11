@@ -13,6 +13,7 @@ use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
 use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
+use mars_schema::keys::{self, Surface};
 use mars_schema::manifest::ManifestRead;
 use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::names::{RenameMap, SourceSubpath};
@@ -664,16 +665,22 @@ fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
         message: format!("failed to parse {}: {error}", path.display()),
     };
     let value: toml::Value = toml::from_str(content).map_err(parse_error)?;
-    if let Some(legacy) = value
-        .get("settings")
-        .and_then(|settings| settings.get("model_visibility"))
-    {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "{}: [settings.model_visibility] was removed. Move these display rules to mars.curated.toml (or mars.curated.local.toml for local overrides); review harness×model semantics before applying. Mars will not write the new file:\n{}",
-                path.display(), visibility_migration(legacy)
-            ),
-        }.into());
+    for (row, removal) in keys::removals(Surface::Settings) {
+        if let Some(legacy) = value
+            .get("settings")
+            .and_then(|settings| settings.get(row.key))
+        {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "{}: [settings.{}] was removed. {}\n{}",
+                    path.display(),
+                    row.key,
+                    removal.advice,
+                    visibility_migration(legacy)
+                ),
+            }
+            .into());
+        }
     }
     // Deserialize the original text, not the intermediate `toml::Value`:
     // round-tripping through Value reorders declaration-keyed tables and can
@@ -891,9 +898,6 @@ struct ProjectConfigWarning {
     message: String,
 }
 
-/// Overlay keys Mars once read and now ignores.
-const STALE_AGENT_OVERLAY_KEYS: &[&str] = &["autocompact", "autocompact_pct"];
-
 const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
 const NETWORK_OVERLAY_KEYS: &str =
     "network, network-allow (or network_allow), network-deny (or network_deny)";
@@ -961,9 +965,9 @@ fn stale_overlay_warnings(
         });
     };
     for (name, overlay) in agents {
-        for key in STALE_AGENT_OVERLAY_KEYS {
-            if overlay.unknown.contains_key(*key) {
-                stale(format!("[agents.{name}] `{key}`"));
+        for (row, _) in keys::removals(Surface::AgentOverlay) {
+            if overlay.unknown.contains_key(row.key) {
+                stale(format!("[agents.{name}] `{}`", row.key));
             }
         }
     }
@@ -1001,14 +1005,18 @@ fn validate_agent_overlays(
 ) -> Result<(), MarsError> {
     use mars_schema::agent::{ApprovalMode, SandboxMode};
     for (name, overlay) in agents {
-        if overlay.tools.unknown.contains_key("mcp") {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "{}: [agents.{name}.tools] `mcp` was removed; put MCP grants in `allowed` as \"mcp(server)\"",
-                    file.display()
-                ),
+        for (row, removal) in keys::removals(Surface::AgentOverlayTools) {
+            if overlay.tools.unknown.contains_key(row.key) {
+                return Err(ConfigError::Invalid {
+                    message: format!(
+                        "{}: [agents.{name}.tools] `{}` was removed; {}",
+                        file.display(),
+                        row.key,
+                        removal.advice
+                    ),
+                }
+                .into());
             }
-            .into());
         }
         let values = [
             (
@@ -1098,13 +1106,16 @@ fn project_config_warnings(
             ));
         }
         for (name, overlay) in skills {
-            if overlay.unknown.contains_key("tools") {
-                warnings.push(ProjectConfigWarning {
-                    code: "stale-config-key",
-                    message: format!(
-                        "{file} [skills.{name}.tools] is no longer read and is ignored; delete it"
-                    ),
-                });
+            for (row, _) in keys::removals(Surface::SkillOverlay) {
+                if overlay.unknown.contains_key(row.key) {
+                    warnings.push(ProjectConfigWarning {
+                        code: "stale-config-key",
+                        message: format!(
+                            "{file} [skills.{name}.{}] is no longer read and is ignored; delete it",
+                            row.key
+                        ),
+                    });
+                }
             }
         }
     }

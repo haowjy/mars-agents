@@ -3,47 +3,15 @@
 use crate::HarnessId;
 use serde_yaml::Value;
 
-use crate::diagnostic::{RemovedField, RemovedValue, push_invalid, unrecognized_field};
+use crate::diagnostic::{push_invalid, removed_value, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
+use crate::keys::Surface;
 use crate::model_policy::ModelPolicyRule;
 use crate::network::{NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
 use crate::tool_policy::{self, EffectiveToolPolicy};
-
-/// `lift_mars_only_keys` drops the `discarded` keys; the legacy upgrade rewrites the rest.
-pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
-    RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`"),
-    RemovedField::discarded("models", "use `model-policies`"),
-    RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`"),
-    RemovedField::discarded("autocompact", "configure compaction on the model alias"),
-    RemovedField::discarded("autocompact_pct", "configure compaction on the model alias"),
-    RemovedField::replaced("disallowed-tools", "use `tools: {<capability>: deny}`"),
-    RemovedField::replaced("model_invocable", "use `model-invocable`"),
-    RemovedField::replaced("user_invocable", "use `user-invocable`"),
-    RemovedField::replaced("network_allow", "use `network-allow`"),
-    RemovedField::replaced("network_deny", "use `network-deny`"),
-    RemovedField::replaced(
-        "permission",
-        "move it under `harness-overrides.meridian-flow.permission`",
-    ),
-    RemovedField::replaced(
-        "resident-rearm-budget",
-        "move it under `harness-overrides.meridian-cli.resident-rearm-budget`",
-    ),
-    RemovedField::replaced(
-        "meridian-capabilities",
-        "move it under `harness-overrides.meridian-cli.capabilities`",
-    ),
-];
-
-/// Values `lift_mars_only_keys` rewrites; the reader refuses them.
-pub(crate) const REMOVED_AGENT_VALUES: &[RemovedValue] = &[
-    RemovedValue::new("approval", "yolo", "never"),
-    RemovedValue::new("effort", "adaptive", "medium"),
-    RemovedValue::new("effort", "disabled", "none"),
-];
 
 /// The Agent keys Mars lowers into a harness's native file itself, by the field that owns them.
 /// A `harness-overrides` entry never replaces one (native lowering keeps Mars's value and reports
@@ -688,9 +656,9 @@ pub(crate) fn read_fields(
                 profile.approval =
                     read_string(value, "approval", false, diags).and_then(|approval| {
                         if let Some(removed) =
-                            RemovedValue::find(REMOVED_AGENT_VALUES, "approval", &approval)
+                            removed_value(Surface::AgentProfile, "approval", &approval)
                         {
-                            diags.push(removed.diagnostic());
+                            diags.push(removed);
                             return None;
                         }
                         ApprovalMode::parse(&approval).or_else(|| {
@@ -739,10 +707,8 @@ pub(crate) fn read_fields(
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
-                    if let Some(removed) =
-                        RemovedValue::find(REMOVED_AGENT_VALUES, "effort", &effort)
-                    {
-                        diags.push(removed.diagnostic());
+                    if let Some(removed) = removed_value(Surface::AgentProfile, "effort", &effort) {
+                        diags.push(removed);
                         return None;
                     }
                     EffortLevel::parse(&effort).or_else(|| {
@@ -774,7 +740,7 @@ pub(crate) fn read_fields(
                 profile.harness_overrides = parse_harness_overrides("agent", value, diags);
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
-            _ => diags.push(unrecognized_field(REMOVED_AGENT_FIELDS, &key)),
+            _ => diags.push(unrecognized_field(Surface::AgentProfile, &key)),
         }
     }
 
@@ -796,7 +762,7 @@ fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
              `harness-overrides.opencode.permission`",
         ),
         Value::String(permission) if matches!(permission.as_str(), "read" | "edit") => {
-            unrecognized_field(REMOVED_AGENT_FIELDS, "permission")
+            unrecognized_field(Surface::AgentProfile, "permission")
         }
         _ => SchemaDiagnostic::new(
             "field.removed",

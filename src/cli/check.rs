@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 
+use mars_schema::keys::{self, Surface};
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
 
@@ -167,12 +168,6 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     if clean { Ok(0) } else { Ok(1) }
 }
 
-/// The first Mars whose `mars version` keeps `[plugin]`.
-const PLUGIN_MARS_FLOOR: &str = "0.19.0";
-
-/// The first Mars that applies `[package.tools]`.
-const PACKAGE_TOOLS_MARS_FLOOR: &str = "0.30.0";
-
 fn requires_mars_warnings(
     prepared: &mars_schema::prepare::Prepared,
     lens: &crate::resolve::PublishLens,
@@ -194,7 +189,7 @@ fn requires_mars_warnings(
         .then(|| {
             mars_schema::package::requires_mars_floor_warning(
                 requires,
-                PLUGIN_MARS_FLOOR,
+                keys::since(Surface::Manifest, "plugin"),
                 "older Mars versions may drop [plugin] during `mars version`",
             )
         })
@@ -203,7 +198,7 @@ fn requires_mars_warnings(
         .then(|| {
             mars_schema::package::requires_mars_floor_warning(
                 requires,
-                PACKAGE_TOOLS_MARS_FLOOR,
+                keys::since(Surface::Package, "tools"),
                 "an older Mars installs this package's agents without the `[package.tools]` rules, with only a warning",
             )
         })

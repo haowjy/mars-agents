@@ -4,6 +4,7 @@
 
 use crate::dependency::Dependencies;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
+use crate::keys::{self, Surface};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 use crate::read::DefinitionRead;
@@ -101,22 +102,22 @@ fn read_package(
     }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
-        if key == "visibility" {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
-                child_path("package", "visibility"),
-                "`package.visibility` was removed; remove it",
-            ));
-        } else if key == "bootstrap" {
-            // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
-                child_path("package", "bootstrap"),
-                "`package.bootstrap` is not read; Mars finds bootstrap docs in \
-                 `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
-            ));
+        if let Some((_, removal)) = keys::removed_key(Surface::Package, key) {
+            diagnostics.push(if removal.warns_on.contains(&Surface::Package) {
+                SchemaDiagnostic::new(
+                    "field.unknown",
+                    Severity::Warning,
+                    child_path("package", key),
+                    format!("`package.{key}` is not read; {}", removal.advice),
+                )
+            } else {
+                SchemaDiagnostic::new(
+                    "field.removed",
+                    Severity::Error,
+                    child_path("package", key),
+                    format!("`package.{key}` was removed; {}", removal.advice),
+                )
+            });
         } else if !known.contains(&key.as_str()) {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.unknown",

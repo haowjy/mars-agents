@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use mars_schema::diagnostic::Severity;
 use mars_schema::hooks::targets::{Profile, Target};
 use mars_schema::hooks::{self, HookDef, HookOutput, NativeHook, Origin, Tokens};
+use mars_schema::keys::{self, Surface};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
@@ -427,10 +428,6 @@ fn native_hook_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsEr
     })
 }
 
-/// The first Mars that reads `[hooks]`; older ones reject the whole `hook.toml` and, with it,
-/// the sync.
-const PORTABLE_HOOKS_MARS_FLOOR: &str = "0.25.0";
-
 pub(crate) fn check_hooks(
     package_root: &Path,
     requires_mars: Option<Option<&str>>,
@@ -454,10 +451,11 @@ pub(crate) fn check_hooks(
         };
         let name = &item.def.name;
         if let Some(requirement) = requires_mars {
+            let floor = keys::since(Surface::HookToml, "hooks");
             warnings.extend(mars_schema::package::requires_mars_floor_warning(
                 requirement,
-                PORTABLE_HOOKS_MARS_FLOOR,
-                &format!("hook `{name}` uses `[hooks]`, which a Mars before {PORTABLE_HOOKS_MARS_FLOOR} rejects, failing the whole sync"),
+                floor,
+                &format!("hook `{name}` uses `[hooks]`, which a Mars before {floor} rejects, failing the whole sync"),
             ));
         }
         for event in portable.conditions_on_non_tool_events() {

@@ -1,0 +1,178 @@
+{
+  "classification": {
+    "kind": "mars-legacy"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "edited",
+      "paths": [
+        [
+          "package",
+          "schema"
+        ]
+      ]
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "runner",
+      "source_path": "agents/runner.md",
+      "output_path": "agents/runner.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "runner"
+          ],
+          [
+            "description",
+            "Runs things"
+          ],
+          [
+            "model-policies",
+            [
+              {
+                "match": {
+                  "model": "x"
+                },
+                "override": {
+                  "sandbox": "read-only"
+                }
+              },
+              {
+                "match": {
+                  "model": "y"
+                },
+                "override": {}
+              }
+            ]
+          ]
+        ],
+        "fields": {
+          "name": "runner",
+          "description": "Runs things",
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": [
+            {
+              "match": {
+                "model": "x"
+              },
+              "override": {
+                "sandbox": "read-only"
+              }
+            },
+            {
+              "match": {
+                "model": "y"
+              }
+            }
+          ]
+        },
+        "body": "Body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "edited",
+        "paths": [
+          [
+            "model-policies"
+          ]
+        ]
+      }
+    }
+  ],
+  "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "runner",
+        "output_path": "agents/runner.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {},
+  "changes": {
+    "agents/runner.md": [
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          1,
+          "override",
+          "approval"
+        ],
+        "message": "agent `runner` lost the restriction `model-policies.1.override.approval`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[1].override.approval` has invalid value `bogus`; allowed: default, auto, confirm, never); use default, auto, confirm or never"
+      },
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          0,
+          "override",
+          "effort"
+        ],
+        "message": "agent `runner`: `model-policies.0.override.effort: 3` ignored (not valid here); use none, low, medium, high, xhigh or max"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          1,
+          "override",
+          "network"
+        ],
+        "message": "agent `runner` lost the restriction `model-policies.1.override.network`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[1].override.network` has invalid value `5`; allowed: allow, deny, allowlist); use allow, deny or allowlist"
+      }
+    ]
+  }
+}

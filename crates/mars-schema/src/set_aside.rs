@@ -218,9 +218,26 @@ fn drop_entries(
     Some(removed)
 }
 
+/// The key of a model policy override named by `path` (`model-policies.<n>.override.<key>`).
+fn policy_override_key(path: &[PathSegment]) -> Option<&str> {
+    match path {
+        [
+            PathSegment::Key(policies),
+            PathSegment::Index(_),
+            PathSegment::Key(overrides),
+            PathSegment::Key(key),
+        ] if policies == "model-policies" && overrides == "override" => Some(key),
+        _ => None,
+    }
+}
+
 /// What was lost, when a restriction was: a `deny` or `ask` tool entry (or a tool-flag `false`),
 /// an entry of `disallowed-tools`, a `network-deny` host, or a whole restriction key.
 fn restriction_lost(path: &[PathSegment], removed: &Value) -> Option<String> {
+    if let Some(key) = policy_override_key(path) {
+        return matches!(key, "sandbox" | "approval" | "network")
+            .then(|| format!("`{}`", path_text(path)));
+    }
     let Some(PathSegment::Key(key)) = path.first() else {
         return None;
     };
@@ -282,13 +299,18 @@ impl Report<'_> {
         why: &str,
     ) {
         let shown = path_text(path);
-        // Only a top-level execution field written as a non-string; a nested key of the same name
-        // (`tools.effort`) is an ordinary set-aside.
-        let allowed = match path {
-            [PathSegment::Key(key)] if !value.is_string() => execution_allowed(key),
-            _ => None,
-        }
-        .map(|allowed| match allowed.rsplit_once(", ") {
+        // Only a top-level execution field written as a non-string, or one a model policy's
+        // `override` takes; a nested key of the same name (`tools.effort`) is an ordinary set-aside.
+        let (allowed, why_ignored) = match (path, policy_override_key(path)) {
+            (_, Some(key @ ("effort" | "sandbox" | "approval" | "network"))) => {
+                (execution_allowed(key), "not valid here")
+            }
+            ([PathSegment::Key(key)], None) if !value.is_string() => {
+                (execution_allowed(key), "not a string")
+            }
+            _ => (None, ""),
+        };
+        let allowed = allowed.map(|allowed| match allowed.rsplit_once(", ") {
             Some((rest, last)) => format!("{rest} or {last}"),
             None => allowed.to_owned(),
         });
@@ -304,7 +326,7 @@ impl Report<'_> {
             (None, Some(allowed)) => (
                 EXECUTION_IGNORED,
                 format!(
-                    "{}: `{shown}: {}` ignored (not a string); use {allowed}",
+                    "{}: `{shown}: {}` ignored ({why_ignored}); use {allowed}",
                     self.agent,
                     crate::ordered::plain(value),
                 ),
@@ -320,6 +342,41 @@ impl Report<'_> {
             path.to_vec(),
             message,
         ));
+    }
+}
+
+/// Drop each model policy `override` key the reader rejects and keep the rest of the list. The
+/// reader names one error per rule, so it runs again after each drop. `rejections` ends as what is
+/// left: anything but an override key, which still takes the whole `model-policies` key.
+fn drop_policy_overrides(
+    fm: &mut Frontmatter,
+    kind: DefinitionKind,
+    rejections: &mut Vec<Rejection>,
+    report: &mut Report<'_>,
+    changed: &mut bool,
+) {
+    while !rejections.is_empty()
+        && rejections
+            .iter()
+            .all(|rejection| policy_override_key(&rejection.path).is_some())
+    {
+        let Some(removed) = drop_entries(fm, "model-policies", rejections) else {
+            return;
+        };
+        *changed = true;
+        for (path, entry) in removed {
+            let why = rejections
+                .iter()
+                .find(|rejection| rejection.path == path)
+                .map_or("", |rejection| rejection.why.as_str());
+            let lost = restriction_lost(&path, &entry);
+            let what = "that override was dropped and the rest of the rule is kept";
+            report.note(&path, &entry, lost, what, why);
+        }
+        *rejections = rejected_keys(kind, fm)
+            .into_iter()
+            .find(|(key, _)| key == "model-policies")
+            .map_or_else(Vec::new, |(_, next)| next);
     }
 }
 
@@ -345,7 +402,13 @@ pub(crate) fn set_aside_rejected_keys(
     };
     let mut changed = false;
     let mut movable = Vec::new();
-    for (key, rejections) in rejected {
+    for (key, mut rejections) in rejected {
+        if key == "model-policies" {
+            drop_policy_overrides(fm, kind, &mut rejections, &mut report, &mut changed);
+            if rejections.is_empty() {
+                continue;
+            }
+        }
         let reserved = match kind {
             DefinitionKind::Agent => LoweredField::reserves(&key),
             DefinitionKind::Skill => skill::LOWERED_KEYS.contains(&key.as_str()),

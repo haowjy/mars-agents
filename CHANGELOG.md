@@ -7,6 +7,26 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-11
+
+### Upgrade notes
+- Of the rules that match a tool call, the strictest now wins on every harness (deny, then ask, then allow), however narrow a key is. `bash: deny` beside `bash(rg *): allow` turns Bash off; write `'*': deny` with the allows instead. `edit: deny` beside `write: allow` now denies writes on Claude and Pi, and `web: deny` beside `web_fetch: allow` denies the fetch. A longer scoped allow inside a shorter scoped deny or ask no longer wins. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- An allow or ask that a stricter rule covers is no longer dropped. It stays in the agent's rules and the launch bundle with empty `native` and `native_tools`, a `covered_by` (`{"action": "deny", "key": "bash"}`) and a `note` naming the stricter rule. The bundle's `tools.set_aside` is always `[]` for this release, and `mars validate` prints `tool-rule-covered` in place of `tool-rule-set-aside` and `tool-rule-form-changes`. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- A Mars from 0.29.0 up to this release fails the load on `allow` or `ask` in `[settings.tools]`. A project that uses them should set `min_mars_version = "0.30.0"`. See [older Mars](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- A Mars before 0.30.0 reads `[package.tools]` as an unknown package field, warns, and installs the package's agents without the rules, exit code 0. Set `requires-mars = ">=0.30.0"` in a package that uses it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#package-tool-rules-packagetools).
+
+### Added
+- `[package.tools]` in a package's `mars.toml`: tool rules that act as if each entry were written in the `tools:` map of every agent the package ships (`"bash(pkill -f *)" = "deny"`). A profile's own key wins; `[agents.<name>.tools]` replaces a key per agent. Values are `allow`, `deny` or `ask`; `*` is refused. `mars check` warns when `requires-mars` admits a Mars before 0.30.0. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#package-tool-rules-packagetools).
+- `[settings.tools]` accepts `allow` and `ask` beside `deny`; `*` is still refused. A project-wide `allow` never gives an agent a tool that its `'*'` rule closes, and a project-wide `ask` on an allowlist agent asks only where the agent allows. See [project-wide tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- `mars build launch-bundle --agent-tool-rules <path>` takes an agent's tool rules from the caller and applies the current `[settings.tools]` to them. Meridian uses it when a session continues or forks, so the agent's rules stay as the session started and project-wide rules are current. See [commands](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md).
+
+### Changed
+- Every native permission name goes to the strictest rule that names it, on Claude, OpenCode, Pi and Codex, so no name is in both a bundle's `allowed` and `disallowed` list. Mars no longer reports a tool that is "both allowed and denied". See [tool name projection](https://github.com/haowjy/mars-agents/blob/main/docs/config/agent-compilation.md#tool-name-projection).
+
+### Fixed
+- A project whose `min_mars_version` is above the running Mars now fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; before, only `mars validate` reported it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md).
+- A pre-v1 package whose `model-policies` entry has one bad `override` key now keeps the rest of the list: only that key is dropped. A lost `sandbox`, `approval` or `network` shows on every `mars sync` as `field.restriction-lost`; a lost `effort` is listed once as `field.execution-ignored`. See [migrating to schema 1](https://github.com/haowjy/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md).
+
 ## [0.29.1] - 2026-11-11
 
 ### Fixed

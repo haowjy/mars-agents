@@ -507,7 +507,7 @@ fn validate_reports_an_allow_a_project_wide_deny_covers_at_info_level() {
     assert_eq!(set_aside[0]["level"], "info", "--strict leaves info alone");
     assert!(
         set_aside[0]["message"].as_str().unwrap().contains(
-            "agent `writer`: `allow write` is set aside because the project-wide `deny edit`"
+            "`allow write` is set aside because the project-wide `deny edit` covers it, in 1 agent(s): writer"
         ),
         "{report}"
     );

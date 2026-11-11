@@ -3,6 +3,8 @@
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::tool_rule_map::ToolRuleMap;
+
 /// The first Mars release that reads schema 1. An older one reads a `schema = 1` package as
 /// pre-v1, so a schema v1 package's `requires-mars` may not admit one.
 pub const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
@@ -126,6 +128,10 @@ pub struct PackageMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub requires_meridian: Option<String>,
+    /// Rules that act as if each entry were written in the `tools:` map of every agent this
+    /// package ships; a key the profile already has keeps the profile's action.
+    #[serde(default, skip_serializing_if = "ToolRuleMap::is_empty")]
+    pub tools: ToolRuleMap,
 }
 
 /// The schema dispatch result for a package root's optional `mars.toml`.

@@ -122,6 +122,7 @@ requires-meridian = ">=0.15.0"                       # optional
 | `license` | string | no | Package license identifier used in generated plugin manifests |
 | `requires-mars` | semver requirement | no | Mars versions that can consume this package. A schema 1 package needs a floor of `>=0.20.0`, the first Mars that reads schema 1: `mars check` warns when one is missing or lower, and `mars migrate` adds it only when the package has none (an existing requirement is reported, never rewritten). A package whose hooks use `[hooks]` needs `>=0.25.0`; see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading) |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
+| `tools` | table | no | Tool rules applied to each agent this package ships. See [Package tool rules](#package-tool-rules-packagetools) |
 | `uses-providers` | string[] | no | The hosts the package expects to supply skills at sync time, such as `["meridian"]`; each is a provider name (`[a-z0-9][a-z0-9-]*`). See [Provided skills and `uses-providers`](#provided-skills-and-uses-providers) |
 
 #### Provided skills and `uses-providers`
@@ -413,6 +414,47 @@ Network policy keys in `[settings]` and overlays accept separator aliases: `defa
 `default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
 Mars warns when another ignored key looks network-related and lists these accepted spellings.
 (A package's Agent file is stricter: only the hyphenated keys, per [schema v1](schema-v1.md#network).)
+
+#### Package tool rules: `[package.tools]`
+
+`[package.tools]` acts as if each entry were written in the `tools:` map of every agent the
+package ships, and of no other agent. It takes the keys of a profile's `tools:` map
+(`bash(pkill -f *)`, `edit`, `mcp(github)`) with the values `deny`, `ask` and `allow`. It
+exists so a package states a rule once instead of in every profile.
+
+```toml
+[package]
+name = "meridian-base"
+version = "1.2.0"
+schema = 1
+requires-mars = ">=0.30.0"
+
+[package.tools]
+"bash(pkill -f *)" = "deny"
+"bash(killall *)" = "deny"
+```
+
+- **A profile's own key wins.** The entry is added only when the profile's `tools:` has no
+  key naming the same tool; `bash(pkill -f:*)` and `bash(pkill -f *)` are one key. Beside that,
+  the rules combine as in any `tools:` map: the strictest matching rule wins.
+- **Installed into the agent.** Sync writes the rules into the installed
+  `.mars/agents/<name>.md`, so native files, the launch bundle, `mars agents show` and
+  `mars build plugin` all see ordinary profile rules. Editing only `[package.tools]` updates
+  the installed agents on the next sync.
+- **A project's own package** ships its `.mars-src/` and package-root agents with the rules
+  of its own `[package.tools]`. A project with no `[package]` table ships none.
+- **Consumers can exempt an agent.** `[agents.<name>.tools]` replaces the same key, as it does
+  for a profile's rule.
+- **Refused at read:** `*` (an agent's own `'*'` rule is its default), a value other than
+  `allow`, `deny` or `ask`, two spellings of one key in the table, and a package without
+  `schema = 1`.
+- **Older Mars versions** (before 0.30.0) warn `unknown package field `tools` is preserved`
+  and install the agents without the rules, exit code 0. Set `requires-mars = ">=0.30.0"`
+  so they refuse the package instead; `mars check` warns when a package with `[package.tools]`
+  does not.
+- **Plugin builds** carry the rules in each agent. `[settings.tools]` stays out of a plugin:
+  it belongs to the author's machine. A scoped rule that a plugin target cannot carry is
+  reported by the usual lost-restriction lines.
 
 ### Project-wide tool rules
 

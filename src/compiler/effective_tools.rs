@@ -37,9 +37,7 @@ pub(crate) fn effective_tools(
     profile: &EffectiveToolPolicy,
     overlay: Option<&AgentOverlayTools>,
 ) -> EffectiveToolPolicy {
-    let named = |rule: &ToolRule| {
-        overlay.is_some_and(|overlay| overlay.rules.contains_key(&parsed_key(rule)))
-    };
+    let named = |rule: &ToolRule| overlay_names(overlay, rule);
     let mut policy = EffectiveToolPolicy {
         rules: profile
             .rules
@@ -67,16 +65,24 @@ pub(crate) fn effective_tools(
 }
 
 /// [`effective_tools`] for an agent side the caller already holds: `agent_rules` stand in for
-/// the profile's and the overlay's rules, with their origins kept, and no project-wide rule is
-/// dropped for an overlay key (the origin does not say whether the overlay named the key or
-/// only listed it in `allowed` / `disallowed`; keeping the rule can only restrict).
+/// the profile's and the overlay's rules, with their origins kept. The current `overlay` still
+/// lifts the project-wide rules for the keys its rule entries name, as in [`effective_tools`]:
+/// that exemption is consumer configuration, not part of what the caller stored.
 pub(crate) fn effective_tools_for_rules(
     project: &ToolRuleMap,
     agent_rules: Vec<ToolRule>,
+    overlay: Option<&AgentOverlayTools>,
 ) -> EffectiveToolPolicy {
-    join_project(project, EffectiveToolPolicy { rules: agent_rules }, |_| {
-        false
-    })
+    join_project(
+        project,
+        EffectiveToolPolicy { rules: agent_rules },
+        |rule| overlay_names(overlay, rule),
+    )
+}
+
+/// Whether the overlay's rule entries name `rule`'s key.
+fn overlay_names(overlay: Option<&AgentOverlayTools>, rule: &ToolRule) -> bool {
+    overlay.is_some_and(|overlay| overlay.rules.contains_key(&parsed_key(rule)))
 }
 
 fn join_project(

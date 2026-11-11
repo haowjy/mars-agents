@@ -109,19 +109,21 @@ pub fn build_launch_bundle(
         .into());
     }
     warnings.extend(effective_project_config.warnings.iter().cloned());
+    let overlay = request
+        .agent
+        .as_deref()
+        .and_then(|agent| effective_project_config.agents.get(agent))
+        .map(|overlay| &overlay.tools);
     let effective_tools = match request.agent_tool_rules.take() {
         Some(rules) => crate::compiler::effective_tools::effective_tools_for_rules(
             &effective_project_config.settings.tools,
             rules,
+            overlay,
         ),
         None => crate::compiler::effective_tools::effective_tools(
             &effective_project_config.settings.tools,
             &profile.tools,
-            request
-                .agent
-                .as_deref()
-                .and_then(|agent| effective_project_config.agents.get(agent))
-                .map(|overlay| &overlay.tools),
+            overlay,
         ),
     };
     profile.tools = effective_tools;

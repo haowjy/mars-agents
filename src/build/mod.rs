@@ -251,10 +251,10 @@ fn resolve_bundle_tools(
                 native,
                 native_tools: projected.native_tools(),
                 native_status: projected.status.map(NativeStatus::as_str),
-                note: projected
-                    .note()
-                    .or(unsettled.then_some(UNSETTLED_NOTE))
-                    .or(shares_a_tool.then_some(OVERLAP_NOTE)),
+                note: join_notes(
+                    unsettled.then_some(UNSETTLED_NOTE),
+                    projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
+                ),
             }
         })
         .collect();
@@ -295,6 +295,13 @@ fn resolve_bundle_tools(
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
     })
+}
+
+fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
+        (one, other) => one.or(other).map(str::to_string),
+    }
 }
 
 fn parse_harness_descriptor(

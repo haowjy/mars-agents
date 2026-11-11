@@ -166,9 +166,10 @@ pub struct ToolRuleSpec {
     /// gap: Mars adds nothing to `warnings[]`. Present when `native_status` is `unknown` (the
     /// reason Mars could not name the rule, for example "codex loads skills by reading files;
     /// no switch") and on a `known` rule whose projection has broader effects or whose native
-    /// permission is shared with another rule.
+    /// permission is shared with another rule, or a project-wide deny an agent rule may override.
+    /// Every note that applies, joined with `; `.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<&'static str>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

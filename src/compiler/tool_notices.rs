@@ -3,6 +3,7 @@
 //!
 //! None of these is a lost restriction, so `mars sync` stays quiet about them.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::compiler::{ToolConfig, installed_agent_tools};
@@ -25,19 +26,7 @@ pub(crate) fn tool_rule_notices(
         },
         &mut scan_diag,
     );
-    for (name, tools, settlement) in &agents {
-        for entry in &settlement.set_aside {
-            notes.push(info(
-                "tool-rule-set-aside",
-                format!(
-                    "agent `{name}`: `{} {}` is set aside because the project-wide `{} {}` covers it",
-                    entry.rule.action.as_str(),
-                    entry.rule.render(),
-                    entry.by.action.as_str(),
-                    entry.by.render(),
-                ),
-            ));
-        }
+    for (name, tools, _) in &agents {
         // An unscoped deny or ask beside an allow it covers, such as `bash: deny` beside
         // `bash(rg *): allow` or `edit: deny` beside `write: allow`, is settled by each harness
         // today and by the deny in the next release.
@@ -58,6 +47,28 @@ pub(crate) fn tool_rule_notices(
                 }
             }
         }
+    }
+
+    // One line per set-aside rule and covering deny, naming the agents it applies to.
+    let mut set_aside: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+    for (name, _, settlement) in &agents {
+        for entry in &settlement.set_aside {
+            let key = (
+                format!("{} {}", entry.rule.action.as_str(), entry.rule.render()),
+                format!("{} {}", entry.by.action.as_str(), entry.by.render()),
+            );
+            set_aside.entry(key).or_default().push(name);
+        }
+    }
+    for ((rule, by), names) in set_aside {
+        notes.push(info(
+            "tool-rule-set-aside",
+            format!(
+                "`{rule}` is set aside because the project-wide `{by}` covers it, in {} agent(s): {}",
+                names.len(),
+                names.join(", "),
+            ),
+        ));
     }
 
     let user_file = loaded.user.path.display().to_string();

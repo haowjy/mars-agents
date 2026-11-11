@@ -952,7 +952,8 @@ those rules, which are absent from `rules`: each entry has the rule's own `capab
 `action` and `origin`, and `by`, the covering project-wide rule in the same shape. A consumer that
 ignores it still gets the right `rules`. When Mars cannot tell from the keys whether a project-wide
 deny covers an agent rule, both stay in `rules` and the project-wide rule carries a `note` on every
-harness but Claude, whose own order already puts a deny first.
+harness but Claude, whose own order already puts a deny first. A `note` joins every note that
+applies with `; `.
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind

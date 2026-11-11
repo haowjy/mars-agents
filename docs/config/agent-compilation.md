@@ -164,7 +164,8 @@ An agent allow or ask that a project-wide deny covers by key is left out of the 
 `tools.rules` in the bundle, and the bundle lists it under `tools.set_aside` with the deny that
 covers it (`{capability, pattern, action, origin, by}`). A pair whose keys may overlap, so Mars
 cannot tell either way, keeps both rules; the bundle puts a `note` on the project-wide rule for
-every harness but Claude, and `mars sync` warns (`tool-rule-unsettled`).
+every harness but Claude, and `mars sync` warns once for the project (`tool-rule-unsettled`). When
+the rule also has a note of its own, such as an overlap, the bundle carries both, joined with `; `.
 
 ### Tool name projection
 
@@ -566,7 +567,7 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
 `mars validate` also prints three `info` notes about tool rules, which `--strict` leaves alone:
-each agent allow or ask a project-wide deny set aside (`tool-rule-set-aside`), each profile with
+each agent allow or ask a project-wide deny set aside, one line per rule naming its agents (`tool-rule-set-aside`), each profile with
 an unscoped deny or ask beside an allow it covers (`tool-rule-form-changes`; that allow stops
 working in a later release, when a deny covers every allow of its tool), and each
 `[agents.<name>.tools]` that still uses `allowed` or `disallowed` (`tool-overlay-lists-deprecated`).

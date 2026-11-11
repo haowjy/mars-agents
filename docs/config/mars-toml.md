@@ -460,9 +460,15 @@ with no agent. It takes the keys of a profile's `tools:` map (`bash(pkill -f *)`
   agent; `--verbose` lists it). Native `.claude` files carry every deny; `.opencode` carries
   unscoped ones; `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
   launches through Meridian. A set-aside allow is not a lost restriction and `mars sync` says
-  nothing about it: `mars validate` lists each as `info`, which `--strict` leaves alone, and the
+  nothing about it: `mars validate` lists each rule as one `info` line naming its agents, which `--strict` leaves alone, and the
   launch bundle lists them under `tools.set_aside`. `mars check`, `mars init` and the plugin
   build never see these rules, since they preview or build a package for other projects.
+- **Unsettled pairs.** When Mars cannot tell from the keys whether a project-wide deny covers an
+  agent allow (a path scope on both sides, say), `mars sync` prints one `tool-rule-unsettled`
+  line for the whole project: the deny, one agent rule it may lose to, the agents holding that
+  pair and the targets affected. `--verbose` lists every pair. It prints nothing when `.claude`
+  is the only configured target, since Claude checks every deny before any allow. Two skill
+  names with no wildcard character are never a pair.
 - **Older Mars.** A Mars older than the release that adds these keys ignores `[settings.tools]`
   and rule entries without a word, so the deny does nothing there. A project that relies on a
   project-wide deny must make sure everyone's Mars is new enough. `min_mars_version` is no guard
@@ -485,8 +491,9 @@ network-allow = ["github.com", "*.github.com"]
 model = "opus"
 ```
 
-- Merging follows the usual rules: tables replace by key, an `[agents.<name>]` block replaces the
-  lower block whole, and permission sets compose (user hosts first).
+- Merging follows the usual rules: tables replace by key, and a higher `[agents.<name>]` block
+  replaces the lower block's other fields, except that the network and `tools` permission sets
+  compose (user hosts first) and tool rule entries merge by key.
 - An `[agents.x]` or `[skills.x]` entry for something a project doesn't have is skipped without a
   diagnostic.
 - `[overrides]` is an error here: it would send every project to a local checkout. Put it in the

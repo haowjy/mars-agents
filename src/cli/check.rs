@@ -92,7 +92,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     }
     report
         .warnings
-        .extend(requires_mars_warning(&prepared, &lens));
+        .extend(requires_mars_warnings(&prepared, &lens));
     let requires_mars = lens
         .manifest
         .as_ref()
@@ -170,26 +170,45 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 /// The first Mars whose `mars version` keeps `[plugin]`.
 const PLUGIN_MARS_FLOOR: &str = "0.19.0";
 
-fn requires_mars_warning(
+/// The first Mars that applies `[package.tools]`.
+const PACKAGE_TOOLS_MARS_FLOOR: &str = "0.30.0";
+
+fn requires_mars_warnings(
     prepared: &mars_schema::prepare::Prepared,
     lens: &crate::resolve::PublishLens,
-) -> Option<String> {
-    let config = lens.manifest.as_ref()?;
-    let package = config.package.as_ref()?;
-    crate::resolve::validate_package_requirement_syntax(package).ok()?;
-    if prepared.classification == Classification::Schema1 {
-        return mars_schema::package::schema_1_requires_mars_warning(
-            package.requires_mars.as_deref(),
-        );
+) -> Vec<String> {
+    let Some(config) = lens.manifest.as_ref() else {
+        return Vec::new();
+    };
+    let Some(package) = config.package.as_ref() else {
+        return Vec::new();
+    };
+    if crate::resolve::validate_package_requirement_syntax(package).is_err() {
+        return Vec::new();
     }
-    if config.plugin.is_some() {
-        return mars_schema::package::requires_mars_floor_warning(
-            package.requires_mars.as_deref(),
-            PLUGIN_MARS_FLOOR,
-            "older Mars versions may drop [plugin] during `mars version`",
-        );
-    }
-    None
+    let requires = package.requires_mars.as_deref();
+    let schema_1 = (prepared.classification == Classification::Schema1)
+        .then(|| mars_schema::package::schema_1_requires_mars_warning(requires))
+        .flatten();
+    let plugin = (prepared.classification != Classification::Schema1 && config.plugin.is_some())
+        .then(|| {
+            mars_schema::package::requires_mars_floor_warning(
+                requires,
+                PLUGIN_MARS_FLOOR,
+                "older Mars versions may drop [plugin] during `mars version`",
+            )
+        })
+        .flatten();
+    let tools = (!package.tools.is_empty())
+        .then(|| {
+            mars_schema::package::requires_mars_floor_warning(
+                requires,
+                PACKAGE_TOOLS_MARS_FLOOR,
+                "an older Mars installs this package's agents without the `[package.tools]` rules, with only a warning",
+            )
+        })
+        .flatten();
+    [schema_1, plugin, tools].into_iter().flatten().collect()
 }
 
 fn plugin_warnings(

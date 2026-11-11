@@ -144,6 +144,8 @@ export interface ManifestFields {
   "uses-providers"?: string[];
   "requires-mars"?: string;
   "requires-meridian"?: string;
+  /** Rules added to every agent the package ships; omitted when empty. */
+  tools?: Record<string, "allow" | "deny" | "ask">;
 }
 
 /**

@@ -39,6 +39,10 @@ pub enum UpgradeError {
     Manifest(#[from] toml_edit::TomlError),
     #[error("mars.toml at a package root must contain [package]")]
     MissingPackage,
+    #[error(
+        "`[package.tools]` needs `[package] schema = 1`; older Mars versions ignore it, so a package without a schema cannot carry it"
+    )]
+    PackageToolsNeedSchema,
 }
 
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
@@ -130,6 +134,9 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
             fully_rewritten: false,
             edited_paths: Vec::new(),
         });
+    }
+    if package.contains_key("tools") {
+        return Err(UpgradeError::PackageToolsNeedSchema);
     }
     let mut diagnostics = Vec::new();
     let mut edited_paths = vec![package_path("schema")];

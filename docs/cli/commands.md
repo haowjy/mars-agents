@@ -880,10 +880,10 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
       "task": { "native": ["TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskUpdate", "TaskStop", "TodoWrite"], "native_status": "known" }
     },
     "rules": [
-      { "capability": "edit", "pattern": null, "action": "deny",
+      { "capability": "edit", "pattern": null, "action": "deny", "origin": "profile",
         "native": ["Edit", "Write", "NotebookEdit"],
         "native_tools": ["Edit", "Write", "NotebookEdit"], "native_status": "known" },
-      { "capability": "bash", "pattern": "rg *", "action": "allow",
+      { "capability": "bash", "pattern": "rg *", "action": "allow", "origin": "profile",
         "native": ["Bash(rg *)"], "native_tools": ["Bash"], "native_status": "known" }
     ],
     "allowed": ["Bash(rg *)"],
@@ -941,6 +941,7 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` and `native_tools` are empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
+| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed` or `disallowed` in `[agents.<name>.tools]`) or `project` (`[settings.tools]`). Not part of a rule's identity |
 | `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule can also be empty when a stricter or more specific rule owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |

@@ -92,7 +92,8 @@
                   {
                     "capability": "bash",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {},

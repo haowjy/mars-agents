@@ -103,17 +103,20 @@
                   {
                     "capability": "*",
                     "pattern": null,
-                    "action": "deny"
+                    "action": "deny",
+                    "origin": "profile"
                   },
                   {
                     "capability": "read",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   },
                   {
                     "capability": "grep",
                     "pattern": null,
-                    "action": "allow"
+                    "action": "allow",
+                    "origin": "profile"
                   }
                 ],
                 "harness-overrides": {

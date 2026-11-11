@@ -55,17 +55,20 @@
             {
               "capability": "*",
               "pattern": null,
-              "action": "deny"
+              "action": "deny",
+              "origin": "profile"
             },
             {
               "capability": "read",
               "pattern": null,
-              "action": "allow"
+              "action": "allow",
+              "origin": "profile"
             },
             {
               "capability": "agent",
               "pattern": null,
-              "action": "allow"
+              "action": "allow",
+              "origin": "profile"
             }
           ],
           "harness-overrides": {},

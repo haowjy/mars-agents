@@ -370,7 +370,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
     assert_eq!(
         *rule(&bundle, "edit", None),
         serde_json::json!({
-            "capability": "edit", "pattern": null, "action": "deny",
+            "capability": "edit", "pattern": null, "action": "deny", "origin": "profile",
             "native": ["Edit", "Write", "NotebookEdit"],
             "native_tools": ["Edit", "Write", "NotebookEdit"],
             "native_status": "known"
@@ -379,7 +379,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
     assert_eq!(
         *rule(&bundle, "bash", Some("rg *")),
         serde_json::json!({
-            "capability": "bash", "pattern": "rg *", "action": "allow",
+            "capability": "bash", "pattern": "rg *", "action": "allow", "origin": "profile",
             "native": ["Bash(rg *)"], "native_tools": ["Bash"],
             "native_status": "known"
         })
@@ -412,7 +412,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
     assert_eq!(
         *rule(&bundle, "mcp", Some("github/delete_repo")),
         serde_json::json!({
-            "capability": "mcp", "pattern": "github/delete_repo", "action": "deny",
+            "capability": "mcp", "pattern": "github/delete_repo", "action": "deny", "origin": "profile",
             "native": ["mcp__github__delete_repo"],
             "native_tools": ["mcp__github__delete_repo"], "native_status": "known"
         })
@@ -421,7 +421,7 @@ fn bundle_tools_rules_carry_capability_and_native_names_apart() {
     assert_eq!(
         *rule(&bundle, "mystery_tool", None),
         serde_json::json!({
-            "capability": "mystery_tool", "pattern": null, "action": "deny",
+            "capability": "mystery_tool", "pattern": null, "action": "deny", "origin": "profile",
             "native": [], "native_tools": [], "native_status": "unknown",
             "note": "no native name known for this tool on this harness; left out"
         })
@@ -553,11 +553,11 @@ Review code changes."#;
     assert_eq!(
         bundle["tools"]["rules"],
         serde_json::json!([
-            {"capability": "*", "pattern": null, "action": "deny",
+            {"capability": "*", "pattern": null, "action": "deny", "origin": "profile",
              "native": [], "native_tools": []},
-            {"capability": "read", "pattern": null, "action": "allow",
+            {"capability": "read", "pattern": null, "action": "allow", "origin": "profile",
              "native": ["Read"], "native_tools": ["Read"], "native_status": "known"},
-            {"capability": "grep", "pattern": null, "action": "allow",
+            {"capability": "grep", "pattern": null, "action": "allow", "origin": "profile",
              "native": ["Grep"], "native_tools": ["Grep"], "native_status": "known"},
         ])
     );

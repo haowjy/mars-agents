@@ -10,6 +10,7 @@ use mars_schema::tool_names::OverlayToolName;
 use mars_schema::tool_rule_map::ToolRuleMap;
 use serde_yaml::{Mapping, Value};
 
+use crate::diagnostic::DiagnosticCollector;
 use crate::resolve::ResolvedGraph;
 use crate::sync::target::TargetState;
 
@@ -19,7 +20,15 @@ use crate::sync::target::TargetState;
 ///
 /// A dependency's map comes from its resolved manifest; `local_tools` is the project's own
 /// `[package]`, for the items whose source is not in the graph.
-pub(crate) fn fold(target: &mut TargetState, graph: &ResolvedGraph, local_tools: &ToolRuleMap) {
+///
+/// An agent whose source cannot be read gets a warning naming it: the rules the package asked
+/// for are not in its installed profile.
+pub(crate) fn fold(
+    target: &mut TargetState,
+    graph: &ResolvedGraph,
+    local_tools: &ToolRuleMap,
+    diag: &mut DiagnosticCollector,
+) {
     for item in target.items.values_mut() {
         if item.id.kind != ItemKind::Agent {
             continue;
@@ -38,7 +47,17 @@ pub(crate) fn fold(target: &mut TargetState, graph: &ResolvedGraph, local_tools:
             Some(content) => content.clone(),
             None => match std::fs::read_to_string(&item.source_path) {
                 Ok(content) => content,
-                Err(_) => continue,
+                Err(error) => {
+                    diag.warn_advisory(
+                        "package-tools-skipped",
+                        format!(
+                            "warning: could not add `[package.tools]` rules to agent `{}`: cannot read {}: {error}",
+                            item.id.name,
+                            item.source_path.display()
+                        ),
+                    );
+                    continue;
+                }
             },
         };
         if let Some(folded) = fold_content(&content, package_tools) {

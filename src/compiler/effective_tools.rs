@@ -26,8 +26,8 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 ///    | `ask` | joins | joins | cut down by [`cut_down_ask`] |
 ///    | `allow` | joins | dropped | dropped |
 ///
-///    A project-wide rule the agent already states joins it in place as one rule of origin
-///    `Project`.
+///    A project-wide rule the agent already states adds nothing: the agent's rule stays, with its
+///    own origin. A cut-down `ask` is a new rule of origin `Project`.
 ///
 /// The result is the agent's side followed by the project-wide rules it did not already hold.
 /// Nothing the agent wrote is dropped: a rule a stricter one covers stays, and [`covered`]
@@ -303,7 +303,7 @@ mod tests {
                 "'bash(pkill -f *)' = 'deny'",
                 "  'bash(pkill -f:*)': deny\n  'bash(ls *)': deny\n",
                 "",
-                &["deny:bash(pkill -f *)@project", "deny:bash(ls *)"],
+                &["deny:bash(pkill -f *)", "deny:bash(ls *)"],
                 &[],
             ),
             // An unscoped agent allow is not covered by a scoped project deny.

@@ -466,7 +466,7 @@ impl<'a> AgentLoweringCtx<'a> {
     fn insert_claude_tools(&mut self) {
         let target = self.target_name();
         let projection = self.eff.tools.project(self.harness);
-        let allowed = projection.natives(ToolAction::Allow, RuleKind::All);
+        let allowed = projection.available();
         let disallowed = projection.natives(ToolAction::Deny, RuleKind::All);
         for note in projection.gaps(ToolAction::Allow, RuleKind::All) {
             self.lossy.push(LossyField {

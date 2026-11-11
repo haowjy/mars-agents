@@ -84,6 +84,9 @@ impl NativeBinding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectedRule {
     bindings: Vec<NativeBinding>,
+    /// The names `bindings` held before coverage and strictest-per-native cleared any: what the
+    /// rule makes available, as opposed to what it still says to the permission engine.
+    named: Vec<String>,
     /// `None` for `*`, which names no tool.
     pub status: Option<NativeStatus>,
     /// A harness-specific consequence of this projection that callers must surface even when
@@ -96,6 +99,10 @@ pub(crate) struct ProjectedRule {
 impl ProjectedRule {
     fn known(bindings: Vec<NativeBinding>, note: Option<&'static str>) -> Self {
         Self {
+            named: bindings
+                .iter()
+                .map(|binding| binding.native.clone())
+                .collect(),
             bindings,
             status: Some(NativeStatus::Known),
             note,
@@ -106,6 +113,7 @@ impl ProjectedRule {
     fn with_status(status: NativeStatus) -> Self {
         Self {
             bindings: Vec::new(),
+            named: Vec::new(),
             status: Some(status),
             note: None,
             covered_by: None,
@@ -158,6 +166,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
+            named: Vec::new(),
             status: None,
             note: None,
             covered_by: None,
@@ -312,6 +321,27 @@ impl<'a> PolicyProjection<'a> {
         names
     }
 
+    /// Names of every allow and ask rule, taken before coverage and conflict resolution cleared
+    /// any: the tools an allowlist must keep available. A deny that beats one of them is
+    /// written beside the list, never by emptying it.
+    pub fn available(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut rules: Vec<_> = self
+            .rules
+            .iter()
+            .filter(|(rule, _)| rule.action != ToolAction::Deny && !rule.is_wildcard())
+            .collect();
+        rules.sort_by_key(|(rule, _)| rule.is_mcp());
+        for (_, projected) in rules {
+            for name in &projected.named {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        names
+    }
+
     /// Why Mars could not name each `kind` rule with `action`.
     pub fn gaps(&self, action: ToolAction, kind: RuleKind) -> Vec<&'static str> {
         self.select(action, kind)
@@ -377,6 +407,24 @@ mod tests {
 
     fn known(names: &[&str]) -> (Vec<String>, &'static str) {
         (names.iter().map(|n| n.to_string()).collect(), "known")
+    }
+
+    #[test]
+    fn covered_allows_stay_available() {
+        // `deny` covers the allow, so the allow names no permission; the tool it opens stays
+        // on Claude's `tools:` list, and the deny is what takes it back.
+        let policy = agent_policy(
+            "---\nname: a\ndescription: d\ntools:\n  '*': deny\n  write: allow\n  edit: deny\n  'bash(git status *)': allow\n  bash: ask\n---\n",
+        );
+        let projection = policy.project(HarnessId::Claude);
+        assert_eq!(
+            projection.natives(ToolAction::Allow, RuleKind::All),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            projection.available(),
+            ["Write", "Bash(git status *)", "Bash"]
+        );
     }
 
     #[test]

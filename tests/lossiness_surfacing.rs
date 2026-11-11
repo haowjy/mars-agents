@@ -270,25 +270,20 @@ fn scoped_bash_allow_is_not_a_lost_restriction() {
 }
 
 #[test]
-fn a_project_wide_deny_a_target_cannot_carry_is_one_project_loss() {
-    // The profile's own `pkill` deny and the project's are one rule, lost once for the project.
+fn a_project_deny_equal_to_the_agents_own_stays_the_agents_loss() {
+    // The agent's own `pkill` deny and the project's are one rule, and it keeps the agent's
+    // origin, so its loss is the agent's, not the project's.
     let (quiet, verbose) = sync_tools_agent_in_project(
         "  bash: allow\n  \"bash(pkill -f:*)\": deny\n",
         "\n[settings.tools]\n\"bash(pkill -f *)\" = \"deny\"\n",
     );
+    assert!(!quiet.contains("project setting"), "{quiet}");
     assert!(
-        quiet.contains("project setting `tools.bash(pkill -f *)`"),
-        "{quiet}"
-    );
-    assert_eq!(
-        verbose
-            .matches("project `tools.bash(pkill -f *)`: 1 field dropped for .codex")
-            .count(),
-        1,
+        !verbose.contains("project `tools.bash(pkill -f *)`"),
         "{verbose}"
     );
     assert!(
-        !verbose.contains("agent `a`: 1 field dropped for .codex (tools (deny bash(pkill"),
-        "the agent's own record no longer carries it: {verbose}"
+        verbose.contains("agent `a`: 1 field dropped for .codex (tools (deny bash(pkill"),
+        "{verbose}"
     );
 }

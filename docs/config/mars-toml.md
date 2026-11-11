@@ -527,9 +527,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   word, so the deny does nothing there. A Mars from 0.29.0 up to 0.30.0 accepts only `deny` and
   fails the load on `allow` or `ask`, and applies the older precedence (a longer or narrower
   allow can beat a deny). A project that relies on a project-wide rule must make sure everyone's
-  Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars that meets it fails
-  `mars sync` and `mars build launch-bundle` on an older Mars. A binary released before this
-  check was added still ignores it.
+  Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars older than that
+  value fails `mars sync` and `mars build launch-bundle`. A binary released before this check
+  was added still ignores it.
 
 ### User config
 

@@ -140,7 +140,7 @@ pub struct ToolRuleSpec {
     pub rule: ToolRule,
     /// The harness's names for this rule: one per native tool the capability covers, with the
     /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`, and
-    /// possibly empty for a known rule shadowed by a stricter or more specific rule.
+    /// possibly empty for a known rule a stricter rule covers or takes the name from.
     pub native: Vec<String>,
     /// The unscoped harness tool names this rule concerns. Permission engines can
     /// name a scoped category rather than the tool being made available (for example Claude

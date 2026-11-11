@@ -180,6 +180,29 @@ fn project_key(rule: &ToolRule) -> String {
     format!("tools.{}", rule.render())
 }
 
+/// A project-wide rule's loss is recorded once for the project; the label of any other rule
+/// comes back for the agent's own record.
+fn agent_label(
+    rule: &ToolRule,
+    label: String,
+    target: &str,
+    classification: Lossiness,
+    project: &mut Vec<ProjectLoss>,
+) -> Option<String> {
+    if rule.origin != RuleOrigin::Project {
+        return Some(label);
+    }
+    project.push(ProjectLoss {
+        key: project_key(rule),
+        field: LossyField {
+            field: label,
+            target: target.into(),
+            classification,
+        },
+    });
+    None
+}
+
 fn lose(
     rule: &ToolRule,
     label: String,
@@ -187,17 +210,9 @@ fn lose(
     lost: &mut Vec<(Lost, String)>,
     project: &mut Vec<ProjectLoss>,
 ) {
-    if rule.origin == RuleOrigin::Project {
-        project.push(ProjectLoss {
-            key: project_key(rule),
-            field: LossyField {
-                field: label,
-                target: target.into(),
-                classification: Lossiness::Dropped(rule_loss(rule)),
-            },
-        });
-    } else {
-        lost.push((rule_loss(rule), label));
+    let loss = rule_loss(rule);
+    if let Some(label) = agent_label(rule, label, target, Lossiness::Dropped(loss), project) {
+        lost.push((loss, label));
     }
 }
 
@@ -208,20 +223,10 @@ fn covered_by_sandbox(
     covered: &mut Vec<String>,
     project: &mut Vec<ProjectLoss>,
 ) {
-    if rule.origin == RuleOrigin::Project {
-        project.push(ProjectLoss {
-            key: project_key(rule),
-            field: LossyField {
-                field: label,
-                target: target.into(),
-                classification: Lossiness::Quiet {
-                    why: SANDBOX_COVERS_WRITES,
-                },
-            },
-        });
-    } else {
-        covered.push(label);
-    }
+    let quiet = Lossiness::Quiet {
+        why: SANDBOX_COVERS_WRITES,
+    };
+    covered.extend(agent_label(rule, label, target, quiet, project));
 }
 
 const SANDBOX_COVERS_WRITES: &str =

@@ -375,7 +375,7 @@ include_fanout = false
 | `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
-| `min_mars_version` | string | unset | Minimum Mars binary version required for this project |
+| `min_mars_version` | string | unset | Minimum Mars binary version required for this project. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. Only a user config's value is ignored |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
@@ -487,9 +487,10 @@ This section is the one definition of both terms; the other pages link here.
 
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]`
   and rule entries without a word, so the deny does nothing there. A project that relies on a
-  project-wide deny must make sure everyone's Mars is new enough. `min_mars_version` is no guard
-  for this: only `mars validate` reports it; `mars sync` and `mars build launch-bundle` do not
-  check it.
+  project-wide deny must make sure everyone's Mars is new enough. Set
+  `min_mars_version = "0.29.0"` or higher: a Mars that meets it fails `mars sync` and
+  `mars build launch-bundle` on an older Mars. A binary released before this check was added
+  still ignores it.
 
 ### User config
 

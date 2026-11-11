@@ -23,6 +23,7 @@ pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
+pub(crate) mod tool_notices;
 pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
@@ -46,8 +47,8 @@ pub(crate) fn warn_unknown_visibility(
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub(crate) use native_agents::{
-    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, effective_native_profile,
-    materialize_native_agents_after_link,
+    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, ToolConfig, effective_native_profile,
+    installed_agent_tools, materialize_native_agents_after_link,
 };
 pub use native_agents::{
     native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,

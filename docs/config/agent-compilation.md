@@ -154,6 +154,18 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 `approval`, `sandbox`, `network` and the network host sets are applied at launch time by Meridian through its harness projection layer, not stored in the agent file. The same holds for the `effort`, `sandbox`, `approval` and `network` a matching `model-policies` rule or `[agents.<name>]` overlay sets: Mars resolves them for the native file with the [launch bundle's precedence](schema-v1.md#model-policies) minus the command line, so the file and the bundle agree.
 
+### Project-wide tool rules in agent files
+
+`mars sync` writes each agent's rules after joining the project's `[settings.tools]` denies
+and the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules). A
+project-wide deny reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a
+permission entry when it is unscoped, like the agent's own denies; the other targets carry none.
+An agent allow or ask that a project-wide deny covers by key is left out of the file and out of
+`tools.rules` in the bundle, and the bundle lists it under `tools.set_aside` with the deny that
+covers it (`{capability, pattern, action, origin, by}`). A pair whose keys may overlap, so Mars
+cannot tell either way, keeps both rules; the bundle puts a `note` on the project-wide rule for
+every harness but Claude, and `mars sync` warns (`tool-rule-unsettled`).
+
 ### Tool name projection
 
 Mars owns both permission-rule names and unscoped harness tool names. A profile's capability
@@ -520,6 +532,7 @@ What counts:
 | shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` |
 | tool | any other tool deny, `ask` or allow list the file cannot carry, such as `workflow: deny` or `edit: deny` |
 | MCP | an MCP `ask`, or a deny the target does not write |
+| project tool rule | a `[settings.tools]` deny the target's agent files cannot carry (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)), listed as a `project setting` named `tools.<key>` and counted once per target however many agents lose it; its kind is shell, tool or MCP by the rule |
 | network | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting; the project's `default_network` (anything but `allow`), `network-allow` and `network-deny` in `[settings]` once a Codex agent is written, listed as `project setting` |
 | permission | a `harness-overrides.<harness>` key that carries permissions and Mars discards: `tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`; a scalar OpenCode `permission` |
 
@@ -551,6 +564,12 @@ warning: agent `reviewer`: 1 field approximately mapped for .opencode (effort: e
 Expected body-guided skill channels are documented mappings and do not emit warnings.
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
+
+`mars validate` also prints three `info` notes about tool rules, which `--strict` leaves alone:
+each agent allow or ask a project-wide deny set aside (`tool-rule-set-aside`), each profile with
+an unscoped deny or ask beside an allow it covers (`tool-rule-form-changes`; that allow stops
+working in a later release, when a deny covers every allow of its tool), and each
+`[agents.<name>.tools]` that still uses `allowed` or `disallowed` (`tool-overlay-lists-deprecated`).
 
 `mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 

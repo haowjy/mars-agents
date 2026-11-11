@@ -28,6 +28,10 @@ Default merge semantics:
 - **Maps / tables:** higher layer adds/replaces entries by key.
 - **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except the
   permission sets below.
+- **Tool rule tables:** `[settings.tools]` and the rule entries of `[agents.<name>.tools]` merge
+  by key, `user config < mars.toml < mars.local.toml`: the same key in a higher layer replaces the
+  lower entry, and different keys all stay. `Bash`, `shell` and `bash` are one key, and so are
+  `bash(git push:*)` and `bash(git push *)`; two spellings of one key in one table fail the load.
 - **Permission sets:** plain lists add; `{ replace = [...] }` clears lower entries first. This
   applies only to network allow/deny hosts and tool grants/denies. See
   [Adding to or replacing a permission list](#adding-to-or-replacing-a-permission-list).
@@ -379,6 +383,7 @@ include_fanout = false
 | `default-network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
 | `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
+| `tools` | table | `{}` | Project-wide tool denies, written `[settings.tools]`. See [Project-wide tool rules](#project-wide-tool-rules) |
 | `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins |
 | `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching. Entries are kept as written. `mars models list` warns once for an entry Mars has not seen in its model catalog, a harness probe listing, or a harness's native provider; it only reads probes the listing already loaded. `models resolve`, sync and launch bundles do not check |
 | `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
@@ -408,6 +413,62 @@ Network policy keys in `[settings]` and overlays accept separator aliases: `defa
 `default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
 Mars warns when another ignored key looks network-related and lists these accepted spellings.
 (A package's Agent file is stricter: only the hyphenated keys, per [schema v1](schema-v1.md#network).)
+
+### Project-wide tool rules
+
+`[settings.tools]` maps tool keys to `"deny"` for every agent in the project, and for a launch
+with no agent. It takes the keys of a profile's `tools:` map (`bash(pkill -f *)`, `edit`,
+`read(secret/**)`, `mcp(github)`), with the same normalization.
+
+```toml
+[settings]
+min_mars_version = "0.29.0"
+
+[settings.tools]
+"bash(pkill -f *)" = "deny"
+"bash(killall *)" = "deny"
+```
+
+- **Deny only.** `allow`, `ask` and `*` fail the load, naming the file and key: `allow` and
+  `ask` arrive in a later release, and `approval` is already the default for calls no rule
+  matches. A package cannot ship `[settings]`, so no installed package adds or removes one of
+  these. A skill's own tool fields are not affected.
+- **Restrict, never widen.** The rules join each agent's own. An agent allow or ask that a
+  project-wide deny covers by key is set aside, because some harnesses let a narrower allow beat
+  a broader deny: `bash = "deny"` sets aside a profile's `bash(rg *): allow`, `edit = "deny"` sets
+  aside `write: allow`, and `"bash(git *)" = "deny"` sets aside `bash(git status *): allow`. Mars
+  sets an allow aside only when the two keys prove it (the `edit` and `web` capabilities cover
+  `write` and `notebook`, `web_search` and `web_fetch`; for `bash`, a literal ending in one `*`
+  covers every pattern that starts with it). When the keys might overlap and Mars cannot tell
+  (`read(secret/**)` against `read(src/**)`), both rules stay, and `mars sync` warns for the
+  agent and key pair.
+- **The same rule in a profile and here is one rule.** A profile that already denies
+  `bash(pkill -f *)` and a project that denies the same key give one rule, labelled
+  `origin: "project"` in the launch bundle.
+- **Exempting one agent.** `[agents.<name>.tools]` takes rule entries as well as the `allowed`
+  and `disallowed` lists. An entry replaces the same key in the agent's profile and in
+  `[settings.tools]`, for that agent only:
+
+  ```toml
+  [agents.prober.tools]
+  "bash(pkill -f *)" = "allow"   # prober alone may run it
+  ```
+
+  Only the exact key is replaced: `bash = "allow"` does not remove a project-wide
+  `"bash(pkill -f *)" = "deny"`. Entries take `allow`, `deny` and `ask`, and `*`. The lists keep
+  their meaning and add rules; `{ replace = [...] }` clears the profile's rules only, never a
+  project-wide rule or a rule entry.
+- **What is reported.** A project-wide deny that a target's native agent files cannot carry is
+  one line for the project in `mars sync` (the rule is named once per target, not once per
+  agent; `--verbose` lists it). Native `.claude` files carry every deny; `.opencode` carries
+  unscoped ones; `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
+  launches through Meridian. A set-aside allow is not a lost restriction and `mars sync` says
+  nothing about it: `mars validate` lists each as `info`, which `--strict` leaves alone, and the
+  launch bundle lists them under `tools.set_aside`. `mars check`, `mars init` and the plugin
+  build never see these rules, since they preview or build a package for other projects.
+- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and rule entries silently, so a
+  deny written there does nothing. Set `min_mars_version = "0.29.0"` in `[settings]`; without it,
+  Mars warns (`tool-rules-min-version`). The user config has no such guard.
 
 ### User config
 
@@ -498,7 +559,7 @@ disallowed = ["agent"]
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
 | `model-invocable` | bool | Override the profile's `model-invocable` |
 | `user-invocable` | bool | Override the profile's `user-invocable` |
-| `tools` | table | Tool permission sets. Plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars warns once for each non-empty plain list and names its file; empty lists and replacement tables do not warn. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
+| `tools` | table | Tool rules. Rule entries (`"bash(git push *)" = "ask"`) replace the same key in the profile and in `[settings.tools]` for this agent; see [Project-wide tool rules](#project-wide-tool-rules). The `allowed` and `disallowed` lists are deprecated, still read, and `mars validate` notes each use at `info` level. A string value under any other key is a rule, so a stray string key fails the load; other values stay ignored. Tool permission sets: plain `allowed` and `disallowed` string arrays add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. During the compatibility release, Mars warns once for each non-empty plain list and names its file; empty lists and replacement tables do not warn. Profile `ask` rules and the `'*': deny` allowlist marker always stay. MCP grants use `mcp(server)` / `mcp(server/tool)` entries in `allowed`. Native agent files and the launch bundle read the same merged rules. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load |
 | `model-policies` | table[] | Model policy rules; same shape as the profile's and checked when `mars.toml` loads |
 
 An overlay's `effort`, `approval`, `sandbox` and `network` take the same values as an Agent file, and `mars.toml` fails to load on any other: ``mars.toml: [agents.coder] `approval` has invalid value `yolo`; allowed: default, auto, confirm, never``.

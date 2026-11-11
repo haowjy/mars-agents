@@ -22,7 +22,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// `sandbox: read-only` is written to the same file, a plain grant, a network grant. An
 /// unclassified site is loud. Codex lowers `network` as dropped, because its native artifact
 /// carries `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
-pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput};
+pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, ProjectLoss};
 use crate::compiler::tool_policy::{RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
@@ -390,6 +390,7 @@ struct AgentLoweringCtx<'a> {
     native_skills: Vec<String>,
     yaml: serde_yaml::Mapping,
     lossy: Vec<LossyField>,
+    project_losses: Vec<ProjectLoss>,
     /// Native names of the `deny` rules that lower to `permission` entries.
     denied: Vec<String>,
 }
@@ -414,6 +415,7 @@ impl<'a> AgentLoweringCtx<'a> {
             native_skills: lowered_skills.native_preload,
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
+            project_losses: Vec::new(),
             denied: Vec::new(),
         }
     }
@@ -539,12 +541,9 @@ impl<'a> AgentLoweringCtx<'a> {
             }
             AgentLossinessStep::ToolRules(carries) => {
                 let target = self.target_name();
-                self.lossy.extend(tool_loss::losses(
-                    self.eff.tools,
-                    self.harness,
-                    target,
-                    carries,
-                ));
+                let losses = tool_loss::losses(self.eff.tools, self.harness, target, carries);
+                self.lossy.extend(losses.agent);
+                self.project_losses.extend(losses.project);
             }
             AgentLossinessStep::DeniedAsPermission => {
                 let projection = self.eff.tools.project(self.harness);
@@ -653,6 +652,7 @@ impl<'a> AgentLoweringCtx<'a> {
         LoweredOutput {
             bytes: render_markdown(self.yaml, &self.body),
             lossy_fields: self.lossy,
+            project_losses: self.project_losses,
             siblings: Vec::new(),
         }
     }
@@ -862,7 +862,7 @@ pub fn lower_to_codex(
     });
 
     // The Codex file writes `sandbox_mode`, so a read-only sandbox there covers write denies.
-    lossy.extend(tool_loss::losses(
+    let tool_losses = tool_loss::losses(
         eff.tools,
         HarnessId::Codex,
         target,
@@ -874,7 +874,8 @@ pub fn lower_to_codex(
                 note: "Codex per-tool MCP gating lives in server config, not the tool list",
             }),
         },
-    ));
+    );
+    lossy.extend(tool_losses.agent);
     // The native file carries no network setting, so Codex keeps its own default: anything but
     // `network: allow` is a restriction that does not apply.
     use mars_schema::network::NetworkPolicy;
@@ -978,6 +979,7 @@ pub fn lower_to_codex(
     LoweredOutput {
         bytes: out.into_bytes(),
         lossy_fields: lossy,
+        project_losses: tool_losses.project,
         siblings: Vec::new(),
     }
 }

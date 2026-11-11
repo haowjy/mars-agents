@@ -129,6 +129,7 @@ fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
         canonical_dest_path: format!("agents/{stem}.md"),
         profile,
         overlay: None,
+        settlement: Default::default(),
         body,
     }
 }

@@ -7,6 +7,27 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-11
+
+### Upgrade notes
+- A string-valued key in `[agents.<name>.tools]` other than `allowed` and `disallowed` used to be ignored. It is now a rule, so a stray one (`stray = "yes"`) stops `mars.toml` loading and names the key. See [rule entries](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- A Mars before 0.29.0 ignores `[settings.tools]` and rule entries without a word, so a deny written there does nothing, and `min_mars_version` does not stop it: only `mars validate` checks that field. A project that relies on a project-wide deny must make sure everyone's Mars is 0.29.0 or newer. See [older Mars](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- `[agents.<name>.tools] mcp = [...]` in the user config, `mars.toml` or `mars.local.toml` now fails the load, naming the file and key. It was ignored with a `stale-config-key` warning: delete the key and put each MCP grant in `tools.allowed` as `"mcp(server)"`. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#agentsname-overlay).
+
+### Added
+- `[settings.tools]` in the user config, `mars.toml` and `mars.local.toml`: project-wide tool denies for every agent and for a launch with no agent (`"bash(pkill -f *)" = "deny"`). Only `deny` is accepted; `allow`, `ask` and `*` fail the load and name the file and key. Layers merge by key. See [project-wide tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#project-wide-tool-rules).
+- A project-wide deny that covers an agent's allow or ask sets that allow or ask aside: the agent's rules no longer include it, and the launch bundle lists it under `tools.set_aside` (`{capability, pattern, action, origin, by}`). See [set-aside rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#set-aside-rules-and-unsettled-pairs).
+- `[agents.<name>.tools]` takes rule entries (`"bash(pkill -f *)" = "allow"`) beside `allowed` and `disallowed`. An entry replaces the same key in the profile and in `[settings.tools]`, for that agent only, which is how one agent is exempted from a project-wide deny.
+- `mars validate` prints three `info` notes: each allow a project deny set aside (one line per rule, naming its agents), each profile with an unscoped deny or ask beside an allow it covers (that allow stops working in a release after 0.29.0), and each use of `allowed` or `disallowed`. `--strict` does not fail on them.
+
+### Changed
+- Every tool rule in `mars agents show --json` and in the bundle's `tools.rules` has `origin`: `profile`, `overlay` or `project`. Origin is not part of a rule's identity.
+- A project deny that a target's agent files cannot carry is one line for the project in `mars sync`, named `tools.<key>`; `--verbose` lists it once per target instead of once per agent. A profile rule with the same key and action as a project deny is one rule of origin `project`.
+- `mars sync` warns once for the project (`tool-rule-unsettled`) when a project deny and an agent rule may overlap and Mars cannot tell from the keys: it names the deny, one agent rule, the agents and the targets. It prints nothing when `.claude` is the only configured target. In the launch bundle the project deny carries a `note` on every harness but Claude, joined with `; ` to any note it already has.
+
+### Fixed
+- A pre-v1 or foreign agent file that writes `effort`, `mode` or `harness` as something other than a string (`effort: 3`) now gets a `field.execution-ignored` warning that names the value and the allowed values; `mars check` prints it in your own package and `mars migrate` lists it. Before there was no message. A `sandbox`, `approval` or `network` written that way keeps its `field.restriction-lost` line, which now also lists the allowed values. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/migrating-to-schema-v1.md).
+
 ## [0.28.0] - 2026-11-07
 
 ### Upgrade notes

@@ -36,6 +36,13 @@ against the final diff, with evidence from the commit being merged. A big fix or
 also needs an independent review. A merge can release, so take the label with care:
 `release:patch` publishes to users, and a change with no user effect takes `release:skip`.
 
+**A release run GitHub will not finish.** When `release.yml` fails on GitHub's side (artifact
+upload errors during an incident) and the run then stays `in_progress`, it can be neither
+cancelled nor re-run, and its tag is published nowhere. Do not move the tag. Merge the next
+patch PR with `release:patch`: CI cuts the next version from the same `main`, and that release
+carries everything the lost one had. Say in that PR's `## Changelog` which version it stands
+in for. `v0.30.0` is such a tag: 0.30.1 is its first published build.
+
 **Direct push ≠ release.** A push to `main` triggers a release only when the pushed commit is the merge of a PR labeled `release:*`. `release-on-main.yml` looks up the trigger commit's PR (`/commits/{sha}/pulls`); finding none, it sets `should_release=false` and runs CI only — no bump, no tag. Docs and other no-ceremony work can go straight to `main`.
 
 `CHANGELOG.md` `[Unreleased]` is only an empty anchor. The release collects PR

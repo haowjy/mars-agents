@@ -63,6 +63,27 @@ pub(crate) fn effective_tools(
         }
     }
 
+    join_project(project, policy, named)
+}
+
+/// [`effective_tools`] for an agent side the caller already holds: `agent_rules` stand in for
+/// the profile's and the overlay's rules, with their origins kept, and no project-wide rule is
+/// dropped for an overlay key (the origin does not say whether the overlay named the key or
+/// only listed it in `allowed` / `disallowed`; keeping the rule can only restrict).
+pub(crate) fn effective_tools_for_rules(
+    project: &ToolRuleMap,
+    agent_rules: Vec<ToolRule>,
+) -> EffectiveToolPolicy {
+    join_project(project, EffectiveToolPolicy { rules: agent_rules }, |_| {
+        false
+    })
+}
+
+fn join_project(
+    project: &ToolRuleMap,
+    mut policy: EffectiveToolPolicy,
+    named: impl Fn(&ToolRule) -> bool,
+) -> EffectiveToolPolicy {
     let project_rules: Vec<ToolRule> = project
         .iter()
         .map(|(name, action)| {

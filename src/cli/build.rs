@@ -163,6 +163,12 @@ pub struct LaunchBundleArgs {
     #[arg(long = "skill", value_delimiter = ',', action = ArgAction::Append)]
     pub extra_skills: Vec<String>,
 
+    /// JSON file of tool rules that replace the agent's own profile and overlay rules; `-` reads
+    /// stdin. An array of `tools.rules` entries (`capability`, `pattern`, `action`, `origin`);
+    /// `project` entries are skipped. Mars then applies the current `[settings.tools]`.
+    #[arg(long, value_name = "PATH")]
+    agent_tool_rules: Option<PathBuf>,
+
     /// Refresh models.dev catalog and harness probes synchronously before building (blocks until complete).
     #[arg(long, conflicts_with = "no_refresh_models")]
     pub refresh_models: bool,
@@ -234,6 +240,11 @@ fn run_plugin(
 }
 
 fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, MarsError> {
+    let agent_tool_rules = args
+        .agent_tool_rules
+        .as_deref()
+        .map(read_agent_tool_rules)
+        .transpose()?;
     let models_refresh =
         crate::models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
     let bundle = build_launch_bundle(
@@ -252,6 +263,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             network_allow: args.network_allow.clone(),
             network_deny: args.network_deny.clone(),
             extra_skills: args.extra_skills.clone(),
+            agent_tool_rules,
             models_refresh,
         },
     )?;
@@ -264,4 +276,23 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
     );
 
     Ok(0)
+}
+
+fn read_agent_tool_rules(
+    path: &std::path::Path,
+) -> Result<Vec<mars_schema::tool_policy::ToolRule>, MarsError> {
+    let json = if path == std::path::Path::new("-") {
+        std::io::read_to_string(std::io::stdin()).map_err(|source| MarsError::Io {
+            operation: "read --agent-tool-rules from stdin".to_string(),
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        std::fs::read_to_string(path).map_err(|source| MarsError::Io {
+            operation: "read --agent-tool-rules".to_string(),
+            path: path.to_path_buf(),
+            source,
+        })?
+    };
+    crate::build::agent_rules::parse_agent_tool_rules(&json)
 }

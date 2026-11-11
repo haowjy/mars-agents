@@ -12,6 +12,10 @@ pub fn read(
     enforce_preparation_gate: bool,
 ) -> Result<ReaderIr, MarsError> {
     let loaded = load_config(ctx, request, diag)?;
+    if enforce_preparation_gate {
+        // A project's `min_mars_version` the running Mars doesn't meet stops here, before resolution.
+        diag.fail_on_errors()?;
+    }
 
     let mut resolved = resolve_graph(ctx, loaded, request, diag)?;
 

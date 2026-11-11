@@ -120,7 +120,7 @@ The reader covers the `[package]` table of `mars.toml`. The other tables (`[depe
 | `schema` | integer `1` | Required for schema 1. |
 | `description`, `homepage`, `license` | string | |
 | `authors` | list of strings or `{name, email}` tables | |
-| `requires-mars`, `requires-meridian` | version requirement | Tool-version hints; see [mars.toml](mars-toml.md#package-optional). |
+| `requires-mars`, `requires-meridian` | version requirement | Tool-version requirements; see [mars.toml](mars-toml.md#package-optional). A dependency's `requires-mars` that the running Mars does not meet fails `mars sync` when no release of it is compatible. A project's own floor is `[settings].min_mars_version`, which `mars sync` and `mars build launch-bundle` enforce. |
 | `uses-providers` | list of provider names | The hosts the package expects to supply skills at sync time, such as `["meridian"]`. Each entry matches `[a-z0-9][a-z0-9-]*` (a `field.value` error otherwise). Mars never fetches or requires a provider; the list only lets the package's agents name that provider's skills. See [mars.toml](mars-toml.md#provided-skills-and-uses-providers). |
 
 Removed: `package.visibility`, with nothing to replace it.

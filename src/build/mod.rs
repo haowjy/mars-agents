@@ -98,6 +98,19 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    if let Some(diagnostic) = crate::diagnostic::compatibility_preflight(
+        env!("CARGO_PKG_VERSION"),
+        effective_project_config
+            .settings
+            .min_mars_version
+            .as_deref(),
+    ) && diagnostic.level == crate::diagnostic::DiagnosticLevel::Error
+    {
+        return Err(ConfigError::Invalid {
+            message: format!("[{}] {}", diagnostic.code, diagnostic.message),
+        }
+        .into());
+    }
     warnings.extend(effective_project_config.warnings.iter().cloned());
     let effective_tools = crate::compiler::effective_tools::effective_tools(
         &effective_project_config.settings.tools,

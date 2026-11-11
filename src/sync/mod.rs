@@ -264,6 +264,14 @@ pub(crate) fn load_config(
     let (effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
+    diag.extend(
+        crate::diagnostic::compatibility_preflight(
+            env!("CARGO_PKG_VERSION"),
+            effective.settings.min_mars_version.as_deref(),
+        )
+        .into_iter()
+        .collect(),
+    );
 
     if request.options.ignore_requires_mars {
         diag.warn_advisory(

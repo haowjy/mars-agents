@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-11-11
+
+### Fixed
+- `mars sync` no longer warns `tool-rule-unsettled` that a project-wide deny "may not hold" on `.opencode`, `.codex`, `.cursor` and `.pi` against an agent's allow. None of those files writes the allow, and the next line already says the deny is lost there. The launch bundle's `note` on the project deny is unchanged. See [unsettled pairs](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#set-aside-rules-and-unsettled-pairs).
+
 ## [0.29.0] - 2026-11-11
 
 ### Upgrade notes

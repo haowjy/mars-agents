@@ -502,9 +502,8 @@ is not protected by the dependency pin and must coordinate both upgrades.
 `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
 `--unavailable` were removed from `models list`. Put display rules in
 [`mars.curated.toml`](../config/mars-curated.md). Legacy
-`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a targeted
-error translating the file's actual values; Mars does not rewrite config
-automatically. A dependency package's consumer-only settings are ignored by
+`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a removed key and
+an error that translates the file's actual values; Mars does not rewrite it. A dependency package's consumer-only settings are ignored by
 manifest loading and never require the consumer to migrate upstream files.
 
 ### `mars models prompting`
@@ -946,7 +945,7 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` and `native_tools` are empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
-| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed`, `disallowed` or a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; also an `ask` cut down to an agent's own allow, when the agent closes `*`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule, and it keeps the profile's origin |
+| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; also an `ask` cut down to an agent's own allow, when the agent closes `*`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule, and it keeps the profile's origin |
 | `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule is also empty when a stricter rule covers it or owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `Write`, `NotebookEdit` and the `write` allow none, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |

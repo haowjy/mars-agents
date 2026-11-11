@@ -23,8 +23,14 @@ pub enum Surface {
     AgentOverlay,
     /// `[agents.<name>.tools]` in the consumer config files.
     AgentOverlayTools,
+    /// `[settings.meridian.agent_copy]` in the consumer config files.
+    AgentCopy,
     /// `[skills.<name>]` in the consumer config files.
     SkillOverlay,
+    /// The tables of the user `config.toml` outside `[settings]`.
+    UserConfig,
+    /// `[settings]` in the user `config.toml`.
+    UserSettings,
 }
 
 /// Whether a value of the key narrows what an agent may do.
@@ -45,6 +51,8 @@ pub enum Rewrite {
     Drop,
     /// The row's `value` of the key becomes this one.
     Value(&'static str),
+    /// The key is spelled as this instead; its value is unchanged.
+    Rename(&'static str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,9 +60,8 @@ pub struct Removal {
     /// What the reader tells the author.
     pub advice: &'static str,
     pub rewrite: Rewrite,
-    /// Surfaces whose reader reports the key as a warning instead of an error. This is how
-    /// each surface behaved before the table; the next change makes it one answer.
-    pub warns_on: &'static [Surface],
+    /// More advice that depends on what the author wrote under the key.
+    pub detail: Option<fn(&toml::Value) -> String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,6 +72,9 @@ pub enum Status {
     /// Still read; the advice names its replacement.
     Deprecated(&'static str),
     Removed(Removal),
+    /// Not read on this surface because it belongs in the project's files. Ignoring it loses no
+    /// restriction (`restricts` is `Never`), so the reader warns and drops it.
+    Elsewhere(&'static str),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -96,7 +106,7 @@ const fn removed(
         status: Status::Removed(Removal {
             advice,
             rewrite,
-            warns_on: &[],
+            detail: None,
         }),
     }
 }
@@ -112,9 +122,24 @@ const fn removed_value(
     }
 }
 
-const fn warned_on(mut row: KeyRow, surfaces: &'static [Surface]) -> KeyRow {
+const fn elsewhere(
+    key: &'static str,
+    surfaces: &'static [Surface],
+    advice: &'static str,
+) -> KeyRow {
+    KeyRow {
+        key,
+        value: None,
+        surfaces,
+        since: None,
+        restricts: Restricts::Never,
+        status: Status::Elsewhere(advice),
+    }
+}
+
+const fn with_detail(mut row: KeyRow, detail: fn(&toml::Value) -> String) -> KeyRow {
     if let Status::Removed(removal) = &mut row.status {
-        removal.warns_on = surfaces;
+        removal.detail = Some(detail);
     }
     row
 }
@@ -154,23 +179,17 @@ pub static KEYS: &[KeyRow] = &[
         "put MCP capability references in `tools`",
         Rewrite::Drop,
     ),
-    warned_on(
-        removed(
-            "autocompact",
-            &[AgentProfile, AgentOverlay],
-            "configure compaction on the model alias",
-            Rewrite::Drop,
-        ),
-        &[AgentOverlay],
+    removed(
+        "autocompact",
+        &[AgentProfile, AgentOverlay],
+        "configure compaction on the model alias",
+        Rewrite::Drop,
     ),
-    warned_on(
-        removed(
-            "autocompact_pct",
-            &[AgentProfile, AgentOverlay],
-            "configure compaction on the model alias",
-            Rewrite::Drop,
-        ),
-        &[AgentOverlay],
+    removed(
+        "autocompact_pct",
+        &[AgentProfile, AgentOverlay],
+        "configure compaction on the model alias",
+        Rewrite::Drop,
     ),
     // Agent and skill keys the legacy upgrade renames or moves, or leaves for the author.
     removed(
@@ -181,27 +200,27 @@ pub static KEYS: &[KeyRow] = &[
     ),
     removed(
         "model_invocable",
-        &[AgentProfile, SkillProfile],
+        &[AgentProfile, SkillProfile, AgentOverlay, SkillOverlay],
         "use `model-invocable`",
-        Rewrite::None,
+        Rewrite::Rename("model-invocable"),
     ),
     removed(
         "user_invocable",
-        &[AgentProfile, SkillProfile],
+        &[AgentProfile, SkillProfile, AgentOverlay, SkillOverlay],
         "use `user-invocable`",
-        Rewrite::None,
+        Rewrite::Rename("user-invocable"),
     ),
     removed(
         "network_allow",
-        &[AgentProfile],
+        &[AgentProfile, AgentOverlay, Settings],
         "use `network-allow`",
-        Rewrite::None,
+        Rewrite::Rename("network-allow"),
     ),
     removed(
         "network_deny",
-        &[AgentProfile],
+        &[AgentProfile, AgentOverlay, Settings],
         "use `network-deny`",
-        Rewrite::None,
+        Rewrite::Rename("network-deny"),
     ),
     removed(
         "permission",
@@ -225,14 +244,11 @@ pub static KEYS: &[KeyRow] = &[
     removed_value("effort", "adaptive", "medium"),
     removed_value("effort", "disabled", "none"),
     // Schema v1 skills carry no tool policy, so every spelling of one is dropped.
-    warned_on(
-        removed(
-            "tools",
-            &[SkillProfile, SkillOverlay],
-            DISCARDED_SKILL_POLICY,
-            Rewrite::Drop,
-        ),
-        &[SkillOverlay],
+    removed(
+        "tools",
+        &[SkillProfile, SkillOverlay],
+        DISCARDED_SKILL_POLICY,
+        Rewrite::Drop,
     ),
     removed(
         "allowed-tools",
@@ -297,27 +313,62 @@ pub static KEYS: &[KeyRow] = &[
     // `[package]`.
     removed("visibility", &[Package], "remove it", Rewrite::Drop),
     // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
-    warned_on(
-        removed(
-            "bootstrap",
-            &[Package],
-            "Mars finds bootstrap docs in `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
-            Rewrite::None,
-        ),
+    removed(
+        "bootstrap",
         &[Package],
+        "Mars finds bootstrap docs in `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
+        Rewrite::None,
     ),
     // Consumer config.
     removed(
         "mcp",
         &[AgentOverlayTools],
-        "put MCP grants in `allowed` as \"mcp(server)\"",
+        "write an MCP grant as a rule: `\"mcp(server)\" = \"allow\"`",
+        Rewrite::None,
+    ),
+    // The lists `mars migrate` rewrites into rule entries; what it cannot rewrite it says.
+    removed(
+        "allowed",
+        &[AgentOverlayTools],
+        "write a rule per tool: `\"<tool>\" = \"allow\"`; `mars migrate` rewrites the lists",
         Rewrite::None,
     ),
     removed(
-        "model_visibility",
-        &[Settings],
-        "Move these display rules to mars.curated.toml (or mars.curated.local.toml for local overrides); review harness×model semantics before applying. Mars will not write the new file:",
+        "disallowed",
+        &[AgentOverlayTools],
+        "write a rule per tool: `\"<tool>\" = \"deny\"`; `mars migrate` rewrites the lists",
         Rewrite::None,
+    ),
+    removed(
+        "fanout_agents",
+        &[AgentCopy],
+        "use `[settings.meridian.fanout].agents`",
+        Rewrite::None,
+    ),
+    // Keys of the project's files that a user-wide `config.toml` would apply to every project.
+    elsewhere(
+        "managed_root",
+        &[UserSettings],
+        "put it in the project's mars.toml",
+    ),
+    elsewhere(
+        "targets",
+        &[UserSettings],
+        "put it in the project's mars.toml",
+    ),
+    elsewhere(
+        "overrides",
+        &[UserConfig],
+        "put it in the project's mars.local.toml, since a user-wide override would point every project at a local checkout unseen",
+    ),
+    with_detail(
+        removed(
+            "model_visibility",
+            &[Settings],
+            "move these display rules to `mars.curated.toml` (or `mars.curated.local.toml` for local overrides) after reviewing the harness×model semantics; Mars does not write that file, and the nearest entries are:",
+            Rewrite::None,
+        ),
+        crate::model_visibility::migration,
     ),
     // Keys a Mars release gates: an older Mars reads a package that uses one wrongly.
     gated("schema", &[Package], "0.20.0"),
@@ -351,6 +402,14 @@ pub fn removed_value_of(
     value: &str,
 ) -> Option<(&'static KeyRow, &'static Removal)> {
     removals(surface).find(|(row, _)| row.key == key && row.value == Some(value))
+}
+
+/// The advice for `key` when `surface` does not hold it and ignoring it loses nothing.
+pub fn elsewhere_key(surface: Surface, key: &str) -> Option<&'static str> {
+    KEYS.iter().find_map(|row| match row.status {
+        Status::Elsewhere(advice) if row.key == key && on(row, surface) => Some(advice),
+        _ => None,
+    })
 }
 
 /// The keys `surface` deletes outright.

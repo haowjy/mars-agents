@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::{ConfigError, MarsError};
+use mars_schema::keys::{self, Surface};
 
 use super::LocalConfig;
 
@@ -10,8 +11,8 @@ pub struct UserConfig {
     /// Names the file in warnings; empty when no user file exists, and then nothing warns.
     pub path: PathBuf,
     pub local: LocalConfig,
-    /// `[settings]` keys that describe one project, removed from `local` and reported by name.
-    pub ignored_settings: Vec<&'static str>,
+    /// A warning for each key the file holds that belongs in a project's files; the layer drops it.
+    pub misplaced: Vec<String>,
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
@@ -27,33 +28,66 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
         }
         Err(source) => return Err(super::read_error(&path, source)),
     };
-    let mut local: LocalConfig = super::parse_without_removed_visibility(&content, &path)?;
-    super::validate_agent_overlays(&path, &local.agents)?;
-    super::validate_project_tools(&path, local.settings.tools.as_ref())?;
-    // A user-wide override would point every project at a local checkout unseen.
-    if !local.overrides.is_empty() {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "{}: [overrides] is not accepted in the user config; put it in the project's mars.local.toml",
-                path.display()
-            ),
-        }
-        .into());
-    }
-    let settings = &mut local.settings;
-    let mut ignored_settings = Vec::new();
-    if settings.managed_root.take().is_some() {
-        ignored_settings.push("managed_root");
-    }
-    if settings.targets.take().is_some() {
-        ignored_settings.push("targets");
-    }
-    if settings.min_mars_version.take().is_some() {
-        ignored_settings.push("min_mars_version");
-    }
+    let file = path.display().to_string();
+    let local = super::parse_local(&content, &path, &file)?;
+    let (local, misplaced) = without_project_keys(local, &content, &file)?;
     Ok(UserConfig {
         path,
         local,
-        ignored_settings,
+        misplaced,
     })
+}
+
+/// Drop the keys the key table says belong in a project's files. A user-wide `targets` or
+/// override would apply to every project unseen, and ignoring either loses no restriction.
+fn without_project_keys(
+    local: LocalConfig,
+    content: &str,
+    file: &str,
+) -> Result<(LocalConfig, Vec<String>), MarsError> {
+    let authored: toml::Table = toml::from_str(content).expect("the file parsed as a config");
+    let mut misplaced = Vec::new();
+    let mut rewritten = toml::Table::try_from(&local).map_err(|error| ConfigError::Invalid {
+        message: format!("{file}: {error}"),
+    })?;
+    for (surface, table) in [
+        (Surface::UserConfig, ""),
+        (Surface::UserSettings, "settings"),
+    ] {
+        let authored = if table.is_empty() {
+            Some(&authored)
+        } else {
+            authored.get(table).and_then(toml::Value::as_table)
+        };
+        for key in authored.into_iter().flat_map(toml::Table::keys) {
+            let Some(advice) = keys::elsewhere_key(surface, key) else {
+                continue;
+            };
+            let place = if table.is_empty() {
+                format!("`[{key}]`")
+            } else {
+                format!("[{table}] `{key}`")
+            };
+            misplaced.push(format!(
+                "{file}: {place} is not read in the user config; {advice}"
+            ));
+            if table.is_empty() {
+                rewritten.remove(key);
+            } else if let Some(toml::Value::Table(settings)) = rewritten.get_mut(table) {
+                settings.remove(key);
+            }
+        }
+    }
+    if misplaced.is_empty() {
+        return Ok((local, misplaced));
+    }
+    let unknown_keys = local.unknown_keys.clone();
+    let mut stripped: LocalConfig =
+        rewritten
+            .try_into()
+            .map_err(|error: toml::de::Error| ConfigError::Invalid {
+                message: format!("{file}: {error}"),
+            })?;
+    stripped.unknown_keys = unknown_keys;
+    Ok((stripped, misplaced))
 }

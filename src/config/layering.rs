@@ -2,10 +2,8 @@ use indexmap::IndexMap;
 
 use super::targets::{LinkSource, TargetOrigin, TargetSource};
 
-use super::{
-    AgentOverlay, AgentOverlayTools, Config, LocalConfig, LocalSettings, Settings, SkillOverlay,
-};
-use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
+use super::{AgentOverlay, Config, LocalConfig, LocalSettings, Settings, SkillOverlay};
+use mars_schema::permission_set::compose_permission_sets;
 use mars_schema::tool_rule_map::ToolRuleMap;
 
 fn overlay_map_replace_by_key<V: Clone>(
@@ -60,38 +58,12 @@ fn compose_agent_overlay(lower: &AgentOverlay, higher: &AgentOverlay) -> AgentOv
     let mut merged = higher.clone();
     merged.network_allow = compose_permission_sets(&lower.network_allow, &higher.network_allow);
     merged.network_deny = compose_permission_sets(&lower.network_deny, &higher.network_deny);
-    merged.tools = compose_tool_permission_sets(&lower.tools, &higher.tools);
+    merged.tools = ToolRuleMap::merge_by_key(&lower.tools, &higher.tools);
     merged
 }
 
 fn compose_skill_overlay(_lower: &SkillOverlay, higher: &SkillOverlay) -> SkillOverlay {
     higher.clone()
-}
-
-fn compose_tool_permission_sets(
-    lower: &AgentOverlayTools,
-    higher: &AgentOverlayTools,
-) -> AgentOverlayTools {
-    AgentOverlayTools {
-        allowed: compose_optional_permission_sets(lower.allowed.as_ref(), higher.allowed.as_ref()),
-        disallowed: compose_optional_permission_sets(
-            lower.disallowed.as_ref(),
-            higher.disallowed.as_ref(),
-        ),
-        rules: ToolRuleMap::merge_by_key(&lower.rules, &higher.rules),
-        unknown: higher.unknown.clone(),
-    }
-}
-
-fn compose_optional_permission_sets<T: Clone + Eq>(
-    lower: Option<&PermissionSet<T>>,
-    higher: Option<&PermissionSet<T>>,
-) -> Option<PermissionSet<T>> {
-    match (lower, higher) {
-        (Some(lower), Some(higher)) => Some(compose_permission_sets(lower, higher)),
-        (Some(layer), None) | (None, Some(layer)) => Some(layer.clone()),
-        (None, None) => None,
-    }
 }
 
 /// Everything the three config files contribute, composed bottom to top:
@@ -158,7 +130,6 @@ impl From<&Settings> for LocalSettings {
             agent_emission,
             meridian,
             model_policies,
-            unknown,
         } = project.clone();
         LocalSettings {
             managed_root,
@@ -177,7 +148,6 @@ impl From<&Settings> for LocalSettings {
             agent_emission,
             meridian,
             model_policies,
-            unknown,
         }
     }
 }
@@ -200,7 +170,6 @@ impl LocalSettings {
             && self.agent_emission.is_none()
             && self.meridian.is_empty()
             && self.model_policies.is_none()
-            && self.unknown.is_empty()
     }
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {

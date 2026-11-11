@@ -78,17 +78,10 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
     };
 
     // Load config for the notes that only
-    // validate reports (unknown `[settings]` keys, tool rules set aside or about to change). This is a lightweight read that doesn't
+    // validate reports (tool rules set aside or about to change). This is a lightweight read that doesn't
     // acquire the sync lock.
     let config_notes = match crate::config::load_project_config_layers(&ctx.project_root) {
-        Ok(loaded) => {
-            let mut notes = crate::config::unknown_settings_diagnostics(&loaded);
-            notes.extend(crate::compiler::tool_notices::tool_rule_notices(
-                &ctx.project_root,
-                &loaded,
-            ));
-            notes
-        }
+        Ok(loaded) => crate::compiler::tool_notices::tool_rule_notices(&ctx.project_root, &loaded),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => Vec::new(),
         Err(err) => return Err(err),
     };

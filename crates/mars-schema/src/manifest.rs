@@ -103,27 +103,18 @@ fn read_package(
     let mut diagnostics = Vec::new();
     for key in package.keys() {
         if let Some((_, removal)) = keys::removed_key(Surface::Package, key) {
-            diagnostics.push(if removal.warns_on.contains(&Surface::Package) {
-                SchemaDiagnostic::new(
-                    "field.unknown",
-                    Severity::Warning,
-                    child_path("package", key),
-                    format!("`package.{key}` is not read; {}", removal.advice),
-                )
-            } else {
-                SchemaDiagnostic::new(
-                    "field.removed",
-                    Severity::Error,
-                    child_path("package", key),
-                    format!("`package.{key}` was removed; {}", removal.advice),
-                )
-            });
+            diagnostics.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Error,
+                child_path("package", key),
+                format!("`package.{key}` was removed; {}", removal.advice),
+            ));
         } else if !known.contains(&key.as_str()) {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.unknown",
                 Severity::Warning,
                 child_path("package", key),
-                format!("unknown package field `{key}` is preserved"),
+                crate::diagnostic::unknown_key_message("package", key),
             ));
         }
     }

@@ -85,6 +85,21 @@ pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnosti
     }
 }
 
+/// The one warning for a key that a project, package or user config file carries and this Mars
+/// does not read. `table` is the dotted table the key sits in, empty at the top of the file.
+/// The key stays in the file: an older Mars cannot tell a typo from a key a newer one reads.
+pub fn unknown_key_message(table: &str, key: &str) -> String {
+    let table = if table.is_empty() {
+        String::new()
+    } else {
+        format!("[{table}] ")
+    };
+    format!(
+        "{table}unknown key `{key}` is not read by Mars v{} (a typo, or a key from a newer Mars); it stays in the file",
+        crate::VERSION
+    )
+}
+
 /// What the reader reports for a value the key table removed from a field that remains. The legacy
 /// upgrade rewrites it to the row's replacement.
 pub(crate) fn removed_value(surface: Surface, key: &str, value: &str) -> Option<SchemaDiagnostic> {

@@ -300,11 +300,6 @@ impl DiagnosticCollector {
             .any(|diagnostic| diagnostic.code == code && diagnostic.message == message)
     }
 
-    /// Whether `--verbose` asked for the detail behind a roll-up line.
-    pub(crate) fn verbose(&self) -> bool {
-        self.lossiness_mode.verbose()
-    }
-
     pub fn warn_with_category(
         &mut self,
         code: impl Into<Cow<'static, str>>,

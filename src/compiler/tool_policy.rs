@@ -1,8 +1,8 @@
 //! Typed tool policy for agent and skill frontmatter.
 //!
-//! Canonical Mars profiles express tool gating with `tools:` (list or allow/deny/ask map),
-//! `disallowed-tools:`, and whole-server or per-tool MCP grants as `mcp(...)` entries in
-//! those lists. [`parse_tool_policy`] reads them once into an [`EffectiveToolPolicy`]: one list
+//! Canonical Mars profiles express tool gating with a `tools:` action map (`rule: allow`,
+//! `deny` or `ask`), whole-server or per-tool MCP grants being `mcp(...)` keys in it.
+//! [`parse_tool_policy`] reads them once into an [`EffectiveToolPolicy`]: one list
 //! of [`ToolRule`]s that the profile stores, a `mars.toml` overlay edits, and
 //! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
 //! and the launch bundle all read that projection; nothing else turns a rule into native

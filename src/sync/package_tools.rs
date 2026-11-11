@@ -41,35 +41,65 @@ pub(crate) fn fold(target: &mut TargetState, graph: &ResolvedGraph, local_tools:
                 Err(_) => continue,
             },
         };
-        // An unreadable profile or a list-form `tools:` is reported where the profile is
-        // compiled; the fold has nothing to add to it.
-        let Ok(mut profile) = frontmatter::parse(&content) else {
+        if let Some(folded) = fold_content(&content, package_tools) {
+            item.rewritten_content = Some(folded);
+        }
+    }
+}
+
+/// The profile text with the missing keys of `package_tools` added, or `None` when nothing was
+/// added or the profile cannot take them.
+fn fold_content(content: &str, package_tools: &ToolRuleMap) -> Option<String> {
+    // An unreadable profile or a list-form `tools:` is reported where the profile is
+    // compiled; the fold has nothing to add to it.
+    let mut profile = frontmatter::parse(content).ok()?;
+    let mut tools = match profile.get("tools") {
+        None | Some(Value::Null) => Mapping::new(),
+        Some(Value::Mapping(map)) => map.clone(),
+        Some(_) => return None,
+    };
+    let own: Vec<OverlayToolName> = tools
+        .keys()
+        .filter_map(|key| key.as_str())
+        .filter_map(|key| OverlayToolName::try_from(key.to_owned()).ok())
+        .collect();
+    let mut added = false;
+    for (name, action) in package_tools.iter() {
+        if own.iter().any(|own| own.parsed() == name.parsed()) {
             continue;
-        };
-        let mut tools = match profile.get("tools") {
-            None | Some(Value::Null) => Mapping::new(),
-            Some(Value::Mapping(map)) => map.clone(),
-            Some(_) => continue,
-        };
-        let own: Vec<OverlayToolName> = tools
-            .keys()
-            .filter_map(|key| key.as_str())
-            .filter_map(|key| OverlayToolName::try_from(key.to_owned()).ok())
-            .collect();
-        let mut added = false;
-        for (name, action) in package_tools.iter() {
-            if own.iter().any(|own| own.parsed() == name.parsed()) {
-                continue;
-            }
-            tools.insert(
-                Value::String(String::from(name.clone())),
-                Value::String(action.as_str().to_owned()),
-            );
-            added = true;
         }
-        if added {
-            profile.insert("tools", Value::Mapping(tools));
-            item.rewritten_content = Some(profile.render());
-        }
+        tools.insert(
+            Value::String(String::from(name.clone())),
+            Value::String(action.as_str().to_owned()),
+        );
+        added = true;
+    }
+    if !added {
+        return None;
+    }
+    profile.insert("tools", Value::Mapping(tools));
+    Some(profile.render())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules(toml: &str) -> ToolRuleMap {
+        toml::from_str(toml).unwrap()
+    }
+
+    #[test]
+    fn two_spellings_are_one_key_and_content_changes_only_when_a_key_is_added() {
+        let profile = "---\nname: a\ntools:\n  \"bash(pkill -f *)\": allow\n---\nbody\n";
+
+        let same = rules("\"bash(pkill -f:*)\" = \"deny\"");
+        assert_eq!(fold_content(profile, &same), None);
+
+        let more = rules("\"bash(pkill -f:*)\" = \"deny\"\nweb = \"ask\"");
+        let folded = fold_content(profile, &more).unwrap();
+        assert!(folded.contains("web: ask"), "{folded}");
+        assert!(folded.contains("bash(pkill -f *): allow"), "{folded}");
+        assert!(!folded.contains("deny"), "{folded}");
     }
 }

@@ -474,7 +474,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   `bash(git status *): allow` does not beat a project-wide `"bash(git *)" = "deny"`, and
   `bash: deny` beside `bash(rg *): allow` turns Bash off. `*` is refused in `[settings.tools]`,
   naming the file and key: `approval` is already the default for calls no rule matches.
-  A package cannot ship `[settings]`, so no installed package adds or removes one of these. A
+  A package cannot ship `[settings]`; what it can ship is [`[package.tools]`](#package-tool-rules-packagetools),
+  which is folded into its agents' own rules and so is a profile rule here, covered by a project-wide
+  rule like any other. A
   skill's own tool fields are not affected.
 - **Restrict, never widen.** The rules join each agent's own, and an agent keeps every rule it
   wrote. A project-wide `deny` joins every agent. A project-wide `allow` only decides what the

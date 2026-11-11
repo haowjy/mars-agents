@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-11-11
+
+### Upgrade notes
+- 0.30.1 is the first published 0.30 build. The `v0.30.0` tag exists, but a GitHub Actions outage failed its release run and nothing was published from it. Everything listed under 0.30.0 ships in this version; there is no code change between the two.
+
 ## [0.30.0] - 2026-11-11
 
 ### Upgrade notes

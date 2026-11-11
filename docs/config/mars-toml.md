@@ -472,7 +472,8 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 - **One precedence.** Of the rules that match a call, the strictest wins on every harness: deny,
   then `ask`, then `allow`. How narrow a pattern is never matters, so a profile's
   `bash(git status *): allow` does not beat a project-wide `"bash(git *)" = "deny"`, and
-  `bash: deny` beside `bash(rg *): allow` turns Bash off. `*` is refused in `[settings.tools]`,
+  `bash: deny` beside `bash(rg *): allow` turns Bash off
+  ([what to write for each case](agent-profiles.md#tools)). `*` is refused in `[settings.tools]`,
   naming the file and key: `approval` is already the default for calls no rule matches.
   A package cannot ship `[settings]`; what it can ship is [`[package.tools]`](#package-tool-rules-packagetools),
   which is folded into its agents' own rules and so is a profile rule here, covered by a project-wide
@@ -492,15 +493,15 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   agent.
 - **Covered rules stay.** A rule a stricter rule covers by key never applies, as a project
   `bash = "deny"` against a profile's `bash(rg *): allow`, or a profile's own `edit: deny` beside
-  `write: allow`. Mars keeps it in the agent's rules and the launch bundle with no native name
-  and a `note` naming the stricter rule, and `mars validate` prints one `info` line per pair
+  `write: allow`. Mars keeps it in the agent's rules and the launch bundle with no native name,
+  a `covered_by` and a `note` naming the stricter rule, and `mars validate` prints one `info` line per pair
   (`tool-rule-covered`). Covering is decided only where the keys prove it (the `edit` and `web`
   capabilities cover `write` and `notebook`, `web_search` and `web_fetch`; for `bash`, a literal
   ending in one `*` covers every pattern that starts with it). A pair the keys cannot settle
   (`read(secret/**)` against `read(src/**)`) is not recorded: each harness matches the real call.
 - **The same rule in a profile and here is one rule.** A profile that already denies
-  `bash(pkill -f *)` and a project that denies the same key give one rule, labelled
-  `origin: "project"` in the launch bundle.
+  `bash(pkill -f *)` and a project that denies the same key give one rule, which keeps
+  the profile's origin (`origin: "profile"` in the launch bundle).
 - **Exempting one agent.** `[agents.<name>.tools]` takes rule entries as well as the `allowed`
   and `disallowed` lists. An entry replaces the same key in the agent's profile and in
   `[settings.tools]`, for that agent only:

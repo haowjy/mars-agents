@@ -206,6 +206,18 @@ impl Prepared {
         })
     }
 
+    /// The changes that ignored a non-string `effort`, `mode` or `harness`, by source path. A
+    /// sync leaves these in the count of changed files; `mars check` prints them, because the
+    /// author of the file can fix them.
+    pub fn ignored_execution_fields(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
+        self.changes.iter().flat_map(|(path, changes)| {
+            changes
+                .iter()
+                .filter(|change| change.code == crate::set_aside::EXECUTION_IGNORED)
+                .map(move |change| (path.as_str(), change))
+        })
+    }
+
     /// How many authored files preparation changed: the prepared bytes differ from the file, and
     /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
     /// to change and is not counted.

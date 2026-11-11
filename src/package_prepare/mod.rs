@@ -275,6 +275,7 @@ pub(crate) fn prepare_rooted(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
         &Subject::Package(package_name),
+        false,
         diag,
     );
 
@@ -351,7 +352,7 @@ pub(crate) fn prepare_authored(
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
     let prepared = mars_schema::prepare::prepare(&source, context, dialect);
-    reported(root, source, prepared, diag)
+    reported(root, source, prepared, false, diag)
 }
 
 /// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
@@ -365,13 +366,14 @@ pub(crate) fn prepare_authored_for_migration(
     let source = DiskTreeSource::new(root)?;
     let mut prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
     mars_schema::links::package(&mut prepared);
-    reported(root, source, prepared, diag)
+    reported(root, source, prepared, false, diag)
 }
 
 fn reported(
     root: &Path,
     source: DiskTreeSource,
     prepared: Prepared,
+    own_files: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
@@ -386,7 +388,7 @@ fn reported(
         Some(name) => Subject::Package(name),
         None => Subject::AuthoredSource,
     };
-    report_diagnostics(&prepared, &source_label(root), &subject, diag);
+    report_diagnostics(&prepared, &source_label(root), &subject, own_files, diag);
     Ok(prepared)
 }
 
@@ -401,7 +403,7 @@ pub(crate) fn prepare_project(
     let mut prepared = mars_schema::prepare::prepare(&source, PrepareContext::Project, None);
     // `mars check` judges the package's own layout; a sync judges installed trees.
     mars_schema::links::package(&mut prepared);
-    let prepared = reported(root, source, prepared, diag)?;
+    let prepared = reported(root, source, prepared, true, diag)?;
     let manifest = match &prepared.manifest {
         Some(manifest) => Some(manifest.normalized_bytes.clone()),
         None => match fs::read(root.join("mars.toml")) {
@@ -431,11 +433,14 @@ pub(crate) enum Subject<'a> {
 /// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
 /// pre-v1 package gets one warning and a translated one a summary line, each with the count of
 /// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
-/// are printed every time with the file they are in.
+/// are printed every time with the file they are in. `own_files` is a package's own checkout
+/// (`mars check`), where the author can fix the file: it also prints each ignored execution
+/// field.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
     subject: &Subject<'_>,
+    own_files: bool,
     diag: &mut DiagnosticCollector,
 ) {
     for (relative, diagnostics) in prepared.all_diagnostics() {
@@ -446,6 +451,11 @@ pub(crate) fn report_diagnostics(
     }
     for (relative, lost) in prepared.lost_restrictions() {
         diag.schema(lost, &label(relative), false);
+    }
+    if own_files {
+        for (relative, ignored) in prepared.ignored_execution_fields() {
+            diag.schema(ignored, &label(relative), false);
+        }
     }
     let files = prepared.changed_files();
     if files == 0 {

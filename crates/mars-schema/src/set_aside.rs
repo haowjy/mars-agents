@@ -17,7 +17,8 @@
 //!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
 //!   (`Prepared::lost_restrictions`).
 //! - A top-level `effort`, `mode` or `harness` that is not a string restricts nothing, so it is an
-//!   ordinary change ([`EXECUTION_IGNORED`]) that is listed once. A non-string `sandbox`,
+//!   ordinary change ([`EXECUTION_IGNORED`]) that is listed once; `mars check` also prints it
+//!   (`Prepared::ignored_execution_fields`). A non-string `sandbox`,
 //!   `approval` or `network` stays a lost restriction, with the allowed values added.
 
 use std::cmp::Ordering;

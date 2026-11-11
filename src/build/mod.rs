@@ -11,6 +11,7 @@ use crate::compiler::tool_policy::{
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use mars_schema::tool_policy::ToolAction;
+use mars_schema::tool_rule_map::ToolRuleMap;
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -93,11 +94,16 @@ pub fn build_launch_bundle(
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
     warnings.extend(effective_project_config.warnings.iter().cloned());
-    if let Some(agent) = request.agent.as_deref()
-        && let Some(overlay) = effective_project_config.agents.get(agent)
-    {
-        profile.tools.apply_overlay(&overlay.tools);
-    }
+    profile.tools = crate::compiler::effective_tools::effective_tools(
+        &ToolRuleMap::default(),
+        &profile.tools,
+        request
+            .agent
+            .as_deref()
+            .and_then(|agent| effective_project_config.agents.get(agent))
+            .map(|overlay| &overlay.tools),
+    )
+    .policy;
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
     ) {

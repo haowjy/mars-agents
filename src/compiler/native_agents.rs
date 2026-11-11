@@ -1,6 +1,5 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
-use crate::compiler::tool_policy::ToolPolicyRuntime;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -8,11 +7,13 @@ use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
+use super::effective_tools::effective_tools;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{ModelAlias, ModelSpec, ModelsCache};
 use mars_schema::model_policy::ModelPolicyMatchType;
+use mars_schema::tool_rule_map::ToolRuleMap;
 
 /// Lock output paths removed by native agent reconcile (target_root, dest_path).
 pub(crate) type RemovedNativeOutput = (String, String);
@@ -823,11 +824,18 @@ pub(crate) fn compile_native_agents<'a>(
 pub(crate) fn effective_native_profile(
     profile: &mars_schema::agent::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
+    project_tools: &ToolRuleMap,
 ) -> mars_schema::agent::AgentProfile {
-    let Some(overlay) = overlay else {
-        return profile.clone();
-    };
     let mut effective = profile.clone();
+    effective.tools = effective_tools(
+        project_tools,
+        &profile.tools,
+        overlay.map(|overlay| &overlay.tools),
+    )
+    .policy;
+    let Some(overlay) = overlay else {
+        return effective;
+    };
     effective.model =
         crate::config::overlay_then_profile_model(Some(overlay), profile.model.as_deref())
             .map(|model| model.to_string());
@@ -852,7 +860,6 @@ pub(crate) fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    effective.tools.apply_overlay(&overlay.tools);
     effective
 }
 
@@ -1172,8 +1179,11 @@ fn resolve_native_agent_profiles(
     mars_agents
         .iter()
         .map(|agent| {
-            let profile =
-                effective_native_profile(&agent.profile, agent_overlays.get(&agent.agent_name));
+            let profile = effective_native_profile(
+                &agent.profile,
+                agent_overlays.get(&agent.agent_name),
+                &ToolRuleMap::default(),
+            );
             MarsCanonicalAgent {
                 agent_name: agent.agent_name.clone(),
                 canonical_dest_path: agent.canonical_dest_path.clone(),

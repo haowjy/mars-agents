@@ -12,7 +12,7 @@ and rules, so never add a binary-side copy.
   so an uneditable dependency can still install. Preserve valid entries in `LoweredField`,
   `skill::LOWERED_KEYS`, and network host lists; losing a deny entry can widen permissions.
   Record lost deny/ask tools, disallowed tools, deny hosts and restriction fields as
-  `field.restriction-lost` changes, exposed by `Prepared::lost_restrictions`.
+  `field.restriction-lost` changes, exposed by `Prepared::surfaced_changes`.
 - Ordinary reading leaves schema-v1 files as written; migration may repair removed
   fields because it writes the result back. Upgrade definitions without changing
   unrelated bytes when possible. Do not change a dependency's `requires-mars` during

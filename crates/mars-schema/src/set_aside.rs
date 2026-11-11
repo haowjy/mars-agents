@@ -15,7 +15,7 @@
 //!   `network`, `network-deny`) is
 //!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
 //!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
-//!   (`Prepared::lost_restrictions`).
+//!   (`Prepared::surfaced_changes`).
 
 use std::cmp::Ordering;
 
@@ -35,6 +35,25 @@ const KEPT_KEYS: &[&str] = &["name", "description", "harness-overrides"];
 
 /// The code of the change that records a lost restriction.
 pub(crate) const RESTRICTION_LOST: &str = "field.restriction-lost";
+
+/// The code of the change that records an execution field written as something other than a
+/// string and ignored for it.
+pub(crate) const EXECUTION_IGNORED: &str = "field.execution-ignored";
+
+/// Execution fields (in a profile, or in a model policy's `override`) and what each accepts.
+fn execution_allowed(key: &str) -> Option<&'static str> {
+    use crate::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    use crate::network::NetworkPolicy;
+    Some(match key {
+        "harness" => "claude, codex, opencode, cursor, pi",
+        "mode" => "primary, subagent",
+        "effort" => EffortLevel::ALLOWED,
+        "approval" => ApprovalMode::ALLOWED,
+        "sandbox" => SandboxMode::ALLOWED,
+        "network" => NetworkPolicy::ALLOWED,
+        _ => return None,
+    })
+}
 
 /// Keys that restrict what an agent may do; losing one widens the agent.
 const RESTRICTION_KEYS: &[&str] = &[
@@ -250,20 +269,46 @@ struct Report<'a> {
 impl Report<'_> {
     /// `lost` is what a restriction-losing set-aside took away, if it did; `what` says what
     /// happened to the rejected piece, `why` is the reader's reason.
-    fn note(&mut self, path: &[PathSegment], lost: Option<String>, what: &str, why: &str) {
+    fn note(
+        &mut self,
+        path: &[PathSegment],
+        value: &Value,
+        lost: Option<String>,
+        what: &str,
+        why: &str,
+    ) {
         let shown = path_text(path);
-        let (code, message) = match lost {
-            Some(lost) => (
-                RESTRICTION_LOST,
+        let allowed = match path.last() {
+            Some(PathSegment::Key(key)) if !value.is_string() => execution_allowed(key),
+            _ => None,
+        };
+        let (code, message) = match (allowed, lost) {
+            (Some(allowed), lost) => (
+                EXECUTION_IGNORED,
                 format!(
-                    "{} lost the restriction {lost}: {what}. Schema v1 does not accept it ({why})",
-                    self.agent
+                    "{}: `{shown}: {}` is not a string, so Mars ignored it and the harness default (or a lower layer) applies{}; write one of: {allowed}",
+                    self.agent,
+                    crate::ordered::plain(value),
+                    if lost.is_some() {
+                        ", which leaves the agent less restricted than the file says"
+                    } else {
+                        ""
+                    },
                 ),
             ),
-            None => (
-                "field.set-aside",
-                format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
-            ),
+            (None, lost) => match lost {
+                Some(lost) => (
+                    RESTRICTION_LOST,
+                    format!(
+                        "{} lost the restriction {lost}: {what}. Schema v1 does not accept it ({why})",
+                        self.agent
+                    ),
+                ),
+                None => (
+                    "field.set-aside",
+                    format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
+                ),
+            },
         };
         self.changes.push(SchemaDiagnostic::new(
             code,
@@ -314,7 +359,7 @@ pub(crate) fn set_aside_rejected_keys(
                     .map_or("", |rejection| rejection.why.as_str());
                 let lost = restriction_lost(&path, &entry);
                 let what = format!("that entry was dropped and the rest of `{key}` is kept");
-                report.note(&path, lost, &what, why);
+                report.note(&path, &entry, lost, &what, why);
             }
             continue;
         }
@@ -331,9 +376,10 @@ pub(crate) fn set_aside_rejected_keys(
             } else {
                 "it was dropped, because no harness reads it".to_owned()
             };
-            report.note(&path, lost, &what, &why);
+            report.note(&path, &removed, lost, &what, &why);
         } else {
-            movable.push((key, why));
+            let value = fm.get(&key).cloned().unwrap_or(Value::Null);
+            movable.push((key, why, value));
         }
     }
     if let Destination::Overrides(harness) = destination
@@ -341,11 +387,11 @@ pub(crate) fn set_aside_rejected_keys(
     {
         let keys = movable
             .iter()
-            .map(|(key, _)| (key.as_str(), key.as_str()))
+            .map(|(key, _, _)| (key.as_str(), key.as_str()))
             .collect::<Vec<_>>();
         if let Moved::Done { moved, displaced } = move_keys_under(fm, harness, &keys) {
             changed = true;
-            for (key, why) in &movable {
+            for (key, why, value) in &movable {
                 let what = if moved.contains(&key.as_str()) {
                     format!(
                         "it was moved under `harness-overrides.{harness}`, which Mars does not enforce"
@@ -360,7 +406,7 @@ pub(crate) fn set_aside_rejected_keys(
                 let lost = RESTRICTION_KEYS
                     .contains(&key.as_str())
                     .then(|| format!("`{key}`"));
-                report.note(&path, lost, &what, why);
+                report.note(&path, value, lost, &what, why);
             }
         }
     }

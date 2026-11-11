@@ -84,6 +84,7 @@ fn read_package(
         "homepage",
         "license",
         "uses-providers",
+        "tools",
     ];
     // A newer schema's other fields may mean something this Mars cannot read, so the one thing
     // to say is to upgrade.
@@ -176,7 +177,19 @@ fn read_package(
         )),
     }
     let fields = match toml::Value::Table(package.clone()).try_into::<PackageMetadata>() {
-        Ok(fields) => Some(fields),
+        Ok(fields) => {
+            for (name, _) in fields.tools.iter() {
+                if name.parsed().capability == crate::tool_names::Capability::Any {
+                    diagnostics.push(SchemaDiagnostic::new(
+                        "field.value",
+                        Severity::Error,
+                        child_path("package", "tools"),
+                        "`package.tools` does not accept `*`: an agent's own `'*'` rule is its default",
+                    ));
+                }
+            }
+            Some(fields)
+        }
         Err(error) => {
             if !diagnostics.iter().any(SchemaDiagnostic::is_error) {
                 diagnostics.push(SchemaDiagnostic::new(

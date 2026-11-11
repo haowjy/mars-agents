@@ -20,7 +20,6 @@ use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::PermissionSet;
 use mars_schema::tool_names::{Capability, OverlayToolName};
-use mars_schema::tool_policy::ToolAction;
 use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
@@ -424,7 +423,7 @@ pub struct Settings {
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
-    /// Tool rules for every agent and for a launch with no agent. Takes `deny` only.
+    /// Tool rules for every agent and for a launch with no agent. Takes `allow`, `ask` and `deny`; never `*`.
     #[serde(default, skip_serializing_if = "ToolRuleMap::is_empty")]
     pub tools: ToolRuleMap,
     /// Ordered harness preference for launch-bundle candidate selection.
@@ -971,31 +970,24 @@ fn stale_overlay_warnings(
     warnings
 }
 
-/// `[settings.tools]` takes `deny` only in this release, and no `*`: a project-wide `allow` or
-/// `ask` needs rules Mars does not apply yet, and `*` would turn every agent into an allowlist
-/// or sit ahead of every profile's `approval`.
+/// `[settings.tools]` takes no `*`: it would turn every agent into an allowlist or sit ahead of
+/// every profile's `approval`, which already is the default for calls no rule matches.
 pub(crate) fn validate_project_tools(
     file: &Path,
     tools: Option<&ToolRuleMap>,
 ) -> Result<(), MarsError> {
     for (name, action) in tools.into_iter().flat_map(ToolRuleMap::iter) {
-        let key = String::from(name.clone());
-        let problem = if name.parsed().capability == Capability::Any {
-            "`*` is not accepted: `approval` is the default for calls no rule matches"
-        } else if action != ToolAction::Deny {
-            "only `deny` is accepted in this release; `allow` and `ask` arrive in the next. To \
-             let one agent do something, use `[agents.<name>.tools]`"
-        } else {
-            continue;
-        };
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "{}: [settings.tools] `{key}` = \"{}\": {problem}",
-                file.display(),
-                action.as_str()
-            ),
+        if name.parsed().capability == Capability::Any {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "{}: [settings.tools] `{}` = \"{}\": `*` is not accepted: `approval` is the default for calls no rule matches",
+                    file.display(),
+                    String::from(name.clone()),
+                    action.as_str()
+                ),
+            }
+            .into());
         }
-        .into());
     }
     Ok(())
 }
@@ -1849,24 +1841,24 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn settings_tools_take_deny_and_nothing_else() {
+    fn settings_tools_take_every_action_but_the_wildcard() {
         let file = Path::new("mars.toml");
         let check = |source: &str| {
             let config: Config = toml::from_str(source).unwrap();
             validate_project_tools(file, Some(&config.settings.tools))
         };
-        assert!(check("[settings.tools]\n\"bash(git *)\" = \"deny\"\n").is_ok());
-        for (source, expect) in [
-            (
-                "[settings.tools]\n\"*\" = \"deny\"\n",
-                "`*` is not accepted",
-            ),
-            ("[settings.tools]\nbash = \"allow\"\n", "arrive in the next"),
-            ("[settings.tools]\nbash = \"ask\"\n", "arrive in the next"),
-        ] {
-            let error = check(source).unwrap_err().to_string();
+        for action in ["allow", "ask", "deny"] {
             assert!(
-                error.contains(expect) && error.contains("mars.toml"),
+                check(&format!(
+                    "[settings.tools]\n\"bash(git *)\" = \"{action}\"\n"
+                ))
+                .is_ok()
+            );
+            let error = check(&format!("[settings.tools]\n\"*\" = \"{action}\"\n"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("`*` is not accepted") && error.contains("mars.toml"),
                 "{error}"
             );
         }

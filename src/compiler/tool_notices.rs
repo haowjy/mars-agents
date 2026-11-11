@@ -1,16 +1,15 @@
-//! Info-level notes about tool rules that only `mars validate` prints: what a project-wide deny
-//! set aside, which profile forms change next release, and the deprecated overlay lists.
+//! Info-level notes about tool rules that only `mars validate` prints: rules a stricter rule
+//! covers, and the deprecated overlay lists.
 //!
 //! None of these is a lost restriction, so `mars sync` stays quiet about them.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::compiler::effective_tools::covered;
 use crate::compiler::{ToolConfig, installed_agent_tools};
 use crate::config::LoadedProjectConfig;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
-use mars_schema::tool_cover::{Relation, ToolKey, relation};
-use mars_schema::tool_policy::ToolAction;
 
 pub(crate) fn tool_rule_notices(
     project_root: &Path,
@@ -26,45 +25,23 @@ pub(crate) fn tool_rule_notices(
         },
         &mut scan_diag,
     );
-    for (name, tools, _) in &agents {
-        // An unscoped deny or ask beside an allow it covers, such as `bash: deny` beside
-        // `bash(rg *): allow` or `edit: deny` beside `write: allow`, is settled by each harness
-        // today and by the deny in the next release.
-        for deny in tools.rules.iter().filter(|rule| {
-            rule.action != ToolAction::Allow && !rule.is_wildcard() && rule.pattern.is_none()
-        }) {
-            for allow in tools.with_action(ToolAction::Allow) {
-                if relation(ToolKey::from(deny), ToolKey::from(allow)) == Relation::Covers {
-                    notes.push(info(
-                        "tool-rule-form-changes",
-                        format!(
-                            "agent `{name}`: `{} {}` beside `allow {}` stops allowing it in the next release, when a deny covers every allow of its tool; keep the allow by narrowing the deny, or drop the allow",
-                            deny.action.as_str(),
-                            deny.render(),
-                            allow.render(),
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-
-    // One line per set-aside rule and covering deny, naming the agents it applies to.
-    let mut set_aside: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
-    for (name, _, settlement) in &agents {
-        for entry in &settlement.set_aside {
+    // One line per covered rule and covering rule, naming the agents it applies to.
+    let mut covered_rules: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+    for (name, tools) in &agents {
+        for (index, by) in covered(tools) {
+            let rule = &tools.rules[index];
             let key = (
-                format!("{} {}", entry.rule.action.as_str(), entry.rule.render()),
-                format!("{} {}", entry.by.action.as_str(), entry.by.render()),
+                format!("{} {}", rule.action.as_str(), rule.render()),
+                format!("{} {}", by.action.as_str(), by.render()),
             );
-            set_aside.entry(key).or_default().push(name);
+            covered_rules.entry(key).or_default().push(name);
         }
     }
-    for ((rule, by), names) in set_aside {
+    for ((rule, by), names) in covered_rules {
         notes.push(info(
-            "tool-rule-set-aside",
+            "tool-rule-covered",
             format!(
-                "`{rule}` is set aside because the project-wide `{by}` covers it, in {} {}: {}",
+                "`{rule}` never applies: `{by}` covers it, in {} {}: {}",
                 names.len(),
                 if names.len() == 1 { "agent" } else { "agents" },
                 names.join(", "),

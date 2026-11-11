@@ -113,23 +113,13 @@ pub struct SupplementalDoc {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolsSpec {
     pub rules: Vec<ToolRuleSpec>,
-    /// Agent allows and asks a project-wide deny covers, left out of `rules`. Omitted when
-    /// there are none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub set_aside: Vec<SetAsideSpec>,
+    /// Always `[]`: it listed the rules a project-wide deny covers, which now stay in `rules`
+    /// with a `note`. Kept for one release so a reader of the field still finds it.
+    pub set_aside: Vec<serde_json::Value>,
     pub capability_natives: BTreeMap<String, CapabilityNativeSpec>,
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
-}
-
-/// A rule left out of `tools.rules` because a project-wide deny covers it: the rule's own
-/// `{capability, pattern, action, origin}`, and `by`, the rule that covers it.
-#[derive(Debug, Clone, Serialize)]
-pub struct SetAsideSpec {
-    #[serde(flatten)]
-    pub rule: ToolRule,
-    pub by: ToolRule,
 }
 
 /// How the resolved harness spells one capability that a launcher may gate independently of
@@ -150,7 +140,7 @@ pub struct ToolRuleSpec {
     pub rule: ToolRule,
     /// The harness's names for this rule: one per native tool the capability covers, with the
     /// pattern appended as `name(pattern)`. Empty unless `native_status` is `known`, and
-    /// possibly empty for a known rule shadowed by a stricter or more specific rule.
+    /// possibly empty for a known rule a stricter rule covers or takes the name from.
     pub native: Vec<String>,
     /// The unscoped harness tool names this rule concerns. Permission engines can
     /// name a scoped category rather than the tool being made available (for example Claude
@@ -170,6 +160,11 @@ pub struct ToolRuleSpec {
     /// Every note that applies, joined with `; `.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The stricter rule that wins every call this rule would match (or every name it has on
+    /// this harness), as its author wrote it. Present means the rule never applies; `native`
+    /// and `native_tools` are then empty. Omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub covered_by: Option<crate::compiler::tool_policy::CoveredBy>,
 }
 
 #[derive(Debug, Clone, Serialize)]

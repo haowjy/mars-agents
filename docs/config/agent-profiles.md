@@ -387,8 +387,30 @@ launch bundle and lowers agent files; the author never writes a harness spelling
 
 `tools` is a map. A rule states a grant or a denial and leaves everything else to the harness.
 Add `'*': deny` to make the map an allowlist: only the capabilities it allows remain. A
-scoped allow (`bash(rg *)`) only pre-approves the calls it matches and restricts nothing; to
-limit a capability, write `bash: deny` beside the scoped allows.
+scoped allow (`bash(rg *)`) only pre-approves the calls it matches and restricts nothing.
+
+**Precedence.** Of the rules that match a call, the strictest wins on every harness: `deny`,
+then `ask`, then `allow`. How narrow a key is never matters, and neither does the order of
+the map. `'*'` is not one of the competing rules: it decides only the calls no other rule
+matches. Rules from [`[package.tools]`](mars-toml.md#package-tool-rules-packagetools) and
+[`[settings.tools]`](mars-toml.md#project-wide-tool-rules) join the map and follow the same
+precedence.
+
+| To get | Write | Why |
+|---|---|---|
+| Block some commands, leave the rest to the harness | `"bash(pkill -f *)": deny` | A scoped deny refuses what it matches and nothing else. |
+| Only the listed tools | `'*': deny` with an `allow` for each | The allowlist. Every tool the agent needs must be listed. |
+| A shell limited to some commands | `'*': deny`, `"bash(rg *)": allow`, and an `allow` for each other tool | `bash: deny` beside `bash(rg *): allow` turns the shell off: the deny matches every command and is stricter. No rule limits one capability and leaves every other tool to the harness. |
+| A tool allowed, with a prompt for some calls | `bash: allow`, `"bash(git push *)": ask` | The `ask` is stricter where both match. |
+| An exception inside a deny | Narrow the deny: `"bash(git push *)": deny`, not `"bash(git *)": deny` with `"bash(git status *)": allow` | An allow never beats a deny that matches the same call. |
+| No file changes | `edit: deny` | It covers `write` and `notebook`; a `write: allow` beside it never applies. |
+| No web access | `web: deny` | It covers `web_search` and `web_fetch`; a `web_fetch: allow` beside it never applies. |
+| One rule in every agent of a package | [`[package.tools]`](mars-toml.md#package-tool-rules-packagetools) | A profile's own entry for the same key wins. |
+| One rule for every agent in a project | [`[settings.tools]`](mars-toml.md#project-wide-tool-rules) | It restricts and never widens an allowlist. |
+| One agent exempt from a package or project rule | The same key under `[agents.<name>.tools]` in the project's `mars.toml` | It replaces that exact key for that agent only. |
+
+An `allow` or `ask` that a stricter rule covers stays in the agent's rules, and `mars validate`
+names the pair (`tool-rule-covered`), so a rule that can never apply is visible.
 
 A list (`tools: [read, grep]`), the scalar spellings (`tools: allow`, `tools: Read, Grep`) and
 `disallowed-tools` are errors in schema 1. A denial is `tools: {agent: deny}`.

@@ -1,3 +1,4 @@
+pub(crate) mod agent_rules;
 pub mod bundle;
 pub mod plugin;
 pub mod policy;
@@ -5,18 +6,12 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::effective_tools::Settlement;
 use crate::compiler::tool_policy::{
-    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, UNSETTLED_NOTE,
-    project_platform_capability,
+    NativeStatus, RuleKind, ToolPolicyRuntime, project_platform_capability,
 };
 use crate::content::ContentRoots;
-use bundle::{
-    CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, SetAsideSpec, Skills, ToolRuleSpec,
-    ToolsSpec,
-};
-use mars_schema::HarnessId;
-use mars_schema::tool_policy::{RuleOrigin, ToolAction};
+use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
+use mars_schema::tool_policy::ToolAction;
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -44,6 +39,8 @@ pub struct LaunchBundleRequest {
     pub network_allow: Vec<NetworkHost>,
     pub network_deny: Vec<NetworkHost>,
     pub extra_skills: Vec<String>,
+    /// Replaces the agent's profile and overlay tool rules; see `--agent-tool-rules`.
+    pub agent_tool_rules: Option<Vec<mars_schema::tool_policy::ToolRule>>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
 
@@ -98,17 +95,38 @@ pub fn build_launch_bundle(
     }
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    if let Some(diagnostic) = crate::diagnostic::compatibility_preflight(
+        env!("CARGO_PKG_VERSION"),
+        effective_project_config
+            .settings
+            .min_mars_version
+            .as_deref(),
+    ) && diagnostic.level == crate::diagnostic::DiagnosticLevel::Error
+    {
+        return Err(ConfigError::Invalid {
+            message: format!("[{}] {}", diagnostic.code, diagnostic.message),
+        }
+        .into());
+    }
     warnings.extend(effective_project_config.warnings.iter().cloned());
-    let effective_tools = crate::compiler::effective_tools::effective_tools(
-        &effective_project_config.settings.tools,
-        &profile.tools,
-        request
-            .agent
-            .as_deref()
-            .and_then(|agent| effective_project_config.agents.get(agent))
-            .map(|overlay| &overlay.tools),
-    );
-    profile.tools = effective_tools.policy;
+    let overlay = request
+        .agent
+        .as_deref()
+        .and_then(|agent| effective_project_config.agents.get(agent))
+        .map(|overlay| &overlay.tools);
+    let effective_tools = match request.agent_tool_rules.take() {
+        Some(rules) => crate::compiler::effective_tools::effective_tools_for_rules(
+            &effective_project_config.settings.tools,
+            rules,
+            overlay,
+        ),
+        None => crate::compiler::effective_tools::effective_tools(
+            &effective_project_config.settings.tools,
+            &profile.tools,
+            overlay,
+        ),
+    };
+    profile.tools = effective_tools;
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
     ) {
@@ -154,11 +172,7 @@ pub fn build_launch_bundle(
     );
 
     warnings.extend(prompt.warnings);
-    let resolved_tools = resolve_bundle_tools(
-        &profile,
-        &effective_tools.settlement,
-        &policy.routing.harness,
-    )?;
+    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
@@ -226,35 +240,27 @@ pub(crate) fn load_effective_project_config_or_default(
 /// author hears about a typo.
 fn resolve_bundle_tools(
     profile: &mars_schema::agent::AgentProfile,
-    settlement: &Settlement,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
     let projection = profile.tools.project(descriptor.kind);
-    let overlaps = projection.overlaps();
 
     let rules = projection
         .rules()
         .iter()
         .map(|(rule, projected)| {
             let native = projected.native();
-            let shares_a_tool = native.iter().any(|native| overlaps.contains(native));
-            // Claude checks every deny before any allow, so its order already holds.
-            let unsettled = descriptor.kind != HarnessId::Claude
-                && rule.origin == RuleOrigin::Project
-                && settlement
-                    .unsettled
-                    .iter()
-                    .any(|pair| pair.project == **rule);
             ToolRuleSpec {
                 rule: (*rule).clone(),
                 native,
                 native_tools: projected.native_tools(),
                 native_status: projected.status.map(NativeStatus::as_str),
-                note: join_notes(
-                    unsettled.then_some(UNSETTLED_NOTE),
-                    projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
-                ),
+                note: projected
+                    .covered_by
+                    .as_ref()
+                    .map(|by| format!("never applies: `{by}` covers it"))
+                    .or_else(|| projected.note().map(str::to_string)),
+                covered_by: projected.covered_by.clone(),
             }
         })
         .collect();
@@ -277,31 +283,15 @@ fn resolve_bundle_tools(
         })
         .collect();
 
-    let set_aside = settlement
-        .set_aside
-        .iter()
-        .map(|entry| SetAsideSpec {
-            rule: entry.rule.clone(),
-            by: entry.by.clone(),
-        })
-        .collect();
-
     Ok(ToolsSpec {
         rules,
-        set_aside,
+        set_aside: Vec::new(),
         capability_natives,
         // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
         allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
     })
-}
-
-fn join_notes(first: Option<&str>, second: Option<&str>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{first}; {second}")),
-        (one, other) => one.or(other).map(str::to_string),
-    }
 }
 
 fn parse_harness_descriptor(

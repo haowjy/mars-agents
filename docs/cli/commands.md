@@ -132,7 +132,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
@@ -818,6 +818,8 @@ Build a harness-targeted launch bundle — a JSON artifact containing routing, e
 mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 ```
 
+A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2, and prints no bundle.
+
 **Two modes:**
 
 **Ad-hoc mode** (no `--agent`):
@@ -844,6 +846,9 @@ mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 | `--network-allow <host>` | Add an allowed host. Repeatable; accepts exact hosts, IPs, `*.x`, and `**.x`. |
 | `--network-deny <host>` | Add a denied host. Repeatable; uses the same host grammar. |
 | `--skill <name>` | Add extra skills by name. Repeatable; also accepts `--skill a,b`. |
+| `--agent-tool-rules <path>` | JSON file (`-` reads stdin) of tool rules that replace the agent's own profile and overlay rules; see below. |
+
+**Supplying the agent's tool rules (`--agent-tool-rules`):** a caller that stored an agent's rules (a session that continues) passes them back instead of combining them with `[settings.tools]` itself. The file is a JSON array; each entry has `capability`, `pattern` (string or `null`) and `action` (`allow`, `deny`, `ask`), and `origin` (`profile` or `overlay`), the fields of a bundle's `tools.rules` entry, so rules a bundle emitted can be passed back. Other fields are ignored; an entry of origin `project` is skipped, and any other `origin` fails the command like any bad entry. A `*` rule is `capability: "*"`; an MCP rule is `capability: "mcp"` with `pattern: "server/tool"`. The rules replace the agent's profile and overlay tool rules, order and origin kept, with or without `--agent`; the current `[settings.tools]` is then applied and projected as usual, so `rules`, `covered_by`, `native`, `allowed` and `disallowed` come out as for a profile that had written those rules. The supplied rules also stand in for the `[agents.<name>.tools]` overlay's rules, but with `--agent` an overlay rule entry replaces the same key in `[settings.tools]` only when the supplied rules also hold an `overlay` rule with that key and action (`allowed` and `disallowed` never did). An exemption added or changed after the rules were stored therefore applies from the next new session; until then the project rule joins and the strictest decides. Without `--agent` no exemption applies. An entry that does not parse fails the command with its index and the reason, exit 2, and prints nothing.
 
 **Output JSON structure:**
 
@@ -941,25 +946,23 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` and `native_tools` are empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
-| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed`, `disallowed` or a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; a profile rule with the same key and action is one rule of origin `project`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule |
-| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule can also be empty when a stricter or more specific rule owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed, so emit `native` as given |
+| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed`, `disallowed` or a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; also an `ask` cut down to an agent's own allow, when the agent closes `*`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule, and it keeps the profile's origin |
+| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule is also empty when a stricter rule covers it or owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `Write`, `NotebookEdit` and the `write` allow none, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
-| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, why a stricter rule shadowed it, or why the harness must decide an unresolved overlap. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
+| `covered_by` | Present only when a stricter rule wins every call this rule would match, or every name it has on this harness: `{"action": "deny", "key": "bash(uname *)"}`, the covering rule as its author wrote it. The rule never applies, and `native` and `native_tools` are empty. Test for it with this field, not with an empty `native`. A reader that ignores it stays safe: a covered rule carries no native name to emit. Omitted when the rule is not covered |
+| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, or why a stricter rule left it no native name. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
 
-**`tools.set_aside`** appears only when a project-wide deny covers an agent allow or ask. It lists
-those rules, which are absent from `rules`: each entry has the rule's own `capability`, `pattern`,
-`action` and `origin`, and `by`, the covering project-wide rule in the same shape. A consumer that
-ignores it still gets the right `rules`. For a pair Mars cannot settle, and for the `note` that
-joins several notes with `; `, see
-[Set-aside rules and unsettled pairs](../config/mars-toml.md#set-aside-rules-and-unsettled-pairs).
+**`tools.set_aside`** is always `[]`. It listed the rules a project-wide deny covers; those now
+stay in `rules` with empty `native` and `native_tools`, a `covered_by` and a `note` naming the stricter rule
+(see [Project-wide tool rules](../config/mars-toml.md#project-wide-tool-rules)). It stays for one
+release so a reader of the field keeps working.
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
 a name; `allowed` never reflects an allowlist, and `mcp` never contains server definitions or
-commands. Prefer `rules`. A tool that an allow and a deny
-rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
-puts a `note` on both rules.
+commands. Prefer `rules`. A native name that rules of different actions share goes to the
+strictest, so no name is in both `allowed` and `disallowed`.
 
 Claude path scopes use its permission categories, not every bare tool name:
 `write(path)`, `edit(path)` and `notebook(path)` become `Edit(path)`, while `read(path)`,

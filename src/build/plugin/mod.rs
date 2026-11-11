@@ -264,8 +264,14 @@ fn stage_plugin_inner(
         crate::sync::build_target_state(&graph, &effective, &root_source, None, diag, |_, _| {
             Ok(())
         })?;
-    let mut prepared_target =
-        crate::sync::apply_target_renames(built_target, &graph, &effective, diag)?;
+    let mut prepared_target = crate::sync::apply_target_renames(
+        built_target,
+        &graph,
+        &effective,
+        // The plugin root is a graph node, so its own `[package.tools]` arrives from there.
+        &mars_schema::tool_rule_map::ToolRuleMap::default(),
+        diag,
+    )?;
     // A plugin build has no project-local items and carries no provided skills, so it passes no
     // declarations and no installed record: every ref is judged by what the graph ships.
     let warnings =

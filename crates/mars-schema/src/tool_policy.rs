@@ -23,6 +23,15 @@ impl ToolAction {
         }
     }
 
+    /// How restrictive the action is; the stricter action of two rules that match a call wins.
+    pub fn strictness(self) -> u8 {
+        match self {
+            Self::Allow => 0,
+            Self::Ask => 1,
+            Self::Deny => 2,
+        }
+    }
+
     fn parse(raw: &str) -> Option<Self> {
         match raw {
             "allow" => Some(Self::Allow),
@@ -58,11 +67,10 @@ impl RuleOrigin {
 
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
 ///
-/// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
-/// one is the consuming harness's call. [`EffectiveToolPolicy::project`] settles two cases: a
-/// capability whose native tools are a strict subset of another's wins over it (the narrower
-/// rule wins), and on Claude two scoped rules naming the same native permission resolve to the
-/// stricter action.
+/// Rules are kept in profile order, which carries no precedence: of the rules that match a call,
+/// the strictest action wins (deny, then ask, then allow), however narrow a key is.
+/// [`EffectiveToolPolicy::project`] applies the same order to a native name two rules share, and
+/// gives a rule that a stricter one covers no native name.
 #[derive(Debug, Clone)]
 pub struct ToolRule {
     pub capability: Capability,
@@ -166,16 +174,13 @@ impl EffectiveToolPolicy {
             .iter()
             .any(|rule| rule.is_wildcard() && rule.action == ToolAction::Deny)
     }
-    /// Add `rule` unless an equal one is there. A `Project` rule takes over the origin of the
-    /// equal rule it meets; otherwise the first origin stays.
+    /// Add `rule` unless an equal one is there. The first rule's origin stays: consumers act on
+    /// origin (a continued session replaces `Project` rules with the current ones, and the
+    /// platform `task` opt-out reads only profile and overlay rules), and the rule already
+    /// held says what the copy would.
     pub fn push_unique(&mut self, rule: ToolRule) {
-        match self.rules.iter_mut().find(|existing| **existing == rule) {
-            Some(existing) => {
-                if rule.origin == RuleOrigin::Project {
-                    existing.origin = RuleOrigin::Project;
-                }
-            }
-            None => self.rules.push(rule),
+        if !self.rules.contains(&rule) {
+            self.rules.push(rule);
         }
     }
 }
@@ -406,8 +411,6 @@ mod tests {
         assert_eq!(policy.rules[0].origin, RuleOrigin::Profile);
         policy.push_unique(rule(RuleOrigin::Project));
         assert_eq!(policy.rules.len(), 1);
-        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
-        policy.push_unique(rule(RuleOrigin::Profile));
-        assert_eq!(policy.rules[0].origin, RuleOrigin::Project);
+        assert_eq!(policy.rules[0].origin, RuleOrigin::Profile);
     }
 }

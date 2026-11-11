@@ -7,6 +7,7 @@ mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
 pub(crate) mod package_dir;
+mod package_tools;
 pub mod plan;
 pub(crate) mod recovery;
 pub mod rewrite;
@@ -264,6 +265,14 @@ pub(crate) fn load_config(
     let (effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
+    diag.extend(
+        crate::diagnostic::compatibility_preflight(
+            env!("CARGO_PKG_VERSION"),
+            effective.settings.min_mars_version.as_deref(),
+        )
+        .into_iter()
+        .collect(),
+    );
 
     if request.options.ignore_requires_mars {
         diag.warn_advisory(
@@ -460,6 +469,7 @@ pub(crate) fn apply_target_renames(
     built: BuiltTarget,
     graph: &crate::resolve::ResolvedGraph,
     effective: &EffectiveConfig,
+    local_tools: &mars_schema::tool_rule_map::ToolRuleMap,
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedTarget, MarsError> {
     let BuiltTarget {
@@ -474,6 +484,7 @@ pub(crate) fn apply_target_renames(
             diag.warn_advisory("rewrite-warning", warning);
         }
     }
+    package_tools::fold(&mut target, graph, local_tools, diag);
 
     Ok(PreparedTarget {
         target,
@@ -556,12 +567,27 @@ pub(crate) fn build_target(
         built.target.items.shift_remove(&collision.path);
     }
 
+    // The project's own package ships its `.mars-src/` agents; a project with no `[package]`
+    // ships none.
+    let no_tools = mars_schema::tool_rule_map::ToolRuleMap::default();
+    let local_tools = resolved
+        .loaded
+        .config
+        .package
+        .as_ref()
+        .map_or(&no_tools, |package| &package.tools);
     let PreparedTarget {
         target: target_state,
         explicit_renames: renames,
         collision_renames,
         ..
-    } = apply_target_renames(built, &resolved.graph, &resolved.loaded.effective, diag)?;
+    } = apply_target_renames(
+        built,
+        &resolved.graph,
+        &resolved.loaded.effective,
+        local_tools,
+        diag,
+    )?;
 
     let warnings = validate::validate_skill_refs(
         &target_state,

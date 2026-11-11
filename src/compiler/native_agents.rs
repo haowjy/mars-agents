@@ -1282,7 +1282,10 @@ fn warn_unsettled(
         return;
     };
     let rest = if pairs.len() > 1 {
-        format!(" and {} more pair(s)", pairs.len() - 1)
+        match pairs.len() - 1 {
+            1 => " and 1 more pair".to_string(),
+            n => format!(" and {n} more pairs"),
+        }
     } else {
         String::new()
     };
@@ -1294,10 +1297,11 @@ fn warn_unsettled(
     diag.warn(
         "tool-rule-unsettled",
         format!(
-            "project-wide `{project}` may not hold on {} against `{agent_rule}` in {} ({} agent(s)){rest}: the keys may overlap, and outside Claude the agent's rule can outrank the deny. Narrow one key, or state the exemption in `[agents.<name>.tools]`{hint}",
+            "project-wide `{project}` may not hold on {} against `{agent_rule}` in {} ({} {}){rest}: the keys may overlap, and outside Claude the agent's rule can outrank the deny. Narrow one key, or state the exemption in `[agents.<name>.tools]`{hint}",
             targets.join(", "),
             agents.join(", "),
             agents.len(),
+            if agents.len() == 1 { "agent" } else { "agents" },
         ),
     );
     if diag.verbose() {

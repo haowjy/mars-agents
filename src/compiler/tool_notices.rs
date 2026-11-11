@@ -64,8 +64,9 @@ pub(crate) fn tool_rule_notices(
         notes.push(info(
             "tool-rule-set-aside",
             format!(
-                "`{rule}` is set aside because the project-wide `{by}` covers it, in {} agent(s): {}",
+                "`{rule}` is set aside because the project-wide `{by}` covers it, in {} {}: {}",
                 names.len(),
+                if names.len() == 1 { "agent" } else { "agents" },
                 names.join(", "),
             ),
         ));

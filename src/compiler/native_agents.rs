@@ -1188,21 +1188,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).
     let resolved = resolve_native_agent_profiles(&scan.agents, tool_config);
-    for agent in &resolved {
-        for pair in &agent.settlement.unsettled {
-            diag.warn(
-                "tool-rule-unsettled",
-                format!(
-                    "agent `{}`: project-wide `deny {}` may not hold against the agent's `{} {}`: the keys may overlap, and outside Claude the agent's rule can outrank the deny. Narrow one key, or state the exemption in `[agents.{}.tools]`",
-                    agent.agent_name,
-                    pair.project.render(),
-                    pair.agent.action.as_str(),
-                    pair.agent.render(),
-                    agent.agent_name,
-                ),
-            );
-        }
-    }
+    warn_unsettled(&resolved, compile_ctx, diag);
     let desired = desired_native_agent_outputs(
         policy,
         &resolved,
@@ -1248,6 +1234,80 @@ pub(crate) fn installed_agent_tools(
         .collect();
     agents.sort_by(|a, b| a.0.cmp(&b.0));
     agents
+}
+
+/// One roll-up line for every project-wide deny that an agent rule of overlapping scope may
+/// override. Claude settles it (every deny before any allow), so only the other configured
+/// targets can be affected; with none, there is nothing to say.
+fn warn_unsettled(
+    resolved: &[MarsCanonicalAgent],
+    compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
+    diag: &mut DiagnosticCollector,
+) {
+    use mars_schema::HarnessId;
+
+    let Some(ctx) = compile_ctx else { return };
+    let targets: Vec<&str> = ctx
+        .configured_emit_harnesses
+        .iter()
+        .filter(|harness| **harness != HarnessId::Claude)
+        .filter(|harness| {
+            ctx.harness_scope
+                .is_none_or(|scope| scope.contains(harness))
+        })
+        .map(|harness| crate::harness::registry::descriptor(*harness).default_target)
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+
+    // (project-wide rule, agent rule) -> agents holding the pair.
+    let mut pairs: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+    for agent in resolved {
+        for pair in &agent.settlement.unsettled {
+            let key = (
+                format!("deny {}", pair.project.render()),
+                format!("{} {}", pair.agent.action.as_str(), pair.agent.render()),
+            );
+            let agents = pairs.entry(key).or_default();
+            if !agents.contains(&agent.agent_name.as_str()) {
+                agents.push(&agent.agent_name);
+            }
+        }
+    }
+    for agents in pairs.values_mut() {
+        agents.sort_unstable();
+    }
+    let Some(((project, agent_rule), agents)) = pairs.iter().next() else {
+        return;
+    };
+    let rest = if pairs.len() > 1 {
+        format!(" and {} more pair(s)", pairs.len() - 1)
+    } else {
+        String::new()
+    };
+    let hint = if diag.verbose() {
+        ""
+    } else {
+        "; `mars sync --verbose` lists every pair"
+    };
+    diag.warn(
+        "tool-rule-unsettled",
+        format!(
+            "project-wide `{project}` may not hold on {} against `{agent_rule}` in {} ({} agent(s)){rest}: the keys may overlap, and outside Claude the agent's rule can outrank the deny. Narrow one key, or state the exemption in `[agents.<name>.tools]`{hint}",
+            targets.join(", "),
+            agents.join(", "),
+            agents.len(),
+        ),
+    );
+    if diag.verbose() {
+        for ((project, agent_rule), agents) in &pairs {
+            diag.info(
+                "tool-rule-unsettled",
+                format!("`{project}` against `{agent_rule}`: {}", agents.join(", ")),
+            );
+        }
+    }
 }
 
 /// Apply each agent's overlay over its canonical profile, yielding agents whose

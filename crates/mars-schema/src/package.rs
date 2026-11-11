@@ -5,10 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::tool_rule_map::ToolRuleMap;
 
-/// The first Mars release that reads schema 1. An older one reads a `schema = 1` package as
-/// pre-v1, so a schema v1 package's `requires-mars` may not admit one.
-pub const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
-
 /// Parse a `requires-mars` or `requires-meridian` requirement. A bare version means `>=` it
 /// (`0.19.0` is `>=0.19.0`), as `mars.toml` documents both fields.
 pub fn parse_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
@@ -72,7 +68,7 @@ fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
 pub fn schema_1_requires_mars_warning(requirement: Option<&str>) -> Option<String> {
     requires_mars_floor_warning(
         requirement,
-        SCHEMA_1_MARS_FLOOR,
+        crate::keys::since(crate::keys::Surface::Package, "schema"),
         "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
     )
 }

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::keys::{self, Rewrite, Surface};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -61,87 +63,16 @@ impl SchemaDiagnostic {
     }
 }
 
-/// A frontmatter key a schema version removed, as the reader and the legacy upgrade share it.
-/// `advice` is what the reader tells the author. A `discarded` key has no replacement, so the
-/// upgrade and the foreign-dialect import drop it with a warning; every other removed key is
-/// renamed or moved by the upgrade, or left for the author. Every discarded Agent key is one
-/// only pre-v1 Mars defined, so `lift_mars_only_keys` drops it from a definition read as any
-/// dialect.
-pub(crate) struct RemovedField {
-    pub key: &'static str,
-    pub advice: &'static str,
-    pub discarded: bool,
-}
-
-impl RemovedField {
-    pub(crate) const fn replaced(key: &'static str, advice: &'static str) -> Self {
-        Self {
-            key,
-            advice,
-            discarded: false,
-        }
-    }
-
-    pub(crate) const fn discarded(key: &'static str, advice: &'static str) -> Self {
-        Self {
-            key,
-            advice,
-            discarded: true,
-        }
-    }
-}
-
-/// A value a schema version removed from a field that remains. The reader reports it, and
-/// `lift_mars_only_keys` rewrites it to `replacement` in a definition read as any dialect.
-pub(crate) struct RemovedValue {
-    pub key: &'static str,
-    pub value: &'static str,
-    pub replacement: &'static str,
-}
-
-impl RemovedValue {
-    pub(crate) const fn new(
-        key: &'static str,
-        value: &'static str,
-        replacement: &'static str,
-    ) -> Self {
-        Self {
-            key,
-            value,
-            replacement,
-        }
-    }
-
-    /// The entry for `value` in `key`, when `removed` lists that pair.
-    pub(crate) fn find<'a>(removed: &'a [Self], key: &str, value: &str) -> Option<&'a Self> {
-        removed
-            .iter()
-            .find(|entry| entry.key == key && entry.value == value)
-    }
-
-    pub(crate) fn diagnostic(&self) -> SchemaDiagnostic {
-        SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path(self.key),
-            format!(
-                "{} value `{}` was removed; use `{}`",
-                self.key, self.value, self.replacement
-            ),
-        )
-    }
-}
-
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when `removed` lists it, else `field.unknown` (a warning). An unknown key stays in the
+/// error) when the key table removes it on `surface`, else `field.unknown` (a warning). An unknown key stays in the
 /// authored file and reaches no native file.
-pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaDiagnostic {
-    match removed.iter().find(|field| field.key == key) {
-        Some(field) => SchemaDiagnostic::new(
+pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnostic {
+    match keys::removed_key(surface, key) {
+        Some((_, removal)) => SchemaDiagnostic::new(
             "field.removed",
             Severity::Error,
             key_path(key),
-            format!("`{key}` was removed; {}", field.advice),
+            format!("`{key}` was removed; {}", removal.advice),
         ),
         None => SchemaDiagnostic::new(
             "field.unknown",
@@ -152,6 +83,21 @@ pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaD
             ),
         ),
     }
+}
+
+/// What the reader reports for a value the key table removed from a field that remains. The legacy
+/// upgrade rewrites it to the row's replacement.
+pub(crate) fn removed_value(surface: Surface, key: &str, value: &str) -> Option<SchemaDiagnostic> {
+    let (_, removal) = keys::removed_value_of(surface, key, value)?;
+    let Rewrite::Value(replacement) = removal.rewrite else {
+        return None;
+    };
+    Some(SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Error,
+        key_path(key),
+        format!("{key} value `{value}` was removed; use `{replacement}`"),
+    ))
 }
 
 /// A bad value for a field the item kind defines (`kind` is the noun in the message).

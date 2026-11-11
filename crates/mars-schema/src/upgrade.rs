@@ -8,10 +8,8 @@ use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
-use crate::{
-    agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
-    skill,
-};
+use crate::keys::{self, Rewrite, Surface};
+use crate::skill;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
@@ -141,9 +139,11 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     let mut diagnostics = Vec::new();
     let mut edited_paths = vec![package_path("schema")];
     package.insert("schema", toml_edit::value(1));
-    if package.remove("visibility").is_some() {
-        diagnostics.push(removed(&["package", "visibility"], "visibility"));
-        edited_paths.push(package_path("visibility"));
+    for key in keys::dropped_keys(Surface::Package) {
+        if package.remove(key).is_some() {
+            diagnostics.push(removed(&["package", key], key));
+            edited_paths.push(package_path(key));
+        }
     }
     Ok(UpgradeResult {
         text: with_line_ending_of(text, document.to_string()),
@@ -186,7 +186,7 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     {
         table.insert(
             "requires-mars",
-            toml_edit::value(format!(">={}", crate::package::SCHEMA_1_MARS_FLOOR)),
+            toml_edit::value(format!(">={}", keys::since(Surface::Package, "schema"))),
         );
         return Ok(FloorOutcome {
             text: with_line_ending_of(text, document.to_string()),
@@ -545,13 +545,15 @@ pub(crate) fn lift_mars_only_keys(
     if kind == DefinitionKind::Agent {
         merge_host_set_spellings(fm, "network_allow", "network-allow");
         merge_host_set_spellings(fm, "network_deny", "network-deny");
-        for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
-            if fm.remove(field.key).is_some() {
-                notes.push(removed(&[field.key], field.key));
+        for key in keys::dropped_keys(Surface::AgentProfile) {
+            if fm.remove(key).is_some() {
+                notes.push(removed(&[key], key));
             }
         }
-        for removed in REMOVED_AGENT_VALUES {
-            replace_scalar(fm, removed.key, removed.value, removed.replacement);
+        for (row, removal) in keys::removals(Surface::AgentProfile) {
+            if let (Some(value), Rewrite::Value(replacement)) = (row.value, removal.rewrite) {
+                replace_scalar(fm, row.key, value, replacement);
+            }
         }
         move_agent_fields(fm, notes);
         strip_model_policy_overrides(fm, notes);

@@ -51,3 +51,13 @@ and rules, so never add a binary-side copy.
 - Keep frontmatter size and nesting limits: YAML scanning grows quadratically with
   nesting, so a size limit alone does not bound parse time. Keep semantic parsing and
   structural scanning distinct when changing YAML handling.
+
+## Config keys
+
+`keys::KEYS` is the one table of config keys: which surfaces a key appears on, the Mars
+that first read it (`since`), whether a value restricts, and whether it is current, an
+alias, deprecated or removed, with the advice or rewrite. Add a new key as a row and
+nowhere else: no removed-key list, version-floor constant or per-key check beside the
+table. A reader asks `keys::removed_key`, `keys::removals`, `keys::dropped_keys` or
+`keys::since`. `Removal::warns_on` records the surfaces that still warn where others
+error; it exists to keep behavior unchanged until the surfaces agree, so don't add to it.

@@ -262,14 +262,10 @@ fn scoped_bash_allow_is_not_a_lost_restriction() {
     assert!(!quiet.contains("loses restrictions"), "{quiet}");
     assert!(!verbose.contains("only this"), "{verbose}");
 
-    let (quiet, verbose) = sync_tools_agent("  \"bash(rg *)\": allow\n  bash: deny\n");
+    let (quiet, _) = sync_tools_agent("  \"bash(rg *)\": allow\n  bash: deny\n");
     assert!(
         quiet.contains("loses restrictions") && quiet.contains(".codex"),
         "{quiet}"
-    );
-    assert!(
-        verbose.contains("allow bash(rg *)"),
-        "shadowed allow recorded on .claude: {verbose}"
     );
 }
 

@@ -7,8 +7,7 @@ use std::path::PathBuf;
 
 use crate::compiler::effective_tools::Settlement;
 use crate::compiler::tool_policy::{
-    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, UNSETTLED_NOTE,
-    project_platform_capability,
+    NativeStatus, RuleKind, ToolPolicyRuntime, UNSETTLED_NOTE, project_platform_capability,
 };
 use crate::content::ContentRoots;
 use bundle::{
@@ -244,14 +243,12 @@ fn resolve_bundle_tools(
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
     let projection = profile.tools.project(descriptor.kind);
-    let overlaps = projection.overlaps();
 
     let rules = projection
         .rules()
         .iter()
         .map(|(rule, projected)| {
             let native = projected.native();
-            let shares_a_tool = native.iter().any(|native| overlaps.contains(native));
             // Claude checks every deny before any allow, so its order already holds.
             let unsettled = descriptor.kind != HarnessId::Claude
                 && rule.origin == RuleOrigin::Project
@@ -264,10 +261,7 @@ fn resolve_bundle_tools(
                 native,
                 native_tools: projected.native_tools(),
                 native_status: projected.status.map(NativeStatus::as_str),
-                note: join_notes(
-                    unsettled.then_some(UNSETTLED_NOTE),
-                    projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
-                ),
+                note: join_notes(unsettled.then_some(UNSETTLED_NOTE), projected.note()),
             }
         })
         .collect();

@@ -68,7 +68,6 @@ pub(super) fn losses(
     let projection = tools.project(harness);
     let mut lost: Vec<(Lost, String)> = Vec::new();
     let mut covered: Vec<String> = Vec::new();
-    let mut shadowed: Vec<String> = Vec::new();
     let mut project: Vec<ProjectLoss> = Vec::new();
 
     for (rule, projected) in projection.rules() {
@@ -90,21 +89,6 @@ pub(super) fn losses(
                         DenyCarry::All => true,
                     };
                 if carried {
-                    // The file's unscoped deny blocks the capability outright, so the scoped
-                    // allows beside it are not written anywhere in this file.
-                    if rule.pattern.is_none() {
-                        shadowed.extend(
-                            tools
-                                .rules
-                                .iter()
-                                .filter(|other| {
-                                    other.action == ToolAction::Allow
-                                        && other.pattern.is_some()
-                                        && other.capability == rule.capability
-                                })
-                                .map(|other| format!("allow {}", other.render())),
-                        );
-                    }
                     continue;
                 }
                 if carries.writes_covered && is_file_write(rule) {
@@ -147,15 +131,6 @@ pub(super) fn losses(
             target: target.into(),
             classification: Lossiness::Quiet {
                 why: SANDBOX_COVERS_WRITES,
-            },
-        });
-    }
-    if !shadowed.is_empty() {
-        fields.push(LossyField {
-            field: format!("tools ({})", shadowed.join(", ")),
-            target: target.into(),
-            classification: Lossiness::Quiet {
-                why: "an unscoped deny of the same tool in this file blocks the scoped allows",
             },
         });
     }

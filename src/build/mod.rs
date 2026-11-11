@@ -1,3 +1,4 @@
+pub(crate) mod agent_rules;
 pub mod bundle;
 pub mod plugin;
 pub mod policy;
@@ -38,6 +39,8 @@ pub struct LaunchBundleRequest {
     pub network_allow: Vec<NetworkHost>,
     pub network_deny: Vec<NetworkHost>,
     pub extra_skills: Vec<String>,
+    /// Replaces the agent's profile and overlay tool rules; see `--agent-tool-rules`.
+    pub agent_tool_rules: Option<Vec<mars_schema::tool_policy::ToolRule>>,
     pub models_refresh: crate::models::ModelsRefreshControl,
 }
 
@@ -106,15 +109,21 @@ pub fn build_launch_bundle(
         .into());
     }
     warnings.extend(effective_project_config.warnings.iter().cloned());
-    let effective_tools = crate::compiler::effective_tools::effective_tools(
-        &effective_project_config.settings.tools,
-        &profile.tools,
-        request
-            .agent
-            .as_deref()
-            .and_then(|agent| effective_project_config.agents.get(agent))
-            .map(|overlay| &overlay.tools),
-    );
+    let effective_tools = match request.agent_tool_rules.take() {
+        Some(rules) => crate::compiler::effective_tools::effective_tools_for_rules(
+            &effective_project_config.settings.tools,
+            rules,
+        ),
+        None => crate::compiler::effective_tools::effective_tools(
+            &effective_project_config.settings.tools,
+            &profile.tools,
+            request
+                .agent
+                .as_deref()
+                .and_then(|agent| effective_project_config.agents.get(agent))
+                .map(|overlay| &overlay.tools),
+        ),
+    };
     profile.tools = effective_tools;
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),

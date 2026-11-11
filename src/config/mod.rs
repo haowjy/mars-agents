@@ -1126,7 +1126,6 @@ fn project_config_warnings(
             }
         }
     }
-    warnings.extend(project_tool_rules_version_warning(config));
     for (name, overlay) in &config.agents {
         warnings.extend(tool_overlay_warnings(
             "mars.toml",
@@ -1144,38 +1143,6 @@ fn project_config_warnings(
         ));
     }
     warnings
-}
-
-/// The first Mars that reads project-wide tool rules and the rule entries of
-/// `[agents.<name>.tools]`. An older one ignores both without a word, so a deny written there
-/// does nothing until `min_mars_version` stops it from running.
-const TOOL_RULES_SINCE: &str = "0.29.0";
-
-fn project_tool_rules_version_warning(config: &Config) -> Option<ProjectConfigWarning> {
-    let uses_rules = !config.settings.tools.is_empty()
-        || config
-            .agents
-            .values()
-            .any(|overlay| !overlay.tools.rules.is_empty());
-    if !uses_rules {
-        return None;
-    }
-    let guarded = config
-        .settings
-        .min_mars_version
-        .as_deref()
-        .and_then(crate::diagnostic::parse_semver)
-        .zip(crate::diagnostic::parse_semver(TOOL_RULES_SINCE))
-        .is_some_and(|(required, since)| required >= since);
-    if guarded {
-        return None;
-    }
-    Some(ProjectConfigWarning {
-        code: "tool-rules-min-version",
-        message: format!(
-            "mars.toml sets tool rules ([settings.tools] or a rule in [agents.<name>.tools]), which Mars before {TOOL_RULES_SINCE} ignores without a word; set `min_mars_version = \"{TOOL_RULES_SINCE}\"` in [settings] so an older Mars refuses this project instead"
-        ),
-    })
 }
 
 fn tool_overlay_warnings(
@@ -1890,24 +1857,6 @@ override = { effort = "high" }
                 "{error}"
             );
         }
-    }
-
-    #[test]
-    fn tool_rules_without_a_new_enough_min_mars_version_warn() {
-        let warns = |source: &str| {
-            let config: Config = toml::from_str(source).unwrap();
-            project_tool_rules_version_warning(&config).is_some()
-        };
-        let rules = "[settings.tools]\nbash = \"deny\"\n";
-        assert!(warns(rules));
-        assert!(warns(&format!(
-            "{rules}[settings]\nmin_mars_version = \"0.28.9\"\n"
-        )));
-        assert!(!warns(&format!(
-            "{rules}\n[settings]\nmin_mars_version = \"0.29.0\"\n"
-        )));
-        assert!(!warns("[settings]\ntargets = [\".claude\"]\n"));
-        assert!(warns("[agents.a.tools]\nbash = \"deny\"\n"));
     }
 
     #[test]

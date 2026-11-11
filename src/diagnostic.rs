@@ -457,7 +457,7 @@ pub fn compatibility_preflight(
 }
 
 /// Minimal semver parser: returns `(major, minor, patch)` tuple from "X.Y.Z" or "vX.Y.Z".
-pub(crate) fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
+fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
     let s = s.trim_start_matches('v');
     let parts: Vec<&str> = s.split('.').collect();
     if parts.len() < 3 {

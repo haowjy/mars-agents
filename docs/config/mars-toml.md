@@ -421,9 +421,6 @@ with no agent. It takes the keys of a profile's `tools:` map (`bash(pkill -f *)`
 `read(secret/**)`, `mcp(github)`), with the same normalization.
 
 ```toml
-[settings]
-min_mars_version = "0.29.0"
-
 [settings.tools]
 "bash(pkill -f *)" = "deny"
 "bash(killall *)" = "deny"
@@ -466,9 +463,11 @@ min_mars_version = "0.29.0"
   nothing about it: `mars validate` lists each as `info`, which `--strict` leaves alone, and the
   launch bundle lists them under `tools.set_aside`. `mars check`, `mars init` and the plugin
   build never see these rules, since they preview or build a package for other projects.
-- **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]` and rule entries silently, so a
-  deny written there does nothing. Set `min_mars_version = "0.29.0"` in `[settings]`; without it,
-  Mars warns (`tool-rules-min-version`). The user config has no such guard.
+- **Older Mars.** A Mars older than the release that adds these keys ignores `[settings.tools]`
+  and rule entries without a word, so the deny does nothing there. A project that relies on a
+  project-wide deny must make sure everyone's Mars is new enough. `min_mars_version` is no guard
+  for this: only `mars validate` reports it; `mars sync` and `mars build launch-bundle` do not
+  check it.
 
 ### User config
 

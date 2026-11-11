@@ -74,7 +74,10 @@ impl<'de> Deserialize<'de> for ToolRuleMap {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut entries: Vec<(OverlayToolName, ToolAction)> = Vec::new();
-                while let Some((raw, action)) = map.next_entry::<String, ToolAction>()? {
+                while let Some(raw) = map.next_key::<String>()? {
+                    let action = map
+                        .next_value::<ToolAction>()
+                        .map_err(|error| A::Error::custom(format!("`{raw}`: {error}")))?;
                     let name = OverlayToolName::try_from(raw).map_err(A::Error::custom)?;
                     if let Some((earlier, _)) = entries
                         .iter()

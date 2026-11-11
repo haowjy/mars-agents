@@ -19,7 +19,9 @@ use mars_schema::names::{RenameMap, SourceSubpath};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::PermissionSet;
-use mars_schema::tool_names::OverlayToolName;
+use mars_schema::tool_names::{Capability, OverlayToolName};
+use mars_schema::tool_policy::ToolAction;
+use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
 pub mod migrations;
@@ -142,16 +144,22 @@ struct SourceManifestSections {
     models: IndexMap<String, crate::models::ModelAlias>,
 }
 
-/// Structured tool-policy overrides in `[agents.<name>]` (`tools.allowed` / `disallowed`).
+/// Tool-policy overrides in `[agents.<name>.tools]`: the `allowed` / `disallowed` lists, and
+/// rules written as `"bash(git push *)" = "ask"`.
 ///
 /// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
-/// fails `mars.toml` instead of reaching the policy.
+/// fails `mars.toml` instead of reaching the policy. `allowed` and `disallowed` are not tool
+/// names, so a string-valued key beside them is a rule; any other value stays in `unknown`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(try_from = "RawAgentOverlayTools")]
 pub struct AgentOverlayTools {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed: Option<PermissionSet<OverlayToolName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disallowed: Option<PermissionSet<OverlayToolName>>,
+    /// Entries that replace the same key in the profile and in `[settings.tools]`.
+    #[serde(flatten, default, skip_serializing_if = "ToolRuleMap::is_empty")]
+    pub rules: ToolRuleMap,
     /// Keys Mars does not read here (a retired `mcp`); kept so a stale one can be reported.
     #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) unknown: BTreeMap<String, toml::Value>,
@@ -159,7 +167,46 @@ pub struct AgentOverlayTools {
 
 impl AgentOverlayTools {
     pub fn is_empty(&self) -> bool {
-        self.allowed.is_none() && self.disallowed.is_none()
+        self.allowed.is_none() && self.disallowed.is_none() && self.rules.is_empty()
+    }
+}
+
+#[derive(Deserialize)]
+struct RawAgentOverlayTools {
+    #[serde(default)]
+    allowed: Option<PermissionSet<OverlayToolName>>,
+    #[serde(default)]
+    disallowed: Option<PermissionSet<OverlayToolName>>,
+    #[serde(flatten)]
+    rest: IndexMap<String, toml::Value>,
+}
+
+impl TryFrom<RawAgentOverlayTools> for AgentOverlayTools {
+    type Error = String;
+
+    fn try_from(raw: RawAgentOverlayTools) -> Result<Self, String> {
+        let mut entries = Vec::new();
+        let mut unknown = BTreeMap::new();
+        for (key, value) in raw.rest {
+            match value {
+                toml::Value::String(action) => entries.push((key, action)),
+                other => {
+                    unknown.insert(key, other);
+                }
+            }
+        }
+        let rules = ToolRuleMap::deserialize(serde::de::value::MapDeserializer::<
+            '_,
+            _,
+            serde::de::value::Error,
+        >::new(entries.into_iter()))
+        .map_err(|error| error.to_string())?;
+        Ok(Self {
+            allowed: raw.allowed,
+            disallowed: raw.disallowed,
+            rules,
+            unknown,
+        })
     }
 }
 
@@ -301,6 +348,8 @@ pub struct LocalSettings {
     )]
     pub network_deny: Option<PermissionSet<NetworkHost>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ToolRuleMap>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_order: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_order: Option<Vec<String>>,
@@ -375,6 +424,9 @@ pub struct Settings {
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
+    /// Tool rules for every agent and for a launch with no agent. Takes `deny` only.
+    #[serde(default, skip_serializing_if = "ToolRuleMap::is_empty")]
+    pub tools: ToolRuleMap,
     /// Ordered harness preference for launch-bundle candidate selection.
     ///
     /// When set, replaces built-in provider preference ordering for candidate
@@ -715,6 +767,7 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
     let config: Config = parse_without_removed_visibility(content, path)?;
     validate_agent_overlays(path, &config.agents)?;
+    validate_project_tools(path, Some(&config.settings.tools))?;
     Ok(config)
 }
 
@@ -750,6 +803,7 @@ pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
         Ok(content) => {
             let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
             validate_agent_overlays(&path, &local.agents)?;
+            validate_project_tools(&path, local.settings.tools.as_ref())?;
             Ok(local)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -922,6 +976,35 @@ fn stale_overlay_warnings(
     warnings
 }
 
+/// `[settings.tools]` takes `deny` only in this release, and no `*`: a project-wide `allow` or
+/// `ask` needs rules Mars does not apply yet, and `*` would turn every agent into an allowlist
+/// or sit ahead of every profile's `approval`.
+pub(crate) fn validate_project_tools(
+    file: &Path,
+    tools: Option<&ToolRuleMap>,
+) -> Result<(), MarsError> {
+    for (name, action) in tools.into_iter().flat_map(ToolRuleMap::iter) {
+        let key = String::from(name.clone());
+        let problem = if name.parsed().capability == Capability::Any {
+            "`*` is not accepted: `approval` is the default for calls no rule matches"
+        } else if action != ToolAction::Deny {
+            "only `deny` is accepted in this release; `allow` and `ask` arrive in the next. To \
+             let one agent do something, use `[agents.<name>.tools]`"
+        } else {
+            continue;
+        };
+        return Err(ConfigError::Invalid {
+            message: format!(
+                "{}: [settings.tools] `{key}` = \"{}\": {problem}",
+                file.display(),
+                action.as_str()
+            ),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 /// `approval` and `sandbox` in an overlay take the same values as in an Agent file (`effort` is
 /// typed, so an invalid one fails when `mars.toml` is read).
 fn validate_agent_overlays(
@@ -1043,6 +1126,7 @@ fn project_config_warnings(
             }
         }
     }
+    warnings.extend(project_tool_rules_version_warning(config));
     for (name, overlay) in &config.agents {
         warnings.extend(tool_overlay_warnings(
             "mars.toml",
@@ -1060,6 +1144,38 @@ fn project_config_warnings(
         ));
     }
     warnings
+}
+
+/// The first Mars that reads project-wide tool rules and the rule entries of
+/// `[agents.<name>.tools]`. An older one ignores both without a word, so a deny written there
+/// does nothing until `min_mars_version` stops it from running.
+const TOOL_RULES_SINCE: &str = "0.29.0";
+
+fn project_tool_rules_version_warning(config: &Config) -> Option<ProjectConfigWarning> {
+    let uses_rules = !config.settings.tools.is_empty()
+        || config
+            .agents
+            .values()
+            .any(|overlay| !overlay.tools.rules.is_empty());
+    if !uses_rules {
+        return None;
+    }
+    let guarded = config
+        .settings
+        .min_mars_version
+        .as_deref()
+        .and_then(crate::diagnostic::parse_semver)
+        .zip(crate::diagnostic::parse_semver(TOOL_RULES_SINCE))
+        .is_some_and(|(required, since)| required >= since);
+    if guarded {
+        return None;
+    }
+    Some(ProjectConfigWarning {
+        code: "tool-rules-min-version",
+        message: format!(
+            "mars.toml sets tool rules ([settings.tools] or a rule in [agents.<name>.tools]), which Mars before {TOOL_RULES_SINCE} ignores without a word; set `min_mars_version = \"{TOOL_RULES_SINCE}\"` in [settings] so an older Mars refuses this project instead"
+        ),
+    })
 }
 
 fn tool_overlay_warnings(
@@ -1685,6 +1801,113 @@ override = { effort = "high" }
             let error = toml::from_str::<Config>(source).unwrap_err().to_string();
             assert!(error.contains("invalid network host"), "{error}");
         }
+    }
+
+    fn rule_keys(map: &ToolRuleMap) -> Vec<String> {
+        map.iter()
+            .map(|(name, action)| format!("{}={}", String::from(name.clone()), action.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn tool_rules_layer_by_key_across_the_three_files() {
+        let user: LocalConfig = toml::from_str(
+            "[settings.tools]\nbash = \"deny\"\nread = \"deny\"\n[agents.a.tools]\n\"bash(git push *)\" = \"ask\"\nallowed = [\"read\"]\n",
+        )
+        .unwrap();
+        let config: Config = toml::from_str(
+            "[settings.tools]\nshell = \"deny\"\nweb = \"deny\"\n[agents.a.tools]\n\"bash(git push:*)\" = \"allow\"\n",
+        )
+        .unwrap();
+        let local: LocalConfig = toml::from_str(
+            "[settings.tools]\n\"Web\" = \"deny\"\n[agents.a.tools]\nedit = \"deny\"\n",
+        )
+        .unwrap();
+
+        let layers = compose_layers(&config, &local, &user);
+        assert_eq!(
+            rule_keys(&layers.settings.tools),
+            ["read=deny", "shell=deny", "Web=deny"]
+        );
+        let tools = &layers.agents["a"].tools;
+        assert_eq!(
+            rule_keys(&tools.rules),
+            ["bash(git push:*)=allow", "edit=deny"]
+        );
+        assert!(tools.allowed.is_some(), "the lists still compose");
+    }
+
+    #[test]
+    fn overlay_tools_table_splits_lists_rules_and_stale_keys() {
+        let config: Config = toml::from_str(
+            "[agents.a.tools]\nallowed = [\"bash\"]\nweb = \"ask\"\n\"*\" = \"deny\"\nmcp = [\"x\"]\n",
+        )
+        .unwrap();
+        let tools = &config.agents["a"].tools;
+        assert!(tools.allowed.is_some());
+        assert_eq!(rule_keys(&tools.rules), ["web=ask", "*=deny"]);
+        assert!(tools.unknown.contains_key("mcp"));
+        // What the user wrote saves back as written.
+        let saved = toml::to_string(&config).unwrap();
+        assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+
+        for (source, expect) in [
+            ("[agents.a.tools]\nbash = \"block\"\n", "`bash`"),
+            ("[agents.a.tools]\nstray = \"yes\"\n", "`stray`"),
+            (
+                "[agents.a.tools]\n\"bash(\" = \"deny\"\n",
+                "invalid tool name",
+            ),
+            (
+                "[agents.a.tools]\nBash = \"deny\"\nbash = \"ask\"\n",
+                "name the same tool",
+            ),
+        ] {
+            let error = toml::from_str::<Config>(source).unwrap_err().to_string();
+            assert!(error.contains(expect), "{source}: {error}");
+        }
+    }
+
+    #[test]
+    fn settings_tools_take_deny_and_nothing_else() {
+        let file = Path::new("mars.toml");
+        let check = |source: &str| {
+            let config: Config = toml::from_str(source).unwrap();
+            validate_project_tools(file, Some(&config.settings.tools))
+        };
+        assert!(check("[settings.tools]\n\"bash(git *)\" = \"deny\"\n").is_ok());
+        for (source, expect) in [
+            (
+                "[settings.tools]\n\"*\" = \"deny\"\n",
+                "`*` is not accepted",
+            ),
+            ("[settings.tools]\nbash = \"allow\"\n", "arrive in the next"),
+            ("[settings.tools]\nbash = \"ask\"\n", "arrive in the next"),
+        ] {
+            let error = check(source).unwrap_err().to_string();
+            assert!(
+                error.contains(expect) && error.contains("mars.toml"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_rules_without_a_new_enough_min_mars_version_warn() {
+        let warns = |source: &str| {
+            let config: Config = toml::from_str(source).unwrap();
+            project_tool_rules_version_warning(&config).is_some()
+        };
+        let rules = "[settings.tools]\nbash = \"deny\"\n";
+        assert!(warns(rules));
+        assert!(warns(&format!(
+            "{rules}[settings]\nmin_mars_version = \"0.28.9\"\n"
+        )));
+        assert!(!warns(&format!(
+            "{rules}\n[settings]\nmin_mars_version = \"0.29.0\"\n"
+        )));
+        assert!(!warns("[settings]\ntargets = [\".claude\"]\n"));
+        assert!(warns("[agents.a.tools]\nbash = \"deny\"\n"));
     }
 
     #[test]

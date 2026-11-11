@@ -6,6 +6,7 @@ use super::{
     AgentOverlay, AgentOverlayTools, Config, LocalConfig, LocalSettings, Settings, SkillOverlay,
 };
 use mars_schema::permission_set::{PermissionSet, compose_permission_sets};
+use mars_schema::tool_rule_map::ToolRuleMap;
 
 fn overlay_map_replace_by_key<V: Clone>(
     base: &IndexMap<String, V>,
@@ -77,6 +78,7 @@ fn compose_tool_permission_sets(
             lower.disallowed.as_ref(),
             higher.disallowed.as_ref(),
         ),
+        rules: ToolRuleMap::merge_by_key(&lower.rules, &higher.rules),
         unknown: higher.unknown.clone(),
     }
 }
@@ -149,6 +151,7 @@ impl From<&Settings> for LocalSettings {
             default_network,
             network_allow,
             network_deny,
+            tools,
             harness_order,
             provider_order,
             catalog_providers,
@@ -167,6 +170,7 @@ impl From<&Settings> for LocalSettings {
             default_network,
             network_allow: Some(network_allow),
             network_deny: Some(network_deny),
+            tools: Some(tools),
             harness_order,
             provider_order,
             catalog_providers,
@@ -189,6 +193,7 @@ impl LocalSettings {
             && self.default_network.is_none()
             && self.network_allow.is_none()
             && self.network_deny.is_none()
+            && self.tools.is_none()
             && self.harness_order.is_none()
             && self.provider_order.is_none()
             && self.catalog_providers.is_none()
@@ -243,6 +248,9 @@ impl LocalSettings {
         }
         if let Some(value) = &self.network_deny {
             merged.network_deny = compose_permission_sets(&merged.network_deny, value);
+        }
+        if let Some(value) = &self.tools {
+            merged.tools = ToolRuleMap::merge_by_key(&merged.tools, value);
         }
         if let Some(value) = &self.harness_order {
             merged.harness_order = Some(value.clone());

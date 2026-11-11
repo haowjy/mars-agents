@@ -1,5 +1,5 @@
 //! An agent's effective tool rules: its profile's rules with the `mars.toml` overlay applied,
-//! joined with the project-wide `[settings.tools]` denies.
+//! joined with the project-wide `[settings.tools]` rules.
 //!
 //! Every path that needs an agent's rules (the launch bundle, native agent files and the
 //! plugin build) goes through [`effective_tools`], so they cannot disagree.
@@ -15,12 +15,23 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 ///
 /// 1. The agent's side: `profile` without each key the overlay's rule entries name, with the
 ///    `allowed` / `disallowed` lists applied, then those entries (origin `Overlay`).
-/// 2. The project-wide side: `project` (every rule a deny) without the keys the overlay names,
-///    origin `Project`. A project-wide deny the agent already states joins it in place as one
-///    rule of origin `Project`.
+/// 2. The project-wide side: `project` without the keys the overlay names, origin `Project`,
+///    shaped by the agent's `'*'` rule so that the one flat list gives, under strictest-wins,
+///    what two answers (the agent's, the project's; the stricter decides) would. A project-wide
+///    rule restricts every agent and widens none:
+///
+///    | project rule | no `'*'` | `'*': allow` or `ask` | `'*': deny` |
+///    |---|---|---|---|
+///    | `deny` | joins | joins | joins |
+///    | `ask` | joins | joins | cut down by [`cut_down_ask`] |
+///    | `allow` | joins | dropped | dropped |
+///
+///    A project-wide rule the agent already states joins it in place as one rule of origin
+///    `Project`.
 ///
 /// The result is the agent's side followed by the project-wide rules it did not already hold.
-/// Nothing is dropped: a rule a stricter one covers stays, and [`covered`] names the pairs.
+/// Nothing the agent wrote is dropped: a rule a stricter one covers stays, and [`covered`]
+/// names the pairs.
 pub(crate) fn effective_tools(
     project: &ToolRuleMap,
     profile: &EffectiveToolPolicy,
@@ -59,10 +70,56 @@ pub(crate) fn effective_tools(
         })
         .filter(|rule| !named(rule))
         .collect();
+    let agent_star = policy
+        .rules
+        .iter()
+        .filter(|rule| rule.is_wildcard())
+        .map(|rule| rule.action)
+        .max_by_key(|action| action.strictness());
+    let agent_allows: Vec<ToolRule> = policy
+        .with_action(ToolAction::Allow)
+        .filter(|rule| !rule.is_wildcard())
+        .cloned()
+        .collect();
     for rule in project_rules {
-        policy.push_unique(rule);
+        match (rule.action, agent_star) {
+            (ToolAction::Deny, _)
+            | (ToolAction::Ask, None | Some(ToolAction::Allow | ToolAction::Ask))
+            | (ToolAction::Allow, None) => {
+                policy.push_unique(rule);
+            }
+            (ToolAction::Ask, Some(ToolAction::Deny)) => {
+                for ask in cut_down_ask(&rule, &agent_allows) {
+                    policy.push_unique(ask);
+                }
+            }
+            (ToolAction::Allow, Some(_)) => {}
+        }
     }
     policy
+}
+
+/// A project-wide `ask` on an agent whose `'*': deny` closes every tool it does not allow: it may
+/// only ask where the agent allows, never open a call the agent's answer refuses. For each
+/// agent allow `A`:
+/// - `A` covers or equals the ask: the ask joins as written.
+/// - the ask covers `A`, or [`relation`] cannot tell: an ask with `A`'s key joins, which only
+///   asks more than the pair needs.
+/// - the two are disjoint: nothing.
+fn cut_down_ask(ask: &ToolRule, agent_allows: &[ToolRule]) -> Vec<ToolRule> {
+    let mut rules = Vec::new();
+    for allow in agent_allows {
+        match relation(ToolKey::from(allow), ToolKey::from(ask)) {
+            Relation::Equal | Relation::Covers => rules.push(ask.clone()),
+            Relation::CoveredBy | Relation::Unknown => {
+                let mut cut = allow.clone();
+                cut.action = ToolAction::Ask;
+                rules.push(cut.with_origin(RuleOrigin::Project));
+            }
+            Relation::Disjoint => {}
+        }
+    }
+    rules
 }
 
 fn parsed_key(rule: &ToolRule) -> ParsedToolName {
@@ -373,6 +430,135 @@ mod tests {
                 got, want,
                 "project `{project}`, profile `{profile}`, overlay `{overlay}`"
             );
+        }
+    }
+
+    /// A call: the tool and its argument (a command, or a path).
+    type Call = (&'static str, &'static str);
+
+    fn glob(pattern: &str, text: &str) -> bool {
+        match pattern.split_once('*') {
+            None => pattern == text,
+            Some((head, rest)) => text.strip_prefix(head).is_some_and(|tail| {
+                (0..=tail.len())
+                    .filter(|at| tail.is_char_boundary(*at))
+                    .any(|at| glob(rest, &tail[at..]))
+            }),
+        }
+    }
+
+    /// Whether a rule key matches a call, written out here and not through `relation`.
+    fn matches(rule: &ToolRule, (tool, arg): Call) -> bool {
+        let capability = rule.capability.name();
+        let tool_matches = capability == tool
+            || (capability == "edit" && tool == "write")
+            || (capability == "web" && tool == "web_fetch");
+        tool_matches
+            && rule.pattern.as_deref().is_none_or(|pattern| {
+                glob(pattern, arg) || pattern.strip_suffix(" *").is_some_and(|bare| bare == arg)
+            })
+    }
+
+    /// Deny, then ask, then allow among the rules that match; `fallback` when none does.
+    fn answer(rules: &[ToolRule], call: Call, fallback: Option<ToolAction>) -> Option<ToolAction> {
+        rules
+            .iter()
+            .filter(|rule| !rule.is_wildcard() && matches(rule, call))
+            .map(|rule| rule.action)
+            .max_by_key(|action| action.strictness())
+            .or(fallback)
+    }
+
+    fn star(rules: &[ToolRule]) -> Option<ToolAction> {
+        rules
+            .iter()
+            .find(|rule| rule.is_wildcard())
+            .map(|rule| rule.action)
+    }
+
+    fn strictness(action: Option<ToolAction>) -> i8 {
+        action.map_or(-1, |action| action.strictness() as i8)
+    }
+
+    #[test]
+    fn the_flat_policy_gives_what_two_answers_with_the_stricter_deciding_would() {
+        let agents = [
+            "tools: {}\n",
+            "tools:\n  bash: allow\n  read: allow\n",
+            "tools:\n  'bash(git status *)': allow\n  'bash(git log *)': ask\n",
+            "tools:\n  '*': allow\n  'bash(rg *)': deny\n",
+            "tools:\n  '*': ask\n  read: allow\n",
+            "tools:\n  '*': deny\n  'bash(git status *)': allow\n  read: allow\n",
+            "tools:\n  '*': deny\n  bash: allow\n",
+            "tools:\n  '*': deny\n  'bash(*status)': allow\n",
+            "tools:\n  '*': deny\n  'bash(git *)': allow\n  edit: allow\n",
+            "tools:\n  '*': deny\n  bash: ask\n  web: allow\n",
+        ];
+        // `relation` cannot compare a pattern that is not a literal and one trailing `*` (the last
+        // two projects and the agent with `bash(*status)`): the cut-down asks more there, never less.
+        let projects = [
+            "bash = 'allow'",
+            "bash = 'ask'",
+            "bash = 'deny'",
+            "'bash(git *)' = 'ask'",
+            "'bash(git push *)' = 'ask'",
+            "'bash(git *)' = 'allow'",
+            "'bash(git status *)' = 'ask'",
+            "edit = 'ask'",
+            "write = 'allow'",
+            "web_fetch = 'ask'",
+            "bash = 'allow'\nread = 'ask'",
+            "'bash(*--force*)' = 'ask'",
+            "'bash(*status)' = 'ask'",
+        ];
+        let calls: [Call; 13] = [
+            ("bash", "git"),
+            ("bash", "git status"),
+            ("bash", "git status -s"),
+            ("bash", "git log -1"),
+            ("bash", "git push origin"),
+            ("bash", "git push --force"),
+            ("bash", "rg x"),
+            ("bash", "ls"),
+            ("read", "src/a"),
+            ("write", "src/a"),
+            ("edit", "src/a"),
+            ("web_fetch", "example.com"),
+            ("task", ""),
+        ];
+        for agent in agents {
+            let profile = agent_policy(&format!("---\nname: a\ndescription: d\n{agent}---\n"));
+            for (index, project) in projects.iter().enumerate() {
+                let map: ToolRuleMap = toml::from_str(project).unwrap();
+                let flat = effective_tools(&map, &profile, None);
+                let project_rules = effective_tools(&map, &EffectiveToolPolicy::default(), None);
+                let inexact = index >= projects.len() - 2 || agent.contains("(*status)");
+                for call in calls {
+                    let agent_answer = answer(&profile.rules, call, star(&profile.rules));
+                    let project_answer = answer(&project_rules.rules, call, None);
+                    // A project-wide allow counts only when the agent has no answer.
+                    let two_sided = match (agent_answer, project_answer) {
+                        (None, project) => project,
+                        (agent, Some(ToolAction::Allow) | None) => agent,
+                        (agent, project) => {
+                            if strictness(project) > strictness(agent) {
+                                project
+                            } else {
+                                agent
+                            }
+                        }
+                    };
+                    let got = answer(&flat.rules, call, star(&flat.rules));
+                    let context = format!("agent `{agent}` project `{project}` call {call:?}");
+                    assert!(
+                        strictness(got) >= strictness(two_sided),
+                        "weaker: {context}"
+                    );
+                    if !inexact {
+                        assert_eq!(got, two_sided, "{context}");
+                    }
+                }
+            }
         }
     }
 

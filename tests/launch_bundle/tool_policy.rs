@@ -607,7 +607,7 @@ fn bundle_denies_a_write_that_an_edit_deny_covers_on_every_harness() {
         assert!(
             write["note"]
                 .as_str()
-                .is_some_and(|note| note.contains("stricter rule")),
+                .is_some_and(|note| note.contains("covers it")),
             "{harness}"
         );
         assert!(rule(&bundle, "edit", None)["note"].is_null(), "{harness}");

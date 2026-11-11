@@ -11,49 +11,21 @@ use mars_schema::tool_names::{OverlayToolName, ParsedToolName};
 use mars_schema::tool_policy::{EffectiveToolPolicy, RuleOrigin, ToolAction, ToolRule};
 use mars_schema::tool_rule_map::ToolRuleMap;
 
-pub(crate) struct EffectiveTools {
-    pub policy: EffectiveToolPolicy,
-    pub settlement: Settlement,
-}
-
-/// What joining the project-wide denies did to an agent's allows and asks.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct Settlement {
-    /// Agent allows and asks that a project-wide deny covers, left out of the policy.
-    pub set_aside: Vec<SetAside>,
-    /// Pairs whose keys may overlap in a way Mars cannot prove either way; both stay in the
-    /// policy and the enforcers decide.
-    pub unsettled: Vec<Unsettled>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SetAside {
-    pub rule: ToolRule,
-    pub by: ToolRule,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Unsettled {
-    pub project: ToolRule,
-    pub agent: ToolRule,
-}
-
 /// The rules for one agent:
 ///
 /// 1. The agent's side: `profile` without each key the overlay's rule entries name, with the
 ///    `allowed` / `disallowed` lists applied, then those entries (origin `Overlay`).
 /// 2. The project-wide side: `project` (every rule a deny) without the keys the overlay names,
-///    origin `Project`.
-/// 3. Each agent allow or ask that a project-wide deny covers is set aside. A pair
-///    [`relation`] cannot decide leaves both rules in and is recorded. A project-wide deny
-///    the agent already states joins it in place as one rule of origin `Project`.
+///    origin `Project`. A project-wide deny the agent already states joins it in place as one
+///    rule of origin `Project`.
 ///
 /// The result is the agent's side followed by the project-wide rules it did not already hold.
+/// Nothing is dropped: a rule a stricter one covers stays, and [`covered`] names the pairs.
 pub(crate) fn effective_tools(
     project: &ToolRuleMap,
     profile: &EffectiveToolPolicy,
     overlay: Option<&AgentOverlayTools>,
-) -> EffectiveTools {
+) -> EffectiveToolPolicy {
     let named = |rule: &ToolRule| {
         overlay.is_some_and(|overlay| overlay.rules.contains_key(&parsed_key(rule)))
     };
@@ -87,11 +59,10 @@ pub(crate) fn effective_tools(
         })
         .filter(|rule| !named(rule))
         .collect();
-    let settlement = settle(&mut policy, &project_rules);
     for rule in project_rules {
         policy.push_unique(rule);
     }
-    EffectiveTools { policy, settlement }
+    policy
 }
 
 fn parsed_key(rule: &ToolRule) -> ParsedToolName {
@@ -101,35 +72,32 @@ fn parsed_key(rule: &ToolRule) -> ParsedToolName {
     }
 }
 
-/// Removes from `policy` each allow or ask a project-wide deny covers. `*` rules are left
-/// alone: every enforcer ranks a named key above `*`, so a deny already wins there.
-fn settle(policy: &mut EffectiveToolPolicy, project: &[ToolRule]) -> Settlement {
-    let mut settlement = Settlement::default();
-    policy.rules.retain(|agent| {
-        if agent.action == ToolAction::Deny || agent.is_wildcard() {
-            return true;
-        }
-        let mut unsettled = Vec::new();
-        for denied in project {
-            match relation(ToolKey::from(denied), ToolKey::from(agent)) {
-                Relation::Equal | Relation::Covers => {
-                    settlement.set_aside.push(SetAside {
-                        rule: agent.clone(),
-                        by: denied.clone(),
-                    });
-                    return false;
-                }
-                Relation::Unknown => unsettled.push(Unsettled {
-                    project: denied.clone(),
-                    agent: agent.clone(),
-                }),
-                Relation::CoveredBy | Relation::Disjoint => {}
-            }
-        }
-        settlement.unsettled.extend(unsettled);
-        true
-    });
-    settlement
+/// Each allow or ask in `policy`, by index, with the stricter rule that covers it or has its
+/// key: a call it matches also matches that rule, so under strictest-wins it never applies.
+/// `*` takes no part, and a pair [`relation`] cannot decide is left out: the enforcer matches
+/// the real call.
+pub(crate) fn covered(policy: &EffectiveToolPolicy) -> Vec<(usize, &ToolRule)> {
+    policy
+        .rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule.action != ToolAction::Deny && !rule.is_wildcard())
+        .filter_map(|(index, rule)| {
+            policy
+                .rules
+                .iter()
+                .filter(|other| other.action.strictness() > rule.action.strictness())
+                .filter(|other| !other.is_wildcard())
+                .filter(|other| {
+                    matches!(
+                        relation(ToolKey::from(*other), ToolKey::from(rule)),
+                        Relation::Equal | Relation::Covers
+                    )
+                })
+                .min_by_key(|other| std::cmp::Reverse(other.action.strictness()))
+                .map(|other| (index, other))
+        })
+        .collect()
 }
 
 fn apply_permission_set(
@@ -188,7 +156,7 @@ mod tests {
     }
 
     fn apply(policy: &EffectiveToolPolicy, overlay: &AgentOverlayTools) -> EffectiveToolPolicy {
-        effective_tools(&ToolRuleMap::default(), policy, Some(overlay)).policy
+        effective_tools(&ToolRuleMap::default(), policy, Some(overlay))
     }
 
     /// `action:key` for each rule, with `@project` or `@overlay` after one of that origin.
@@ -208,11 +176,7 @@ mod tests {
             .collect()
     }
 
-    fn join(
-        project: &str,
-        profile: &str,
-        overlay: &str,
-    ) -> (Vec<String>, Vec<String>, Vec<String>) {
+    fn join(project: &str, profile: &str, overlay: &str) -> (Vec<String>, Vec<String>) {
         let project: ToolRuleMap = toml::from_str(project).unwrap();
         let tools = if profile.is_empty() {
             "tools: {}\n".to_string()
@@ -221,35 +185,21 @@ mod tests {
         };
         let profile = agent_policy(&format!("---\nname: a\ndescription: d\n{tools}---\n"));
         let overlay: AgentOverlayTools = toml::from_str(overlay).unwrap();
-        let tools = effective_tools(&project, &profile, Some(&overlay));
-        let pair = |project: &ToolRule, agent: &ToolRule| {
-            format!("{} / {}", project.render(), agent.render())
-        };
-        (
-            show(&tools.policy),
-            tools
-                .settlement
-                .set_aside
-                .iter()
-                .map(|entry| pair(&entry.by, &entry.rule))
-                .collect(),
-            tools
-                .settlement
-                .unsettled
-                .iter()
-                .map(|entry| pair(&entry.project, &entry.agent))
-                .collect(),
-        )
+        let policy = effective_tools(&project, &profile, Some(&overlay));
+        let pairs = covered(&policy)
+            .into_iter()
+            .map(|(index, by)| format!("{} / {}", by.render(), policy.rules[index].render()))
+            .collect();
+        (show(&policy), pairs)
     }
 
     #[test]
-    fn project_denies_cover_agent_allows_and_asks() {
-        // (project, profile yaml, overlay, rules, set aside "by / rule", unsettled)
+    fn project_denies_join_every_rule_and_covered_pairs_are_named() {
+        // (project, profile yaml, overlay, rules, covered "by / rule")
         type Row = (
             &'static str,
             &'static str,
             &'static str,
-            &'static [&'static str],
             &'static [&'static str],
             &'static [&'static str],
         );
@@ -261,41 +211,35 @@ mod tests {
                 "",
                 &["allow:bash", "deny:read"],
                 &[],
-                &[],
             ),
-            // The first table of the design: bash, edit, bash(git *).
+            // A covered allow or ask stays in the policy; the pair is named.
             (
                 "bash = 'deny'",
                 "  'bash(rg *)': allow\n",
                 "",
-                &["deny:bash@project"],
+                &["allow:bash(rg *)", "deny:bash@project"],
                 &["bash / bash(rg *)"],
-                &[],
             ),
             (
                 "edit = 'deny'",
                 "  write: allow\n  read: allow\n",
                 "",
-                &["allow:read", "deny:edit@project"],
+                &["allow:write", "allow:read", "deny:edit@project"],
                 &["edit / write"],
-                &[],
             ),
             (
                 "'bash(git *)' = 'deny'",
                 "  'bash(git status *)': allow\n",
                 "",
-                &["deny:bash(git *)@project"],
+                &["allow:bash(git status *)", "deny:bash(git *)@project"],
                 &["bash(git *) / bash(git status *)"],
-                &[],
             ),
-            // An ask is covered like an allow.
             (
                 "bash = 'deny'",
                 "  'bash(git commit *)': ask\n",
                 "",
-                &["deny:bash@project"],
+                &["ask:bash(git commit *)", "deny:bash@project"],
                 &["bash / bash(git commit *)"],
-                &[],
             ),
             // An agent deny of the same key is the project rule; the other denies stay.
             (
@@ -304,43 +248,42 @@ mod tests {
                 "",
                 &["deny:bash(pkill -f *)@project", "deny:bash(ls *)"],
                 &[],
-                &[],
             ),
-            // An unscoped agent allow does not cover a scoped project deny; both stay.
+            // An unscoped agent allow is not covered by a scoped project deny.
             (
                 "'bash(pkill -f *)' = 'deny'",
                 "  bash: allow\n",
                 "",
                 &["allow:bash", "deny:bash(pkill -f *)@project"],
                 &[],
-                &[],
             ),
-            // Different capabilities do not touch.
+            // Different capabilities do not touch; `web` covers `web_fetch`.
             (
                 "web = 'deny'",
                 "  bash: allow\n  web_fetch: allow\n",
                 "",
-                &["allow:bash", "deny:web@project"],
+                &["allow:bash", "allow:web_fetch", "deny:web@project"],
                 &["web / web_fetch"],
-                &[],
             ),
-            // An agent with bash: deny and a scoped allow, under bash(git *).
+            // The first covering deny is named.
             (
                 "'bash(git *)' = 'deny'",
                 "  bash: deny\n  'bash(git status *)': allow\n",
                 "",
-                &["deny:bash", "deny:bash(git *)@project"],
-                &["bash(git *) / bash(git status *)"],
-                &[],
+                &[
+                    "deny:bash",
+                    "allow:bash(git status *)",
+                    "deny:bash(git *)@project",
+                ],
+                &["bash / bash(git status *)"],
             ),
-            // Keys that may overlap stay and are recorded.
+            // Keys that may overlap are not recorded: the enforcer matches the real call.
             (
                 "'bash(git *)' = 'deny'",
                 "  'bash(* status)': allow\n",
                 "",
                 &["allow:bash(* status)", "deny:bash(git *)@project"],
                 &[],
-                &["bash(git *) / bash(* status)"],
             ),
             (
                 "'read(secret/**)' = 'deny'",
@@ -348,7 +291,6 @@ mod tests {
                 "",
                 &["allow:read(src/**)", "deny:read(secret/**)@project"],
                 &[],
-                &["read(secret/**) / read(src/**)"],
             ),
             // `*` is not measured against a key.
             (
@@ -356,7 +298,6 @@ mod tests {
                 "  '*': allow\n",
                 "",
                 &["allow:*", "deny:bash@project"],
-                &[],
                 &[],
             ),
             // The exemption: the same key in the overlay replaces the project rule and the profile's.
@@ -366,9 +307,8 @@ mod tests {
                 "'bash(pkill -f *)' = 'allow'",
                 &["allow:bash(pkill -f *)@overlay"],
                 &[],
-                &[],
             ),
-            // Only the exact key: bash = allow leaves the scoped project deny, and its own allow stays.
+            // Only the exact key: bash = allow leaves the scoped project deny.
             (
                 "'bash(pkill -f *)' = 'deny'",
                 "  read: allow\n",
@@ -379,25 +319,24 @@ mod tests {
                     "deny:bash(pkill -f *)@project",
                 ],
                 &[],
-                &[],
             ),
-            // An exemption of an unscoped deny: the scoped project denies still cover scoped overlay allows.
             (
                 "bash = 'deny'\n'bash(git *)' = 'deny'",
                 "",
                 "bash = 'allow'",
                 &["allow:bash@overlay", "deny:bash(git *)@project"],
                 &[],
-                &[],
             ),
-            // The exempting allow is itself set aside when another project deny covers it.
+            // The exempting allow is itself covered by another project deny.
             (
                 "'bash(git *)' = 'deny'",
                 "",
                 "'bash(git status *)' = 'allow'",
-                &["deny:bash(git *)@project"],
+                &[
+                    "allow:bash(git status *)@overlay",
+                    "deny:bash(git *)@project",
+                ],
                 &["bash(git *) / bash(git status *)"],
-                &[],
             ),
             // An overlay ask replaces the profile's rule of that key.
             (
@@ -406,16 +345,14 @@ mod tests {
                 "'bash(git push *)' = 'ask'",
                 &["ask:bash(git push *)@overlay"],
                 &[],
-                &[],
             ),
             // Spellings of one key are one key.
             (
                 "shell = 'deny'",
                 "  Bash: allow\n",
                 "",
-                &["deny:bash@project"],
+                &["allow:bash", "deny:bash@project"],
                 &["bash / bash"],
-                &[],
             ),
             // replace clears the profile's allows, not the overlay's entries.
             (
@@ -424,15 +361,13 @@ mod tests {
                 "allowed = { replace = ['read'] }\nedit = 'allow'",
                 &["allow:read@overlay", "allow:edit@overlay"],
                 &[],
-                &[],
             ),
         ];
-        for (project, profile, overlay, rules, set_aside, unsettled) in rows {
+        for (project, profile, overlay, rules, covered) in rows {
             let got = join(project, profile, overlay);
             let want = (
                 rules.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                set_aside.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                unsettled.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                covered.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
             );
             assert_eq!(
                 got, want,
@@ -444,8 +379,8 @@ mod tests {
     #[test]
     fn a_launch_with_no_agent_gets_the_project_rules_alone() {
         let project: ToolRuleMap = toml::from_str("bash = 'deny'").unwrap();
-        let tools = effective_tools(&project, &EffectiveToolPolicy::default(), None);
-        assert_eq!(show(&tools.policy), ["deny:bash@project"]);
+        let policy = effective_tools(&project, &EffectiveToolPolicy::default(), None);
+        assert_eq!(show(&policy), ["deny:bash@project"]);
     }
 
     #[test]

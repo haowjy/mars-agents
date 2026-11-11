@@ -23,6 +23,15 @@ impl ToolAction {
         }
     }
 
+    /// How restrictive the action is; the stricter action of two rules that match a call wins.
+    pub fn strictness(self) -> u8 {
+        match self {
+            Self::Allow => 0,
+            Self::Ask => 1,
+            Self::Deny => 2,
+        }
+    }
+
     fn parse(raw: &str) -> Option<Self> {
         match raw {
             "allow" => Some(Self::Allow),

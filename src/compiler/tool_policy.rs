@@ -8,6 +8,7 @@
 //! and the launch bundle all read that projection; nothing else turns a rule into native
 //! permission names or unscoped harness tool names.
 
+use crate::compiler::effective_tools::covered;
 use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
 use mars_schema::HarnessId;
 use mars_schema::tool_names::{Capability, is_mcp_wire_token, render_scoped};
@@ -88,6 +89,8 @@ pub(crate) struct ProjectedRule {
     /// A harness-specific consequence of this projection that callers must surface even when
     /// the native name is known.
     note: Option<&'static str>,
+    /// The stricter rule (`deny bash`) that covers this one, which then names no native tool.
+    pub covered_by: Option<String>,
 }
 
 impl ProjectedRule {
@@ -96,6 +99,7 @@ impl ProjectedRule {
             bindings,
             status: Some(NativeStatus::Known),
             note,
+            covered_by: None,
         }
     }
 
@@ -104,6 +108,7 @@ impl ProjectedRule {
             bindings: Vec::new(),
             status: Some(status),
             note: None,
+            covered_by: None,
         }
     }
 
@@ -155,6 +160,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
             bindings: Vec::new(),
             status: None,
             note: None,
+            covered_by: None,
         },
         Capability::Mcp(mcp_ref) => match project_mcp_ref(mcp_ref, harness) {
             McpProjection::Token(token) => {
@@ -241,6 +247,11 @@ impl ToolPolicyRuntime for EffectiveToolPolicy {
             .map(|rule| (rule, project_rule(rule, harness)))
             .collect();
         keep_strictest_per_native(&mut rules);
+        for (index, by) in covered(self) {
+            let projected = &mut rules[index].1;
+            projected.bindings.clear();
+            projected.covered_by = Some(format!("{} {}", by.action.as_str(), by.render()));
+        }
         PolicyProjection { rules }
     }
 }
@@ -266,12 +277,6 @@ impl RuleKind {
 
 /// The `note` on a rule that lost a native name to a stricter rule on the same name.
 const STRICTER_RULE_NOTE: &str = "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out";
-
-/// The bundle `note` on a project-wide deny that an agent rule of overlapping scope may
-/// override: Mars could not tell from the keys whether the deny covers it (see
-/// `effective_tools`), and every harness but Claude lets a scoped allow beat an unscoped deny
-/// or a longer pattern beat a shorter one.
-pub(crate) const UNSETTLED_NOTE: &str = "an agent rule with an overlapping scope may override this project-wide deny; Mars could not tell from the keys which applies";
 
 /// A policy's rules spelled for one harness, in profile order.
 pub(crate) struct PolicyProjection<'a> {
@@ -329,21 +334,12 @@ fn keep_strictest_per_native(rules: &mut [(&ToolRule, ProjectedRule)]) {
         let before = projected.bindings.len();
         projected.retain_native(|native| {
             !named.iter().any(|(action, names)| {
-                action_strictness(*action) > action_strictness(rule.action)
-                    && names.contains(native)
+                action.strictness() > rule.action.strictness() && names.contains(native)
             })
         });
         if projected.bindings.len() != before {
             projected.note = Some(STRICTER_RULE_NOTE);
         }
-    }
-}
-
-fn action_strictness(action: ToolAction) -> u8 {
-    match action {
-        ToolAction::Allow => 0,
-        ToolAction::Ask => 1,
-        ToolAction::Deny => 2,
     }
 }
 

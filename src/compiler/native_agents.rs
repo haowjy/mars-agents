@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
-use super::effective_tools::{Settlement, effective_tools};
+use super::effective_tools::effective_tools;
 use super::lossiness::{Lossiness, LossyField, ProjectLoss};
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
@@ -72,8 +72,6 @@ pub(crate) struct MarsCanonicalAgent {
     /// The consumer's `[agents.<name>]` overlay, already merged into `profile` except for
     /// the scalar layers that outrank model policies.
     pub overlay: Option<crate::config::AgentOverlay>,
-    /// What the project-wide denies did to the agent's allows and asks.
-    pub settlement: Settlement,
     pub body: String,
 }
 
@@ -618,7 +616,6 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             canonical_dest_path,
             profile,
             overlay: None,
-            settlement: Settlement::default(),
             body,
         });
     }
@@ -840,17 +837,15 @@ pub(crate) fn effective_native_profile(
     profile: &mars_schema::agent::AgentProfile,
     overlay: Option<&crate::config::AgentOverlay>,
     project_tools: &ToolRuleMap,
-) -> (mars_schema::agent::AgentProfile, Settlement) {
+) -> mars_schema::agent::AgentProfile {
     let mut effective = profile.clone();
-    let tools = effective_tools(
+    effective.tools = effective_tools(
         project_tools,
         &profile.tools,
         overlay.map(|overlay| &overlay.tools),
     );
-    effective.tools = tools.policy;
-    let settlement = tools.settlement;
     let Some(overlay) = overlay else {
-        return (effective, settlement);
+        return effective;
     };
     effective.model =
         crate::config::overlay_then_profile_model(Some(overlay), profile.model.as_deref())
@@ -876,7 +871,7 @@ pub(crate) fn effective_native_profile(
         effective.had_user_invocable_field = true;
     }
 
-    (effective, settlement)
+    effective
 }
 
 /// An agent's native profile with the consumer overlay whose scalar layers outrank its
@@ -1215,21 +1210,16 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     (compiled_native_outputs, removed_native_outputs)
 }
 
-/// Each installed agent's name, tool rules and what the project-wide denies did to them, for
-/// `mars validate`.
+/// Each installed agent's name and effective tool rules, for `mars validate`.
 pub(crate) fn installed_agent_tools(
     mars_dir: &Path,
     config: ToolConfig<'_>,
     diag: &mut DiagnosticCollector,
-) -> Vec<(
-    String,
-    mars_schema::tool_policy::EffectiveToolPolicy,
-    Settlement,
-)> {
+) -> Vec<(String, mars_schema::tool_policy::EffectiveToolPolicy)> {
     let scan = scan_mars_agents(mars_dir, diag);
     let mut agents: Vec<_> = resolve_native_agent_profiles(&scan.agents, config)
         .into_iter()
-        .map(|agent| (agent.agent_name, agent.profile.tools, agent.settlement))
+        .map(|agent| (agent.agent_name, agent.profile.tools))
         .collect();
     agents.sort_by(|a, b| a.0.cmp(&b.0));
     agents
@@ -1249,7 +1239,7 @@ fn resolve_native_agent_profiles(
     mars_agents
         .iter()
         .map(|agent| {
-            let (profile, settlement) = effective_native_profile(
+            let profile = effective_native_profile(
                 &agent.profile,
                 agent_overlays.get(&agent.agent_name),
                 project_tools,
@@ -1258,7 +1248,6 @@ fn resolve_native_agent_profiles(
                 agent_name: agent.agent_name.clone(),
                 canonical_dest_path: agent.canonical_dest_path.clone(),
                 profile,
-                settlement,
                 overlay: agent_overlays.get(&agent.agent_name).cloned(),
                 body: agent.body.clone(),
             }

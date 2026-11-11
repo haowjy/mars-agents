@@ -160,6 +160,11 @@ pub struct ToolRuleSpec {
     /// Every note that applies, joined with `; `.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The stricter rule that wins every call this rule would match (or every name it has on
+    /// this harness), as its author wrote it. Present means the rule never applies; `native`
+    /// and `native_tools` are then empty. Omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub covered_by: Option<crate::compiler::tool_policy::CoveredBy>,
 }
 
 #[derive(Debug, Clone, Serialize)]

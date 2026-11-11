@@ -5,13 +5,18 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
+use crate::compiler::effective_tools::Settlement;
 use crate::compiler::tool_policy::{
-    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, project_platform_capability,
+    NativeStatus, OVERLAP_NOTE, RuleKind, ToolPolicyRuntime, UNSETTLED_NOTE,
+    project_platform_capability,
 };
 use crate::content::ContentRoots;
-use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
-use mars_schema::tool_policy::ToolAction;
-use mars_schema::tool_rule_map::ToolRuleMap;
+use bundle::{
+    CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, SetAsideSpec, Skills, ToolRuleSpec,
+    ToolsSpec,
+};
+use mars_schema::HarnessId;
+use mars_schema::tool_policy::{RuleOrigin, ToolAction};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -94,16 +99,16 @@ pub fn build_launch_bundle(
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
     warnings.extend(effective_project_config.warnings.iter().cloned());
-    profile.tools = crate::compiler::effective_tools::effective_tools(
-        &ToolRuleMap::default(),
+    let effective_tools = crate::compiler::effective_tools::effective_tools(
+        &effective_project_config.settings.tools,
         &profile.tools,
         request
             .agent
             .as_deref()
             .and_then(|agent| effective_project_config.agents.get(agent))
             .map(|overlay| &overlay.tools),
-    )
-    .policy;
+    );
+    profile.tools = effective_tools.policy;
     if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
         effective_project_config.settings.meridian_agent_copy(),
     ) {
@@ -149,7 +154,11 @@ pub fn build_launch_bundle(
     );
 
     warnings.extend(prompt.warnings);
-    let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
+    let resolved_tools = resolve_bundle_tools(
+        &profile,
+        &effective_tools.settlement,
+        &policy.routing.harness,
+    )?;
 
     Ok(LaunchBundle {
         version: LAUNCH_BUNDLE_VERSION,
@@ -217,6 +226,7 @@ pub(crate) fn load_effective_project_config_or_default(
 /// author hears about a typo.
 fn resolve_bundle_tools(
     profile: &mars_schema::agent::AgentProfile,
+    settlement: &Settlement,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
@@ -229,12 +239,22 @@ fn resolve_bundle_tools(
         .map(|(rule, projected)| {
             let native = projected.native();
             let shares_a_tool = native.iter().any(|native| overlaps.contains(native));
+            // Claude checks every deny before any allow, so its order already holds.
+            let unsettled = descriptor.kind != HarnessId::Claude
+                && rule.origin == RuleOrigin::Project
+                && settlement
+                    .unsettled
+                    .iter()
+                    .any(|pair| pair.project == **rule);
             ToolRuleSpec {
                 rule: (*rule).clone(),
                 native,
                 native_tools: projected.native_tools(),
                 native_status: projected.status.map(NativeStatus::as_str),
-                note: projected.note().or(shares_a_tool.then_some(OVERLAP_NOTE)),
+                note: projected
+                    .note()
+                    .or(unsettled.then_some(UNSETTLED_NOTE))
+                    .or(shares_a_tool.then_some(OVERLAP_NOTE)),
             }
         })
         .collect();
@@ -257,8 +277,18 @@ fn resolve_bundle_tools(
         })
         .collect();
 
+    let set_aside = settlement
+        .set_aside
+        .iter()
+        .map(|entry| SetAsideSpec {
+            rule: entry.rule.clone(),
+            by: entry.by.clone(),
+        })
+        .collect();
+
     Ok(ToolsSpec {
         rules,
+        set_aside,
         capability_natives,
         // The flat lists have no `ask`, `*` or allowlist; only `rules` carries those.
         allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),

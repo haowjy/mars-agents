@@ -269,6 +269,12 @@ impl RuleKind {
 pub(crate) const OVERLAP_NOTE: &str =
     "another rule allows or denies the same native tool; the harness decides which wins";
 
+/// The bundle `note` on a project-wide deny that an agent rule of overlapping scope may
+/// override: Mars could not tell from the keys whether the deny covers it (see
+/// `effective_tools`), and every harness but Claude lets a scoped allow beat an unscoped deny
+/// or a longer pattern beat a shorter one.
+pub(crate) const UNSETTLED_NOTE: &str = "an agent rule with an overlapping scope may override this project-wide deny; Mars could not tell from the keys which applies";
+
 const CLAUDE_SCOPED_PRECEDENCE_NOTE: &str = "a stricter scoped rule controls the same Claude permission and wins (deny, then ask, then allow); this rule is left out";
 
 /// A policy's rules spelled for one harness, in profile order.

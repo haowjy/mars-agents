@@ -74,6 +74,14 @@ pub(crate) struct MarsCanonicalAgent {
     pub body: String,
 }
 
+/// The configured layers that shape an agent's native profile: its `[agents.<name>]`
+/// overlay and the project-wide tool rules.
+#[derive(Clone, Copy)]
+pub(crate) struct ToolConfig<'a> {
+    pub agent_overlays: &'a indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    pub project_tools: &'a ToolRuleMap,
+}
+
 pub(crate) struct MarsAgentScan {
     agents: Vec<MarsCanonicalAgent>,
     failed_canonical_paths: HashSet<String>,
@@ -1133,7 +1141,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     reconcile_ctx: &NativeAgentReconcileCtx<'_>,
     policy: &AgentSurfacePolicy,
     scan: &MarsAgentScan,
-    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    tool_config: ToolConfig<'_>,
     compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
     mut model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
@@ -1141,7 +1149,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).
-    let resolved = resolve_native_agent_profiles(&scan.agents, agent_overlays);
+    let resolved = resolve_native_agent_profiles(&scan.agents, tool_config);
     let desired = desired_native_agent_outputs(
         policy,
         &resolved,
@@ -1174,15 +1182,19 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
 /// for the native lifecycle (routing, description, invocation axes, tool policy).
 fn resolve_native_agent_profiles(
     mars_agents: &[MarsCanonicalAgent],
-    agent_overlays: &indexmap::IndexMap<String, crate::config::AgentOverlay>,
+    config: ToolConfig<'_>,
 ) -> Vec<MarsCanonicalAgent> {
+    let ToolConfig {
+        agent_overlays,
+        project_tools,
+    } = config;
     mars_agents
         .iter()
         .map(|agent| {
             let profile = effective_native_profile(
                 &agent.profile,
                 agent_overlays.get(&agent.agent_name),
-                &ToolRuleMap::default(),
+                project_tools,
             );
             MarsCanonicalAgent {
                 agent_name: agent.agent_name.clone(),
@@ -1277,7 +1289,10 @@ pub(crate) fn materialize_native_agents_after_link(
         &reconcile_ctx,
         &policy,
         &mars_agent_scan,
-        &input.effective.agents,
+        ToolConfig {
+            agent_overlays: &input.effective.agents,
+            project_tools: &input.effective.settings.tools,
+        },
         compile_ctx.as_ref(),
         model_router.as_mut(),
         diag,

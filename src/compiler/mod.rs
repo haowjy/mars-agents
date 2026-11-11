@@ -233,7 +233,10 @@ fn compile_inner(
         &native_reconcile_ctx,
         &agent_surface_policy,
         &mars_agent_scan,
-        &loaded.effective.agents,
+        native_agents::ToolConfig {
+            agent_overlays: &loaded.effective.agents,
+            project_tools: &loaded.effective.settings.tools,
+        },
         native_compile_ctx.as_ref(),
         native_model_router.as_mut(),
         diag,

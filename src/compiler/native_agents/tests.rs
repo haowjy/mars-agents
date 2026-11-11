@@ -236,7 +236,13 @@ fn compile_emit_all_with_overlays(
         fanout_agents: &[],
     };
     // Mirror the lifecycle: resolve overlays before compile (compile no longer merges).
-    let resolved = resolve_native_agent_profiles(agents, overlays);
+    let resolved = resolve_native_agent_profiles(
+        agents,
+        ToolConfig {
+            agent_overlays: overlays,
+            project_tools: &ToolRuleMap::default(),
+        },
+    );
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
         &ctx,

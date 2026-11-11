@@ -14,8 +14,8 @@ struct Entry {
     action: ToolAction,
 }
 
-/// Parse a JSON array of `tools.rules` entries. Entries whose `origin` is not `profile` or
-/// `overlay` are skipped; one entry that does not parse fails the whole input.
+/// Parse a JSON array of `tools.rules` entries. Entries of origin `project` are skipped; one
+/// entry that does not parse, or has any other origin, fails the whole input.
 pub(crate) fn parse_agent_tool_rules(json: &str) -> Result<Vec<ToolRule>, MarsError> {
     let entries: Vec<serde_json::Value> = serde_json::from_str(json).map_err(|err| {
         invalid(format!(
@@ -28,7 +28,12 @@ pub(crate) fn parse_agent_tool_rules(json: &str) -> Result<Vec<ToolRule>, MarsEr
         let origin = match value.get("origin").and_then(|origin| origin.as_str()) {
             Some("profile") => RuleOrigin::Profile,
             Some("overlay") => RuleOrigin::Overlay,
-            Some(_) => continue,
+            Some("project") => continue,
+            Some(other) => {
+                return Err(fail(format!(
+                    "`origin` must be `profile`, `overlay` or `project`, not `{other}`"
+                )));
+            }
             None => return Err(fail("`origin` must be a string".to_string())),
         };
         let entry = Entry::deserialize(value).map_err(|err| fail(err.to_string()))?;

@@ -477,13 +477,13 @@ This section is the one definition of both terms; the other pages link here.
   `--strict` leaves `info` alone), and the launch bundle lists each under
   [`tools.set_aside`](../cli/commands.md#mars-build-launch-bundle).
 - **Unsettled.** When Mars cannot tell from the keys whether a project-wide deny covers an
-  agent allow or ask (a path scope on both sides, say), both rules stay and `mars sync` prints
-  one `tool-rule-unsettled` line for the whole project: the deny, one agent rule it may lose
-  to, the agents holding that pair and the targets affected. `--verbose` lists every pair. It
-  prints nothing when `.claude` is the only configured target, since Claude checks every deny
-  before any allow. In the launch bundle the project-wide rule carries a `note` on every
-  harness but Claude, joined with `; ` to any note the rule already has. Two skill rules
-  (`skill(init)`, `skill(review)`) whose names have no wildcard character are never a pair.
+  agent allow or ask (a path scope on both sides, say), both rules stay in the agent's rules.
+  `mars sync` says nothing about the pair: no other target's agent file writes an allow for it and Claude checks every deny first, so
+  the deny's fate on each target is already in the sync line about restrictions a target
+  loses. The pair matters in a launch through Meridian, where the launch bundle's
+  project-wide rule carries a `note` on every harness but Claude, joined with `; ` to any
+  note the rule already has. Two skill rules (`skill(init)`, `skill(review)`) whose names
+  have no wildcard character are never a pair.
 
 - **Older Mars.** A Mars before 0.29.0 ignores `[settings.tools]`
   and rule entries without a word, so the deny does nothing there. A project that relies on a

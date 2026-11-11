@@ -156,13 +156,12 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 
 ### Project-wide tool rules in agent files
 
-`mars sync` writes each agent's rules after joining the project's `[settings.tools]` denies
-and the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules). An
-unscoped project-wide deny reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a
-permission entry, like the agent's own denies; the other targets carry none. An agent allow or
-ask that a deny covers is left out of the file and moves to `tools.set_aside` in the bundle; a
-pair Mars cannot settle keeps both rules. See
-[Set-aside rules and unsettled pairs](mars-toml.md#set-aside-rules-and-unsettled-pairs).
+`mars sync` writes each agent's rules after joining the project's `[settings.tools]` rules and
+the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules; see
+[Project-wide tool rules](mars-toml.md#project-wide-tool-rules)). An unscoped project-wide deny
+reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a permission entry, like the
+agent's own denies; the other targets carry none. A rule that a stricter one covers stays in the
+bundle with no native name and a `note`, and is not written to the file.
 
 ### Tool name projection
 
@@ -254,20 +253,16 @@ Claude's valid scoped spelling and stays unchanged.
 
 MCP refs keep their own projection (below), and `mcp__…` wire tokens pass through verbatim.
 
-**A narrower capability wins.** `edit: deny` with `write: allow` means "no edits, but writing is
-fine". On Claude `edit` covers `Write`, so projecting both rules as written would put `Write` in
-the allow and the deny list, and a deny beats an allow. Mars resolves this per native name,
-before anything is emitted: when two rules with different actions name the same unscoped tool,
-the rule whose capability covers fewer tools wins it. Claude's `edit` deny becomes
-`Edit` + `NotebookEdit` and `Write` stays allowed. The bundle's `native` and `native_tools`
-lists, the flat lists and Claude agent files all carry the resolved names. A harness that
-cannot tell two capabilities apart (Codex and OpenCode name one tool for both `write` and
-`edit`) stays in conflict: the agent file records a lossiness entry naming the tool that is
-both allowed and denied, and the bundle gives each of the two rules a `note` saying the harness
-decides.
-Scoped Claude rules that collapse to the exact same category permission are resolved by
-Claude's documented action order instead: `deny` beats `ask`, which beats `allow`; the losing
-rule has empty `native` and `native_tools` lists, and its `note` says why.
+**The strictest rule keeps a native name.** On every harness, of the rules that match a call
+the strictest action wins (deny, then ask, then allow), however narrow a key is. Mars applies
+that to each native permission name before anything is emitted: when rules of different
+actions name the same name, the strictest keeps it and the others lose it. `edit: deny` with
+`write: allow` denies `Write` on Claude and `write` on Pi, because `edit` covers `Write` and the
+`write` allow loses it; `web: deny` beside `web_fetch: allow` likewise. A rule that loses every
+name gets empty `native` and `native_tools` lists and a `note` saying so. Where a harness names
+one tool for two capabilities (Codex and OpenCode for `write` and `edit`) the same step decides
+it, so the deny wins there too. The bundle's `native` and `native_tools` lists, the flat lists
+and Claude agent files all carry the resolved names.
 
 **Native agent files cannot hold everything.** An `ask` rule has no field in an agent file,
 and neither does an allowlist with nothing allowed (an omitted `tools:` inherits every tool).
@@ -563,12 +558,11 @@ Expected body-guided skill channels are documented mappings and do not emit warn
 
 These are non-fatal warnings. The sync continues and the native artifact is still written.
 
-`mars validate` also prints three `info` notes about tool rules, which `--strict` leaves alone:
+`mars validate` also prints two `info` notes about tool rules, which `--strict` leaves alone:
 
 | Code | What it lists |
 |---|---|
-| `tool-rule-set-aside` | each agent allow or ask a project-wide deny set aside, one line per rule naming its agents (see [Set-aside rules](mars-toml.md#set-aside-rules-and-unsettled-pairs)) |
-| `tool-rule-form-changes` | each profile with an unscoped deny or ask beside an allow it covers. In a release after 0.29.0 the strictest matching rule wins (deny, then ask, then allow), and that allow stops working |
+| `tool-rule-covered` | each allow or ask a stricter rule covers, so it never applies, one line per rule and covering rule naming its agents (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)) |
 | `tool-overlay-lists-deprecated` | each `[agents.<name>.tools]` that still uses `allowed` or `disallowed` |
 
 `mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.

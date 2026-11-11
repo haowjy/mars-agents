@@ -944,24 +944,21 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
 | `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed`, `disallowed` or a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; a profile rule with the same key and action is one rule of origin `project`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule |
-| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule can also be empty when a stricter or more specific rule owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `NotebookEdit` and leaves `Write` allowed, so emit `native` as given |
+| `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule is also empty when a stricter rule covers it or owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `Write`, `NotebookEdit` and the `write` allow none, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
-| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, why a stricter rule shadowed it, or why the harness must decide an unresolved overlap. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
+| `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, or why a stricter rule left it no native name. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
 
-**`tools.set_aside`** appears only when a project-wide deny covers an agent allow or ask. It lists
-those rules, which are absent from `rules`: each entry has the rule's own `capability`, `pattern`,
-`action` and `origin`, and `by`, the covering project-wide rule in the same shape. A consumer that
-ignores it still gets the right `rules`. For a pair Mars cannot settle, and for the `note` that
-joins several notes with `; `, see
-[Set-aside rules and unsettled pairs](../config/mars-toml.md#set-aside-rules-and-unsettled-pairs).
+**`tools.set_aside`** is always `[]`. It listed the rules a project-wide deny covers; those now
+stay in `rules` with empty `native` and `native_tools` and a `note` naming the stricter rule
+(see [Project-wide tool rules](../config/mars-toml.md#project-wide-tool-rules)). It stays for one
+release so a reader of the field keeps working.
 
 `tools.allowed`, `tools.disallowed` and `tools.mcp` are flat native-name lists derived from
 `rules` for consumers that predate it. They cannot express `ask`, `*`, or the capability behind
 a name; `allowed` never reflects an allowlist, and `mcp` never contains server definitions or
-commands. Prefer `rules`. A tool that an allow and a deny
-rule both still name (`write: allow` with `edit: deny` on Codex, whose `apply_patch` is both)
-puts a `note` on both rules.
+commands. Prefer `rules`. A native name that rules of different actions share goes to the
+strictest, so no name is in both `allowed` and `disallowed`.
 
 Claude path scopes use its permission categories, not every bare tool name:
 `write(path)`, `edit(path)` and `notebook(path)` become `Edit(path)`, while `read(path)`,

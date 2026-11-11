@@ -67,11 +67,10 @@ impl RuleOrigin {
 
 /// One tool-policy statement: `action` for `capability`, optionally narrowed by `pattern`.
 ///
-/// Rules are kept in profile order, which carries no precedence: a broad rule against a scoped
-/// one is the consuming harness's call. [`EffectiveToolPolicy::project`] settles two cases: a
-/// capability whose native tools are a strict subset of another's wins over it (the narrower
-/// rule wins), and on Claude two scoped rules naming the same native permission resolve to the
-/// stricter action.
+/// Rules are kept in profile order, which carries no precedence: of the rules that match a call,
+/// the strictest action wins (deny, then ask, then allow), however narrow a key is.
+/// [`EffectiveToolPolicy::project`] applies the same order to a native name two rules share, and
+/// gives a rule that a stricter one covers no native name.
 #[derive(Debug, Clone)]
 pub struct ToolRule {
     pub capability: Capability,

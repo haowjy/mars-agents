@@ -225,7 +225,7 @@ pub fn dispatch(cli: Cli) -> i32 {
                 }
                 println!("{}", payload);
             } else {
-                output::print_diagnostics(err.diagnostics());
+                output::print_diagnostics(err.diagnostics(), false);
                 eprintln!("error: {cause}");
             }
             if !json && matches!(cause, MarsError::Lock(LockError::Corrupt { .. })) {
@@ -246,8 +246,6 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
-        // Migrate is how a config the readers refuse becomes one they accept.
-        Command::Migrate(args) => migrate::run(args, cli.root.as_deref(), cli.json),
         cmd => {
             let ctx = match find_agents_root(cli.root.as_deref()) {
                 Ok(ctx) => ctx,
@@ -321,6 +319,7 @@ fn dispatch_with_root(
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),
+        Command::Migrate(args) => migrate::run(args, ctx, json),
         Command::Outdated(args) => outdated::run(args, ctx, json),
         Command::Version(args) => version::run(args, ctx, json),
         Command::List(args) => list::run(args, ctx, json),
@@ -336,11 +335,7 @@ fn dispatch_with_root(
         Command::Build(args) => build::run(args, ctx, explicit_root, json),
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
-        Command::Init(_)
-        | Command::Check(_)
-        | Command::Cache(_)
-        | Command::Provide(_)
-        | Command::Migrate(_) => {
+        Command::Init(_) | Command::Check(_) | Command::Cache(_) | Command::Provide(_) => {
             unreachable!()
         }
     }
@@ -428,18 +423,13 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
 }
 
 fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
-    MarsContext::new(find_project_root(start)?)
-}
-
-/// The nearest directory at or above `start` that holds a `mars.toml`, without reading it.
-pub(crate) fn find_project_root(start: &Path) -> Result<PathBuf, MarsError> {
     let start_canon = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut dir = start_canon.as_path();
 
     loop {
         let config_path = dir.join("mars.toml");
         if config_path.exists() {
-            return Ok(dir.to_path_buf());
+            return MarsContext::new(dir.to_path_buf());
         }
 
         match dir.parent() {

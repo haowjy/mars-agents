@@ -264,10 +264,10 @@ against the project's configured managed targets.
 
 | Code | Severity | Cause |
 |---|---|---|
-| `field.removed` | error | A removed key (see [Removed fields](#removed-fields)); the message names the replacement |
+| `field.removed` | error | A pre-v1 key (see [Removed fields](#removed-fields)); one message for all of them |
 | `field.required` | error | `name` or `description` is missing or empty in a skill with frontmatter |
 | `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
-| `field.unknown` | warning | An unknown field; it stays in the file and reaches no native file |
+| `field.unknown` | info | An unknown field; it stays in the file and reaches no native file |
 | `skill.claude-keys-moved` | info | Import moved Claude-only keys to `harness-overrides.claude` |
 | `skill.claude-keys-conflict` | warning | A Claude-only key was dropped because `harness-overrides.claude` already sets it; the override's value wins |
 | `skill.claude-keys-unmoved` | warning | Claude-only keys stayed in place because `harness-overrides` or `harness-overrides.claude` is not a mapping |

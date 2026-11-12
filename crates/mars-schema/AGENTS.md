@@ -54,14 +54,10 @@ and rules, so never add a binary-side copy.
 
 ## Config keys
 
-`keys.rs` holds three tables of config keys, each row naming the surfaces (files and tables) it
-holds on: `REMOVED` (a key or one value Mars no longer reads, with advice and the rewrite
-`mars migrate` applies: drop, rename or a value), `GATED` (a key an older Mars ignores or
-misreads, with the release that first read it) and `ELSEWHERE` (a key that belongs in a
-project's files, which the user config warns about and drops). A new key is a row in one of
-them and nowhere else: no removed-key list, version-floor constant or per-key check beside the
-tables. A reader asks `removed_key`, `removed_value_of`, `removals`, `dropped_keys` or
-`elsewhere_key`.
+`keys.rs` is the table of gated keys (`GATED`): a key an older Mars ignores or misreads, with
+the release that first read it. It lists keys Mars reads today and when they arrived, nothing
+about keys it no longer reads. A new gated key is a row and nowhere else; say on the row's
+comment what the older Mars does with the key.
 
 A file's version floor is `keys::floor` over the keys it uses, and every caller gets those from
 `keys::used(document, Document)`, which walks a parsed `mars.toml`. The uses that live in other
@@ -69,12 +65,27 @@ files are the caller's to add as `Used::hook` and `Used::profile_rule` (`check::
 does, and `mars check`, `mars version` and `mars migrate` all call it); the consumer reader
 (`config/read.rs`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
 key's presence) or `Gate::Rules` (each rule whose action restricts: `deny` and `ask`, not
-`allow`). Say on the row's comment what the older Mars does with the key. A consumer floor is
-reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older than that ignores
-`min_mars_version`.
+`allow`). A consumer floor is reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older
+than that ignores `min_mars_version`.
 
-A removed key is an error on every surface its row lists, and the same goes for a removed value
-(`approval = "yolo"`, on a profile and an overlay alike). A key no row names is a warning with
-one text (`diagnostic::unknown_key_message`) in packages, frontmatter and consumer config; an
-unknown value is an error. Don't give one surface a different answer for the same key. The
-consumer config reader is `src/config/read.rs`; see `src/config/AGENTS.md`.
+What a reader does with a key it has no field for depends on the table, nothing else:
+
+- A table of entries (`[settings.tools]`, a profile's `tools`, `[dependencies]`): the key is an
+  entry, and a key or value that is not a valid one is an error at its line.
+- A table of fields (`[settings]`, `[agents.<name>]`, `[package]`, frontmatter): the key is not
+  read and stays in the file. It is one `Info`, `field.unknown`, built by
+  `diagnostic::unknown_field`, with the text `unknown_key_message` builds. Don't add a code, a
+  level or a text for a particular key.
+- A table that refuses what it does not define (a model-policy `override`, a project's
+  `hook.toml`): an error that lists the keys it takes.
+
+A value of a key Mars reads stays closed: an unknown value is an error listing what is allowed.
+
+The only code that names an old key is a translator from another format. `upgrade::PRE_V1` is
+the pre-v1 Mars grammar: every key and value the pre-v1 upgrade drops, renames, moves or
+rewrites. The upgrade functions iterate it and the strict readers ask it (`PreV1::key`,
+`PreV1::value`), so a file the upgrade would change is a file the reader refuses with
+`field.removed` and one text. It is an error and not an unread key because a schema 1 file in
+this format would lose a restriction silently (`disallowed-tools`, `network_deny`, a `permission`
+map); `read::installed` and `set_aside` key on that error, so a translated definition still
+records `field.restriction-lost`. A new key goes in `PRE_V1` only if the upgrade handles it.

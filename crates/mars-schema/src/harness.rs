@@ -54,11 +54,6 @@ pub fn names() -> String {
 /// Flow's is `meridian-flow`, the Meridian CLI's is `meridian-cli`.
 pub(crate) const RESERVED_CONSUMER_NAMESPACES: &[&str] = &["meridian-flow", "meridian-cli"];
 
-/// The namespace spellings before the full host names; the reader reports them as removed and
-/// `mars migrate` rewrites them to the name beside them.
-pub(crate) const RENAMED_CONSUMER_NAMESPACES: &[(&str, &str)] =
-    &[("flow", "meridian-flow"), ("meridian", "meridian-cli")];
-
 pub fn parse(name: &str) -> Option<HarnessId> {
     let normalized = name.trim().to_ascii_lowercase();
     ALL.iter()

@@ -36,7 +36,7 @@ The typed fields serialize with the spellings the file uses (kebab-case keys and
 
 Diagnostics are built directly with a structured `path` of keys and indexes. `range` is set only for fence and YAML-syntax errors, and no reader sets it yet; consumers locate a diagnostic by `path`.
 
-Unknown keys are kept and reported as `field.unknown` warnings. Removed keys are `field.removed` errors that name the replacement.
+Unknown keys are kept and reported as `field.unknown` `Info`. A key or value of pre-v1 Mars's is a `field.removed` error with one text; the pre-v1 upgrade owns the list.
 
 ## Editing
 

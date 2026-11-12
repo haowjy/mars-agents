@@ -22,7 +22,7 @@
       "path": [
         "when_to_use"
       ],
-      "message": "`when_to_use` was removed; fold it into `description`"
+      "message": "`when_to_use` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

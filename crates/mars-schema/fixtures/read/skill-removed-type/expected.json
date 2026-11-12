@@ -22,7 +22,7 @@
       "path": [
         "type"
       ],
-      "message": "`type` was removed; use `metadata.type`"
+      "message": "`type` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

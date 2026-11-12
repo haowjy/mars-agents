@@ -3,6 +3,7 @@
 use crate::diagnostic::unrecognized_field;
 use crate::frontmatter::Frontmatter;
 use crate::invocability::parse_invocability_axis;
+use crate::item::DefinitionKind;
 use serde_yaml::Value;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -58,7 +59,7 @@ pub const LOWERED_KEYS: &[&str] = &[
 
 /// The keys that carry a skill's tool policy.
 pub(crate) fn tool_keys() -> impl Iterator<Item = &'static str> {
-    crate::keys::dropped_keys(crate::keys::Surface::SkillProfile)
+    crate::upgrade::PRE_V1.skill_tool_keys.iter().copied()
 }
 
 pub(crate) fn read_fields(
@@ -166,8 +167,7 @@ pub(crate) fn read_fields(
                     &mut field_diagnostics,
                 );
             }
-            _ => classification_diagnostics
-                .push(unrecognized_field(crate::keys::Surface::SkillProfile, &key)),
+            _ => classification_diagnostics.push(unrecognized_field(DefinitionKind::Skill, &key)),
         }
     }
 

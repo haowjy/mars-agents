@@ -124,12 +124,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 
     if json {
         let mut json_report = report;
-        for diag in diagnostics
-            .iter()
-            .filter(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info)
-        {
-            json_report.warnings.push(diag.to_string());
-        }
+        json_report
+            .warnings
+            .extend(diagnostics.iter().map(ToString::to_string));
         output::print_json(&json_report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
@@ -140,11 +137,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
         println!();
 
-        let has_non_info_diagnostics = diagnostics
-            .iter()
-            .any(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info);
-        if clean && report.warnings.is_empty() && !has_non_info_diagnostics {
-            output::print_diagnostics(&diagnostics);
+        let has_warnings = diagnostics.iter().any(|diag| diag.shown(false));
+        if clean && report.warnings.is_empty() && !has_warnings {
+            output::print_diagnostics(&diagnostics, true);
             output::print_success("all checks passed");
         } else {
             for e in &report.errors {
@@ -153,7 +148,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             for w in &report.warnings {
                 output::print_warn(w);
             }
-            output::print_diagnostics(&diagnostics);
+            output::print_diagnostics(&diagnostics, true);
             if !clean {
                 println!();
                 println!("  {} error(s) found", report.errors.len());

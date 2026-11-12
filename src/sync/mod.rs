@@ -207,50 +207,6 @@ pub(crate) fn execute_validation(
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }
 
-/// Each agent's own tool rules as a sync of the project would install them, read from the
-/// project's files and dependencies without the project's `.mars/` and without the consumer's
-/// overlays and `[settings.tools]`. Nothing is written. Removed keys and values in the consumer files are
-/// ignored: `mars migrate` asks before it has rewritten them.
-pub(crate) fn resolved_agent_tools(
-    ctx: &MarsContext,
-) -> Result<Vec<(String, mars_schema::tool_policy::EffectiveToolPolicy)>, MarsError> {
-    let request = SyncRequest {
-        resolution: ResolutionMode::Normal,
-        mutation: None,
-        options: SyncOptions {
-            dry_run: true,
-            ..SyncOptions::default()
-        },
-        recovery: Default::default(),
-        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
-    };
-    let mut diag = DiagnosticCollector::new();
-    let targeted = crate::config::tolerating_removals(|| {
-        let ir = crate::reader::read(ctx, &request, &mut diag, false)?;
-        build_target(ctx, ir.resolved, ir.local_items, &request, &mut diag)
-    })?;
-    let mut agents = Vec::new();
-    for item in targeted.target.items.values() {
-        if item.id.kind != mars_schema::item::ItemKind::Agent {
-            continue;
-        }
-        let content = match &item.rewritten_content {
-            Some(content) => content.clone(),
-            None => std::fs::read_to_string(&item.source_path)?,
-        };
-        let Some(profile) = mars_schema::read::installed_agent(&content).fields else {
-            continue;
-        };
-        let name = profile
-            .name
-            .clone()
-            .unwrap_or_else(|| item.id.name.to_string());
-        agents.push((name, profile.tools));
-    }
-    agents.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(agents)
-}
-
 pub(crate) fn load_config(
     ctx: &MarsContext,
     request: &SyncRequest,

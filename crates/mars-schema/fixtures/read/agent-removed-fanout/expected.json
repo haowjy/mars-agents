@@ -36,7 +36,7 @@
       "path": [
         "fanout"
       ],
-      "message": "`fanout` was removed; use consumer `[settings.meridian.fanout]`"
+      "message": "`fanout` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

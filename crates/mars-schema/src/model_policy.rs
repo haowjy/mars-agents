@@ -85,6 +85,9 @@ pub enum ModelPolicyRuleParseError {
     OverrideMustBeMapping {
         found: String,
     },
+    UnknownOverrideKey {
+        key: String,
+    },
     /// A host set is layered by settings, profile, overlay and CLI, never by a model rule.
     NetworkHostsNotAllowed {
         key: String,
@@ -126,6 +129,9 @@ impl ModelPolicyRuleParseError {
             Self::OverrideMustBeMapping { .. } => {
                 "model policy `override` must be a mapping".to_string()
             }
+            Self::UnknownOverrideKey { key } => format!(
+                "unknown model policy override `{key}`; expected effort, sandbox, approval, or network"
+            ),
             Self::NetworkHostsNotAllowed { key } => format!(
                 "model policy override `{key}` is not supported; set it on settings, the profile, an agent overlay, or the CLI"
             ),
@@ -147,7 +153,9 @@ impl ModelPolicyRuleParseError {
     }
 }
 
-/// The keys of a rule, and of its `override`, that Mars reads. A key beside them is unknown.
+/// The keys of a rule that Mars reads. A key beside them is unknown. An `override` takes only
+/// the fields below, every one of them an execution or restriction setting, so an unknown key
+/// there is an error rather than a note.
 const RULE_KEYS: &[&str] = &["match", "override", "no-fallback", "when"];
 const OVERRIDE_KEYS: &[&str] = &[
     "effort",
@@ -158,19 +166,11 @@ const OVERRIDE_KEYS: &[&str] = &[
     "network-deny",
 ];
 
-/// A key of a rule the reader does not read: it stays in the file, and the caller warns.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct UnknownRuleKey {
-    /// In the rule's `override` table, not the rule itself.
-    pub in_override: bool,
-    pub key: String,
-}
-
 /// What reading one rule found, all in one pass: the rule when nothing in it is rejected, every
 /// rejection when something is, and the unknown keys either way.
 pub(crate) struct RuleReading {
     pub rule: Result<ModelPolicyRule, Vec<ModelPolicyRuleParseError>>,
-    pub unknown: Vec<UnknownRuleKey>,
+    pub unknown: Vec<String>,
 }
 
 pub(crate) fn read_model_policy_rule(value: &serde_yaml::Value) -> RuleReading {
@@ -184,16 +184,13 @@ pub(crate) fn read_model_policy_rule(value: &serde_yaml::Value) -> RuleReading {
         };
     };
     let mut errors = Vec::new();
-    let mut unknown = unknown_keys(rule, RULE_KEYS, false);
+    let unknown = unknown_keys(rule, RULE_KEYS);
 
     let matched = read_match(rule).map_err(|error| errors.push(error)).ok();
 
     let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
         Some(value) if !value.is_null() => match value.as_mapping() {
-            Some(mapping) => {
-                unknown.extend(unknown_keys(mapping, OVERRIDE_KEYS, true));
-                read_overrides(mapping, &mut errors)
-            }
+            Some(mapping) => read_overrides(mapping, &mut errors),
             None => {
                 errors.push(Error::OverrideMustBeMapping {
                     found: crate::ordered::plain(value),
@@ -243,19 +240,13 @@ pub(crate) fn read_model_policy_rule(value: &serde_yaml::Value) -> RuleReading {
     RuleReading { rule, unknown }
 }
 
-fn unknown_keys(
-    mapping: &serde_yaml::Mapping,
-    known: &[&str],
-    in_override: bool,
-) -> Vec<UnknownRuleKey> {
+fn unknown_keys(mapping: &serde_yaml::Mapping, known: &[&str]) -> Vec<String> {
     mapping
         .keys()
         .filter(|key| !key.as_str().is_some_and(|key| known.contains(&key)))
-        .map(|key| UnknownRuleKey {
-            in_override,
-            key: key
-                .as_str()
-                .map_or_else(|| crate::ordered::plain(key), str::to_owned),
+        .map(|key| {
+            key.as_str()
+                .map_or_else(|| crate::ordered::plain(key), str::to_owned)
         })
         .collect()
 }
@@ -320,6 +311,11 @@ fn read_overrides(
     let mut overrides = ModelPolicyOverride::default();
     for (key, value) in mapping {
         let Some(key) = key.as_str().filter(|key| OVERRIDE_KEYS.contains(key)) else {
+            errors.push(ModelPolicyRuleParseError::UnknownOverrideKey {
+                key: key
+                    .as_str()
+                    .map_or_else(|| crate::ordered::plain(key), str::to_owned),
+            });
             continue;
         };
         if matches!(key, "network-allow" | "network-deny") {
@@ -389,9 +385,7 @@ impl<'de> Deserialize<'de> for ModelPolicyRule {
             ) -> Result<Self::Value, A::Error> {
                 let mut rule = serde_yaml::Mapping::new();
                 while let Some(key) = map.next_key::<String>()? {
-                    if key == "override" {
-                        rule.insert(key.into(), map.next_value_seed(OverrideSeed)?);
-                    } else if RULE_KEYS.contains(&key.as_str()) {
+                    if RULE_KEYS.contains(&key.as_str()) {
                         rule.insert(key.into(), map.next_value::<serde_yaml::Value>()?);
                     } else {
                         map.next_value::<serde::de::IgnoredAny>()?;
@@ -408,47 +402,6 @@ impl<'de> Deserialize<'de> for ModelPolicyRule {
                                 .join("; "),
                         )
                     })
-            }
-        }
-
-        /// An `override` table with only the keys Mars reads; the others are ignored values.
-        struct OverrideSeed;
-
-        impl<'de> serde::de::DeserializeSeed<'de> for OverrideSeed {
-            type Value = serde_yaml::Value;
-
-            fn deserialize<D: serde::Deserializer<'de>>(
-                self,
-                deserializer: D,
-            ) -> Result<Self::Value, D::Error> {
-                deserializer.deserialize_any(self)
-            }
-        }
-
-        impl<'de> serde::de::Visitor<'de> for OverrideSeed {
-            type Value = serde_yaml::Value;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a model policy `override` mapping")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(serde_yaml::Value::Null)
-            }
-
-            fn visit_map<A: serde::de::MapAccess<'de>>(
-                self,
-                mut map: A,
-            ) -> Result<Self::Value, A::Error> {
-                let mut overrides = serde_yaml::Mapping::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    if OVERRIDE_KEYS.contains(&key.as_str()) {
-                        overrides.insert(key.into(), map.next_value::<serde_yaml::Value>()?);
-                    } else {
-                        map.next_value::<serde::de::IgnoredAny>()?;
-                    }
-                }
-                Ok(serde_yaml::Value::Mapping(overrides))
             }
         }
 

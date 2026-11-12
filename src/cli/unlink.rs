@@ -80,7 +80,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             "unlinked `{target_name}` (removed {removed_outputs} managed output{})",
             if removed_outputs == 1 { "" } else { "s" }
         ));
-        output::print_diagnostics(&diagnostics);
+        output::print_diagnostics(&diagnostics, false);
     } else {
         output::print_info(&format!(
             "`{target_name}` is not a managed target; no changes made"

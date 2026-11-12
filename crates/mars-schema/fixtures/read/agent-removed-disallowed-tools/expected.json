@@ -38,7 +38,7 @@
       "path": [
         "disallowed-tools"
       ],
-      "message": "`disallowed-tools` was removed; use `tools: {<capability>: deny}`"
+      "message": "`disallowed-tools` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

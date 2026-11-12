@@ -172,7 +172,7 @@ The order inside one `mars sync`:
 4. **Binary and compiler checks.** Building the target, planning, and the hook and MCP preflight report their own errors, and the gate runs after the target is built and again after the preflight, so those errors also fail before apply.
 5. **Apply and publish.** The config mutation is saved, the plan is applied to the `.mars/` canonical store, and the generation at `.mars/.staging.pending` is renamed over `.mars/staging` (nothing is copied). The next sync that takes the lock removes a leftover pending path.
 
-Warnings never stop a sync: unknown keys (`field.unknown`), the lossiness a target cannot express, and the pre-v1 notice are printed and the run continues. `--diff` runs the same steps and writes nothing.
+Warnings never stop a sync: the lossiness a target cannot express, and the pre-v1 notice are printed and the run continues. Unknown keys (`field.unknown`) are `Info`: `mars sync --verbose`, `mars validate` and `mars check` print them. `--diff` runs the same steps and writes nothing.
 
 Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), `mars migrate` writes its normalized bytes back to the authored files, and `mars outdated` reads tags only, so it never classifies a package. `mars migrate` is the one caller that prepares for writing: it also repairs the keys schema 1 removed in favour of a `harness-overrides` namespace, in a schema 1 definition too. An unusable version is refused by sync with its error.
 

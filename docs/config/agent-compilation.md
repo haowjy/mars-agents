@@ -655,7 +655,7 @@ These are non-fatal warnings. The sync continues and the native artifact is stil
 |---|---|
 | `tool-rule-covered` | each allow or ask a stricter rule covers, so it never applies, one line per rule and covering rule naming its agents (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)) |
 
-`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors, an unknown field (`field.unknown`) included. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
+`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors; an unknown field (`field.unknown`) is an `Info` and stays one. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 
 ## Lossiness Matrix
 

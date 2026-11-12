@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::keys::{self, Rewrite, Surface};
+use crate::item::DefinitionKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,23 +64,25 @@ impl SchemaDiagnostic {
 }
 
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when the key table removes it on `surface`, else `field.unknown` (a warning). An
-/// unknown key stays in the authored file and reaches no native file.
-pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnostic {
-    match keys::removed_key(surface, key) {
-        Some(removal) => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path(key),
-            format!("`{key}` was removed; {}", removal.advice),
-        ),
-        None => SchemaDiagnostic::new(
-            "field.unknown",
-            Severity::Warning,
-            key_path(key),
-            unknown_key_message("", key),
-        ),
+/// error) when it is a key of pre-v1 Mars's, else `field.unknown`. An unknown key stays in the
+/// authored file and reaches no native file.
+pub(crate) fn unrecognized_field(kind: DefinitionKind, key: &str) -> SchemaDiagnostic {
+    if crate::upgrade::PRE_V1.key(kind, key) {
+        return crate::upgrade::pre_v1_key(key_path(key), key);
     }
+    unknown_field(key_path(key), "", key)
+}
+
+/// A key a reader has no field for. Nothing is lost by ignoring it and it may be intended
+/// (a typo, or a key from a newer Mars), so it is `Info`: `validate`, `check` and `--verbose`
+/// show it. `table` is as in [`unknown_key_message`].
+pub(crate) fn unknown_field(path: Vec<PathSegment>, table: &str, key: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.unknown",
+        Severity::Info,
+        path,
+        unknown_key_message(table, key),
+    )
 }
 
 /// The one warning for a key that a project, package or user config file carries and this Mars
@@ -96,28 +98,6 @@ pub fn unknown_key_message(table: &str, key: &str) -> String {
         "{table}unknown key `{key}` is not read by Mars v{} (a typo, or a key from a newer Mars); it stays in the file",
         crate::VERSION
     )
-}
-
-/// What a reader tells the author about a value the key table removed from a field that remains.
-pub fn removed_value_message(surface: Surface, key: &str, value: &str) -> Option<String> {
-    let removal = keys::removed_value_of(surface, key, value)?;
-    let Rewrite::Value(replacement) = removal.rewrite else {
-        return None;
-    };
-    Some(format!(
-        "{key} value `{value}` was removed; use `{replacement}`"
-    ))
-}
-
-/// The schema reader's `field.removed` error for such a value. The legacy upgrade rewrites it to
-/// the row's replacement.
-pub(crate) fn removed_value(surface: Surface, key: &str, value: &str) -> Option<SchemaDiagnostic> {
-    Some(SchemaDiagnostic::new(
-        "field.removed",
-        Severity::Error,
-        key_path(key),
-        removed_value_message(surface, key, value)?,
-    ))
 }
 
 /// A bad value for a field the item kind defines (`kind` is the noun in the message).

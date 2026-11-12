@@ -4,7 +4,6 @@
 
 use crate::dependency::Dependencies;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
-use crate::keys::{self, Surface};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 use crate::read::DefinitionRead;
@@ -102,19 +101,19 @@ fn read_package(
     }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
-        if let Some(removal) = keys::removed_key(Surface::Package, key) {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
+        if crate::upgrade::PRE_V1
+            .package_dropped
+            .contains(&key.as_str())
+        {
+            diagnostics.push(crate::upgrade::pre_v1_key(
                 child_path("package", key),
-                format!("`package.{key}` was removed; {}", removal.advice),
+                &format!("package.{key}"),
             ));
         } else if !known.contains(&key.as_str()) {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
+            diagnostics.push(crate::diagnostic::unknown_field(
                 child_path("package", key),
-                crate::diagnostic::unknown_key_message("package", key),
+                "package",
+                key,
             ));
         }
     }

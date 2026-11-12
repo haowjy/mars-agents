@@ -38,7 +38,7 @@
       "path": [
         "mcp-tools"
       ],
-      "message": "`mcp-tools` was removed; put MCP capability references in `tools`"
+      "message": "`mcp-tools` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

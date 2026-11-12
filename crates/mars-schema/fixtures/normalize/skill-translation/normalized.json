@@ -212,7 +212,7 @@
               "diagnostics": [
                 {
                   "code": "field.unknown",
-                  "severity": "warning",
+                  "severity": "info",
                   "path": [
                     "x-custom"
                   ],

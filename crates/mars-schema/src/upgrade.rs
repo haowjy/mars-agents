@@ -8,8 +8,7 @@ use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
-use crate::keys::{self, Rewrite, Surface};
-use crate::skill;
+use crate::keys;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
@@ -41,6 +40,143 @@ pub enum UpgradeError {
         "`[package.tools]` needs `[package] schema = 1`; older Mars versions ignore it, so a package without a schema cannot carry it"
     )]
     PackageToolsNeedSchema,
+}
+
+/// The grammar of pre-v1 Mars: every key and value the upgrade below drops, renames, moves or
+/// rewrites. The upgrade functions iterate it, and the strict reader asks [`PreV1::key`] and
+/// [`PreV1::value`], so a file the upgrade would change is the file the reader refuses and the
+/// two cannot drift apart. A schema 1 file in this format is in the wrong format, not a file with
+/// a typo: dropping its `disallowed-tools` or `network_deny` unread would lose a restriction.
+pub(crate) struct PreV1 {
+    /// Agent keys the upgrade deletes.
+    pub agent_dropped: &'static [&'static str],
+    /// Spellings of Agent and skill keys that became another key: (old, new).
+    pub renamed: &'static [(&'static str, &'static str)],
+    /// Spellings of Agent keys that became another key: (old, new).
+    pub agent_renamed: &'static [(&'static str, &'static str)],
+    /// Agent host sets that became another key; both spellings merge: (old, new).
+    pub agent_host_sets: &'static [(&'static str, &'static str)],
+    /// Agent keys whose list becomes tool rules: `disallowed-tools` becomes `deny` rules.
+    pub agent_tool_lists: &'static [&'static str],
+    /// Agent keys that moved under a consumer namespace of `harness-overrides`:
+    /// (namespace, key, key within the namespace).
+    pub agent_moved: &'static [(&'static str, &'static str, &'static str)],
+    /// Agent values rewritten: (key, old value, new value).
+    pub agent_values: &'static [(&'static str, &'static str, &'static str)],
+    /// Skill keys that carried a tool policy, which schema 1 skills do not have.
+    pub skill_tool_keys: &'static [&'static str],
+    /// Skill keys `upgrade_skill` folds into `metadata.type` and `description`.
+    pub skill_folded: &'static [&'static str],
+    /// Skill keys that other formats spell invocability with; the dialect translation reads them.
+    pub skill_invocation: &'static [&'static str],
+    /// `[package]` keys the upgrade deletes.
+    pub package_dropped: &'static [&'static str],
+    /// `harness-overrides` namespaces that took their full host names: (old, new).
+    pub namespaces: &'static [(&'static str, &'static str)],
+}
+
+pub(crate) const PRE_V1: PreV1 = PreV1 {
+    agent_dropped: &[
+        "fanout",
+        "models",
+        "mcp-tools",
+        "autocompact",
+        "autocompact_pct",
+    ],
+    renamed: &[
+        ("model_invocable", "model-invocable"),
+        ("user_invocable", "user-invocable"),
+    ],
+    agent_renamed: &[("disallowed_tools", "disallowed-tools")],
+    agent_host_sets: &[
+        ("network_allow", "network-allow"),
+        ("network_deny", "network-deny"),
+    ],
+    agent_tool_lists: &["disallowed-tools"],
+    agent_moved: &[
+        ("meridian-flow", "permission", "permission"),
+        (
+            "meridian-cli",
+            "resident-rearm-budget",
+            "resident-rearm-budget",
+        ),
+        ("meridian-cli", "meridian-capabilities", "capabilities"),
+    ],
+    agent_values: &[
+        ("approval", "yolo", "never"),
+        ("effort", "adaptive", "medium"),
+        ("effort", "disabled", "none"),
+    ],
+    skill_tool_keys: &[
+        "tools",
+        "allowed-tools",
+        "allowed_tools",
+        "disallowed-tools",
+        "disallowed_tools",
+        "disallowedTools",
+    ],
+    skill_folded: &["type", "when_to_use"],
+    skill_invocation: &[
+        "invocation",
+        "disable-model-invocation",
+        "allow_implicit_invocation",
+    ],
+    package_dropped: &["visibility"],
+    namespaces: &[("flow", "meridian-flow"), ("meridian", "meridian-cli")],
+};
+
+impl PreV1 {
+    /// Whether `key` of a `kind` definition is pre-v1 Mars's.
+    pub(crate) fn key(&self, kind: DefinitionKind, key: &str) -> bool {
+        if self.renamed.iter().any(|(old, _)| *old == key) {
+            return true;
+        }
+        match kind {
+            DefinitionKind::Agent => {
+                self.agent_dropped.contains(&key)
+                    || self.agent_renamed.iter().any(|(old, _)| *old == key)
+                    || self.agent_host_sets.iter().any(|(old, _)| *old == key)
+                    || self.agent_tool_lists.contains(&key)
+                    || self.agent_moved.iter().any(|(_, moved, _)| *moved == key)
+            }
+            DefinitionKind::Skill => {
+                self.skill_tool_keys.contains(&key)
+                    || self.skill_folded.contains(&key)
+                    || self.skill_invocation.contains(&key)
+            }
+        }
+    }
+
+    /// Whether `value` of the Agent key `key` is one the upgrade rewrites.
+    pub(crate) fn value(&self, key: &str, value: &str) -> bool {
+        self.agent_values
+            .iter()
+            .any(|(known, old, _)| *known == key && *old == value)
+    }
+
+    pub(crate) fn namespace(&self, old: &str) -> bool {
+        self.namespaces.iter().any(|(known, _)| *known == old)
+    }
+}
+
+/// What the strict reader says of a key the upgrade would change.
+pub(crate) fn pre_v1_key(path: Vec<PathSegment>, key: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Error,
+        path,
+        format!("`{key}` is a pre-v1 key; `mars migrate` upgrades this file"),
+    )
+}
+
+/// What the strict reader says of a value the upgrade would rewrite.
+pub(crate) fn pre_v1_value(key: &str, value: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Error,
+        crate::diagnostic::key_path(key),
+        format!("`{key}: {value}` is a pre-v1 value; `mars migrate` upgrades this file"),
+    )
 }
 
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
@@ -139,7 +275,7 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
     let mut diagnostics = Vec::new();
     let mut edited_paths = vec![package_path("schema")];
     package.insert("schema", toml_edit::value(1));
-    for key in keys::dropped_keys(Surface::Package) {
+    for &key in PRE_V1.package_dropped {
         if package.remove(key).is_some() {
             diagnostics.push(removed(&["package", key], key));
             edited_paths.push(package_path(key));
@@ -390,7 +526,7 @@ fn renamed_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> O
         }
         if old != new {
             let pair = (old.as_str()?, new.as_str()?);
-            if !crate::harness::RENAMED_CONSUMER_NAMESPACES.contains(&pair) {
+            if !PRE_V1.namespaces.contains(&pair) {
                 return None;
             }
             renames.push(pair);
@@ -547,20 +683,20 @@ pub(crate) fn lift_mars_only_keys(
     notes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
     let before = fm.mapping().clone();
-    rename_field(fm, "model_invocable", "model-invocable");
-    rename_field(fm, "user_invocable", "user-invocable");
+    for &(old, new) in PRE_V1.renamed {
+        rename_field(fm, old, new);
+    }
     if kind == DefinitionKind::Agent {
-        merge_host_set_spellings(fm, "network_allow", "network-allow");
-        merge_host_set_spellings(fm, "network_deny", "network-deny");
-        for key in keys::dropped_keys(Surface::AgentProfile) {
+        for &(old, new) in PRE_V1.agent_host_sets {
+            merge_host_set_spellings(fm, old, new);
+        }
+        for &key in PRE_V1.agent_dropped {
             if fm.remove(key).is_some() {
                 notes.push(removed(&[key], key));
             }
         }
-        for row in keys::removals(Surface::AgentProfile) {
-            if let (Some(value), Rewrite::Value(replacement)) = (row.value, row.rewrite) {
-                replace_scalar(fm, row.key, value, replacement);
-            }
+        for &(key, old, new) in PRE_V1.agent_values {
+            replace_scalar(fm, key, old, new);
         }
         move_agent_fields(fm, notes);
         strip_model_policy_overrides(fm, notes);
@@ -614,7 +750,7 @@ fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) 
         }
     }
 
-    for key in skill::tool_keys() {
+    for &key in PRE_V1.skill_tool_keys {
         if fm.remove(key).is_some() {
             diagnostics.push(SchemaDiagnostic::new(
                 "skill.tools-dropped",
@@ -647,7 +783,9 @@ fn set_aside_rejected_keys(
 }
 
 fn upgrade_tools(fm: &mut Frontmatter) {
-    rename_field(fm, "disallowed_tools", "disallowed-tools");
+    for &(old, new) in PRE_V1.agent_renamed {
+        rename_field(fm, old, new);
+    }
     if let Some(Value::Sequence(entries)) = fm.get("tools").cloned()
         && entries.iter().all(|entry| entry.as_str().is_some())
     {
@@ -678,22 +816,11 @@ fn upgrade_tools(fm: &mut Frontmatter) {
     fm.remove("disallowed-tools");
 }
 
-/// The Agent keys schema 1 replaced with a `harness-overrides` key: the consumer namespace that
-/// owns it, and the name it takes there.
+/// Agent keys that moved under a `harness-overrides` namespace are [`PreV1::agent_moved`].
 ///
 /// One conflict rule covers all three: a block already written wins, and its top-level twin is
 /// dropped with a note naming it. `permission` moves only for the values Flow defines; see
 /// [`moves_under_namespace`].
-const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
-    ("meridian-flow", "permission", "permission"),
-    (
-        "meridian-cli",
-        "resident-rearm-budget",
-        "resident-rearm-budget",
-    ),
-    ("meridian-cli", "meridian-capabilities", "capabilities"),
-];
-
 /// Whether the top-level `key` moves under its consumer namespace. Meridian Flow defines
 /// `read` and `edit` only, so any other `permission` value stays where it is for the reader to report.
 fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
@@ -710,7 +837,8 @@ fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
 fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
     let mut displaced = Vec::new();
     for &namespace in crate::harness::RESERVED_CONSUMER_NAMESPACES {
-        let keys = MOVED_AGENT_FIELDS
+        let keys = PRE_V1
+            .agent_moved
             .iter()
             .filter_map(|(owner, from, to)| {
                 (*owner == namespace && moves_under_namespace(fm, from)).then_some((*from, *to))
@@ -742,7 +870,7 @@ fn rename_consumer_namespaces(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagno
     let Some(Value::Mapping(overrides)) = fm.get_mut("harness-overrides") else {
         return;
     };
-    for &(old, new) in crate::harness::RENAMED_CONSUMER_NAMESPACES {
+    for &(old, new) in PRE_V1.namespaces {
         let old_key = Value::String(old.to_string());
         let new_key = Value::String(new.to_string());
         let Some(old_block) = overrides.get(&old_key).cloned() else {

@@ -36,7 +36,7 @@
       "path": [
         "user_invocable"
       ],
-      "message": "`user_invocable` was removed; use `user-invocable`"
+      "message": "`user_invocable` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

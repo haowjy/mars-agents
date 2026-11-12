@@ -7,6 +7,30 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-12
+
+### Upgrade notes
+- The `allowed`, `disallowed` and `mcp` lists in `[agents.<name>.tools]`, deprecated in 0.30, are deleted. A leftover list fails the load at its own line (`wanted string or table`). Write rule entries instead: `bash = "deny"`, `"bash(git push *)" = "ask"`. See [agent tool rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#agentsname).
+- `mars check` fails, where it warned, when `[package].requires-mars` is missing or lower than the package needs: `schema = 1` and `uses-providers` need `>=0.20.0`, `[plugin]` `>=0.19.0`, `[hooks]` `>=0.25.0`, and a `deny` or `ask` in `[package.tools]` or an agent's `tools` `>=0.30.0`. The error names the key and the line to write; `mars version` writes it. See [requires-mars](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#package-optional).
+- A `.opencode` agent file now carries the agent's whole tool policy, so an agent with an allowlist or an `ask` rule decides the tools it names itself, over the project's `opencode.json` and OpenCode's built-in `read *.env: ask`. Put restrictions every agent must keep in `[settings.tools]`. See [the OpenCode agent file](https://github.com/haowjy/mars-agents/blob/main/docs/config/agent-compilation.md#opencodeagentsnamemd).
+- A `min_mars_version` that does not parse fails the load; it used to warn and go on. A bare `0.30.0` means that version or newer, as in `requires-mars`.
+- `disallowedTools` and `disallowed_tools` in a `schema = 1` agent file are refused as pre-v1 keys, and `mars migrate` turns them into deny rules. Before, Mars warned and the tool was not denied.
+
+### Added
+- `mars version` raises the package's `requires-mars` to what its keys need, says so, and keeps every other byte of the file, an upper bound included. `--json` adds `requires_mars`.
+
+### Changed
+- Fewer lines on a sync. A key Mars does not read (a typo, a key from a newer Mars, a deleted key) is reported by `mars validate`, `mars check` and `mars sync --verbose`, and no longer by a default `mars sync` or in the launch bundle's `warnings`. `validate --strict` no longer fails on one. What drops a restriction is still a warning or an error.
+- `[overrides]`, `managed_root` and `targets` in the user `config.toml` are unread keys like any other (`[overrides]` was an error). The user config honors `min_mars_version`.
+- `mars migrate` converts a `schema = 1` package's pre-v1 keys by the same rules as a package with no `schema`, so every key the reader refuses as pre-v1 has a working way out. A `permission` map moves to `harness-overrides.opencode.permission`; when a restricting key is written twice with different values, the restricting one is kept and noted.
+- A `.opencode` agent file's `permission` map holds the `*` default, allows, `ask` rules, denies and scoped patterns. It is never looser than the agent's tool rules or its `harness-overrides.opencode.permission`, and is exactly the tool rules when there is no override. `mars sync` no longer reports those rules as lost for `.opencode`; `.codex`, `.pi` and `.cursor` are unchanged.
+- An unknown key inside a `model-policies` rule in an agent file is reported; it was silent. One rule's rejections are all reported in one pass.
+- A value Mars does not accept in an overlay is reported at the line of the value, not at the table header.
+- A package whose `[package.tools]` holds only `allow` rules needs no `requires-mars` floor.
+
+### Removed
+- The `tool-overlay-additive` and `tool-overlay-lists-deprecated` notes, and the `agent-copy-fanout-moved`, `unknown-network-key`, `unknown-settings-key`, `stale-config-key`, `ignored-user-setting` and `compat-version-parse` warnings.
+
 ## [0.30.1] - 2026-11-11
 
 ### Upgrade notes

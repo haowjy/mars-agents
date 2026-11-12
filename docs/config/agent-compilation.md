@@ -376,10 +376,9 @@ call:
    to the stricter.
 
 Rules are grouped by OpenCode action, not by capability, so a `write` allow and an `edit`
-scope land in one list. An allow is written only where it carves an exception, under a
-restricting `*` or beside a non-allow rule of the same action; elsewhere it restates the
-default and would override the project's `opencode.json`. Mars never writes a permission the
-profile did not grant.
+scope land in one list. An allow is written only under a restricting `*`, where it carves an
+exception; elsewhere it restates OpenCode's default and, because the last match wins, would
+override the project's `opencode.json` rules.
 
 A shell deny, `ask` or scoped rule that is not an allow also denies `execute`, OpenCode's code
 mode, which runs arbitrary code and stays offered when only the shell is restricted (checked on
@@ -388,19 +387,24 @@ without asking). Under `*: deny` it is already closed. `skill` needs no
 extra rule: `*: deny` refuses loading an existing skill, though the tool is still listed and a
 name that does not exist answers "Unable to load skill" before any permission check.
 
-I kept the v1 `permission` map and not the v2 `permissions` array. OpenCode 2.2.5 loads the v1
+The file keeps the v1 `permission` map and not the v2 `permissions` array. OpenCode 2.2.5 loads the v1
 map from an agent file and keeps its key order; a file with `permissions` ignores `name`,
 `permission` and `tools`; and the Claude-style plugin build reads this same map.
 
 The map merges with the author's `harness-overrides.opencode.permission`: the author's other
-entries stay, in their order after `*`, and an author entry for an action Mars writes is
-replaced by Mars's entries for it, so only `mars sync --verbose` shows it.
+entries stay, in their order after `*`. For an action both write, the two lists merge, the
+stricter rule wins for a pattern they share, and the list is sorted again; the `*` entries
+resolve to the stricter. An author rule the merge changes or reorders is a dropped permission,
+and `mars sync` prints it.
 
 What stays lost on OpenCode: `ask` in a non-interactive `opencode run` is refused unless the
 run passes `--auto`, because the file cannot say otherwise; `sandbox`, `approval` and `network`
-have no field (Meridian applies them at launch); agent rules append to the project's
-`opencode.json` rules, so a file cannot remove a project rule; and a tool Mars has no OpenCode
-name for (`image`) cannot be allowed or denied.
+have no field (Meridian applies them at launch); and a tool Mars has no OpenCode
+name for (`image`) cannot be allowed or denied. Agent rules also land after the project's
+`opencode.json` rules and OpenCode's built-in ones, and the last match wins, so an allowlist
+agent's allow beats the project's deny for the same tool and `read: allow` skips OpenCode's
+built-in `read *.env: ask`. A file cannot avoid that; `mars sync` prints the `.env` case, which
+it can see, and not the `opencode.json` one.
 
 OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
 generated `/name` references resolvable.

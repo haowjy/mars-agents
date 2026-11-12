@@ -73,6 +73,32 @@ fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
     Some(version)
 }
 
+/// `requirement` with its lower bound raised to `floor` and every other bound kept
+/// (`>=0.20.0, <1.0.0` becomes `>=0.30.0, <1.0.0`), or `None` when the lower bound is not a
+/// plain `>=` comparator or a bare version that can be replaced without guessing (`^0.20`, `~0.20`).
+pub fn raised_requirement(requirement: &str, floor: &Floor) -> Option<String> {
+    let new = floor.requirement();
+    let parts: Vec<&str> = requirement.split(',').map(str::trim).collect();
+    let bare = |part: &str| {
+        parts.len() == 1 && parse_requirement(part).is_ok() && {
+            part.chars().all(|c| c.is_ascii_digit() || c == '.')
+        }
+    };
+    let lower = parts
+        .iter()
+        .position(|part| part.starts_with(">=") || bare(part))?;
+    let mut raised = parts.clone();
+    if parts
+        .iter()
+        .enumerate()
+        .any(|(at, part)| at != lower && (part.starts_with(">=") || part.starts_with('>')))
+    {
+        return None;
+    }
+    raised[lower] = &new;
+    Some(raised.join(", "))
+}
+
 /// The error for a `requires-mars` that does not state `floor`, naming the key that sets it and
 /// the line to write. `None` when it does, or when it is not a requirement this Mars can read: a
 /// broken requirement is its own error.
@@ -83,7 +109,10 @@ pub fn requires_mars_shortfall(requirement: Option<&str>, floor: &Floor) -> Opti
     if requirement_has_floor(requirement, &floor.since.version()) {
         return None;
     }
-    let line = format!("requires-mars = \"{}\"", floor.requirement());
+    let written = requirement
+        .and_then(|raw| raised_requirement(raw, floor))
+        .unwrap_or_else(|| floor.requirement());
+    let line = format!("requires-mars = \"{written}\"");
     let stated = match requirement {
         Some(raw) => format!(
             "`requires-mars = \"{raw}\"` admits a Mars before {}",

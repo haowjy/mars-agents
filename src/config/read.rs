@@ -13,10 +13,25 @@ use serde_ignored::Path as IgnoredPath;
 use crate::error::{ConfigError, MarsError};
 use mars_schema::keys::{self, Surface};
 
-/// A file read: the value, and one warning for each key Mars did not read.
+/// A file read: the value, one warning for each key Mars did not read, and the Mars its tool
+/// rules need.
 pub(super) struct Read<T> {
     pub(super) value: T,
     pub(super) unknown_keys: Vec<String>,
+    pub(super) floor: Option<keys::Floor>,
+}
+
+thread_local! {
+    static REMOVED_KEYS_TOLERATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with the readers ignoring removed keys, as they ignore any key they have no field
+/// for. `mars migrate` reads files that still hold them: it is the command that removes them.
+pub(crate) fn tolerating_removed_keys<R>(f: impl FnOnce() -> R) -> R {
+    let before = REMOVED_KEYS_TOLERATED.replace(true);
+    let result = f();
+    REMOVED_KEYS_TOLERATED.set(before);
+    result
 }
 
 pub(super) enum Segment {
@@ -50,7 +65,7 @@ pub(super) fn read<T: DeserializeOwned>(
         }
         let table = table_name(&at);
         match surface(&at).and_then(|surface| keys::removed_key(surface, &key)) {
-            Some((_, removal)) => {
+            Some(removal) => {
                 let mut message = format!(
                     "{}: [{table}] `{key}` was removed; {}",
                     path.display(),
@@ -67,15 +82,20 @@ pub(super) fn read<T: DeserializeOwned>(
             None => unknown_keys.push(unknown_key_warning(file, &table, &key)),
         }
     }
-    if !removed.is_empty() {
+    if !removed.is_empty() && !REMOVED_KEYS_TOLERATED.get() {
         return Err(ConfigError::Invalid {
             message: removed.join("\n"),
         }
         .into());
     }
+    let floor = content
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
     Ok(Read {
         value,
         unknown_keys,
+        floor,
     })
 }
 

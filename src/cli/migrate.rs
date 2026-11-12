@@ -103,24 +103,20 @@ impl ConsumerConfig {
 }
 
 /// Apply the key table's rewrites to `mars.toml`, `mars.local.toml` and the user `config.toml`.
-/// The tool lists need each agent's installed profile, so they wait for a synced project.
+/// The tool lists need each agent's own rules, which are resolved from the project's
+/// dependencies, so a fresh clone with no `.mars/` migrates too.
 fn migrate_consumer_config(root: &Path) -> Result<ConsumerConfig, MarsError> {
-    let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let no_overlays = indexmap::IndexMap::new();
-    let no_rules = mars_schema::tool_rule_map::ToolRuleMap::default();
-    let profiles = crate::compiler::installed_agent_tools(
-        &root.join(".mars"),
-        crate::compiler::ToolConfig {
-            agent_overlays: &no_overlays,
-            project_tools: &no_rules,
-        },
-        &mut diag,
-    )
-    .into_iter()
-    .collect();
     let user_config = crate::platform::config::mars_config_dir().map(|dir| dir.join("config.toml"));
     let outcome =
-        crate::config::migrations::consumer::migrate(root, user_config.as_deref(), &profiles)?;
+        crate::config::migrations::consumer::migrate(root, user_config.as_deref(), || {
+            let ctx = crate::types::MarsContext {
+                project_root: root.to_path_buf(),
+                meridian_managed: crate::types::meridian_managed_from_env(),
+            };
+            Ok(crate::sync::resolved_agent_tools(&ctx)?
+                .into_iter()
+                .collect())
+        })?;
     let notice = |code: &str, notice: crate::config::migrations::consumer::Notice| Notice {
         file: notice.file,
         code: code.to_string(),
@@ -219,7 +215,12 @@ fn pending_writes(
         let relative = relative_path(project_root, &path);
         let normalized = std::str::from_utf8(&manifest.normalized_bytes)
             .expect("preparation refuses a manifest that is not UTF-8");
-        match mars_schema::upgrade::ensure_requires_mars_floor(normalized) {
+        let hooks = crate::compiler::hooks::check_hooks(
+            authored_root,
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )?;
+        let floor = super::check::package_floor(normalized, prepared, &hooks.portable);
+        match mars_schema::upgrade::ensure_requires_mars_floor(normalized, floor.as_ref()) {
             Ok(outcome) => {
                 if let Some(message) = outcome.warning {
                     warnings.push(Notice {

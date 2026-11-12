@@ -32,7 +32,7 @@ impl ToolAction {
         }
     }
 
-    fn parse(raw: &str) -> Option<Self> {
+    pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "allow" => Some(Self::Allow),
             "deny" => Some(Self::Deny),

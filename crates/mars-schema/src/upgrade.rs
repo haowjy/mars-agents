@@ -163,20 +163,24 @@ pub struct FloorOutcome {
     pub warning: Option<String>,
 }
 
-/// Add `requires-mars = ">=0.20.0"` to a manifest that has no requirement.
+/// Add `requires-mars` at `floor` to a manifest that has no requirement.
 ///
-/// `mars migrate` runs this on the manifest it is about to write, so a schema v1 package needs
-/// no hand edit. An existing requirement is never rewritten: when it admits a Mars older than
-/// the first release that reads schema 1, [`FloorOutcome::warning`] is `mars check`'s advice and
-/// the value keeps its bytes and comment. A manifest migrate cannot edit minimally (an inline
-/// `[package]` table) comes back unchanged with the same advice, never an error, so an
-/// already-v1 package migrates exactly as it did before this key existed.
-pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeError> {
+/// `mars migrate` runs this on the manifest it is about to write, with the floor
+/// [`keys::floor`] finds for the whole package, so a package needs no hand edit. An existing
+/// requirement is never rewritten: when it admits a Mars older than the floor,
+/// [`FloorOutcome::warning`] is `mars check`'s advice and the value keeps its bytes and comment.
+/// A manifest migrate cannot edit minimally (an inline `[package]` table) comes back unchanged
+/// with the same advice, never an error, so an already-v1 package migrates exactly as it did
+/// before this key existed.
+pub fn ensure_requires_mars_floor(
+    text: &str,
+    floor: Option<&keys::Floor>,
+) -> Result<FloorOutcome, UpgradeError> {
     let mut document = text.parse::<DocumentMut>()?;
     let package = document
         .get_mut("package")
         .ok_or(UpgradeError::MissingPackage)?;
-    let Some(floor) = schema_1_floor() else {
+    let Some(floor) = floor else {
         return Ok(FloorOutcome {
             text: text.to_string(),
             warning: None,
@@ -198,18 +202,8 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     }
     Ok(FloorOutcome {
         text: text.to_string(),
-        warning: crate::package::requires_mars_shortfall(requirement.as_deref(), &floor),
+        warning: crate::package::requires_mars_shortfall(requirement.as_deref(), floor),
     })
-}
-
-/// What a `schema = 1` package needs: the first Mars that reads it as schema 1.
-fn schema_1_floor() -> Option<keys::Floor> {
-    keys::floor([keys::Used {
-        surface: Surface::Package,
-        key: "schema",
-        value: None,
-        at: "`schema = 1`".to_string(),
-    }])
 }
 
 fn package_path(key: &str) -> Vec<PathSegment> {
@@ -563,8 +557,8 @@ pub(crate) fn lift_mars_only_keys(
                 notes.push(removed(&[key], key));
             }
         }
-        for (row, removal) in keys::removals(Surface::AgentProfile) {
-            if let (Some(value), Rewrite::Value(replacement)) = (row.value, removal.rewrite) {
+        for row in keys::removals(Surface::AgentProfile) {
+            if let (Some(value), Rewrite::Value(replacement)) = (row.value, row.rewrite) {
                 replace_scalar(fm, row.key, value, replacement);
             }
         }

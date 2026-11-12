@@ -500,7 +500,14 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.project_losses.extend(losses.project);
             }
             AgentLossinessStep::PermissionMap => {
-                self.permission = opencode_permission::rules(self.eff.tools)
+                self.permission = opencode_permission::rules(self.eff.tools);
+                if opencode_permission::overrides_env_ask(&self.permission) {
+                    self.lossy.push(LossyField {
+                        field: "permission.read: allow also reads `.env` files, which OpenCode asks about by default".into(),
+                        target: self.target_name().into(),
+                        classification: Lossiness::Dropped(Lost::Tool),
+                    });
+                }
             }
             AgentLossinessStep::EffortApproximate(note) => {
                 // `none` writes nothing for these harnesses, so there is nothing to approximate.

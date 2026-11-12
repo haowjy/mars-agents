@@ -1,9 +1,10 @@
-//! The table of config keys: one row per key concept, whichever files it appears in.
+//! The tables of config keys: what Mars removed, what it gates by release, and what belongs in a
+//! project's files.
 //!
-//! A row says which Mars first read the key (`since`), whether a value of it restricts, and
-//! whether it is current, an alias, deprecated or removed. Readers ask the table instead of
-//! keeping their own list of removed keys or version floors, so a new key is one row here.
-//! A file's version floor is [`floor`] over the keys it uses.
+//! A row says on which surfaces (files and tables) it holds. Readers ask the tables instead of
+//! keeping their own list of removed keys or version floors, so a new key is one row here. A
+//! file's version floor is [`floor`] over the keys [`used`] finds in it, plus the uses a
+//! caller derives from other files (a hook, a profile's tool rule).
 
 use std::fmt;
 
@@ -52,18 +53,6 @@ impl Release {
     }
 }
 
-/// Whether a file that writes the key needs a Mars of at least the row's `since`. For a key
-/// that narrows what an agent may do, it is the value that decides: an older Mars drops the
-/// key, so a `deny` must not meet one, and an `allow` loses only a grant. For a key that
-/// changes how a package reads (`schema`, `plugin`), it is `Always`.
-#[derive(Debug, Clone, Copy)]
-pub enum Restricts {
-    Never,
-    Always,
-    /// Decided by the value, rendered as text.
-    OnValue(fn(&str) -> bool),
-}
-
 /// What Mars does to a removed key when it rewrites a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rewrite {
@@ -77,8 +66,14 @@ pub enum Rewrite {
     Rename(&'static str),
 }
 
+/// A key (or one value of a key) Mars no longer reads. It is an error on every surface the row
+/// lists.
 #[derive(Debug, Clone, Copy)]
-pub struct Removal {
+pub struct Removed {
+    pub key: &'static str,
+    /// Set when the row is one value of `key` (`approval = "yolo"`), not the whole key.
+    pub value: Option<&'static str>,
+    pub surfaces: &'static [Surface],
     /// What the reader tells the author.
     pub advice: &'static str,
     pub rewrite: Rewrite,
@@ -86,31 +81,34 @@ pub struct Removal {
     pub detail: Option<fn(&toml::Value) -> String>,
 }
 
+/// A key that belongs in a project's files. The user config warns about it and drops it:
+/// ignoring it loses no restriction.
 #[derive(Debug, Clone, Copy)]
-pub enum Status {
-    Current,
-    /// Read as the named key.
-    Alias(&'static str),
-    /// Still read; the advice names its replacement.
-    Deprecated(&'static str),
-    Removed(Removal),
-    /// Not read on this surface because it belongs in the project's files. Ignoring it loses no
-    /// restriction (`restricts` is `Never`), so the reader warns and drops it.
-    Elsewhere(&'static str),
+pub struct Elsewhere {
+    pub key: &'static str,
+    pub surfaces: &'static [Surface],
+    pub advice: &'static str,
 }
 
+/// When a file that writes a gated key needs the row's `since`.
 #[derive(Debug, Clone, Copy)]
-pub struct KeyRow {
+pub enum Gate {
+    /// The key's presence: an older Mars misreads how the package reads (`schema`, `plugin`).
+    Present,
+    /// The key holds tool rules, and the rule's action decides: an older Mars drops the rule,
+    /// so a restricting one (`deny`, `ask`) must not meet one, and an `allow` loses only a grant.
+    Rules(fn(&str) -> bool),
+}
+
+/// A key a Mars release gates: a file that uses it needs a floor at or above `since`.
+#[derive(Debug, Clone, Copy)]
+pub struct Gated {
     pub key: &'static str,
-    /// Set when the row is one value of `key` (`approval = "yolo"`), not the whole key.
-    pub value: Option<&'static str>,
     pub surfaces: &'static [Surface],
-    /// The first Mars release that reads the key, for keys an older Mars reads wrongly or
-    /// drops. Mars before that release ignores the key or misreads it; a file that uses it
-    /// states the release as its floor.
-    pub since: Option<Release>,
-    pub restricts: Restricts,
-    pub status: Status,
+    /// The first Mars release that reads the key. Mars before it ignores the key or misreads
+    /// it; the row's comment says which.
+    pub since: Release,
+    pub gate: Gate,
 }
 
 use Surface::*;
@@ -120,18 +118,14 @@ const fn removed(
     surfaces: &'static [Surface],
     advice: &'static str,
     rewrite: Rewrite,
-) -> KeyRow {
-    KeyRow {
+) -> Removed {
+    Removed {
         key,
         value: None,
         surfaces,
-        since: None,
-        restricts: Restricts::Never,
-        status: Status::Removed(Removal {
-            advice,
-            rewrite,
-            detail: None,
-        }),
+        advice,
+        rewrite,
+        detail: None,
     }
 }
 
@@ -139,50 +133,21 @@ const fn removed_value(
     key: &'static str,
     value: &'static str,
     replacement: &'static str,
-) -> KeyRow {
-    KeyRow {
+) -> Removed {
+    Removed {
         value: Some(value),
-        ..removed(key, &[AgentProfile], "", Rewrite::Value(replacement))
+        ..removed(
+            key,
+            &[AgentProfile, AgentOverlay],
+            "",
+            Rewrite::Value(replacement),
+        )
     }
 }
 
-const fn elsewhere(
-    key: &'static str,
-    surfaces: &'static [Surface],
-    advice: &'static str,
-) -> KeyRow {
-    KeyRow {
-        key,
-        value: None,
-        surfaces,
-        since: None,
-        restricts: Restricts::Never,
-        status: Status::Elsewhere(advice),
-    }
-}
-
-const fn with_detail(mut row: KeyRow, detail: fn(&toml::Value) -> String) -> KeyRow {
-    if let Status::Removed(removal) = &mut row.status {
-        removal.detail = Some(detail);
-    }
+const fn with_detail(mut row: Removed, detail: fn(&toml::Value) -> String) -> Removed {
+    row.detail = Some(detail);
     row
-}
-
-/// A key a Mars release gates: a file that uses it needs a floor at or above `since`.
-const fn gated(
-    key: &'static str,
-    surfaces: &'static [Surface],
-    since: Release,
-    restricts: Restricts,
-) -> KeyRow {
-    KeyRow {
-        key,
-        value: None,
-        surfaces,
-        since: Some(since),
-        restricts,
-        status: Status::Current,
-    }
 }
 
 fn denies_or_asks(action: &str) -> bool {
@@ -192,7 +157,7 @@ fn denies_or_asks(action: &str) -> bool {
 const DISCARDED_SKILL_POLICY: &str = "remove this unused skill policy";
 
 /// Within a surface, table order is the order readers report and rewrite in.
-pub static KEYS: &[KeyRow] = &[
+pub static REMOVED: &[Removed] = &[
     // Agent keys only pre-v1 Mars defined: a definition read as any dialect loses them.
     removed(
         "fanout",
@@ -363,13 +328,13 @@ pub static KEYS: &[KeyRow] = &[
     removed(
         "allowed",
         &[AgentOverlayTools],
-        "write a rule per tool: `\"<tool>\" = \"allow\"`; `mars migrate` rewrites the lists",
+        "run `mars migrate`, which rewrites the lists as rules without widening any agent",
         Rewrite::None,
     ),
     removed(
         "disallowed",
         &[AgentOverlayTools],
-        "write a rule per tool: `\"<tool>\" = \"deny\"`; `mars migrate` rewrites the lists",
+        "run `mars migrate`, which rewrites the lists as rules without widening any agent",
         Rewrite::None,
     ),
     removed(
@@ -377,22 +342,6 @@ pub static KEYS: &[KeyRow] = &[
         &[AgentCopy],
         "use `[settings.meridian.fanout].agents`",
         Rewrite::None,
-    ),
-    // Keys of the project's files that a user-wide `config.toml` would apply to every project.
-    elsewhere(
-        "managed_root",
-        &[UserSettings],
-        "put it in the project's mars.toml",
-    ),
-    elsewhere(
-        "targets",
-        &[UserSettings],
-        "put it in the project's mars.toml",
-    ),
-    elsewhere(
-        "overrides",
-        &[UserConfig],
-        "put it in the project's mars.local.toml, since a user-wide override would point every project at a local checkout unseen",
     ),
     with_detail(
         removed(
@@ -403,40 +352,178 @@ pub static KEYS: &[KeyRow] = &[
         ),
         crate::model_visibility::migration,
     ),
-    // Keys a Mars release gates; the comment on each says what an older Mars does with it.
+];
+
+pub static ELSEWHERE: &[Elsewhere] = &[
+    // Keys of the project's files that a user-wide `config.toml` would apply to every project.
+    Elsewhere {
+        key: "managed_root",
+        surfaces: &[UserSettings],
+        advice: "put it in the project's mars.toml",
+    },
+    Elsewhere {
+        key: "targets",
+        surfaces: &[UserSettings],
+        advice: "put it in the project's mars.toml",
+    },
+    Elsewhere {
+        key: "overrides",
+        surfaces: &[UserConfig],
+        advice: "put it in the project's mars.local.toml, since a user-wide override would point every project at a local checkout unseen",
+    },
+];
+
+/// The first Mars that honours `min_mars_version`. A floor at or below it protects nothing a
+/// `min_mars_version` line could: Mars before it ignores the line.
+pub const MIN_MARS_VERSION_SINCE: Release = Release(0, 30, 0);
+
+/// Keys a Mars release gates; the comment on each says what an older Mars does with it.
+pub static GATED: &[Gated] = &[
     // Mars before 0.20.0 reads a `schema = 1` package as pre-v1 and drops what it cannot place.
-    gated("schema", &[Package], Release(0, 20, 0), Restricts::Always),
+    Gated {
+        key: "schema",
+        surfaces: &[Package],
+        since: Release(0, 20, 0),
+        gate: Gate::Present,
+    },
     // Mars before 0.20.0 fails `skill__provider` refs with `skill not found`.
-    gated(
-        "uses-providers",
-        &[Package],
-        Release(0, 20, 0),
-        Restricts::Always,
-    ),
+    Gated {
+        key: "uses-providers",
+        surfaces: &[Package],
+        since: Release(0, 20, 0),
+        gate: Gate::Present,
+    },
     // Mars before 0.19.0 drops `[plugin]` when `mars version` rewrites the manifest.
-    gated("plugin", &[Manifest], Release(0, 19, 0), Restricts::Always),
+    Gated {
+        key: "plugin",
+        surfaces: &[Manifest],
+        since: Release(0, 19, 0),
+        gate: Gate::Present,
+    },
     // Mars before 0.25.0 rejects `[hooks]` and fails the whole sync.
-    gated("hooks", &[HookToml], Release(0, 25, 0), Restricts::Always),
+    Gated {
+        key: "hooks",
+        surfaces: &[HookToml],
+        since: Release(0, 25, 0),
+        gate: Gate::Present,
+    },
     // Tool rule tables. Mars before 0.29.0 ignores them without a word; 0.29.x reads `deny`
     // under the older precedence, where a narrower allow can beat it, and fails on `allow` or
     // `ask`; 0.30.0 is the first where the strictest rule wins. `allow` is not a restriction:
     // a Mars that drops one loses a grant only.
-    gated(
-        "tools",
-        &[Package, Settings, AgentOverlay],
-        Release(0, 30, 0),
-        Restricts::OnValue(denies_or_asks),
-    ),
+    Gated {
+        key: "tools",
+        surfaces: &[Package, Settings, AgentOverlay, AgentProfile],
+        since: Release(0, 30, 0),
+        gate: Gate::Rules(denies_or_asks),
+    },
 ];
 
 /// A key a file uses, as [`floor`] reads it.
-pub struct Used<'a> {
+pub struct Used {
     pub surface: Surface,
-    pub key: &'a str,
-    /// The value written, for a key whose `restricts` depends on it.
-    pub value: Option<&'a str>,
+    pub key: String,
+    /// The rule's action, for a key whose gate depends on it.
+    pub value: Option<String>,
     /// Where the file uses it, for the message: "`[package.tools]` `bash` = \"deny\"".
     pub at: String,
+}
+
+impl Used {
+    /// A portable hook in a `hook.toml`, which an older Mars rejects.
+    pub fn hook(name: &str) -> Self {
+        Self {
+            surface: HookToml,
+            key: "hooks".into(),
+            value: None,
+            at: format!("hook `{name}` using `[hooks]`"),
+        }
+    }
+
+    /// A tool rule in an agent's frontmatter `tools`.
+    pub fn profile_rule(agent: &str, rule: &str, action: &str) -> Self {
+        Self {
+            surface: AgentProfile,
+            key: "tools".into(),
+            value: Some(action.into()),
+            at: format!("agent `{agent}` `tools` `{rule}` = \"{action}\""),
+        }
+    }
+}
+
+/// Which file [`used`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Document {
+    /// A package's `mars.toml`.
+    Package,
+    /// `mars.toml`, `mars.local.toml` or the user `config.toml` as a project's configuration.
+    Consumer,
+}
+
+/// The gated keys `document` uses: every key of a table that has a gated row on that table's
+/// surface, and for a key that holds rules, each rule.
+pub fn used(document: &toml::Table, kind: Document) -> Vec<Used> {
+    let mut used = Vec::new();
+    let mut scan = |surface: Surface, label: String, table: &toml::Table| {
+        for row in GATED.iter().filter(|row| on(row.surfaces, surface)) {
+            let Some(value) = table.get(row.key) else {
+                continue;
+            };
+            match (row.gate, value) {
+                (Gate::Rules(_), toml::Value::Table(rules)) => {
+                    let table = if label.is_empty() {
+                        row.key.to_string()
+                    } else {
+                        format!("{label}.{}", row.key)
+                    };
+                    for (name, action) in rules {
+                        let Some(action) = action.as_str() else {
+                            continue;
+                        };
+                        used.push(Used {
+                            surface,
+                            key: row.key.into(),
+                            value: Some(action.into()),
+                            at: format!("`[{table}]` `{name}` = \"{action}\""),
+                        });
+                    }
+                }
+                (Gate::Rules(_), _) => {}
+                (Gate::Present, value) => used.push(Used {
+                    surface,
+                    key: row.key.into(),
+                    value: None,
+                    at: match value {
+                        toml::Value::Table(_) => format!("`[{}]`", row.key),
+                        toml::Value::Integer(_) | toml::Value::Boolean(_) => {
+                            format!("`{} = {value}`", row.key)
+                        }
+                        _ => format!("`{}`", row.key),
+                    },
+                }),
+            }
+        }
+    };
+    match kind {
+        Document::Package => {
+            scan(Manifest, String::new(), document);
+            if let Some(package) = document.get("package").and_then(toml::Value::as_table) {
+                scan(Package, "package".into(), package);
+            }
+        }
+        Document::Consumer => {
+            if let Some(settings) = document.get("settings").and_then(toml::Value::as_table) {
+                scan(Settings, "settings".into(), settings);
+            }
+            let agents = document.get("agents").and_then(toml::Value::as_table);
+            for (name, agent) in agents.into_iter().flatten() {
+                if let Some(agent) = agent.as_table() {
+                    scan(AgentOverlay, format!("agents.{name}"), agent);
+                }
+            }
+        }
+    }
+    used
 }
 
 /// The Mars a file needs, and what in it asks for that.
@@ -455,64 +542,59 @@ impl Floor {
 
 /// The highest `since` among the keys used whose row says an older Mars would misread them.
 /// The first of equal ones names the floor.
-pub fn floor<'a>(used: impl IntoIterator<Item = Used<'a>>) -> Option<Floor> {
+pub fn floor(used: impl IntoIterator<Item = Used>) -> Option<Floor> {
     let mut floor: Option<Floor> = None;
     for used in used {
-        let Some(row) = KEYS.iter().find(|row| {
-            row.key == used.key && on(row, used.surface) && matches!(row.status, Status::Current)
-        }) else {
+        let Some(row) = GATED
+            .iter()
+            .find(|row| row.key == used.key && on(row.surfaces, used.surface))
+        else {
             continue;
         };
-        let Some(since) = row.since else { continue };
-        let holds = match row.restricts {
-            Restricts::Never => false,
-            Restricts::Always => true,
-            Restricts::OnValue(decides) => used.value.is_some_and(decides),
+        let holds = match row.gate {
+            Gate::Present => true,
+            Gate::Rules(restricts) => used.value.as_deref().is_some_and(restricts),
         };
-        if holds && floor.as_ref().is_none_or(|floor| since > floor.since) {
-            floor = Some(Floor { since, at: used.at });
+        if holds && floor.as_ref().is_none_or(|floor| row.since > floor.since) {
+            floor = Some(Floor {
+                since: row.since,
+                at: used.at,
+            });
         }
     }
     floor
 }
 
-fn on(row: &KeyRow, surface: Surface) -> bool {
-    row.surfaces.contains(&surface)
+fn on(surfaces: &[Surface], surface: Surface) -> bool {
+    surfaces.contains(&surface)
 }
 
 /// Every removal on `surface`, in table order.
-pub fn removals(surface: Surface) -> impl Iterator<Item = (&'static KeyRow, &'static Removal)> {
-    KEYS.iter().filter_map(move |row| match &row.status {
-        Status::Removed(removal) if on(row, surface) => Some((row, removal)),
-        _ => None,
-    })
+pub fn removals(surface: Surface) -> impl Iterator<Item = &'static Removed> {
+    REMOVED.iter().filter(move |row| on(row.surfaces, surface))
 }
 
 /// The row that removes the whole of `key` on `surface`.
-pub fn removed_key(surface: Surface, key: &str) -> Option<(&'static KeyRow, &'static Removal)> {
-    removals(surface).find(|(row, _)| row.value.is_none() && row.key == key)
+pub fn removed_key(surface: Surface, key: &str) -> Option<&'static Removed> {
+    removals(surface).find(|row| row.value.is_none() && row.key == key)
 }
 
 /// The row that removes `value` of `key` on `surface`.
-pub fn removed_value_of(
-    surface: Surface,
-    key: &str,
-    value: &str,
-) -> Option<(&'static KeyRow, &'static Removal)> {
-    removals(surface).find(|(row, _)| row.key == key && row.value == Some(value))
+pub fn removed_value_of(surface: Surface, key: &str, value: &str) -> Option<&'static Removed> {
+    removals(surface).find(|row| row.key == key && row.value == Some(value))
 }
 
 /// The advice for `key` when `surface` does not hold it and ignoring it loses nothing.
 pub fn elsewhere_key(surface: Surface, key: &str) -> Option<&'static str> {
-    KEYS.iter().find_map(|row| match row.status {
-        Status::Elsewhere(advice) if row.key == key && on(row, surface) => Some(advice),
-        _ => None,
-    })
+    ELSEWHERE
+        .iter()
+        .find(|row| row.key == key && on(row.surfaces, surface))
+        .map(|row| row.advice)
 }
 
 /// The keys `surface` deletes outright.
 pub fn dropped_keys(surface: Surface) -> impl Iterator<Item = &'static str> {
     removals(surface)
-        .filter(|(row, removal)| row.value.is_none() && removal.rewrite == Rewrite::Drop)
-        .map(|(row, _)| row.key)
+        .filter(|row| row.value.is_none() && row.rewrite == Rewrite::Drop)
+        .map(|row| row.key)
 }

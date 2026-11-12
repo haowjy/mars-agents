@@ -81,7 +81,7 @@ fn without_project_keys(
     if misplaced.is_empty() {
         return Ok((local, misplaced));
     }
-    let unknown_keys = local.unknown_keys.clone();
+    let (unknown_keys, floor) = (local.unknown_keys.clone(), local.floor.clone());
     let mut stripped: LocalConfig =
         rewritten
             .try_into()
@@ -89,5 +89,6 @@ fn without_project_keys(
                 message: format!("{file}: {error}"),
             })?;
     stripped.unknown_keys = unknown_keys;
+    stripped.floor = floor;
     Ok((stripped, misplaced))
 }

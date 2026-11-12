@@ -122,7 +122,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
                 ..d.clone()
             })
             .collect();
-        super::output::print_diagnostics(&shown, true);
+        super::output::print_tagged_diagnostics(&shown);
         println!();
         if clean && warning_count == 0 {
             super::output::print_success("validate: clean");

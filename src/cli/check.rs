@@ -91,18 +91,12 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             }
         }
     }
-    report
-        .warnings
-        .extend(requires_mars_warnings(&prepared, &lens));
-    let requires_mars = lens
-        .manifest
-        .as_ref()
-        .and_then(|config| config.package.as_ref())
-        .map(|package| package.requires_mars.as_deref());
-    let (hook_errors, hook_warnings) =
-        crate::compiler::hooks::check_hooks(&authored_base, requires_mars, &mut publish_diag)?;
-    report.errors.extend(hook_errors);
-    report.warnings.extend(hook_warnings);
+    let hooks = crate::compiler::hooks::check_hooks(&authored_base, &mut publish_diag)?;
+    if let Some(floor) = package_floor(&lens, &prepared, &hooks.portable) {
+        report.errors.extend(requires_mars_shortfall(&lens, &floor));
+    }
+    report.errors.extend(hooks.errors);
+    report.warnings.extend(hooks.warnings);
     report
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
@@ -168,42 +162,68 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     if clean { Ok(0) } else { Ok(1) }
 }
 
-fn requires_mars_warnings(
-    prepared: &mars_schema::prepare::Prepared,
+/// The Mars the package needs, from the keys it uses. `None` for a tree with no `[package]`:
+/// `requires-mars` is a `[package]` key.
+pub(crate) fn package_floor(
     lens: &crate::resolve::PublishLens,
-) -> Vec<String> {
-    let Some(config) = lens.manifest.as_ref() else {
-        return Vec::new();
+    prepared: &mars_schema::prepare::Prepared,
+    portable_hooks: &[String],
+) -> Option<keys::Floor> {
+    let config = lens.manifest.as_ref()?;
+    let package = config.package.as_ref()?;
+    let used = |surface, key, value, at: String| keys::Used {
+        surface,
+        key,
+        value,
+        at,
     };
-    let Some(package) = config.package.as_ref() else {
-        return Vec::new();
-    };
-    if crate::resolve::validate_package_requirement_syntax(package).is_err() {
-        return Vec::new();
+    let mut uses = Vec::new();
+    if prepared.classification == Classification::Schema1 {
+        uses.push(used(
+            Surface::Package,
+            "schema",
+            None,
+            "`schema = 1`".into(),
+        ));
     }
-    let requires = package.requires_mars.as_deref();
-    let schema_1 = (prepared.classification == Classification::Schema1)
-        .then(|| mars_schema::package::schema_1_requires_mars_warning(requires))
-        .flatten();
-    let plugin = (prepared.classification != Classification::Schema1 && config.plugin.is_some())
-        .then(|| {
-            mars_schema::package::requires_mars_floor_warning(
-                requires,
-                keys::since(Surface::Manifest, "plugin"),
-                "older Mars versions may drop [plugin] during `mars version`",
-            )
-        })
-        .flatten();
-    let tools = (!package.tools.is_empty())
-        .then(|| {
-            mars_schema::package::requires_mars_floor_warning(
-                requires,
-                keys::since(Surface::Package, "tools"),
-                "an older Mars installs this package's agents without the `[package.tools]` rules, with only a warning",
-            )
-        })
-        .flatten();
-    [schema_1, plugin, tools].into_iter().flatten().collect()
+    if !package.uses_providers.is_empty() {
+        uses.push(used(
+            Surface::Package,
+            "uses-providers",
+            None,
+            "`uses-providers`".into(),
+        ));
+    }
+    if config.plugin.is_some() {
+        uses.push(used(Surface::Manifest, "plugin", None, "`[plugin]`".into()));
+    }
+    uses.extend(package.tools.used(Surface::Package, "[package.tools]"));
+    for name in portable_hooks {
+        uses.push(used(
+            Surface::HookToml,
+            "hooks",
+            None,
+            format!("hook `{name}` using `[hooks]`"),
+        ));
+    }
+    keys::floor(uses)
+}
+
+/// What `mars version` writes into `requires-mars`: the floor, when the package states less.
+pub(crate) fn requires_mars_to_write(base: &Path) -> Result<Option<keys::Floor>, MarsError> {
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
+    let hooks = crate::compiler::hooks::check_hooks(base, &mut diag)?;
+    Ok(package_floor(&lens, &prepared, &hooks.portable)
+        .filter(|floor| requires_mars_shortfall(&lens, floor).is_some()))
+}
+
+fn requires_mars_shortfall(
+    lens: &crate::resolve::PublishLens,
+    floor: &keys::Floor,
+) -> Option<String> {
+    let package = lens.manifest.as_ref()?.package.as_ref()?;
+    mars_schema::package::requires_mars_shortfall(package.requires_mars.as_deref(), floor)
 }
 
 fn plugin_warnings(

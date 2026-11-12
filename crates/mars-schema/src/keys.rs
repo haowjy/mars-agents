@@ -3,6 +3,9 @@
 //! A row says which Mars first read the key (`since`), whether a value of it restricts, and
 //! whether it is current, an alias, deprecated or removed. Readers ask the table instead of
 //! keeping their own list of removed keys or version floors, so a new key is one row here.
+//! A file's version floor is [`floor`] over the keys it uses.
+
+use std::fmt;
 
 /// Where a key appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +36,26 @@ pub enum Surface {
     UserSettings,
 }
 
-/// Whether a value of the key narrows what an agent may do.
+/// A Mars release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Release(pub u64, pub u64, pub u64);
+
+impl fmt::Display for Release {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+impl Release {
+    pub fn version(self) -> semver::Version {
+        semver::Version::new(self.0, self.1, self.2)
+    }
+}
+
+/// Whether a file that writes the key needs a Mars of at least the row's `since`. For a key
+/// that narrows what an agent may do, it is the value that decides: an older Mars drops the
+/// key, so a `deny` must not meet one, and an `allow` loses only a grant. For a key that
+/// changes how a package reads (`schema`, `plugin`), it is `Always`.
 #[derive(Debug, Clone, Copy)]
 pub enum Restricts {
     Never,
@@ -83,8 +105,10 @@ pub struct KeyRow {
     /// Set when the row is one value of `key` (`approval = "yolo"`), not the whole key.
     pub value: Option<&'static str>,
     pub surfaces: &'static [Surface],
-    /// The first Mars release that reads the key, for keys an older Mars reads wrongly.
-    pub since: Option<&'static str>,
+    /// The first Mars release that reads the key, for keys an older Mars reads wrongly or
+    /// drops. Mars before that release ignores the key or misreads it; a file that uses it
+    /// states the release as its floor.
+    pub since: Option<Release>,
     pub restricts: Restricts,
     pub status: Status,
 }
@@ -144,16 +168,25 @@ const fn with_detail(mut row: KeyRow, detail: fn(&toml::Value) -> String) -> Key
     row
 }
 
-/// A key a Mars release gates: a package that uses it needs `requires-mars` at or above `since`.
-const fn gated(key: &'static str, surfaces: &'static [Surface], since: &'static str) -> KeyRow {
+/// A key a Mars release gates: a file that uses it needs a floor at or above `since`.
+const fn gated(
+    key: &'static str,
+    surfaces: &'static [Surface],
+    since: Release,
+    restricts: Restricts,
+) -> KeyRow {
     KeyRow {
         key,
         value: None,
         surfaces,
         since: Some(since),
-        restricts: Restricts::Always,
+        restricts,
         status: Status::Current,
     }
+}
+
+fn denies_or_asks(action: &str) -> bool {
+    matches!(action, "deny" | "ask")
 }
 
 const DISCARDED_SKILL_POLICY: &str = "remove this unused skill policy";
@@ -370,13 +403,78 @@ pub static KEYS: &[KeyRow] = &[
         ),
         crate::model_visibility::migration,
     ),
-    // Keys a Mars release gates: an older Mars reads a package that uses one wrongly.
-    gated("schema", &[Package], "0.20.0"),
-    gated("uses-providers", &[Package], "0.20.0"),
-    gated("plugin", &[Manifest], "0.19.0"),
-    gated("hooks", &[HookToml], "0.25.0"),
-    gated("tools", &[Package], "0.30.0"),
+    // Keys a Mars release gates; the comment on each says what an older Mars does with it.
+    // Mars before 0.20.0 reads a `schema = 1` package as pre-v1 and drops what it cannot place.
+    gated("schema", &[Package], Release(0, 20, 0), Restricts::Always),
+    // Mars before 0.20.0 fails `skill__provider` refs with `skill not found`.
+    gated(
+        "uses-providers",
+        &[Package],
+        Release(0, 20, 0),
+        Restricts::Always,
+    ),
+    // Mars before 0.19.0 drops `[plugin]` when `mars version` rewrites the manifest.
+    gated("plugin", &[Manifest], Release(0, 19, 0), Restricts::Always),
+    // Mars before 0.25.0 rejects `[hooks]` and fails the whole sync.
+    gated("hooks", &[HookToml], Release(0, 25, 0), Restricts::Always),
+    // Tool rule tables. Mars before 0.29.0 ignores them without a word; 0.29.x reads `deny`
+    // under the older precedence, where a narrower allow can beat it, and fails on `allow` or
+    // `ask`; 0.30.0 is the first where the strictest rule wins. `allow` is not a restriction:
+    // a Mars that drops one loses a grant only.
+    gated(
+        "tools",
+        &[Package, Settings, AgentOverlay],
+        Release(0, 30, 0),
+        Restricts::OnValue(denies_or_asks),
+    ),
 ];
+
+/// A key a file uses, as [`floor`] reads it.
+pub struct Used<'a> {
+    pub surface: Surface,
+    pub key: &'a str,
+    /// The value written, for a key whose `restricts` depends on it.
+    pub value: Option<&'a str>,
+    /// Where the file uses it, for the message: "`[package.tools]` `bash` = \"deny\"".
+    pub at: String,
+}
+
+/// The Mars a file needs, and what in it asks for that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Floor {
+    pub since: Release,
+    pub at: String,
+}
+
+impl Floor {
+    /// The requirement that states it: `>=0.30.0`.
+    pub fn requirement(&self) -> String {
+        format!(">={}", self.since)
+    }
+}
+
+/// The highest `since` among the keys used whose row says an older Mars would misread them.
+/// The first of equal ones names the floor.
+pub fn floor<'a>(used: impl IntoIterator<Item = Used<'a>>) -> Option<Floor> {
+    let mut floor: Option<Floor> = None;
+    for used in used {
+        let Some(row) = KEYS.iter().find(|row| {
+            row.key == used.key && on(row, used.surface) && matches!(row.status, Status::Current)
+        }) else {
+            continue;
+        };
+        let Some(since) = row.since else { continue };
+        let holds = match row.restricts {
+            Restricts::Never => false,
+            Restricts::Always => true,
+            Restricts::OnValue(decides) => used.value.is_some_and(decides),
+        };
+        if holds && floor.as_ref().is_none_or(|floor| since > floor.since) {
+            floor = Some(Floor { since, at: used.at });
+        }
+    }
+    floor
+}
 
 fn on(row: &KeyRow, surface: Surface) -> bool {
     row.surfaces.contains(&surface)
@@ -417,15 +515,4 @@ pub fn dropped_keys(surface: Surface) -> impl Iterator<Item = &'static str> {
     removals(surface)
         .filter(|(row, removal)| row.value.is_none() && removal.rewrite == Rewrite::Drop)
         .map(|(row, _)| row.key)
-}
-
-/// The first Mars that reads `key` on `surface`.
-///
-/// # Panics
-/// When the table has no gated row for it: a call site names a floor it never added.
-pub fn since(surface: Surface, key: &str) -> &'static str {
-    KEYS.iter()
-        .find(|row| row.key == key && on(row, surface))
-        .and_then(|row| row.since)
-        .unwrap_or_else(|| panic!("no `since` row for `{key}`"))
 }

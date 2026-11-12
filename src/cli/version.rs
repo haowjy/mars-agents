@@ -107,6 +107,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     let next_version = next.to_string();
     let tag = format!("v{next_version}");
+    let raised_floor = check::requires_mars_to_write(&ctx.project_root)?;
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
@@ -166,7 +167,14 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let release_result = (|| {
         update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
 
-        update_package_version(&ctx.project_root, &next_version)?;
+        update_package_manifest(
+            &ctx.project_root,
+            &next_version,
+            raised_floor
+                .as_ref()
+                .map(|floor| floor.requirement())
+                .as_deref(),
+        )?;
 
         let plugin_report = staged_plugin.map(|staged| staged.publish()).transpose()?;
 
@@ -219,6 +227,9 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             "tag": tag,
             "pushed": args.push,
         });
+        if let Some(floor) = &raised_floor {
+            result["requires_mars"] = serde_json::json!(floor.requirement());
+        }
         if let Some(report) = &plugin_report {
             result["plugin"] = serde_json::json!({
                 "path": plugin_metadata.as_ref().expect("a plugin report needs plugin config").dir,
@@ -233,51 +244,106 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         if let Some(report) = &plugin_report {
             output::print_diagnostics(&report.diagnostics);
         }
+        if let Some(floor) = &raised_floor {
+            output::print_info(&format!(
+                "[package] `requires-mars` is now \"{}\": {} needs Mars {}",
+                floor.requirement(),
+                floor.at,
+                floor.since
+            ));
+        }
         println!("{tag}");
     }
 
     Ok(0)
 }
 
-fn update_package_version(project_root: &Path, next_version: &str) -> Result<(), MarsError> {
+/// Write the new version into mars.toml, and `requires_mars` when the package needs a higher
+/// floor than it states. Every byte outside those two values stays as written.
+fn update_package_manifest(
+    project_root: &Path,
+    next_version: &str,
+    requires_mars: Option<&str>,
+) -> Result<(), MarsError> {
     let path = project_root.join("mars.toml");
     let mut content = std::fs::read_to_string(&path)?;
-    let (version_span, current_version) = {
-        let document = toml_edit::ImDocument::parse(content.as_str()).map_err(|error| {
-            ConfigError::Invalid {
-                message: format!("failed to edit {}: {error}", path.display()),
-            }
-        })?;
-        let version = document
-            .get("package")
+    let invalid = |message: String| ConfigError::Invalid { message };
+    // Splice the parsed value spans instead of rendering the document: rendering would normalize
+    // CRLF, while versioning must leave every byte outside the values untouched. Each edit is
+    // computed against the original text and applied from the end, so no span moves under another.
+    let mut edits = {
+        let document = toml_edit::ImDocument::parse(content.as_str())
+            .map_err(|error| invalid(format!("failed to edit {}: {error}", path.display())))?;
+        let package = document.get("package").and_then(toml_edit::Item::as_table);
+        let version = package
             .and_then(|package| package.get("version"))
             .and_then(toml_edit::Item::as_value)
-            .ok_or_else(|| ConfigError::Invalid {
-                message: "mars.toml must contain [package] with name and version".to_string(),
+            .ok_or_else(|| {
+                invalid("mars.toml must contain [package] with name and version".into())
             })?;
-        let current_version = version.as_str().ok_or_else(|| ConfigError::Invalid {
-            message: "[package].version must be a string".to_string(),
-        })?;
-        let span = version.span().ok_or_else(|| ConfigError::Invalid {
-            message: "could not locate [package].version in mars.toml".to_string(),
-        })?;
-        (span, current_version.to_string())
-    };
+        let current_version = version
+            .as_str()
+            .ok_or_else(|| invalid("[package].version must be a string".into()))?;
+        let version_span = version
+            .span()
+            .ok_or_else(|| invalid("could not locate [package].version in mars.toml".into()))?;
+        let requirement = package
+            .and_then(|package| package.get("requires-mars"))
+            .and_then(toml_edit::Item::as_value);
 
-    // Splice the parsed value span instead of rendering the document: rendering would normalize
-    // CRLF, while versioning must leave every byte outside the version value untouched.
-    let raw_version = &content[version_span.clone()];
-    if let Some(offset) = raw_version.find(&current_version) {
-        let value_start = version_span.start + offset;
-        content.replace_range(
-            value_start..value_start + current_version.len(),
+        let value_edit = |span: std::ops::Range<usize>, old: &str, new: &str| {
+            let raw = &content[span.clone()];
+            let text = match raw.find(old).filter(|_| !old.is_empty()) {
+                Some(offset) => format!("{}{new}{}", &raw[..offset], &raw[offset + old.len()..]),
+                None => toml_edit::Value::from(new).to_string(),
+            };
+            (span, text)
+        };
+        let mut edits = vec![value_edit(
+            version_span.clone(),
+            current_version,
             next_version,
-        );
-    } else {
-        content.replace_range(
-            version_span,
-            &toml_edit::Value::from(next_version).to_string(),
-        );
+        )];
+        if let Some(new) = requires_mars {
+            match requirement {
+                Some(value) => {
+                    let span = value.span().ok_or_else(|| {
+                        invalid("could not locate [package].requires-mars in mars.toml".into())
+                    })?;
+                    edits.push(value_edit(span, value.as_str().unwrap_or_default(), new));
+                }
+                None if package.is_some_and(toml_edit::Table::is_dotted) => {
+                    return Err(invalid(format!(
+                        "mars version cannot add `requires-mars` to the dotted [package] keys in {}; write `requires-mars = \"{new}\"` yourself",
+                        path.display()
+                    ))
+                    .into());
+                }
+                None => {
+                    let eol = if content
+                        .find('\n')
+                        .is_some_and(|end| content.as_bytes()[..end].ends_with(b"\r"))
+                    {
+                        "\r\n"
+                    } else {
+                        "\n"
+                    };
+                    let line = format!("requires-mars = \"{new}\"");
+                    match content[version_span.end..].find('\n') {
+                        Some(offset) => {
+                            let at = version_span.end + offset + 1;
+                            edits.push((at..at, format!("{line}{eol}")));
+                        }
+                        None => edits.push((content.len()..content.len(), format!("{eol}{line}"))),
+                    }
+                }
+            }
+        }
+        edits
+    };
+    edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
+    for (span, text) in edits {
+        content.replace_range(span, &text);
     }
 
     crate::fs::atomic_write(&path, content.as_bytes())

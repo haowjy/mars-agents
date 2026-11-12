@@ -1,4 +1,4 @@
-use semver::{BuildMetadata, Prerelease, Version, VersionReq};
+use semver::{Version, VersionReq};
 
 use crate::config::PackageInfo;
 use crate::error::ResolutionError;
@@ -39,13 +39,6 @@ pub(crate) fn validate_package_requirement_syntax(
     Ok(())
 }
 
-fn stable_running_version(version: &Version) -> Version {
-    let mut stable = version.clone();
-    stable.pre = Prerelease::EMPTY;
-    stable.build = BuildMetadata::EMPTY;
-    stable
-}
-
 fn check_engine_requirement(
     package: &str,
     engine: &'static str,
@@ -56,7 +49,7 @@ fn check_engine_requirement(
         return Ok(None);
     };
     let parsed = parse_requirement(package, engine, requirement)?;
-    if parsed.matches(&stable_running_version(&running)) {
+    if mars_schema::package::requirement_matches(&parsed, &running) {
         Ok(None)
     } else {
         Ok(Some(EngineRequirementFailure {

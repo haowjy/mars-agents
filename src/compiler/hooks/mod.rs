@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use mars_schema::diagnostic::Severity;
 use mars_schema::hooks::targets::{Profile, Target};
 use mars_schema::hooks::{self, HookDef, HookOutput, NativeHook, Origin, Tokens};
-use mars_schema::keys::{self, Surface};
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
@@ -428,11 +427,18 @@ fn native_hook_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsEr
     })
 }
 
+/// What `mars check` finds in a package's hooks.
+pub(crate) struct HookCheck {
+    pub(crate) errors: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+    /// The hooks written as `[hooks]`, which a Mars before the table's `since` rejects.
+    pub(crate) portable: Vec<String>,
+}
+
 pub(crate) fn check_hooks(
     package_root: &Path,
-    requires_mars: Option<Option<&str>>,
     diag: &mut DiagnosticCollector,
-) -> Result<(Vec<String>, Vec<String>), MarsError> {
+) -> Result<HookCheck, MarsError> {
     let items = match discover_hook_items(
         package_root,
         "this package",
@@ -442,22 +448,22 @@ pub(crate) fn check_hooks(
         diag,
     ) {
         Ok(items) => items,
-        Err(error) => return Ok((vec![error_message(error)], Vec::new())),
+        Err(error) => {
+            return Ok(HookCheck {
+                errors: vec![error_message(error)],
+                warnings: Vec::new(),
+                portable: Vec::new(),
+            });
+        }
     };
     let mut warnings = Vec::new();
+    let mut portable_names = Vec::new();
     for item in &items {
         let Some(portable) = item.def.portable() else {
             continue;
         };
         let name = &item.def.name;
-        if let Some(requirement) = requires_mars {
-            let floor = keys::since(Surface::HookToml, "hooks");
-            warnings.extend(mars_schema::package::requires_mars_floor_warning(
-                requirement,
-                floor,
-                &format!("hook `{name}` uses `[hooks]`, which a Mars before {floor} rejects, failing the whole sync"),
-            ));
-        }
+        portable_names.push(name.clone());
         for event in portable.conditions_on_non_tool_events() {
             warnings.push(format!(
                 "hook `{name}`: `if` on `{event}` never matches: Claude does not run a handler with `if` on a non-tool event"
@@ -478,5 +484,9 @@ pub(crate) fn check_hooks(
             }
         }
     }
-    Ok((Vec::new(), warnings))
+    Ok(HookCheck {
+        errors: Vec::new(),
+        warnings,
+        portable: portable_names,
+    })
 }

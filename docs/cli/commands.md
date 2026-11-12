@@ -585,11 +585,13 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
   version, hand-edited or missing generated files, root files left holding an earlier build's
   output, and conflicts at generated package-root paths
-- `[package].requires-mars` floor: `">=0.20.0"` (or higher) for a package that declares
-  `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
-  `schema`, the first that keeps `[plugin]`
+- `[package].requires-mars` against the package's floor, which is the highest first-Mars among
+  the keys it uses: `schema = 1` and `uses-providers` (0.20.0), `[plugin]` (0.19.0), `[hooks]` in a
+  `hook.toml` (0.25.0), and a `deny` or `ask` in `[package.tools]` (0.30.0). A missing or lower
+  requirement is an error that names the key and the line to write. See
+  [mars.toml](../config/mars-toml.md#package-optional)
 - Plugin compatibility: unknown `[plugin].harnesses` values
-- Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when `requires-mars` is missing or below `>=0.25.0`, when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
+- Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
@@ -614,6 +616,13 @@ mars version <patch|minor|major|X.Y.Z> [--push] [--force] [--no-plugins]
 The command requires a clean Git worktree, runs the package publish checks, updates
 `[package].version` and `CHANGELOG.md`, commits the release, and creates the annotated version
 tag. `--push` pushes the current branch and tag after the local release succeeds.
+
+When `[package].requires-mars` is missing or lower than the package's floor (what
+[`mars check`](#mars-check) derives from the keys the package uses), `mars version` writes
+`requires-mars = ">=<floor>"` in the same commit and says so; `--json` adds `requires_mars`. It
+changes that value, or adds the line after `version`, and keeps every other byte of `mars.toml`.
+It stops with the line to write when `[package]` is written as dotted keys. A `requires-mars` it
+cannot parse is left for `mars check` to report.
 
 When `[plugin]` is configured, `mars version` first stages all selected plugin trees at the new
 version. It then publishes the plugin directory and generated root catalogs/`package.json` in the

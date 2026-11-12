@@ -352,14 +352,6 @@ fn push_model_policy_parse_error(
         crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_agent_invalid(diags, child("override"), found, "mapping");
         }
-        crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
-            push_agent_invalid(
-                diags,
-                grandchild("override", &key),
-                key,
-                "effort, sandbox, approval, network",
-            );
-        }
         crate::model_policy::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
             push_agent_invalid(
                 diags,
@@ -400,9 +392,30 @@ fn parse_model_policies(
 
     let mut out = Vec::new();
     for (index, entry) in seq.iter().enumerate() {
-        match crate::model_policy::parse_model_policy_rule_value(entry) {
+        let reading = crate::model_policy::read_model_policy_rule(entry);
+        for unknown in reading.unknown {
+            let mut path = crate::diagnostic::key_path("model-policies");
+            path.push(crate::diagnostic::PathSegment::Index(index));
+            let mut table = format!("model-policies[{index}]");
+            if unknown.in_override {
+                path.push(crate::diagnostic::PathSegment::Key("override".to_owned()));
+                table.push_str(".override");
+            }
+            path.push(crate::diagnostic::PathSegment::Key(unknown.key.clone()));
+            diags.push(crate::diagnostic::SchemaDiagnostic::new(
+                "field.unknown",
+                crate::diagnostic::Severity::Warning,
+                path,
+                crate::diagnostic::unknown_key_message(&table, &unknown.key),
+            ));
+        }
+        match reading.rule {
             Ok(rule) => out.push(rule),
-            Err(error) => push_model_policy_parse_error(diags, index, error),
+            Err(errors) => {
+                for error in errors {
+                    push_model_policy_parse_error(diags, index, error);
+                }
+            }
         }
     }
     out

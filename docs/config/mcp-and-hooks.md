@@ -73,7 +73,7 @@ An entry is Mars's only while its content still equals what Mars last wrote
 
 - Set `requires-mars = ">=0.25.0"` in the package's [`mars.toml`](mars-toml.md). A Mars older
   than 0.25 rejects `[hooks]` and fails the whole sync, not just your hook, and
-  `mars check` warns when the requirement is missing. A path or branch
+  `mars check` fails when the requirement is missing or lower, and `mars version` writes it. A path or branch
   dependency has no version to fall back on, so a too-old Mars hard-errors on it.
 - A plugin package that moves an `opencode.ts` native hook into `[hooks]` loses its
   hook in the OpenCode plugin tree built by `mars build plugin`; the tree

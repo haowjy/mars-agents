@@ -345,39 +345,35 @@ impl Report<'_> {
     }
 }
 
-/// Drop each model policy `override` key the reader rejects and keep the rest of the list. The
-/// reader names one error per rule, so it runs again after each drop. `rejections` ends as what is
-/// left: anything but an override key, which still takes the whole `model-policies` key.
+/// Drop each model policy `override` key the reader rejects and keep the rest of the list, when
+/// those are all that it rejects. `rejections` ends empty if they were, else is left as it was:
+/// anything but an override key takes the whole `model-policies` key.
 fn drop_policy_overrides(
     fm: &mut Frontmatter,
-    kind: DefinitionKind,
     rejections: &mut Vec<Rejection>,
     report: &mut Report<'_>,
     changed: &mut bool,
 ) {
-    while !rejections.is_empty()
-        && rejections
-            .iter()
-            .all(|rejection| policy_override_key(&rejection.path).is_some())
+    if !rejections
+        .iter()
+        .all(|rejection| policy_override_key(&rejection.path).is_some())
     {
-        let Some(removed) = drop_entries(fm, "model-policies", rejections) else {
-            return;
-        };
-        *changed = true;
-        for (path, entry) in removed {
-            let why = rejections
-                .iter()
-                .find(|rejection| rejection.path == path)
-                .map_or("", |rejection| rejection.why.as_str());
-            let lost = restriction_lost(&path, &entry);
-            let what = "that override was dropped and the rest of the rule is kept";
-            report.note(&path, &entry, lost, what, why);
-        }
-        *rejections = rejected_keys(kind, fm)
-            .into_iter()
-            .find(|(key, _)| key == "model-policies")
-            .map_or_else(Vec::new, |(_, next)| next);
+        return;
     }
+    let Some(removed) = drop_entries(fm, "model-policies", rejections) else {
+        return;
+    };
+    *changed = true;
+    for (path, entry) in removed {
+        let why = rejections
+            .iter()
+            .find(|rejection| rejection.path == path)
+            .map_or("", |rejection| rejection.why.as_str());
+        let lost = restriction_lost(&path, &entry);
+        let what = "that override was dropped and the rest of the rule is kept";
+        report.note(&path, &entry, lost, what, why);
+    }
+    rejections.clear();
 }
 
 /// Set aside every key of `fm` the strict reader rejects. Returns whether the frontmatter
@@ -404,7 +400,7 @@ pub(crate) fn set_aside_rejected_keys(
     let mut movable = Vec::new();
     for (key, mut rejections) in rejected {
         if key == "model-policies" {
-            drop_policy_overrides(fm, kind, &mut rejections, &mut report, &mut changed);
+            drop_policy_overrides(fm, &mut rejections, &mut report, &mut changed);
             if rejections.is_empty() {
                 continue;
             }

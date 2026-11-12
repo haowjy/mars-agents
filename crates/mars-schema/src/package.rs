@@ -3,6 +3,7 @@
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::keys::Floor;
 use crate::tool_rule_map::ToolRuleMap;
 
 /// Parse a `requires-mars` or `requires-meridian` requirement. A bare version means `>=` it
@@ -24,6 +25,15 @@ pub fn parse_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
         raw.to_string()
     };
     VersionReq::parse(&normalized)
+}
+
+/// Whether `running` meets `requirement`. A prerelease or build of a Mars meets what its release
+/// does: `0.31.0-rc.1` runs a project that asks for `0.31.0`.
+pub fn requirement_matches(requirement: &VersionReq, running: &Version) -> bool {
+    let mut stable = running.clone();
+    stable.pre = semver::Prerelease::EMPTY;
+    stable.build = semver::BuildMetadata::EMPTY;
+    requirement.matches(&stable)
 }
 
 /// Whether `requirement` demands at least `floor`, so a Mars older than one floor cannot read
@@ -63,31 +73,28 @@ fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
     Some(version)
 }
 
-/// The advice `mars check` prints for a schema v1 package's `requires-mars`, which `mars migrate`
-/// prints with it when it leaves an authored requirement alone.
-pub fn schema_1_requires_mars_warning(requirement: Option<&str>) -> Option<String> {
-    requires_mars_floor_warning(
-        requirement,
-        crate::keys::since(crate::keys::Surface::Package, "schema"),
-        "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
-    )
-}
-
-/// The advice for a requirement that is missing or admits a Mars older than `floor`. `None` when
-/// it does not, or when it is not a requirement this Mars can read: a broken requirement is its
-/// own error.
-pub fn requires_mars_floor_warning(
-    requirement: Option<&str>,
-    floor: &str,
-    reason: &str,
-) -> Option<String> {
+/// The error for a `requires-mars` that does not state `floor`, naming the key that sets it and
+/// the line to write. `None` when it does, or when it is not a requirement this Mars can read: a
+/// broken requirement is its own error.
+pub fn requires_mars_shortfall(requirement: Option<&str>, floor: &Floor) -> Option<String> {
     if let Some(raw) = requirement {
         parse_requirement(raw).ok()?;
     }
-    let floor = Version::parse(floor).expect("a Mars floor is valid semver");
-    (!requirement_has_floor(requirement, &floor)).then(|| {
-        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
-    })
+    if requirement_has_floor(requirement, &floor.since.version()) {
+        return None;
+    }
+    let line = format!("requires-mars = \"{}\"", floor.requirement());
+    let stated = match requirement {
+        Some(raw) => format!(
+            "`requires-mars = \"{raw}\"` admits a Mars before {}",
+            floor.since
+        ),
+        None => "`requires-mars` is not set".to_string(),
+    };
+    Some(format!(
+        "[package] {stated}, but {} needs Mars {}: write `{line}`",
+        floor.at, floor.since
+    ))
 }
 
 /// Package metadata carried by `mars.toml`.

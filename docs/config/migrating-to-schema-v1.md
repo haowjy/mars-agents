@@ -121,4 +121,4 @@ They share nothing. `mars upgrade` moves your dependencies to newer versions wit
 
 Commit the result and release it. `mars migrate` also adds `[package] requires-mars = ">=0.20.0"`, the first Mars release that reads schema 1, when the package has no requirement. That keeps consumers on older Mars versions resolving the last release they can read ([`requires-mars`](mars-toml.md#package-optional)).
 
-An existing `requires-mars` is never rewritten, because it is the author's decision which Mars versions may read the package. If it allows one older than 0.20.0, `mars migrate` prints the warning `mars check` prints and leaves the value, its comments and any upper bounds alone. Raise it by hand when the package can drop older consumers; `mars check` keeps warning until you do.
+An existing `requires-mars` is never rewritten, because it is the author's decision which Mars versions may read the package. If it allows one older than 0.20.0, `mars migrate` prints the message `mars check` prints and leaves the value, its comments and any upper bounds alone. Raise it by hand, or let `mars version` do it at the next release; `mars check` keeps failing until it is raised.

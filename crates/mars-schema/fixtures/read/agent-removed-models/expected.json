@@ -38,7 +38,7 @@
       "path": [
         "models"
       ],
-      "message": "`models` was removed; use `model-policies`"
+      "message": "`models` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

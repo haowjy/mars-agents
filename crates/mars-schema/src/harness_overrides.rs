@@ -197,17 +197,10 @@ pub(crate) fn parse_harness_overrides(
         if push_unholdable_key(diags, &harness_path, harness_name) {
             continue;
         }
-        if let Some((_, new)) = crate::harness::RENAMED_CONSUMER_NAMESPACES
-            .iter()
-            .find(|(old, _)| *old == harness_name)
-        {
-            diags.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
+        if crate::upgrade::PRE_V1.namespace(harness_name) {
+            diags.push(crate::upgrade::pre_v1_key(
                 harness_path,
-                format!(
-                    "`harness-overrides.{harness_name}` was renamed; use `harness-overrides.{new}`"
-                ),
+                &format!("harness-overrides.{harness_name}"),
             ));
             continue;
         }

@@ -3,11 +3,11 @@
 use crate::HarnessId;
 use serde_yaml::Value;
 
-use crate::diagnostic::{push_invalid, removed_value, unrecognized_field};
+use crate::diagnostic::{push_invalid, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
-use crate::keys::Surface;
+use crate::item::DefinitionKind;
 use crate::model_policy::ModelPolicyRule;
 use crate::network::{NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
@@ -670,10 +670,8 @@ pub(crate) fn read_fields(
             "approval" => {
                 profile.approval =
                     read_string(value, "approval", false, diags).and_then(|approval| {
-                        if let Some(removed) =
-                            removed_value(Surface::AgentProfile, "approval", &approval)
-                        {
-                            diags.push(removed);
+                        if crate::upgrade::PRE_V1.value("approval", &approval) {
+                            diags.push(crate::upgrade::pre_v1_value("approval", &approval));
                             return None;
                         }
                         ApprovalMode::parse(&approval).or_else(|| {
@@ -687,7 +685,6 @@ pub(crate) fn read_fields(
                         })
                     });
             }
-            "permission" => diags.push(removed_permission(value)),
             "sandbox" => {
                 profile.sandbox = read_string(value, "sandbox", false, diags).and_then(|sandbox| {
                     SandboxMode::parse(&sandbox).or_else(|| {
@@ -722,8 +719,8 @@ pub(crate) fn read_fields(
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
-                    if let Some(removed) = removed_value(Surface::AgentProfile, "effort", &effort) {
-                        diags.push(removed);
+                    if crate::upgrade::PRE_V1.value("effort", &effort) {
+                        diags.push(crate::upgrade::pre_v1_value("effort", &effort));
                         return None;
                     }
                     EffortLevel::parse(&effort).or_else(|| {
@@ -755,39 +752,11 @@ pub(crate) fn read_fields(
                 profile.harness_overrides = parse_harness_overrides("agent", value, diags);
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
-            _ => diags.push(unrecognized_field(Surface::AgentProfile, &key)),
+            _ => diags.push(unrecognized_field(DefinitionKind::Agent, &key)),
         }
     }
 
     profile
-}
-
-/// What the reader tells an author whose top-level `permission` schema 1 removed.
-///
-/// Meridian Flow defines `read` and `edit`, and OpenCode's format is a map; any other value names where it
-/// can live instead of sending the author to a block that would reject it again.
-fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
-    match value {
-        Value::Mapping(_) => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path("permission"),
-            "`permission` as a map is OpenCode's format; put it under \
-             `harness-overrides.opencode.permission`",
-        ),
-        Value::String(permission) if matches!(permission.as_str(), "read" | "edit") => {
-            unrecognized_field(Surface::AgentProfile, "permission")
-        }
-        _ => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path("permission"),
-            "`permission` was removed; Meridian Flow reads only `read` or `edit`, at \
-             `harness-overrides.meridian-flow.permission`. Grant what it allowed with \
-             `tools: {<capability>: allow}`",
-        ),
-    }
 }
 
 /// Read an Agent definition through the versioned schema contract.

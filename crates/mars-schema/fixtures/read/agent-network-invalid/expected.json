@@ -134,7 +134,7 @@
       "path": [
         "network_allow"
       ],
-      "message": "`network_allow` was removed; use `network-allow`"
+      "message": "`network_allow` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

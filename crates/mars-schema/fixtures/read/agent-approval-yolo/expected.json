@@ -36,7 +36,7 @@
       "path": [
         "approval"
       ],
-      "message": "approval value `yolo` was removed; use `never`"
+      "message": "`approval: yolo` is a pre-v1 value; `mars migrate` upgrades this file"
     }
   ]
 }

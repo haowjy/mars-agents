@@ -22,7 +22,7 @@
       "path": [
         "allow_implicit_invocation"
       ],
-      "message": "`allow_implicit_invocation` was removed; use `model-invocable`"
+      "message": "`allow_implicit_invocation` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

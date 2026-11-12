@@ -31,7 +31,7 @@
         "package",
         "visibility"
       ],
-      "message": "`package.visibility` was removed; remove it"
+      "message": "`package.visibility` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

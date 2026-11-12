@@ -1,20 +1,15 @@
-//! The tables of config keys: what Mars removed, what it gates by release, and what belongs in a
-//! project's files.
-//!
-//! A row says on which surfaces (files and tables) it holds. Readers ask the tables instead of
-//! keeping their own list of removed keys or version floors, so a new key is one row here. A
-//! file's version floor is [`floor`] over the keys [`used`] finds in it, plus the uses a
-//! caller derives from other files (a hook, a profile's tool rule).
+//! The keys a Mars release gates: a file that uses one needs a floor at or above the release that
+//! first read it. This lists keys Mars reads today and when they arrived, nothing about keys it
+//! no longer reads. A file's version floor is [`floor`] over the keys [`used`] finds in it, plus
+//! the uses a caller derives from other files (a hook, a profile's tool rule).
 
 use std::fmt;
 
-/// Where a key appears.
+/// Where a gated key appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
     /// Agent frontmatter.
     AgentProfile,
-    /// Skill frontmatter.
-    SkillProfile,
     /// `[package]` in `mars.toml`.
     Package,
     /// A top-level table of a package's `mars.toml`, such as `[plugin]`.
@@ -25,16 +20,6 @@ pub enum Surface {
     Settings,
     /// `[agents.<name>]` in the consumer config files.
     AgentOverlay,
-    /// `[agents.<name>.tools]` in the consumer config files.
-    AgentOverlayTools,
-    /// `[settings.meridian.agent_copy]` in the consumer config files.
-    AgentCopy,
-    /// `[skills.<name>]` in the consumer config files.
-    SkillOverlay,
-    /// The tables of the user `config.toml` outside `[settings]`.
-    UserConfig,
-    /// `[settings]` in the user `config.toml`.
-    UserSettings,
 }
 
 /// A Mars release.
@@ -51,43 +36,6 @@ impl Release {
     pub fn version(self) -> semver::Version {
         semver::Version::new(self.0, self.1, self.2)
     }
-}
-
-/// What Mars does to a removed key when it rewrites a file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rewrite {
-    /// Left for the author, or rewritten by code that needs more than the table says.
-    None,
-    /// The key is deleted.
-    Drop,
-    /// The row's `value` of the key becomes this one.
-    Value(&'static str),
-    /// The key is spelled as this instead; its value is unchanged.
-    Rename(&'static str),
-}
-
-/// A key (or one value of a key) Mars no longer reads. It is an error on every surface the row
-/// lists.
-#[derive(Debug, Clone, Copy)]
-pub struct Removed {
-    pub key: &'static str,
-    /// Set when the row is one value of `key` (`approval = "yolo"`), not the whole key.
-    pub value: Option<&'static str>,
-    pub surfaces: &'static [Surface],
-    /// What the reader tells the author.
-    pub advice: &'static str,
-    pub rewrite: Rewrite,
-    /// More advice that depends on what the author wrote under the key.
-    pub detail: Option<fn(&toml::Value) -> String>,
-}
-
-/// A key that belongs in a project's files. The user config warns about it and drops it:
-/// ignoring it loses no restriction.
-#[derive(Debug, Clone, Copy)]
-pub struct Elsewhere {
-    pub key: &'static str,
-    pub surfaces: &'static [Surface],
-    pub advice: &'static str,
 }
 
 /// When a file that writes a gated key needs the row's `since`.
@@ -113,265 +61,9 @@ pub struct Gated {
 
 use Surface::*;
 
-const fn removed(
-    key: &'static str,
-    surfaces: &'static [Surface],
-    advice: &'static str,
-    rewrite: Rewrite,
-) -> Removed {
-    Removed {
-        key,
-        value: None,
-        surfaces,
-        advice,
-        rewrite,
-        detail: None,
-    }
-}
-
-const fn removed_value(
-    key: &'static str,
-    value: &'static str,
-    replacement: &'static str,
-) -> Removed {
-    Removed {
-        value: Some(value),
-        ..removed(
-            key,
-            &[AgentProfile, AgentOverlay],
-            "",
-            Rewrite::Value(replacement),
-        )
-    }
-}
-
-const fn with_detail(mut row: Removed, detail: fn(&toml::Value) -> String) -> Removed {
-    row.detail = Some(detail);
-    row
-}
-
 fn denies_or_asks(action: &str) -> bool {
     matches!(action, "deny" | "ask")
 }
-
-const DISCARDED_SKILL_POLICY: &str = "remove this unused skill policy";
-
-/// Within a surface, table order is the order readers report and rewrite in.
-pub static REMOVED: &[Removed] = &[
-    // Agent keys only pre-v1 Mars defined: a definition read as any dialect loses them.
-    removed(
-        "fanout",
-        &[AgentProfile],
-        "use consumer `[settings.meridian.fanout]`",
-        Rewrite::Drop,
-    ),
-    removed(
-        "models",
-        &[AgentProfile],
-        "use `model-policies`",
-        Rewrite::Drop,
-    ),
-    removed(
-        "mcp-tools",
-        &[AgentProfile],
-        "put MCP capability references in `tools`",
-        Rewrite::Drop,
-    ),
-    removed(
-        "autocompact",
-        &[AgentProfile, AgentOverlay],
-        "configure compaction on the model alias",
-        Rewrite::Drop,
-    ),
-    removed(
-        "autocompact_pct",
-        &[AgentProfile, AgentOverlay],
-        "configure compaction on the model alias",
-        Rewrite::Drop,
-    ),
-    // Agent and skill keys the legacy upgrade renames or moves, or leaves for the author.
-    removed(
-        "disallowed-tools",
-        &[AgentProfile],
-        "use `tools: {<capability>: deny}`",
-        Rewrite::None,
-    ),
-    removed(
-        "model_invocable",
-        &[AgentProfile, SkillProfile, AgentOverlay, SkillOverlay],
-        "use `model-invocable`",
-        Rewrite::Rename("model-invocable"),
-    ),
-    removed(
-        "user_invocable",
-        &[AgentProfile, SkillProfile, AgentOverlay, SkillOverlay],
-        "use `user-invocable`",
-        Rewrite::Rename("user-invocable"),
-    ),
-    removed(
-        "network_allow",
-        &[AgentProfile, AgentOverlay, Settings],
-        "use `network-allow`",
-        Rewrite::Rename("network-allow"),
-    ),
-    removed(
-        "network_deny",
-        &[AgentProfile, AgentOverlay, Settings],
-        "use `network-deny`",
-        Rewrite::Rename("network-deny"),
-    ),
-    removed(
-        "permission",
-        &[AgentProfile],
-        "move it under `harness-overrides.meridian-flow.permission`",
-        Rewrite::None,
-    ),
-    removed(
-        "resident-rearm-budget",
-        &[AgentProfile],
-        "move it under `harness-overrides.meridian-cli.resident-rearm-budget`",
-        Rewrite::None,
-    ),
-    removed(
-        "meridian-capabilities",
-        &[AgentProfile],
-        "move it under `harness-overrides.meridian-cli.capabilities`",
-        Rewrite::None,
-    ),
-    removed_value("approval", "yolo", "never"),
-    removed_value("effort", "adaptive", "medium"),
-    removed_value("effort", "disabled", "none"),
-    // Schema v1 skills carry no tool policy, so every spelling of one is dropped.
-    removed(
-        "tools",
-        &[SkillProfile, SkillOverlay],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "allowed-tools",
-        &[SkillProfile],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "allowed_tools",
-        &[SkillProfile],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "disallowed-tools",
-        &[SkillProfile],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "disallowed_tools",
-        &[SkillProfile],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "disallowedTools",
-        &[SkillProfile],
-        DISCARDED_SKILL_POLICY,
-        Rewrite::Drop,
-    ),
-    removed(
-        "type",
-        &[SkillProfile],
-        "use `metadata.type`",
-        Rewrite::None,
-    ),
-    removed(
-        "when_to_use",
-        &[SkillProfile],
-        "fold it into `description`",
-        Rewrite::None,
-    ),
-    removed(
-        "invocation",
-        &[SkillProfile],
-        "use `model-invocable` and `user-invocable`",
-        Rewrite::None,
-    ),
-    removed(
-        "disable-model-invocation",
-        &[SkillProfile],
-        "use `model-invocable`",
-        Rewrite::None,
-    ),
-    removed(
-        "allow_implicit_invocation",
-        &[SkillProfile],
-        "use `model-invocable`",
-        Rewrite::None,
-    ),
-    // `[package]`.
-    removed("visibility", &[Package], "remove it", Rewrite::Drop),
-    // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
-    removed(
-        "bootstrap",
-        &[Package],
-        "Mars finds bootstrap docs in `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
-        Rewrite::None,
-    ),
-    // Consumer config.
-    removed(
-        "mcp",
-        &[AgentOverlayTools],
-        "`mars migrate` does not rewrite this list; write each server as a rule entry, `\"mcp(server)\" = \"allow\"`, `\"ask\"` or `\"deny\"`, as you want it",
-        Rewrite::None,
-    ),
-    // The lists `mars migrate` rewrites into rule entries; what it cannot rewrite it says.
-    removed(
-        "allowed",
-        &[AgentOverlayTools],
-        "run `mars migrate`, which rewrites the lists as rules without widening any agent",
-        Rewrite::None,
-    ),
-    removed(
-        "disallowed",
-        &[AgentOverlayTools],
-        "run `mars migrate`, which rewrites the lists as rules without widening any agent",
-        Rewrite::None,
-    ),
-    removed(
-        "fanout_agents",
-        &[AgentCopy],
-        "use `[settings.meridian.fanout].agents`",
-        Rewrite::None,
-    ),
-    with_detail(
-        removed(
-            "model_visibility",
-            &[Settings],
-            "move these display rules to `mars.curated.toml` (or `mars.curated.local.toml` for local overrides) after reviewing the harness×model semantics; Mars does not write that file, and the nearest entries are:",
-            Rewrite::None,
-        ),
-        crate::model_visibility::migration,
-    ),
-];
-
-pub static ELSEWHERE: &[Elsewhere] = &[
-    // Keys of the project's files that a user-wide `config.toml` would apply to every project.
-    Elsewhere {
-        key: "managed_root",
-        surfaces: &[UserSettings],
-        advice: "put it in the project's mars.toml",
-    },
-    Elsewhere {
-        key: "targets",
-        surfaces: &[UserSettings],
-        advice: "put it in the project's mars.toml",
-    },
-    Elsewhere {
-        key: "overrides",
-        surfaces: &[UserConfig],
-        advice: "put it in the project's mars.local.toml, since a user-wide override would point every project at a local checkout unseen",
-    },
-];
 
 /// The first Mars that honours `min_mars_version`. A floor at or below it protects nothing a
 /// `min_mars_version` line could: Mars before it ignores the line.
@@ -567,34 +259,4 @@ pub fn floor(used: impl IntoIterator<Item = Used>) -> Option<Floor> {
 
 fn on(surfaces: &[Surface], surface: Surface) -> bool {
     surfaces.contains(&surface)
-}
-
-/// Every removal on `surface`, in table order.
-pub fn removals(surface: Surface) -> impl Iterator<Item = &'static Removed> {
-    REMOVED.iter().filter(move |row| on(row.surfaces, surface))
-}
-
-/// The row that removes the whole of `key` on `surface`.
-pub fn removed_key(surface: Surface, key: &str) -> Option<&'static Removed> {
-    removals(surface).find(|row| row.value.is_none() && row.key == key)
-}
-
-/// The row that removes `value` of `key` on `surface`.
-pub fn removed_value_of(surface: Surface, key: &str, value: &str) -> Option<&'static Removed> {
-    removals(surface).find(|row| row.key == key && row.value == Some(value))
-}
-
-/// The advice for `key` when `surface` does not hold it and ignoring it loses nothing.
-pub fn elsewhere_key(surface: Surface, key: &str) -> Option<&'static str> {
-    ELSEWHERE
-        .iter()
-        .find(|row| row.key == key && on(row.surfaces, surface))
-        .map(|row| row.advice)
-}
-
-/// The keys `surface` deletes outright.
-pub fn dropped_keys(surface: Surface) -> impl Iterator<Item = &'static str> {
-    removals(surface)
-        .filter(|row| row.value.is_none() && row.rewrite == Rewrite::Drop)
-        .map(|row| row.key)
 }

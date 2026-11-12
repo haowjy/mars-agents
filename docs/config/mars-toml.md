@@ -518,8 +518,8 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 - **What is reported.**
   - A project-wide deny that a target's native agent files cannot carry is one line for the
     project in `mars sync`: the rule is named once per target, not once per agent, and
-    `--verbose` lists it. Native `.claude` files carry every deny, `.opencode` carries unscoped
-    ones, and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
+    `--verbose` lists it. Native `.claude` and `.opencode` files carry every deny
+    (scoped ones included), and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
     launches through Meridian.
   - `mars check`, `mars init` and the plugin build never apply these rules, since they preview
     or build a package for other projects.

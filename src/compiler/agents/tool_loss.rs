@@ -14,18 +14,28 @@ use mars_schema::tool_policy::{EffectiveToolPolicy, RuleOrigin, ToolAction, Tool
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DenyCarry {
     Nothing,
-    /// Unscoped names only (OpenCode `permission: {tool: deny}`).
-    Unscoped,
-    /// Every rule Mars can name (Claude `disallowed-tools`).
+    /// Every rule Mars can name (Claude `disallowed-tools`, OpenCode `permission`).
     All,
+}
+
+/// How much of an allowlist (`'*': deny` plus allows) a target's file can write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Allowlist {
+    Nothing,
+    /// A tool list that restricts the agent to what it names (Claude `tools:`); it cannot
+    /// say "no tool", so an allowlist that allows nothing is lost.
+    NonEmpty,
+    /// A default rule plus exceptions (OpenCode `permission`), empty allowlist included.
+    Any,
 }
 
 /// What one target's native agent file can say about tool rules.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Carries {
     pub deny: DenyCarry,
-    /// The file has a tool list that restricts the agent to what it names (Claude `tools:`).
-    pub allowlist: bool,
+    /// The file can say `ask`.
+    pub ask: bool,
+    pub allowlist: Allowlist,
     /// A deny of file writes is quiet: the file's read-only sandbox already blocks them.
     pub writes_covered: bool,
     /// How an MCP rule that loses nothing is classed; `None` records nothing for it.
@@ -81,13 +91,7 @@ pub(super) fn losses(
         };
         match rule.action {
             ToolAction::Deny if !rule.is_wildcard() => {
-                let natives = projected.native();
-                let carried = projected.gap().is_none()
-                    && match carries.deny {
-                        DenyCarry::Nothing => false,
-                        DenyCarry::Unscoped => natives.iter().all(|name| !name.contains('(')),
-                        DenyCarry::All => true,
-                    };
+                let carried = projected.gap().is_none() && carries.deny == DenyCarry::All;
                 if carried {
                     continue;
                 }
@@ -97,12 +101,25 @@ pub(super) fn losses(
                     lose(rule, label(), target, &mut lost, &mut project);
                 }
             }
+            ToolAction::Ask if carries.ask && projected.gap().is_none() => {}
             ToolAction::Ask => lose(rule, label(), target, &mut lost, &mut project),
+            // The allowlist's default denies this tool, which the profile allows.
+            ToolAction::Allow
+                if carries.allowlist == Allowlist::Any
+                    && tools.is_allowlist()
+                    && projected.gap().is_some() =>
+            {
+                lose(rule, label(), target, &mut lost, &mut project)
+            }
             _ => {}
         }
     }
 
-    let allowlist_carried = carries.allowlist && !projection.available().is_empty();
+    let allowlist_carried = match carries.allowlist {
+        Allowlist::Nothing => false,
+        Allowlist::NonEmpty => !projection.available().is_empty(),
+        Allowlist::Any => true,
+    };
     if tools.is_allowlist() && !allowlist_carried {
         record_allowlist_loss(tools, &mut lost);
     }

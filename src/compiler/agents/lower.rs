@@ -224,12 +224,14 @@ mod tests {
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
+        let text = String::from_utf8(opencode.bytes.clone()).unwrap();
         assert!(
-            opencode
-                .lossy_fields
-                .iter()
-                .any(|field| field.field.starts_with("tools")),
-            "harness-overrides passthrough should not clear tools lossiness",
+            text.contains("permission:\n  '*': deny\n  read: allow\n")
+                && !opencode
+                    .lossy_fields
+                    .iter()
+                    .any(|field| field.field.starts_with("tools")),
+            "OpenCode's file carries the allowlist, and the override cannot replace it: {text}",
         );
         assert!(
             opencode

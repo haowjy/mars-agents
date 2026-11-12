@@ -269,10 +269,10 @@ and neither does an allowlist with nothing allowed (an omitted `tools:` inherits
 A map-form `allow` is a grant, not an allowlist, so it writes no `tools:` field: Claude
 would read `tools: [Bash]` as "only Bash". Omitting `tools:` inherits every tool, so the
 grant loses nothing and Mars records no lossiness for it.
-Mars records an `ask` rule and an empty allowlist as dropped lossiness and never drops them
-silently; Meridian enforces them from the launch bundle. Codex, Cursor and Pi agent files carry no tool list at
-all, so any allow, ask or deny rule is recorded as dropped there too; OpenCode's carries the deny rules
-(below).
+Mars records an `ask` rule and an empty allowlist as dropped lossiness on a file that cannot
+hold them and never drops them silently; Meridian enforces them from the launch bundle. Codex, Cursor and Pi agent files carry no tool list at
+all, so any allow, ask or deny rule is recorded as dropped there too; OpenCode's file carries
+them all in its `permission` map (below).
 
 ### `.codex/agents/<name>.toml`
 
@@ -347,22 +347,60 @@ YAML frontmatter + markdown body.
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
 | `network-allow`, `network-deny` | dropped | meridian-only |
-| `tools` allow list (`{"*": deny, read: allow}`) and `ask` rules | dropped (reported as `tools (…)`); a plain grant is not a loss | dropped |
-| `tools` deny rules (`tools: {write: deny}`, `mcp(...)` refs included) | `permission: {<tool>: deny}` | exact |
-| a scoped deny rule (`bash(git *)`) | dropped (reported as `tools (deny …)`) | dropped |
+| `tools` allow list (`{"*": deny, read: allow}`), `ask` rules, scoped rules (`bash(git *)`), `deny` rules (`mcp(...)` refs included) | the `permission` map, in the order below | exact |
+| an allow in an allow list that Mars cannot name on OpenCode (`image`: no switch) | dropped (reported as `tools (allow …)`): the `*` default denies it | dropped |
+| a plain grant (`bash: allow`, no `*`) | nothing: it restates OpenCode's default and would override the project's own `opencode.json` rules | not a loss |
 | `effort` | dropped from frontmatter (any value, `none` included) | approximate |
-| `mcp(...)` in `tools` | a deny is written as above; the rest is dropped (lossiness); launch bundle projects OpenCode tokens | approximate |
+| `mcp(...)` in `tools` | `permission` entries named `<server>_<tool>`, like any rule; the launch bundle projects the same tokens | approximate |
 | `model-invocable`, `user-invocable` | dropped when `false` | dropped |
 | `model-policies` | dropped | meridian-only |
 
 OpenCode's agent file has one tool control, the `permission` map (its `tools` booleans are
-deprecated), so a deny rule lowers to `<tool>: deny` using the permission names in the table
-above (`write` and `edit` both become `edit`). The map merges with the author's
-`harness-overrides.opencode.permission`: the author's other entries stay, in their order, and an
-entry that disagrees with a Mars deny is dropped; Mars's deny is the stricter entry, so only
-`mars sync --verbose` shows it. Allow and `ask` rules and scoped
-rules have no entry Mars writes, so they are reported as dropped; write them under
-`harness-overrides.opencode.permission` to have them in the file.
+deprecated). A rule lowers to `<tool>: <effect>`, or `<tool>: {<pattern>: <effect>}` when it is
+scoped, using the permission names in the table above (`write` and `edit` both become `edit`);
+`*: deny` or `*: ask` becomes the `"*"` key. OpenCode loads the v1 map and renames `bash` to
+`shell` itself.
+
+**Emit order.** Mars resolves a call by the strictest matching rule; OpenCode, by the last
+matching rule. The map is ordered so they agree for every pair of rules that can match one
+call:
+
+1. `"*"` first, when it is `deny` or `ask`. A named tool's rules come later and win, so `*`
+   decides only a call no named rule matches, as in Mars. `*: allow` is OpenCode's default and
+   is not written.
+2. Then one entry per OpenCode action. Rules for different actions never match the same call,
+   so their order among themselves does not matter.
+3. Inside an action, rules go allow, then ask, then deny. All rules that can match a call sit
+   in that one list, so the last match is the strictest. The sort looks at actions only, so it
+   holds for any pattern syntax and any overlap of patterns. Equal action and pattern collapse
+   to the stricter.
+
+Rules are grouped by OpenCode action, not by capability, so a `write` allow and an `edit`
+scope land in one list. An allow is written only where it carves an exception, under a
+restricting `*` or beside a non-allow rule of the same action; elsewhere it restates the
+default and would override the project's `opencode.json`. Mars never writes a permission the
+profile did not grant.
+
+A shell deny, `ask` or scoped rule that is not an allow also denies `execute`, OpenCode's code
+mode, which runs arbitrary code and stays offered when only the shell is restricted (checked on
+OpenCode 2.2.5: `bash: deny` left `execute` running `return 1+1`, and `execute: ask` ran it
+without asking). Under `*: deny` it is already closed. `skill` needs no
+extra rule: `*: deny` refuses loading an existing skill, though the tool is still listed and a
+name that does not exist answers "Unable to load skill" before any permission check.
+
+I kept the v1 `permission` map and not the v2 `permissions` array. OpenCode 2.2.5 loads the v1
+map from an agent file and keeps its key order; a file with `permissions` ignores `name`,
+`permission` and `tools`; and the Claude-style plugin build reads this same map.
+
+The map merges with the author's `harness-overrides.opencode.permission`: the author's other
+entries stay, in their order after `*`, and an author entry for an action Mars writes is
+replaced by Mars's entries for it, so only `mars sync --verbose` shows it.
+
+What stays lost on OpenCode: `ask` in a non-interactive `opencode run` is refused unless the
+run passes `--auto`, because the file cannot say otherwise; `sandbox`, `approval` and `network`
+have no field (Meridian applies them at launch); agent rules append to the project's
+`opencode.json` rules, so a file cannot remove a project rule; and a tool Mars has no OpenCode
+name for (`image`) cannot be allowed or denied.
 
 OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
 generated `/name` references resolvable.
@@ -483,7 +521,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 |---|---|
 | Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowed-tools:` (denials) |
 | Skill native files | None: a skill carries no tool policy |
-| OpenCode agent native | A denied MCP ref is a `permission` entry (`<server>_<tool>: deny`); the rest → MCP lossiness |
+| OpenCode agent native | An MCP ref is a `permission` entry (`<server>_<tool>: <effect>`) |
 | Codex / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
@@ -522,7 +560,7 @@ What counts:
 
 | Kind | Lost when |
 |---|---|
-| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` |
+| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` (on Codex, Cursor and Pi; OpenCode's file carries them) |
 | tool | any other tool deny, `ask` or allow list the file cannot carry, such as `workflow: deny` or `edit: deny` |
 | MCP | an MCP `ask`, or a deny the target does not write |
 | project tool rule | a `[settings.tools]` deny the target's agent files cannot carry (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)), listed as a `project setting` named `tools.<key>` and counted once per target however many agents lose it; its kind is shell, tool or MCP by the rule |
@@ -540,7 +578,7 @@ Quiet by default, listed with its reason under `--verbose`:
 | Launch-time fields: `model-policies`, `sandbox`, `approval`, `mode`, `fanout`, and the network fields on targets that do not lower them | Meridian applies them at spawn |
 | `network: allow` on Codex | A grant, not a restriction |
 | A deny of `edit`, `write` or `notebook` on a Codex agent with `sandbox: read-only` | The Codex file carries that sandbox, which already blocks file writes. Mars checks the agent's sandbox; any other sandbox, and every other target (whose files carry none), keep the line |
-| `network: allow` or `default_network = "allow"`, a plain grant, `user-invocable: false`, `model-invocable: false`, an OpenCode `permission` entry that loses to a stricter Mars deny, an MCP grant on Pi, every skill field | Nothing the author withheld is lost, or the field restricts nothing |
+| `network: allow` or `default_network = "allow"`, a plain grant, `user-invocable: false`, `model-invocable: false`, an OpenCode `permission` entry that Mars's rules for the same tool replace, an MCP grant on Pi, every skill field | Nothing the author withheld is lost, or the field restricts nothing |
 | A `harness-overrides` key that is not a known permission key (`name`, `model`, `developer_instructions`, `mode`, an unknown key, …) | Not a known restriction; recorded, shown by `--verbose` |
 | Approximate mappings | The closest native equivalent; the semantics differ slightly |
 

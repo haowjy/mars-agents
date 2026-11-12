@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 
 use super::AgentSurfacePolicy;
 use super::agent_copy;
+use super::agents::opencode_permission;
 use super::effective_tools::effective_tools;
 use super::lossiness::{Lossiness, LossyField, ProjectLoss};
 use crate::config::routing_settings::ResolvedRoutingSettings;
@@ -809,7 +810,7 @@ pub(crate) fn compile_native_agents<'a>(
             );
         }
     }
-    project_losses.record(diag);
+    project_losses.record(ctx.project_root, diag);
 
     // Native Codex files carry no network setting, and a project default is not any one
     // Agent's, so it is recorded once for the target.
@@ -974,8 +975,14 @@ impl ProjectLosses {
         }
     }
 
-    fn record(self, diag: &mut DiagnosticCollector) {
+    fn record(self, project_root: &Path, diag: &mut DiagnosticCollector) {
+        // Only a project whose `opencode.json` sets `permission` has something the agents' rules
+        // take over.
+        let outside = opencode_permission::project_sets_permission(project_root);
         for ((_, key), field) in self.0 {
+            if key == opencode_permission::OUTSIDE_RULES_KEY && !outside {
+                continue;
+            }
             diag.record_lossy_fields("project", &key, &[field]);
         }
     }

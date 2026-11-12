@@ -361,24 +361,73 @@ scoped, using the permission names in the table above (`write` and `edit` both b
 `*: deny` or `*: ask` becomes the `"*"` key. OpenCode loads the v1 map and renames `bash` to
 `shell` itself.
 
-**Emit order.** Mars resolves a call by the strictest matching rule; OpenCode, by the last
-matching rule. The map is ordered so they agree for every pair of rules that can match one
-call:
+**The guarantee.** Three names. The *policy* is the agent's tool rules as projected above
+(`execute: deny` included). The *override* is the author's
+`harness-overrides.opencode.permission`, written in OpenCode's language: its meaning is the
+last matching entry in the author's order. The *outside rules* are everything OpenCode composes
+that Mars does not write: its built-ins (`* allow`, `read *.env: ask`), the project's and the
+user's `opencode.json` (top-level and `agent.<name>`), plugins and a launcher's config.
 
-1. `"*"` first, when it is `deny` or `ask`. A named tool's rules come later and win, so `*`
-   decides only a call no named rule matches, as in Mars. `*: allow` is OpenCode's default and
-   is not written.
-2. Then one entry per OpenCode action. Rules for different actions never match the same call,
-   so their order among themselves does not matter.
-3. Inside an action, rules go allow, then ask, then deny. All rules that can match a call sit
-   in that one list, so the last match is the strictest. The sort looks at actions only, so it
-   holds for any pattern syntax and any overlap of patterns. Equal action and pattern collapse
-   to the stricter.
+> Read on its own by OpenCode's last-match rule, the `permission` map gives every call an
+> action at least as strict as the policy gives it and at least as strict as the override
+> gives it, exactly the policy's action when there is no override, and no rule at all for a
+> call both leave at the default.
+
+**The boundary.** The guarantee stops at the map. OpenCode appends an agent file's rules after
+the built-ins and `opencode.json`, and the last match wins, so for a call the map has a rule
+for, the outside rules before it do not apply. An `ask` or an allowlist `allow` in the file
+beats the project's `opencode.json` deny for that tool, and `read: allow` skips the built-in
+`read *.env: ask`; a `*` rule in the map does this for every tool. This is OpenCode's agent
+precedence and holds for a hand-written agent file too. A restriction every agent must keep
+belongs in `[settings.tools]`, which is part of the policy and so is held by the guarantee.
+Rules a launcher adds after the file (Meridian's `OPENCODE_CONFIG_CONTENT` entry) and plugin
+rules come last and decide first.
+
+**Reading the two sources.** Both become rules `(key, resource, effect)`.
+
+- Keys are compared by the name OpenCode matches: it renames v1 keys on load and glob-matches
+  action keys against the new name, so `bash` and `shell` are one key, as are `task` and
+  `subagent`, and `write`, `patch` and `edit`. `"sh*"` matches the shell; `"ba*"` does not.
+- The override is read in the author's order, `*` included: OpenCode applies `{read: allow,
+  "*": deny}` as `read` allowed, then everything denied. An entry before the author's `*`
+  (or a rule before a later rule that covers it in the same action) never applied and is not
+  written. An entry Mars cannot read (not an effect, or a map of pattern to effect) is not
+  written. Each is reported.
+
+**Joining them.** Two rules with the same key and resource become one with the stricter effect.
+The map's `*` is the stricter of the policy's `*` and the author's. A rule only one source
+wrote must not answer weaker than the other source does for the calls it matches. That answer
+is the other source's resource-`*` rule in the same key when it has one (that rule is written
+and already sets the floor), otherwise its `*`. A weaker `ask` is written as `deny`. A weaker
+`allow` is written at that bound, except in a key sorted below, where it is left out when the
+map's `*` already equals the bound and the call falls to `*`. An allow in the policy is written
+only under a restricting `*`: elsewhere it restates OpenCode's default and could only override
+outside rules.
+
+**Emit order.** Mars resolves a call by the strictest matching rule; OpenCode, by the last
+matching rule. The map is ordered so the last match is the strictest:
+
+1. `"*"` first, when the map has one.
+2. Keys in three bands: keys whose rules are all `allow`, then every other key, then keys whose
+   rules are all `deny`. Inside a band, the policy's keys in policy order, then keys only the
+   override names in the author's order. Action keys are globs, so two keys can match one call
+   (`mcp(srv)` is `srv_*`, `mcp(srv/x)` is `srv_x`); the bands put the deny after the allow
+   whatever the policy's order.
+3. Inside a key the policy names, rules go allow, ask, deny; the sort looks at the effect only,
+   so it holds for any pattern syntax. A key only the override names keeps the author's order,
+   so `bash: {"*": ask, "git *": allow}` still means what it says. Spellings of one key
+   (`write`, then `edit`) keep the order the author wrote them in.
+4. Two keys in the middle band that can match one call (one is a glob that matches the other's
+   name; two globs count as overlapping) are safe only when every rule in both has one effect.
+   Otherwise each glob key of the pair is written as `deny`.
+
+The map can be stricter than both sources in three places: a key both sources name (the sort
+overrides the author's order), a rule raised by the join, and a glob key written as `deny`.
+Each is a dropped permission, and `mars sync` prints it. So is an override entry that is not
+written, and a policy allow left out under the author's `*`.
 
 Rules are grouped by OpenCode action, not by capability, so a `write` allow and an `edit`
-scope land in one list. An allow is written only under a restricting `*`, where it carves an
-exception; elsewhere it restates OpenCode's default and, because the last match wins, would
-override the project's `opencode.json` rules.
+scope land in one list.
 
 A shell deny, `ask` or scoped rule that is not an allow also denies `execute`, OpenCode's code
 mode, which runs arbitrary code and stays offered when only the shell is restricted (checked on
@@ -391,20 +440,20 @@ The file keeps the v1 `permission` map and not the v2 `permissions` array. OpenC
 map from an agent file and keeps its key order; a file with `permissions` ignores `name`,
 `permission` and `tools`; and the Claude-style plugin build reads this same map.
 
-The map merges with the author's `harness-overrides.opencode.permission`: the author's other
-entries stay, in their order after `*`. For an action both write, the two lists merge, the
-stricter rule wins for a pattern they share, and the list is sorted again; the `*` entries
-resolve to the stricter. An author rule the merge changes or reorders is a dropped permission,
-and `mars sync` prints it.
-
 What stays lost on OpenCode: `ask` in a non-interactive `opencode run` is refused unless the
 run passes `--auto`, because the file cannot say otherwise; `sandbox`, `approval` and `network`
 have no field (Meridian applies them at launch); and a tool Mars has no OpenCode
-name for (`image`) cannot be allowed or denied. Agent rules also land after the project's
-`opencode.json` rules and OpenCode's built-in ones, and the last match wins, so an allowlist
-agent's allow beats the project's deny for the same tool and `read: allow` skips OpenCode's
-built-in `read *.env: ask`. A file cannot avoid that; `mars sync` prints the `.env` case, which
-it can see, and not the `opencode.json` one.
+name for (`image`) cannot be allowed or denied. `mcp(*)` is written as `*_*`, which OpenCode
+glob-matches against every action, so it also denies OpenCode's own tools whose names have an
+underscore (`experimental_image_generate`, checked on OpenCode 2.2.5); Mars cannot name an
+unknown server's tools any other way. Two MCP references can also project to one name
+(`mcp(my/srv_tool)` and tool `tool` of server `my_srv` are both `my_srv_tool`), and a rule for
+one then covers the other.
+
+The boundary above is one line per sync: when the project's `opencode.json` (or `.jsonc`, here
+or under `.opencode/`) has a `permission` key and any agent's map holds a rule that is not a
+deny, `mars sync` prints that those agents decide the tools they name themselves over it, and
+`--verbose` shows the text. It looks for the key as text and does not read the file.
 
 OpenCode has no per-agent skill preload field. Its separate `.opencode/skills/` surface makes the
 generated `/name` references resolvable.

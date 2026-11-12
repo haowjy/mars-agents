@@ -582,13 +582,10 @@ impl<'a> AgentLoweringCtx<'a> {
             &mut self.lossy,
         );
         if self.writes_permission_map {
-            let author = overrides
-                .iter()
-                .position(|(key, _)| *key == "permission")
-                .map(|at| overrides.remove(at).1);
+            overrides.retain(|(key, _)| *key != "permission");
             let built = opencode_permission::build(
                 self.eff.tools,
-                author,
+                opencode_permission::author_override(self.profile),
                 self.target_name(),
                 &mut self.lossy,
             );

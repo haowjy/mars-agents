@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::compiler::agents::opencode_permission::PermissionRule;
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 use mars_schema::tool_policy::ToolRule;
 
@@ -120,6 +121,13 @@ pub struct ToolsSpec {
     pub allowed: Vec<String>,
     pub disallowed: Vec<String>,
     pub mcp: Vec<String>,
+    /// OpenCode only: the `permission` map Mars writes to the agent's native file, as a list in
+    /// the order OpenCode's last-match rule reads it, and an empty list when Mars writes none.
+    /// It is built from the same effective rules as `rules` and the agent's
+    /// `harness-overrides.opencode.permission`, never looser than either, so a launcher applies
+    /// it instead of deriving its own. Omitted for other harnesses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode_permission: Option<Vec<PermissionRule>>,
 }
 
 /// How the resolved harness spells one capability that a launcher may gate independently of

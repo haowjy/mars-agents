@@ -63,6 +63,7 @@
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost};
 use crate::compiler::tool_policy::{PolicyProjection, ToolPolicyRuntime};
 use mars_schema::HarnessId;
+use mars_schema::agent::AgentProfile;
 use mars_schema::ordered::OrderedValue;
 use mars_schema::tool_natives::opencode_v2_action;
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction};
@@ -263,15 +264,34 @@ pub(super) fn glob_match(pattern: &str, text: &str) -> bool {
         })
 }
 
-/// The map Mars writes, and whether it holds a rule that is not a deny.
-pub(super) struct Built {
+/// One entry of the map in OpenCode's rule form. The launch bundle carries the list.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PermissionRule {
+    pub permission: String,
+    pub pattern: String,
+    pub action: ToolAction,
+}
+
+/// The map Mars writes, the same rules as a list, and whether it holds a rule that is not a
+/// deny. `rules` is `map` read the way OpenCode reads it (a string value is pattern `*`), in
+/// the order its last-match rule needs.
+pub(crate) struct Built {
     pub map: Mapping,
+    pub rules: Vec<PermissionRule>,
     pub non_deny: bool,
+}
+
+/// The author's `harness-overrides.opencode.permission`, in written order.
+pub(crate) fn author_override(profile: &AgentProfile) -> Option<&OrderedValue> {
+    profile
+        .harness_overrides
+        .get(&HarnessId::OpenCode)?
+        .get("permission")
 }
 
 /// The `permission` map for `tools` and the author's `permission` override, empty when Mars
 /// writes none. What differs from what a source wrote is added to `lossy`.
-pub(super) fn build(
+pub(crate) fn build(
     tools: &EffectiveToolPolicy,
     author: Option<&OrderedValue>,
     target: &str,
@@ -312,19 +332,34 @@ pub(super) fn build(
     keys.sort_by_key(Key::band);
 
     let mut map = Mapping::new();
+    let mut rules = Vec::new();
     if let Some(effect) = map_star {
         map.insert(
             Value::String(STAR.into()),
             Value::String(effect.as_str().into()),
         );
+        rules.push(PermissionRule {
+            permission: STAR.into(),
+            pattern: STAR.into(),
+            action: effect,
+        });
     }
     let mut non_deny = map_star.is_some_and(|effect| effect != ToolAction::Deny);
     for key in &keys {
         non_deny |= key.rules.iter().any(|rule| rule.effect != ToolAction::Deny);
         map.insert(Value::String(key.name.clone()), key.value());
+        rules.extend(key.rules.iter().map(|rule| PermissionRule {
+            permission: key.name.clone(),
+            pattern: rule.resource.clone(),
+            action: rule.effect,
+        }));
     }
     lossy.extend(notes.lossy);
-    Built { map, non_deny }
+    Built {
+        map,
+        rules,
+        non_deny,
+    }
 }
 
 /// The policy as keys. Without a restricting `*` an allow restates OpenCode's default, and
@@ -754,6 +789,17 @@ mod tests {
         let (profile, map, _) = lower(tools, permission);
         let policy = policy_rules(&profile.tools);
         let written = flatten(&map);
+        let bundled = crate::build::resolve_bundle_tools(&profile, "opencode")
+            .unwrap()
+            .opencode_permission
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.permission, r.pattern, r.action))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bundled, written,
+            "{name}: the bundle's list is not the file's map"
+        );
         let author = author_rules(permission);
         for call in CALLS {
             let f = last_match(&written, *call);

@@ -902,7 +902,10 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
     ],
     "allowed": ["Bash(rg *)"],
     "disallowed": ["Edit", "Write", "NotebookEdit"],
-    "mcp": []
+    "mcp": [],
+    "opencode_permission": [
+      { "permission": "bash", "pattern": "rg *", "action": "allow" }
+    ]
   },
   "skills": {
     "loaded": [{ "name": "...", "skill_type": "...", "source_path": "...", "body": "..." }],
@@ -961,6 +964,17 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |
 | `covered_by` | Present only when a stricter rule wins every call this rule would match, or every name it has on this harness: `{"action": "deny", "key": "bash(uname *)"}`, the covering rule as its author wrote it. The rule never applies, and `native` and `native_tools` are empty. Test for it with this field, not with an empty `native`. A reader that ignores it stays safe: a covered rule carries no native name to emit. Omitted when the rule is not covered |
 | `note` | A harness-specific consequence the consumer must surface. On an `unknown` rule, why Mars could not name it (`"codex loads skills by reading files; no switch"`); on a `known` rule, why the valid native permission is broader, or why a stricter rule left it no native name. Permission gaps never add an entry to `warnings[]`: `note` is the only channel |
+
+**`tools.opencode_permission`** is present only when the resolved harness is OpenCode: the
+`permission` map Mars writes to the agent's native file, as a list in the order OpenCode's
+last-match rule reads it. Each entry is `{permission, pattern, action}`; a map key with a plain
+value has pattern `*`, and a `*` entry comes first. It comes from the same function as the
+file, over the same effective `rules` (the profile, the overlay, `[settings.tools]`, or
+`--agent-tool-rules`) and the author's `harness-overrides.opencode.permission` in written
+order, and it is never looser than either. An agent with neither gets `[]`. A launcher appends
+what only it knows after these entries (a refusal in place of `ask` when headless, its own
+grants and denies). `execution_policy.native_config.permission` still carries the author's
+override with its keys sorted, as before; read the list, not that.
 
 **`tools.set_aside`** is always `[]`. It listed the rules a project-wide deny covers; those now
 stay in `rules` with empty `native` and `native_tools`, a `covered_by` and a `note` naming the stricter rule

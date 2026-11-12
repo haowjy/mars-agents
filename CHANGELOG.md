@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-11-12
+
+### Added
+- `mars build launch-bundle` for an OpenCode agent carries `tools.opencode_permission`: the `permission` map Mars writes to the agent's native file, as an ordered list of `{permission, pattern, action}`. A launcher applies it instead of deriving its own rule. See [launch bundle](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md).
+
 ## [0.31.0] - 2026-11-12
 
 ### Upgrade notes

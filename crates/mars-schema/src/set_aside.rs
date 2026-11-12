@@ -141,7 +141,13 @@ fn rejected_keys(
                 .filter(|diagnostic| matches!(diagnostic.path.first(), Some(PathSegment::Key(first)) if *first == key))
                 .map(|diagnostic| Rejection {
                     path: diagnostic.path.clone(),
-                    why: diagnostic.message.clone(),
+                    why: if diagnostic.code == "field.removed" {
+                        // The reader's text is `mars migrate`'s promise to convert it, and the
+                        // guard runs because the conversion had no form for this one.
+                        "a pre-v1 form with no schema v1 equivalent".to_owned()
+                    } else {
+                        diagnostic.message.clone()
+                    },
                 })
                 .collect::<Vec<_>>();
             (!own.is_empty()).then_some((key, own))

@@ -435,14 +435,28 @@ impl Default for DiagnosticCollector {
     }
 }
 
-impl std::fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Diagnostic {
+    /// The line a printer shows. `tagged` adds the `[code]` tag and the `(context)` suffix, which
+    /// say which rule fired and which setting or file it concerns.
+    pub fn line(&self, tagged: bool) -> String {
         let prefix = match self.level {
             DiagnosticLevel::Error => "error",
             DiagnosticLevel::Warning => "warning",
             DiagnosticLevel::Info => "info",
         };
-        write!(f, "{prefix}: {}", self.message)
+        match (&self.context, tagged) {
+            (Some(context), true) => {
+                format!("{prefix}[{}]: {} ({context})", self.code, self.message)
+            }
+            (None, true) => format!("{prefix}[{}]: {}", self.code, self.message),
+            (_, false) => format!("{prefix}: {}", self.message),
+        }
+    }
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.line(false))
     }
 }
 

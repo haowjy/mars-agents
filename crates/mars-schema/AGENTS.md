@@ -87,9 +87,7 @@ rewrites. The upgrade functions iterate it, `mars migrate` runs the same convers
 (`migrate_definition`, limited to `PRE_V1`'s keys), and the strict readers ask it
 (`PreV1::key`, `PreV1::value`), so the file the reader refuses with `field.removed` and one
 text is the file `mars migrate` converts. The spellings of the Agent deny list come from
-`tool_policy::DISALLOWED_SPELLINGS`, which the translators read too. A row is a conversion; a
-key the upgrade only sets aside (`permission` as a map) is dropped with `field.restriction-lost`.
+`tool_policy::DISALLOWED_SPELLINGS`, which the translators read too. A row is a conversion, and the reader reports each row with the one pre-v1 text; the model-policy `override` reader asks the same rows. The one pre-v1 shape that is not a row is a `tools` list: `mars migrate` does not pick between its two readings (grants or allowlist), so the reader keeps its own `tools.list-form` error and only the no-schema upgrade converts it. A key the upgrade only sets aside (`permission` with a value that is neither `read`, `edit` nor a map) is dropped with `field.restriction-lost`.
 `upgrade::tests` checks this against the list. It is an error and not an unread key because a schema 1 file in
-this format would lose a restriction silently (`disallowed-tools`, `network_deny`, a `permission`
-map); `read::installed` and `set_aside` key on that error, so a translated definition still
+this format would lose a restriction silently (`disallowed-tools`, `network_deny`, `permission`); `read::installed` and `set_aside` key on that error, so a translated definition still
 records `field.restriction-lost`. A new key goes in `PRE_V1` only as a conversion the upgrade performs, and `upgrade::tests` fails when a row is refused but not converted, or converted but not refused.

@@ -587,6 +587,16 @@ pub fn print_success(msg: &str) {
 /// The one printer of diagnostics. `detail` asks for what is otherwise left out: see
 /// [`Diagnostic::shown`].
 pub fn print_diagnostics(diagnostics: &[Diagnostic], detail: bool) {
+    write_diagnostics(diagnostics, detail, false);
+}
+
+/// [`print_diagnostics`] with detail on, each line carrying its `[code]` and `(context)`:
+/// `mars validate`, whose output names the rule and the setting that fired.
+pub fn print_tagged_diagnostics(diagnostics: &[Diagnostic]) {
+    write_diagnostics(diagnostics, true, true);
+}
+
+fn write_diagnostics(diagnostics: &[Diagnostic], detail: bool, tagged: bool) {
     let mut stderr = stderr_stream();
     for diag in diagnostics.iter().filter(|diag| diag.shown(detail)) {
         let color = match diag.level {
@@ -595,7 +605,7 @@ pub fn print_diagnostics(diagnostics: &[Diagnostic], detail: bool) {
             crate::diagnostic::DiagnosticLevel::Info => Color::Cyan,
         };
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
-        let _ = writeln!(stderr, "  {diag}");
+        let _ = writeln!(stderr, "  {}", diag.line(tagged));
         let _ = stderr.reset();
     }
 }

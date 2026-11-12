@@ -120,7 +120,7 @@ fn lift_skill(
         );
     }
 
-    changed |= crate::upgrade::fold_disable_model_invocation(fm);
+    changed |= crate::upgrade::fold_disable_model_invocation(fm, changes);
     changed |= !remove_keys(fm, crate::upgrade::PRE_V1.skill_dropped.iter().copied()).is_empty();
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.

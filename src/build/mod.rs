@@ -18,6 +18,7 @@ use prompt::compile_prompt_surface;
 use crate::cli::MarsContext;
 use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
+use crate::diagnostic::Diagnostic;
 use crate::error::{ConfigError, MarsError};
 use mars_schema::agent::AgentProfile;
 use mars_schema::frontmatter::SkillsSpec;
@@ -52,7 +53,9 @@ pub fn build_launch_bundle(
     request
         .excluded_harnesses
         .retain(|harness| seen.insert(*harness));
-    let mut warnings: Vec<String> = Vec::new();
+    // Everything found while building. The bundle carries the messages of those that are shown
+    // without being asked; failures return an error instead.
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut profile: AgentProfile;
     let agent_body: Option<String>;
     let agent_source_path: Option<PathBuf>;
@@ -79,12 +82,9 @@ pub fn build_launch_bundle(
                 })
             })?;
 
-        warnings.extend(
-            valid
-                .warnings
-                .iter()
-                .map(|diag| format!("agent `{agent}`: {}", diag.message())),
-        );
+        diagnostics.extend(valid.warnings.iter().map(|diag| {
+            Diagnostic::from_schema(diag, format!("agent `{agent}`: {}", diag.message()))
+        }));
         agent_body = Some(valid.body);
         agent_source_path = Some(agent_path);
         profile = valid.fields;
@@ -96,19 +96,19 @@ pub fn build_launch_bundle(
 
     let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
     if let Some(diagnostic) = crate::diagnostic::compatibility_preflight(
-        env!("CARGO_PKG_VERSION"),
         effective_project_config
             .settings
             .min_mars_version
             .as_deref(),
-    ) && diagnostic.level == crate::diagnostic::DiagnosticLevel::Error
+    )
+    .map_err(|message| ConfigError::Invalid { message })?
     {
         return Err(ConfigError::Invalid {
             message: format!("[{}] {}", diagnostic.code, diagnostic.message),
         }
         .into());
     }
-    warnings.extend(effective_project_config.warnings.iter().cloned());
+    diagnostics.extend(effective_project_config.diagnostics.iter().cloned());
     let overlay = request
         .agent
         .as_deref()
@@ -127,11 +127,6 @@ pub fn build_launch_bundle(
         ),
     };
     profile.tools = effective_tools;
-    if let Some(message) = crate::compiler::agent_copy::deprecated_fanout_agents_warning(
-        effective_project_config.settings.meridian_agent_copy(),
-    ) {
-        warnings.push(message);
-    }
     let lock = crate::lock::load_for_runtime_aliases(&ctx.project_root)?;
     let runtime_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,
@@ -159,7 +154,12 @@ pub fn build_launch_bundle(
         },
     )?;
 
-    warnings.extend(policy.warnings);
+    diagnostics.extend(
+        policy
+            .warnings
+            .into_iter()
+            .map(|warning| Diagnostic::warning("launch.warning", warning)),
+    );
 
     let prompt = compile_prompt_surface(
         &content_roots,
@@ -171,7 +171,7 @@ pub fn build_launch_bundle(
         &policy.routing.model,
     );
 
-    warnings.extend(prompt.warnings);
+    diagnostics.extend(prompt.warnings);
     let resolved_tools = resolve_bundle_tools(&profile, &policy.routing.harness)?;
 
     Ok(LaunchBundle {
@@ -193,7 +193,11 @@ pub fn build_launch_bundle(
             missing: prompt.missing_skills,
         },
         provenance: policy.provenance,
-        warnings,
+        warnings: diagnostics
+            .into_iter()
+            .filter(|diagnostic| diagnostic.shown(false))
+            .map(|diagnostic| diagnostic.message)
+            .collect(),
     })
 }
 

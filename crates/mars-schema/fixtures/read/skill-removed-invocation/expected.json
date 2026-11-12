@@ -22,7 +22,7 @@
       "path": [
         "invocation"
       ],
-      "message": "`invocation` was removed; use `model-invocable` and `user-invocable`"
+      "message": "`invocation` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

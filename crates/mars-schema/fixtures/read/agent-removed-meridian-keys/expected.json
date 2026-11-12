@@ -42,7 +42,7 @@
       "path": [
         "resident-rearm-budget"
       ],
-      "message": "`resident-rearm-budget` was removed; move it under `harness-overrides.meridian-cli.resident-rearm-budget`"
+      "message": "`resident-rearm-budget` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.removed",
@@ -50,7 +50,7 @@
       "path": [
         "meridian-capabilities"
       ],
-      "message": "`meridian-capabilities` was removed; move it under `harness-overrides.meridian-cli.capabilities`"
+      "message": "`meridian-capabilities` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

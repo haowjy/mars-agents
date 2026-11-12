@@ -32,6 +32,26 @@ where it falls short: [.context/invariants.md](.context/invariants.md).
   shown by default, and every other field a harness can't express shows under
   `--verbose`: the author and the user must know what an agent can actually do.
 
+## Errors and Warnings
+
+A problem is built as a `Diagnostic` and nothing else; its level says what the user loses if
+they ignore it, and the code that finds the problem states it.
+
+- `Error`: Mars cannot use this input, and the command fails.
+- `Warning`: the user loses something (a restriction not applied, a file not written, an item
+  not installed).
+- `Info`: nothing is lost, and it may be intended. Printed only when asked: `mars validate`,
+  `mars check` and `--verbose` ask; a default `mars sync` and a launch bundle do not.
+
+`Diagnostic::shown` and `output::print_diagnostics` are the whole policy: no reader prints, and
+no reader decides whether its problem is shown. Reducing what users see means changing a site
+from `Warning` to `Info`, or deleting it.
+
+Mars has no code about a key it does not read: no list of removed keys, no per-key advice, no
+deprecation note for a key that is gone. What happens to one is what its table does with any
+key it has no use for (`crates/mars-schema/AGENTS.md`). The one place that names an old key is
+a translator from another format, such as the pre-v1 upgrade in `upgrade.rs`.
+
 ## Design Constraints
 
 - Resolve first, then act: if resolution fails anywhere, nothing on disk changes.

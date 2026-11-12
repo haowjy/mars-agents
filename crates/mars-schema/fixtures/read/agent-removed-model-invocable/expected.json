@@ -36,7 +36,7 @@
       "path": [
         "model_invocable"
       ],
-      "message": "`model_invocable` was removed; use `model-invocable`"
+      "message": "`model_invocable` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

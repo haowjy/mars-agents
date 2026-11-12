@@ -51,3 +51,43 @@ and rules, so never add a binary-side copy.
 - Keep frontmatter size and nesting limits: YAML scanning grows quadratically with
   nesting, so a size limit alone does not bound parse time. Keep semantic parsing and
   structural scanning distinct when changing YAML handling.
+
+## Config keys
+
+`keys.rs` is the table of gated keys (`GATED`): a key an older Mars ignores or misreads, with
+the release that first read it. It lists keys Mars reads today and when they arrived, nothing
+about keys it no longer reads. A new gated key is a row and nowhere else; say on the row's
+comment what the older Mars does with the key.
+
+A file's version floor is `keys::floor` over the keys it uses, and every caller gets those from
+`keys::used(document, Document)`, which walks a parsed `mars.toml`. The uses that live in other
+files are the caller's to add as `Used::hook` and `Used::profile_rule` (`check::package_floor`
+does, and `mars check`, `mars version` and `mars migrate` all call it); the consumer reader
+(`config/read.rs`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
+key's presence) or `Gate::Rules` (each rule whose action restricts: `deny` and `ask`, not
+`allow`). A consumer floor is reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older
+than that ignores `min_mars_version`.
+
+What a reader does with a key it has no field for depends on the table, nothing else:
+
+- A table of entries (`[settings.tools]`, a profile's `tools`, `[dependencies]`): the key is an
+  entry, and a key or value that is not a valid one is an error at its line.
+- A table of fields (`[settings]`, `[agents.<name>]`, `[package]`, frontmatter): the key is not
+  read and stays in the file. It is one `Info`, `field.unknown`, built by
+  `diagnostic::unknown_field`, with the text `unknown_key_message` builds. Don't add a code, a
+  level or a text for a particular key.
+- A table that refuses what it does not define (a model-policy `override`, a project's
+  `hook.toml`): an error that lists the keys it takes.
+
+A value of a key Mars reads stays closed: an unknown value is an error listing what is allowed.
+
+The only code that names an old key is a translator from another format. `upgrade::PRE_V1` is
+the pre-v1 Mars grammar: every key and value the pre-v1 upgrade drops, renames, moves or
+rewrites. The upgrade functions iterate it, `mars migrate` runs the same conversion on a schema 1 file
+(`migrate_definition`, limited to `PRE_V1`'s keys), and the strict readers ask it
+(`PreV1::key`, `PreV1::value`), so the file the reader refuses with `field.removed` and one
+text is the file `mars migrate` converts. The spellings of the Agent deny list come from
+`tool_policy::DISALLOWED_SPELLINGS`, which the translators read too. A row is a conversion, and the reader reports each row with the one pre-v1 text; the model-policy `override` reader asks the same rows. The one pre-v1 shape that is not a row is a `tools` list: `mars migrate` does not pick between its two readings (grants or allowlist), so the reader keeps its own `tools.list-form` error and only the no-schema upgrade converts it. A key the upgrade only sets aside (`permission` with a value that is neither `read`, `edit` nor a map) is dropped with `field.restriction-lost`.
+`upgrade::tests` checks this against the list. It is an error and not an unread key because a schema 1 file in
+this format would lose a restriction silently (`disallowed-tools`, `network_deny`, `permission`); `read::installed` and `set_aside` key on that error, so a translated definition still
+records `field.restriction-lost`. A new key goes in `PRE_V1` only as a conversion the upgrade performs, and `upgrade::tests` fails when a row is refused but not converted, or converted but not refused.

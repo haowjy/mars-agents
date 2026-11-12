@@ -8,10 +8,8 @@ use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::harness_overrides::{Moved, move_keys_under};
 use crate::item::DefinitionKind;
-use crate::{
-    agent::{REMOVED_AGENT_FIELDS, REMOVED_AGENT_VALUES},
-    skill,
-};
+use crate::keys;
+use crate::tool_policy;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UpgradeResult {
@@ -45,6 +43,143 @@ pub enum UpgradeError {
     PackageToolsNeedSchema,
 }
 
+/// A fold of one pre-v1 skill key into another field; whether it changed the frontmatter.
+pub(crate) type Fold = fn(&mut Frontmatter, &mut Vec<SchemaDiagnostic>) -> bool;
+
+/// The grammar of pre-v1 Mars: every key and value the upgrade below drops, renames, moves or
+/// rewrites. The upgrade functions iterate it, and the strict reader asks [`PreV1::key`] and
+/// [`PreV1::value`], so a file the upgrade would change is the file the reader refuses and the
+/// two cannot drift apart. A schema 1 file in this format is in the wrong format, not a file with
+/// a typo: dropping its `disallowed-tools` or `network_deny` unread would lose a restriction.
+pub(crate) struct PreV1 {
+    /// Agent keys the upgrade deletes.
+    pub agent_dropped: &'static [&'static str],
+    /// Spellings of Agent and skill keys that became another key: (old, new).
+    pub renamed: &'static [(&'static str, &'static str)],
+    /// Agent host sets that became another key; both spellings merge: (old, new).
+    pub agent_host_sets: &'static [(&'static str, &'static str)],
+    /// Agent keys that moved under a consumer namespace of `harness-overrides`:
+    /// (namespace, key, key within the namespace).
+    pub agent_moved: &'static [(&'static str, &'static str, &'static str)],
+    /// Agent keys that moved under a namespace when their value is a map: (namespace, key).
+    /// Moved by the pre-v1 conversion only: a foreign dialect reads such a map itself (OpenCode's
+    /// `permission`).
+    pub agent_moved_maps: &'static [(&'static str, &'static str)],
+    /// Agent values rewritten: (key, old value, new value).
+    pub agent_values: &'static [(&'static str, &'static str, &'static str)],
+    /// Skill keys that carried a tool policy, which schema 1 skills do not have. The deny-list
+    /// spellings of [`tool_policy::DISALLOWED_SPELLINGS`] are theirs too (see
+    /// [`crate::skill::tool_keys`]).
+    pub skill_tool_keys: &'static [&'static str],
+    /// Skill keys the upgrade folds into another field, each with the fold.
+    pub skill_folded: &'static [(&'static str, Fold)],
+    /// Skill keys the upgrade deletes.
+    pub skill_dropped: &'static [&'static str],
+    /// Model policy `override` keys the upgrade deletes.
+    pub policy_override_dropped: &'static [&'static str],
+    /// `[package]` keys the upgrade deletes.
+    pub package_dropped: &'static [&'static str],
+    /// `harness-overrides` namespaces that took their full host names: (old, new).
+    pub namespaces: &'static [(&'static str, &'static str)],
+}
+
+pub(crate) const PRE_V1: PreV1 = PreV1 {
+    agent_dropped: &[
+        "fanout",
+        "models",
+        "mcp-tools",
+        "autocompact",
+        "autocompact_pct",
+    ],
+    renamed: &[
+        ("model_invocable", "model-invocable"),
+        ("user_invocable", "user-invocable"),
+    ],
+    agent_host_sets: &[
+        ("network_allow", "network-allow"),
+        ("network_deny", "network-deny"),
+    ],
+    agent_moved: &[
+        ("meridian-flow", "permission", "permission"),
+        (
+            "meridian-cli",
+            "resident-rearm-budget",
+            "resident-rearm-budget",
+        ),
+        ("meridian-cli", "meridian-capabilities", "capabilities"),
+    ],
+    agent_moved_maps: &[("opencode", "permission")],
+    agent_values: &[
+        ("approval", "yolo", "never"),
+        ("effort", "adaptive", "medium"),
+        ("effort", "disabled", "none"),
+    ],
+    skill_tool_keys: &["tools", "allowed-tools", "allowed_tools"],
+    skill_folded: &[
+        ("type", fold_type),
+        ("when_to_use", fold_when_to_use),
+        ("disable-model-invocation", fold_disable_model_invocation),
+    ],
+    skill_dropped: &["invocation", "allow_implicit_invocation"],
+    policy_override_dropped: &["autocompact", "autocompact_pct", "harness"],
+    package_dropped: &["visibility"],
+    namespaces: &[("flow", "meridian-flow"), ("meridian", "meridian-cli")],
+};
+
+impl PreV1 {
+    /// Whether `key` of a `kind` definition is pre-v1 Mars's.
+    pub(crate) fn key(&self, kind: DefinitionKind, key: &str) -> bool {
+        if self.renamed.iter().any(|(old, _)| *old == key) {
+            return true;
+        }
+        match kind {
+            DefinitionKind::Agent => {
+                self.agent_dropped.contains(&key)
+                    || self.agent_host_sets.iter().any(|(old, _)| *old == key)
+                    || tool_policy::DISALLOWED_SPELLINGS.contains(&key)
+                    || self.agent_moved.iter().any(|(_, moved, _)| *moved == key)
+                    || self.agent_moved_maps.iter().any(|(_, moved)| *moved == key)
+            }
+            DefinitionKind::Skill => {
+                crate::skill::tool_keys().any(|known| known == key)
+                    || self.skill_folded.iter().any(|(known, _)| *known == key)
+                    || self.skill_dropped.contains(&key)
+            }
+        }
+    }
+
+    /// Whether `value` of the Agent key `key` is one the upgrade rewrites.
+    pub(crate) fn value(&self, key: &str, value: &str) -> bool {
+        self.agent_values
+            .iter()
+            .any(|(known, old, _)| *known == key && *old == value)
+    }
+
+    pub(crate) fn namespace(&self, old: &str) -> bool {
+        self.namespaces.iter().any(|(known, _)| *known == old)
+    }
+}
+
+/// What the strict reader says of a key the upgrade would change.
+pub(crate) fn pre_v1_key(path: Vec<PathSegment>, key: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Error,
+        path,
+        format!("`{key}` is a pre-v1 key; `mars migrate` upgrades this file"),
+    )
+}
+
+/// What the strict reader says of a value the upgrade would rewrite, at `path`.
+pub(crate) fn pre_v1_value(path: Vec<PathSegment>, key: &str, value: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Error,
+        path,
+        format!("`{key}: {value}` is a pre-v1 value; `mars migrate` upgrades this file"),
+    )
+}
+
 pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
     rewrite(text, |frontmatter, diagnostics| match kind {
         DefinitionKind::Agent => upgrade_agent(frontmatter, diagnostics),
@@ -52,21 +187,21 @@ pub fn upgrade_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeRes
     })
 }
 
-/// Apply only what schema 1 removes with a mechanical replacement: the Agent keys that moved
-/// under `harness-overrides`.
-///
-/// `mars migrate` runs this on a schema 1 file it is about to write back, so a file that
-/// carries a key the reader rejects is repaired instead of failing the run. Every reading
-/// caller leaves it off, because an authored schema 1 file is read exactly as written.
-pub fn relocate_removed_fields(
-    kind: DefinitionKind,
-    text: &str,
-) -> Result<UpgradeResult, UpgradeError> {
+/// `mars migrate`'s conversion of a schema 1 definition: [`PRE_V1`]'s keys and values, converted
+/// as the pre-v1 upgrade converts them, so the file the strict reader refuses for one of them is
+/// the file this makes readable. Everything else in the file is left as written, including a
+/// key or value the reader rejects that pre-v1 Mars never wrote. Every reading caller leaves it
+/// off, because an authored schema 1 file is read exactly as written.
+pub fn migrate_definition(kind: DefinitionKind, text: &str) -> Result<UpgradeResult, UpgradeError> {
     rewrite(text, |frontmatter, notes| {
-        rename_consumer_namespaces(frontmatter, notes);
-        if kind == DefinitionKind::Agent {
-            move_agent_fields(frontmatter, notes);
-        }
+        convert_pre_v1(frontmatter, kind, notes);
+        crate::set_aside::set_aside_rejected_keys(
+            frontmatter,
+            kind,
+            crate::set_aside::Destination::Nowhere,
+            crate::set_aside::Reach::PreV1Keys,
+            notes,
+        );
     })
 }
 
@@ -127,23 +262,28 @@ pub fn upgrade_manifest(text: &str) -> Result<UpgradeResult, UpgradeError> {
         .get_mut("package")
         .and_then(Item::as_table_mut)
         .ok_or(UpgradeError::MissingPackage)?;
-    if package.get("schema").and_then(Item::as_integer) == Some(1) {
+    let mut diagnostics = Vec::new();
+    let mut edited_paths = Vec::new();
+    if package.get("schema").and_then(Item::as_integer) != Some(1) {
+        if package.contains_key("tools") {
+            return Err(UpgradeError::PackageToolsNeedSchema);
+        }
+        package.insert("schema", toml_edit::value(1));
+        edited_paths.push(package_path("schema"));
+    }
+    for &key in PRE_V1.package_dropped {
+        if package.remove(key).is_some() {
+            diagnostics.push(removed(&["package", key], key));
+            edited_paths.push(package_path(key));
+        }
+    }
+    if edited_paths.is_empty() {
         return Ok(UpgradeResult {
             text: text.to_string(),
-            diagnostics: Vec::new(),
+            diagnostics,
             fully_rewritten: false,
-            edited_paths: Vec::new(),
+            edited_paths,
         });
-    }
-    if package.contains_key("tools") {
-        return Err(UpgradeError::PackageToolsNeedSchema);
-    }
-    let mut diagnostics = Vec::new();
-    let mut edited_paths = vec![package_path("schema")];
-    package.insert("schema", toml_edit::value(1));
-    if package.remove("visibility").is_some() {
-        diagnostics.push(removed(&["package", "visibility"], "visibility"));
-        edited_paths.push(package_path("visibility"));
     }
     Ok(UpgradeResult {
         text: with_line_ending_of(text, document.to_string()),
@@ -163,19 +303,29 @@ pub struct FloorOutcome {
     pub warning: Option<String>,
 }
 
-/// Add `requires-mars = ">=0.20.0"` to a manifest that has no requirement.
+/// Add `requires-mars` at `floor` to a manifest that has no requirement.
 ///
-/// `mars migrate` runs this on the manifest it is about to write, so a schema v1 package needs
-/// no hand edit. An existing requirement is never rewritten: when it admits a Mars older than
-/// the first release that reads schema 1, [`FloorOutcome::warning`] is `mars check`'s advice and
-/// the value keeps its bytes and comment. A manifest migrate cannot edit minimally (an inline
-/// `[package]` table) comes back unchanged with the same advice, never an error, so an
-/// already-v1 package migrates exactly as it did before this key existed.
-pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeError> {
+/// `mars migrate` runs this on the manifest it is about to write, with the floor
+/// [`keys::floor`] finds for the whole package, so a package needs no hand edit. An existing
+/// requirement is never rewritten: when it admits a Mars older than the floor,
+/// [`FloorOutcome::warning`] is `mars check`'s advice and the value keeps its bytes and comment.
+/// A manifest migrate cannot edit minimally (an inline `[package]` table) comes back unchanged
+/// with the same advice, never an error, so an already-v1 package migrates exactly as it did
+/// before this key existed.
+pub fn ensure_requires_mars_floor(
+    text: &str,
+    floor: Option<&keys::Floor>,
+) -> Result<FloorOutcome, UpgradeError> {
     let mut document = text.parse::<DocumentMut>()?;
     let package = document
         .get_mut("package")
         .ok_or(UpgradeError::MissingPackage)?;
+    let Some(floor) = floor else {
+        return Ok(FloorOutcome {
+            text: text.to_string(),
+            warning: None,
+        });
+    };
     let requirement = package
         .as_table_like()
         .and_then(|table| table.get("requires-mars"))
@@ -184,10 +334,7 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     if requirement.is_none()
         && let Some(table) = package.as_table_mut()
     {
-        table.insert(
-            "requires-mars",
-            toml_edit::value(format!(">={}", crate::package::SCHEMA_1_MARS_FLOOR)),
-        );
+        table.insert("requires-mars", toml_edit::value(floor.requirement()));
         return Ok(FloorOutcome {
             text: with_line_ending_of(text, document.to_string()),
             warning: None,
@@ -195,7 +342,7 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     }
     Ok(FloorOutcome {
         text: text.to_string(),
-        warning: crate::package::schema_1_requires_mars_warning(requirement.as_deref()),
+        warning: crate::package::requires_mars_shortfall(requirement.as_deref(), floor),
     })
 }
 
@@ -383,7 +530,7 @@ fn renamed_in_place(block: &SourceBlock<'_>, before: &Value, after: &Value) -> O
         }
         if old != new {
             let pair = (old.as_str()?, new.as_str()?);
-            if !crate::harness::RENAMED_CONSUMER_NAMESPACES.contains(&pair) {
+            if !PRE_V1.namespaces.contains(&pair) {
                 return None;
             }
             renames.push(pair);
@@ -447,12 +594,10 @@ fn child_indent<'a>(block: &'a SourceBlock<'a>) -> Option<&'a str> {
 }
 
 fn renamed_key<'a>(old: &str, before: &Mapping, after: &'a Mapping) -> Option<&'a str> {
-    let new = match old {
-        "model_invocable" => "model-invocable",
-        "user_invocable" => "user-invocable",
-        "disallowed_tools" => "disallowed-tools",
-        _ => return None,
-    };
+    let new = PRE_V1
+        .renamed
+        .iter()
+        .find_map(|&(known, new)| (known == old).then_some(new))?;
     if before.contains_key(Value::String(new.to_string())) {
         return None;
     }
@@ -540,18 +685,20 @@ pub(crate) fn lift_mars_only_keys(
     notes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
     let before = fm.mapping().clone();
-    rename_field(fm, "model_invocable", "model-invocable");
-    rename_field(fm, "user_invocable", "user-invocable");
+    for &(old, new) in PRE_V1.renamed {
+        rename_invocability(fm, old, new, notes);
+    }
     if kind == DefinitionKind::Agent {
-        merge_host_set_spellings(fm, "network_allow", "network-allow");
-        merge_host_set_spellings(fm, "network_deny", "network-deny");
-        for field in REMOVED_AGENT_FIELDS.iter().filter(|field| field.discarded) {
-            if fm.remove(field.key).is_some() {
-                notes.push(removed(&[field.key], field.key));
+        for &(old, new) in PRE_V1.agent_host_sets {
+            merge_host_set_spellings(fm, old, new);
+        }
+        for &key in PRE_V1.agent_dropped {
+            if fm.remove(key).is_some() {
+                notes.push(removed(&[key], key));
             }
         }
-        for removed in REMOVED_AGENT_VALUES {
-            replace_scalar(fm, removed.key, removed.value, removed.replacement);
+        for &(key, old, new) in PRE_V1.agent_values {
+            replace_scalar(fm, key, old, new);
         }
         move_agent_fields(fm, notes);
         strip_model_policy_overrides(fm, notes);
@@ -559,65 +706,125 @@ pub(crate) fn lift_mars_only_keys(
     fm.mapping() != &before
 }
 
-fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+/// Every conversion [`PRE_V1`] names, applied to a definition of either format.
+fn convert_pre_v1(fm: &mut Frontmatter, kind: DefinitionKind, notes: &mut Vec<SchemaDiagnostic>) {
     // Before `move_agent_fields`, so a top-level key lands in the block it names, not beside a
     // block still written under the old name.
-    rename_consumer_namespaces(fm, diagnostics);
-    upgrade_tools(fm);
-    lift_mars_only_keys(fm, DefinitionKind::Agent, diagnostics);
+    rename_consumer_namespaces(fm, notes);
+    match kind {
+        DefinitionKind::Agent => {
+            fold_deny_lists(fm);
+            lift_mars_only_keys(fm, kind, notes);
+            move_map_fields(fm, notes);
+        }
+        DefinitionKind::Skill => {
+            lift_mars_only_keys(fm, kind, notes);
+            for &(_, fold) in PRE_V1.skill_folded {
+                fold(fm, notes);
+            }
+            for &key in PRE_V1.skill_dropped {
+                if fm.remove(key).is_some() {
+                    notes.push(removed(&[key], key));
+                }
+            }
+            for key in crate::skill::tool_keys() {
+                if fm.remove(key).is_some() {
+                    notes.push(SchemaDiagnostic::new(
+                        "skill.tools-dropped",
+                        Severity::Warning,
+                        vec![PathSegment::Key(key.to_string())],
+                        format!("removed skill key `{key}`; skill tool rules have no v1 meaning"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn upgrade_agent(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    // Only here: in a schema 1 file a `tools` list is ambiguous (grants in pre-v1 Mars, an
+    // allowlist in Claude's dialect), so `mars migrate` leaves it for the reader to refuse.
+    tools_list_to_allow(fm);
+    convert_pre_v1(fm, DefinitionKind::Agent, diagnostics);
     // A pre-v1 file passed unknown keys to every harness; Claude's own keep reaching Claude.
     claude::translate::move_to_claude_overrides(fm, DefinitionKind::Agent, diagnostics);
     set_aside_rejected_keys(fm, DefinitionKind::Agent, diagnostics);
 }
 
 fn upgrade_skill(fm: &mut Frontmatter, diagnostics: &mut Vec<SchemaDiagnostic>) {
-    rename_consumer_namespaces(fm, diagnostics);
-    lift_mars_only_keys(fm, DefinitionKind::Skill, diagnostics);
+    convert_pre_v1(fm, DefinitionKind::Skill, diagnostics);
+    claude::translate::move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
+    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
+}
 
-    if let Some(skill_type) = fm.get("type").cloned() {
-        let metadata = fm
-            .get("metadata")
-            .cloned()
-            .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-        if let Value::Mapping(mut metadata) = metadata {
-            let key = Value::String("type".to_string());
-            if !metadata.contains_key(&key) {
-                metadata.insert(key, skill_type);
-                fm.insert("metadata", Value::Mapping(metadata));
-                fm.remove("type");
-            }
-        }
+/// Pre-v1 `type` becomes `metadata.type`; an existing `metadata.type` wins and `type` stays.
+fn fold_type(fm: &mut Frontmatter, _notes: &mut Vec<SchemaDiagnostic>) -> bool {
+    let Some(skill_type) = fm.get("type").cloned() else {
+        return false;
+    };
+    let metadata = fm
+        .get("metadata")
+        .cloned()
+        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
+    let Value::Mapping(mut metadata) = metadata else {
+        return false;
+    };
+    let key = Value::String("type".to_string());
+    if metadata.contains_key(&key) {
+        return false;
     }
+    metadata.insert(key, skill_type);
+    fm.insert("metadata", Value::Mapping(metadata));
+    fm.remove("type");
+    true
+}
 
-    if let Some(when) = fm
+/// Pre-v1 `when_to_use` is appended to `description`.
+fn fold_when_to_use(fm: &mut Frontmatter, _notes: &mut Vec<SchemaDiagnostic>) -> bool {
+    let Some(when) = fm
         .get("when_to_use")
         .and_then(Value::as_str)
         .map(str::to_owned)
-    {
-        let description = match fm.get("description") {
-            Some(Value::String(description)) => Some(format!("{description}\n\n{when}")),
-            None => Some(when),
-            Some(_) => None,
-        };
-        if let Some(description) = description {
-            fm.insert("description", Value::String(description));
-            fm.remove("when_to_use");
-        }
-    }
+    else {
+        return false;
+    };
+    let description = match fm.get("description") {
+        Some(Value::String(description)) => format!("{description}\n\n{when}"),
+        None => when,
+        Some(_) => return false,
+    };
+    fm.insert("description", Value::String(description));
+    fm.remove("when_to_use");
+    true
+}
 
-    for key in skill::tool_keys() {
-        if fm.remove(key).is_some() {
-            diagnostics.push(SchemaDiagnostic::new(
-                "skill.tools-dropped",
-                Severity::Warning,
-                vec![PathSegment::Key(key.to_string())],
-                format!("removed skill key `{key}`; skill tool rules have no v1 meaning"),
+/// Claude's `disable-model-invocation: true` is `model-invocable: false`. An existing
+/// `model-invocable: false` stays; beside `model-invocable: true` the restricting value wins, with
+/// a note.
+pub(crate) fn fold_disable_model_invocation(
+    fm: &mut Frontmatter,
+    notes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let Some(disable) = fm.remove("disable-model-invocation") else {
+        return false;
+    };
+    if disable.as_bool() != Some(true) {
+        return true;
+    }
+    match crate::invocability::find_invocability_field(fm, "model-invocable") {
+        None => fm.insert("model-invocable", Value::Bool(false)),
+        Some(field) if field.value == Value::Bool(true) => {
+            fm.insert(&field.consumed_key, Value::Bool(false));
+            notes.push(conflicting_duplicate(
+                "disable-model-invocation",
+                &disable,
+                &field.consumed_key,
+                &field.value,
             ));
         }
+        Some(_) => {}
     }
-
-    claude::translate::move_to_claude_overrides(fm, DefinitionKind::Skill, diagnostics);
-    set_aside_rejected_keys(fm, DefinitionKind::Skill, diagnostics);
+    true
 }
 
 /// What the rules above could not make schema v1 is dropped, with a warning naming it, so the
@@ -633,12 +840,13 @@ fn set_aside_rejected_keys(
         fm,
         kind,
         crate::set_aside::Destination::Nowhere,
+        crate::set_aside::Reach::Everything,
         diagnostics,
     );
 }
 
-fn upgrade_tools(fm: &mut Frontmatter) {
-    rename_field(fm, "disallowed_tools", "disallowed-tools");
+/// A `tools` list becomes allow rules.
+fn tools_list_to_allow(fm: &mut Frontmatter) {
     if let Some(Value::Sequence(entries)) = fm.get("tools").cloned()
         && entries.iter().all(|entry| entry.as_str().is_some())
     {
@@ -648,42 +856,32 @@ fn upgrade_tools(fm: &mut Frontmatter) {
             .collect();
         fm.insert("tools", Value::Mapping(policy));
     }
-
-    let Some(Value::Sequence(disallowed)) = fm.get("disallowed-tools").cloned() else {
-        return;
-    };
-    if !disallowed.iter().all(|entry| entry.as_str().is_some()) {
-        return;
-    }
-    let policy = fm
-        .get("tools")
-        .cloned()
-        .unwrap_or_else(|| Value::Mapping(Mapping::new()));
-    let Value::Mapping(mut policy) = policy else {
-        return;
-    };
-    for entry in disallowed {
-        policy.insert(entry, Value::String("deny".to_string()));
-    }
-    fm.insert("tools", Value::Mapping(policy));
-    fm.remove("disallowed-tools");
 }
 
-/// The Agent keys schema 1 replaced with a `harness-overrides` key: the consumer namespace that
-/// owns it, and the name it takes there.
-///
-/// One conflict rule covers all three: a block already written wins, and its top-level twin is
-/// dropped with a note naming it. `permission` moves only for the values Flow defines; see
-/// [`moves_under_namespace`].
-const MOVED_AGENT_FIELDS: &[(&str, &str, &str)] = &[
-    ("meridian-flow", "permission", "permission"),
-    (
-        "meridian-cli",
-        "resident-rearm-budget",
-        "resident-rearm-budget",
-    ),
-    ("meridian-cli", "meridian-capabilities", "capabilities"),
-];
+/// Every deny list (`disallowed-tools` and the other spellings) becomes deny rules. A deny list
+/// that is not a list of names stays for the reader.
+fn fold_deny_lists(fm: &mut Frontmatter) {
+    for key in tool_policy::DISALLOWED_SPELLINGS {
+        let Some(Value::Sequence(disallowed)) = fm.get(key).cloned() else {
+            continue;
+        };
+        if !disallowed.iter().all(|entry| entry.as_str().is_some()) {
+            continue;
+        }
+        let Value::Mapping(mut policy) = fm
+            .get("tools")
+            .cloned()
+            .unwrap_or_else(|| Value::Mapping(Mapping::new()))
+        else {
+            return;
+        };
+        for entry in disallowed {
+            policy.insert(entry, Value::String("deny".to_string()));
+        }
+        fm.insert("tools", Value::Mapping(policy));
+        fm.remove(key);
+    }
+}
 
 /// Whether the top-level `key` moves under its consumer namespace. Meridian Flow defines
 /// `read` and `edit` only, so any other `permission` value stays where it is for the reader to report.
@@ -699,22 +897,32 @@ fn moves_under_namespace(fm: &Frontmatter, key: &str) -> bool {
 /// and the top-level twin it displaces is dropped with a note: the reader would otherwise report
 /// the key `mars migrate` left behind.
 fn move_agent_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
-    let mut displaced = Vec::new();
-    for &namespace in crate::harness::RESERVED_CONSUMER_NAMESPACES {
-        let keys = MOVED_AGENT_FIELDS
-            .iter()
-            .filter_map(|(owner, from, to)| {
-                (*owner == namespace && moves_under_namespace(fm, from)).then_some((*from, *to))
-            })
-            .collect::<Vec<_>>();
-        if let Moved::Done {
-            displaced: dropped, ..
-        } = move_keys_under(fm, namespace, &keys)
-        {
-            displaced.extend(dropped.into_iter().map(|(from, to)| (namespace, from, to)));
+    for &(namespace, from, to) in PRE_V1.agent_moved {
+        if moves_under_namespace(fm, from) {
+            move_one(fm, namespace, from, to, notes);
         }
     }
-    for (namespace, from, to) in displaced {
+}
+
+/// Move the keys of [`PreV1::agent_moved_maps`] whose value is a map.
+fn move_map_fields(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) {
+    for &(namespace, key) in PRE_V1.agent_moved_maps {
+        if matches!(fm.get(key), Some(Value::Mapping(_))) {
+            move_one(fm, namespace, key, key, notes);
+        }
+    }
+}
+
+fn move_one(
+    fm: &mut Frontmatter,
+    namespace: &str,
+    from: &str,
+    to: &str,
+    notes: &mut Vec<SchemaDiagnostic>,
+) {
+    if let Moved::Done { displaced, .. } = move_keys_under(fm, namespace, &[(from, to)])
+        && !displaced.is_empty()
+    {
         notes.push(dropped_twin(
             &agent_label(fm),
             vec![PathSegment::Key(from.to_string())],
@@ -733,7 +941,7 @@ fn rename_consumer_namespaces(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagno
     let Some(Value::Mapping(overrides)) = fm.get_mut("harness-overrides") else {
         return;
     };
-    for &(old, new) in crate::harness::RENAMED_CONSUMER_NAMESPACES {
+    for &(old, new) in PRE_V1.namespaces {
         let old_key = Value::String(old.to_string());
         let new_key = Value::String(new.to_string());
         let Some(old_block) = overrides.get(&old_key).cloned() else {
@@ -877,14 +1085,14 @@ fn strip_model_policy_overrides(fm: &mut Frontmatter, diagnostics: &mut Vec<Sche
         else {
             continue;
         };
-        // The legacy effort spellings mean the same here as at the top level.
-        for (old, new) in [("adaptive", "medium"), ("disabled", "none")] {
-            let key = Value::String("effort".to_string());
+        // The legacy values mean the same here as at the top level.
+        for &(key, old, new) in PRE_V1.agent_values {
+            let key = Value::String(key.to_string());
             if overrides.get(&key).and_then(Value::as_str) == Some(old) {
                 overrides.insert(key, Value::String(new.to_string()));
             }
         }
-        for key in ["autocompact", "autocompact_pct", "harness"] {
+        for &key in PRE_V1.policy_override_dropped {
             if overrides.remove(Value::String(key.to_string())).is_some() {
                 diagnostics.push(SchemaDiagnostic::new(
                     "field.removed",
@@ -909,6 +1117,45 @@ fn rename_field(fm: &mut Frontmatter, old: &str, new: &str) {
     if fm.get(new).is_none() {
         fm.insert(new, value);
     }
+}
+
+/// Rename an invocability key. Written under both spellings with different values, the restricting
+/// one (`false`) is kept, with a note; any other clash keeps the current spelling's value.
+fn rename_invocability(
+    fm: &mut Frontmatter,
+    old: &str,
+    new: &str,
+    notes: &mut Vec<SchemaDiagnostic>,
+) {
+    let (Some(old_value), Some(new_value)) = (fm.get(old).cloned(), fm.get(new).cloned()) else {
+        return rename_field(fm, old, new);
+    };
+    fm.remove(old);
+    if old_value != new_value
+        && (old_value == Value::Bool(false) || new_value == Value::Bool(false))
+    {
+        fm.insert(new, Value::Bool(false));
+        notes.push(conflicting_duplicate(old, &old_value, new, &new_value));
+    }
+}
+
+/// The note for two keys that set one thing differently, where the restricting `false` was kept.
+fn conflicting_duplicate(
+    first: &str,
+    first_value: &Value,
+    second: &str,
+    second_value: &Value,
+) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.removed",
+        Severity::Warning,
+        vec![PathSegment::Key(first.to_string())],
+        format!(
+            "`{first}: {}` conflicts with `{second}: {}`; kept `false`, the value that restricts",
+            crate::ordered::plain(first_value),
+            crate::ordered::plain(second_value),
+        ),
+    )
 }
 
 /// A host set written under both spellings keeps every host of both: dropping either would
@@ -965,4 +1212,189 @@ fn removed(path: &[&str], key: &str) -> SchemaDiagnostic {
             .collect(),
         format!("removed legacy key `{key}`"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A value that suits the key; any key without one takes `x`.
+    fn sample_value(key: &str) -> &'static str {
+        match key {
+            "permission" => "read",
+            "resident-rearm-budget" => "3",
+            "meridian-capabilities" => "{spawn: true}",
+            "network_allow" | "network_deny" => "[example.com]",
+            _ if tool_policy::DISALLOWED_SPELLINGS.contains(&key) => "[Bash]",
+            _ => "x",
+        }
+    }
+
+    /// One file per row of [`PRE_V1`]: (what the row is, the file path, the file).
+    fn rows() -> Vec<(String, &'static str, String)> {
+        const AGENT: &str = "agents/a.md";
+        const SKILL: &str = "skills/s/SKILL.md";
+        let agent = |field: String| format!("---\nname: a\ndescription: d\n{field}\n---\nbody\n");
+        let skill = |field: String| format!("---\nname: s\ndescription: d\n{field}\n---\nbody\n");
+        let line = |key: &str| format!("{key}: {}", sample_value(key));
+        let mut rows = Vec::new();
+        for key in PRE_V1.agent_dropped {
+            rows.push((format!("agent_dropped {key}"), AGENT, agent(line(key))));
+        }
+        for (key, _) in PRE_V1.renamed {
+            rows.push((
+                format!("renamed {key}"),
+                AGENT,
+                agent(format!("{key}: true")),
+            ));
+            rows.push((
+                format!("renamed {key}"),
+                SKILL,
+                skill(format!("{key}: true")),
+            ));
+        }
+        for (key, _) in PRE_V1.agent_host_sets {
+            rows.push((format!("agent_host_sets {key}"), AGENT, agent(line(key))));
+        }
+        for key in tool_policy::DISALLOWED_SPELLINGS {
+            rows.push((format!("disallowed {key}"), AGENT, agent(line(key))));
+        }
+        for (_, key, _) in PRE_V1.agent_moved {
+            rows.push((format!("agent_moved {key}"), AGENT, agent(line(key))));
+        }
+        for (namespace, key) in PRE_V1.agent_moved_maps {
+            rows.push((
+                format!("agent_moved_maps {namespace} {key}"),
+                AGENT,
+                agent(format!("{key}: {{bash: deny}}")),
+            ));
+        }
+        for (key, old, _) in PRE_V1.agent_values {
+            let policy = format!(
+                "model-policies:\n  - match: {{alias: fast}}\n    override:\n      {key}: {old}"
+            );
+            rows.push((
+                format!("agent_values {key}: {old}"),
+                AGENT,
+                agent(format!("{key}: {old}")),
+            ));
+            rows.push((
+                format!("agent_values {key}: {old} in a policy override"),
+                AGENT,
+                agent(policy),
+            ));
+        }
+        for key in crate::skill::tool_keys() {
+            rows.push((format!("skill tool {key}"), SKILL, skill(line(key))));
+        }
+        for (key, _) in PRE_V1.skill_folded {
+            rows.push((format!("skill_folded {key}"), SKILL, skill(line(key))));
+        }
+        for key in PRE_V1.skill_dropped {
+            rows.push((format!("skill_dropped {key}"), SKILL, skill(line(key))));
+        }
+        for key in PRE_V1.policy_override_dropped {
+            let policy = format!(
+                "model-policies:\n  - match: {{alias: fast}}\n    override:\n      effort: low\n      {key}: {}",
+                sample_value(key)
+            );
+            rows.push((
+                format!("policy_override_dropped {key}"),
+                AGENT,
+                agent(policy),
+            ));
+        }
+        for (old, _) in PRE_V1.namespaces {
+            let overrides = format!("harness-overrides:\n  {old}:\n    permission: read");
+            rows.push((format!("namespaces {old}"), AGENT, agent(overrides)));
+        }
+        for key in PRE_V1.package_dropped {
+            let manifest = format!(
+                "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n{key} = \"x\"\n"
+            );
+            rows.push((format!("package_dropped {key}"), "mars.toml", manifest));
+        }
+        rows
+    }
+
+    fn migrate_with_notes(path: &str, text: &str) -> UpgradeResult {
+        match path {
+            "mars.toml" => upgrade_manifest(text).unwrap(),
+            "agents/a.md" => migrate_definition(DefinitionKind::Agent, text).unwrap(),
+            _ => migrate_definition(DefinitionKind::Skill, text).unwrap(),
+        }
+    }
+
+    fn migrate(path: &str, text: &str) -> String {
+        migrate_with_notes(path, text).text
+    }
+
+    fn errors(path: &str, text: &str) -> Vec<String> {
+        crate::read::read(path, text)
+            .unwrap()
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.is_error())
+            .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message()))
+            .collect()
+    }
+
+    /// The reader refuses a schema 1 file exactly when `mars migrate` converts it, for every row
+    /// of the list both read.
+    #[test]
+    fn the_reader_refuses_what_migrate_converts() {
+        for (row, path, text) in rows() {
+            let refused = errors(path, &text);
+            assert!(!refused.is_empty(), "{row}: the reader accepts\n{text}");
+            for error in &refused {
+                assert!(
+                    error.starts_with("field.removed: ")
+                        && error.ends_with("; `mars migrate` upgrades this file")
+                        && (error.contains(" is a pre-v1 key;")
+                            || error.contains(" is a pre-v1 value;")),
+                    "{row}: the reader refuses it for another reason: {error}"
+                );
+            }
+            let result = migrate_with_notes(path, &text);
+            let migrated = result.text.clone();
+            assert_ne!(migrated, text, "{row}: migrate leaves the file as it is");
+            // Setting a key aside makes the file readable too, but a row is a conversion: it
+            // keeps what the key meant.
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .all(|note| note.code != crate::set_aside::RESTRICTION_LOST),
+                "{row}: migrate drops a restriction: {:?}",
+                result.diagnostics
+            );
+            assert_eq!(
+                errors(path, &migrated),
+                Vec::<String>::new(),
+                "{row}: still refused after migrate\n{migrated}"
+            );
+            assert_eq!(migrate(path, &migrated), migrated, "{row}: not idempotent");
+        }
+    }
+
+    /// The other direction: a file with no key of the list is not refused, and migrate leaves it
+    /// byte for byte, including a key it does not read and a value the reader rejects.
+    #[test]
+    fn migrate_leaves_a_file_without_a_pre_v1_key() {
+        let agent = "---\nname: a\ndescription: d\nmodel: opus\ncolor: red\ntools:\n  read: allow\n  bash: deny\nharness-overrides:\n  claude:\n    x: 1\nsandbox: bogus\n---\nbody\n";
+        assert_eq!(migrate("agents/a.md", agent), agent);
+        // A `tools` list is ambiguous, so the reader refuses it for its own reason and migrate
+        // leaves it; a current override is accepted.
+        let list = "---\nname: a\ndescription: d\ntools: [Read, Grep]\nmodel-policies:\n  - match: {alias: fast}\n    override:\n      approval: never\n      effort: low\n---\nbody\n";
+        assert_eq!(migrate("agents/a.md", list), list);
+        assert!(
+            errors("agents/a.md", list)
+                .iter()
+                .all(|error| error.starts_with("tools.list-form: "))
+        );
+        let skill = "---\nname: s\ndescription: d\nmodel-invocable: false\ncolor: red\n---\nbody\n";
+        assert_eq!(migrate("skills/s/SKILL.md", skill), skill);
+        let manifest = "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\nfuture = 1\n";
+        assert_eq!(migrate("mars.toml", manifest), manifest);
+    }
 }

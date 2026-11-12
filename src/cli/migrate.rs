@@ -122,7 +122,12 @@ fn pending_writes(
         let relative = relative_path(project_root, &path);
         let normalized = std::str::from_utf8(&manifest.normalized_bytes)
             .expect("preparation refuses a manifest that is not UTF-8");
-        match mars_schema::upgrade::ensure_requires_mars_floor(normalized) {
+        let hooks = crate::compiler::hooks::check_hooks(
+            authored_root,
+            &mut crate::diagnostic::DiagnosticCollector::new(),
+        )?;
+        let floor = super::check::package_floor(normalized, prepared, &hooks.portable);
+        match mars_schema::upgrade::ensure_requires_mars_floor(normalized, floor.as_ref()) {
             Ok(outcome) => {
                 if let Some(message) = outcome.warning {
                     warnings.push(Notice {

@@ -177,11 +177,11 @@ pub fn print_catalog(
     }
 }
 
-pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool, show_info: bool) {
+pub fn print_sync_report(report: &SyncReport, json: bool, no_upgrade_hint: bool, detail: bool) {
     if json {
         print_sync_report_json(report);
     } else {
-        print_sync_report_human(report, no_upgrade_hint, show_info);
+        print_sync_report_human(report, no_upgrade_hint, detail);
     }
 }
 
@@ -271,8 +271,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     .unwrap_or_else(|_| serde_json::json!({}))
 }
 
-/// Info diagnostics print only when `show_info` is set; JSON output keeps them all.
-fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info: bool) {
+/// `Info` diagnostics print only when `detail` is set; JSON output keeps them all.
+fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: bool) {
     if let Some(halt) = &report.recovery_halt {
         let mut stderr = stderr_stream();
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
@@ -293,12 +293,8 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
             let _ = writeln!(stderr, "  suggested: `{}`", blocker.suggested_command);
         }
         let _ = writeln!(stderr, "  {}", halt.next_step);
-        for diagnostic in &report.diagnostics {
-            if !show_info && diagnostic.level == crate::diagnostic::DiagnosticLevel::Info {
-                continue;
-            }
-            let _ = writeln!(stderr, "  {diagnostic}");
-        }
+        drop(stderr);
+        print_diagnostics(&report.diagnostics, detail);
         return;
     }
 
@@ -432,21 +428,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, show_info
         let _ = stdout.reset();
     }
 
-    // Print diagnostics to stderr so machine-readable stdout remains stable.
+    // Diagnostics go to stderr so machine-readable stdout remains stable.
+    print_diagnostics(&report.diagnostics, detail);
     let mut stderr = stderr_stream();
-    for diag in &report.diagnostics {
-        if !show_info && diag.level == crate::diagnostic::DiagnosticLevel::Info {
-            continue;
-        }
-        let color = match diag.level {
-            crate::diagnostic::DiagnosticLevel::Error => Color::Red,
-            crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,
-            crate::diagnostic::DiagnosticLevel::Info => Color::Cyan,
-        };
-        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
-        let _ = writeln!(stderr, "  {diag}");
-        let _ = stderr.reset();
-    }
 
     if report.upgrades_available > 0 && !report.dry_run && !no_upgrade_hint {
         let noun = if report.upgrades_available == 1 {
@@ -600,16 +584,28 @@ pub fn print_success(msg: &str) {
     narrate(Some((Color::Green, "✓")), msg);
 }
 
-pub fn print_diagnostics(diagnostics: &[Diagnostic]) {
+/// The one printer of diagnostics. `detail` asks for what is otherwise left out: see
+/// [`Diagnostic::shown`].
+pub fn print_diagnostics(diagnostics: &[Diagnostic], detail: bool) {
+    write_diagnostics(diagnostics, detail, false);
+}
+
+/// [`print_diagnostics`] with detail on, each line carrying its `[code]` and `(context)`:
+/// `mars validate`, whose output names the rule and the setting that fired.
+pub fn print_tagged_diagnostics(diagnostics: &[Diagnostic]) {
+    write_diagnostics(diagnostics, true, true);
+}
+
+fn write_diagnostics(diagnostics: &[Diagnostic], detail: bool, tagged: bool) {
     let mut stderr = stderr_stream();
-    for diag in diagnostics {
+    for diag in diagnostics.iter().filter(|diag| diag.shown(detail)) {
         let color = match diag.level {
             crate::diagnostic::DiagnosticLevel::Error => Color::Red,
             crate::diagnostic::DiagnosticLevel::Warning => Color::Yellow,
             crate::diagnostic::DiagnosticLevel::Info => Color::Cyan,
         };
         let _ = stderr.set_color(ColorSpec::new().set_fg(Some(color)));
-        let _ = writeln!(stderr, "  {diag}");
+        let _ = writeln!(stderr, "  {}", diag.line(tagged));
         let _ = stderr.reset();
     }
 }

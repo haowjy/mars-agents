@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::item::DefinitionKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -61,97 +63,41 @@ impl SchemaDiagnostic {
     }
 }
 
-/// A frontmatter key a schema version removed, as the reader and the legacy upgrade share it.
-/// `advice` is what the reader tells the author. A `discarded` key has no replacement, so the
-/// upgrade and the foreign-dialect import drop it with a warning; every other removed key is
-/// renamed or moved by the upgrade, or left for the author. Every discarded Agent key is one
-/// only pre-v1 Mars defined, so `lift_mars_only_keys` drops it from a definition read as any
-/// dialect.
-pub(crate) struct RemovedField {
-    pub key: &'static str,
-    pub advice: &'static str,
-    pub discarded: bool,
-}
-
-impl RemovedField {
-    pub(crate) const fn replaced(key: &'static str, advice: &'static str) -> Self {
-        Self {
-            key,
-            advice,
-            discarded: false,
-        }
-    }
-
-    pub(crate) const fn discarded(key: &'static str, advice: &'static str) -> Self {
-        Self {
-            key,
-            advice,
-            discarded: true,
-        }
-    }
-}
-
-/// A value a schema version removed from a field that remains. The reader reports it, and
-/// `lift_mars_only_keys` rewrites it to `replacement` in a definition read as any dialect.
-pub(crate) struct RemovedValue {
-    pub key: &'static str,
-    pub value: &'static str,
-    pub replacement: &'static str,
-}
-
-impl RemovedValue {
-    pub(crate) const fn new(
-        key: &'static str,
-        value: &'static str,
-        replacement: &'static str,
-    ) -> Self {
-        Self {
-            key,
-            value,
-            replacement,
-        }
-    }
-
-    /// The entry for `value` in `key`, when `removed` lists that pair.
-    pub(crate) fn find<'a>(removed: &'a [Self], key: &str, value: &str) -> Option<&'a Self> {
-        removed
-            .iter()
-            .find(|entry| entry.key == key && entry.value == value)
-    }
-
-    pub(crate) fn diagnostic(&self) -> SchemaDiagnostic {
-        SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path(self.key),
-            format!(
-                "{} value `{}` was removed; use `{}`",
-                self.key, self.value, self.replacement
-            ),
-        )
-    }
-}
-
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when `removed` lists it, else `field.unknown` (a warning). An unknown key stays in the
+/// error) when it is a key of pre-v1 Mars's, else `field.unknown`. An unknown key stays in the
 /// authored file and reaches no native file.
-pub(crate) fn unrecognized_field(removed: &[RemovedField], key: &str) -> SchemaDiagnostic {
-    match removed.iter().find(|field| field.key == key) {
-        Some(field) => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path(key),
-            format!("`{key}` was removed; {}", field.advice),
-        ),
-        None => SchemaDiagnostic::new(
-            "field.unknown",
-            Severity::Warning,
-            key_path(key),
-            format!(
-                "unknown field `{key}` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
-            ),
-        ),
+pub(crate) fn unrecognized_field(kind: DefinitionKind, key: &str) -> SchemaDiagnostic {
+    if crate::upgrade::PRE_V1.key(kind, key) {
+        return crate::upgrade::pre_v1_key(key_path(key), key);
     }
+    unknown_field(key_path(key), "", key)
+}
+
+/// A key a reader has no field for. Nothing is lost by ignoring it and it may be intended
+/// (a typo, or a key from a newer Mars), so it is `Info`: `validate`, `check` and `--verbose`
+/// show it. `table` is as in [`unknown_key_message`].
+pub(crate) fn unknown_field(path: Vec<PathSegment>, table: &str, key: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.unknown",
+        Severity::Info,
+        path,
+        unknown_key_message(table, key),
+    )
+}
+
+/// The one warning for a key that a project, package or user config file carries and this Mars
+/// does not read. `table` is the dotted table the key sits in, empty at the top of the file.
+/// The key stays in the file: an older Mars cannot tell a typo from a key a newer one reads.
+pub fn unknown_key_message(table: &str, key: &str) -> String {
+    let table = if table.is_empty() {
+        String::new()
+    } else {
+        format!("[{table}] ")
+    };
+    format!(
+        "{table}unknown key `{key}` is not read by Mars v{} (a typo, or a key from a newer Mars); it stays in the file",
+        crate::VERSION
+    )
 }
 
 /// A bad value for a field the item kind defines (`kind` is the noun in the message).

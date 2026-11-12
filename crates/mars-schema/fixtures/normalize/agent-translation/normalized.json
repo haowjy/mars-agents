@@ -263,11 +263,11 @@
               "diagnostics": [
                 {
                   "code": "field.unknown",
-                  "severity": "warning",
+                  "severity": "info",
                   "path": [
                     "x-custom"
                   ],
-                  "message": "unknown field `x-custom` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+                  "message": "unknown key `x-custom` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
                 }
               ]
             },

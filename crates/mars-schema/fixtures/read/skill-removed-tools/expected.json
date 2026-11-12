@@ -24,7 +24,7 @@
       "path": [
         "tools"
       ],
-      "message": "`tools` was removed; remove this unused skill policy"
+      "message": "`tools` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

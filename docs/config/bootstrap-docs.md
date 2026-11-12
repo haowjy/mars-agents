@@ -65,7 +65,7 @@ A plugin manifest (JSON, such as `.claude-plugin/plugin.json`) can declare boots
 }
 ```
 
-`mars.toml` has no bootstrap field: `[package.bootstrap]` is not read, and `mars validate` and `mars sync` warn about it. Top-level `bootstrapDocs` or `bootstrap_docs` keys in `mars.toml` are ignored too, silently. Put the doc in `bootstrap/<doc-name>/BOOTSTRAP.md`.
+`mars.toml` has no bootstrap field: `[package.bootstrap]` is not read: an unknown key like any other, which `mars check` and `mars validate` show as `Info`. Top-level `bootstrapDocs` or `bootstrap_docs` keys in `mars.toml` are unknown tables too. Put the doc in `bootstrap/<doc-name>/BOOTSTRAP.md`.
 
 Each path points to either:
 

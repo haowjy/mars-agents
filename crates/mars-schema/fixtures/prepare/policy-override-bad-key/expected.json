@@ -147,6 +147,17 @@
           "model-policies",
           1,
           "override",
+          "network"
+        ],
+        "message": "agent `runner` lost the restriction `model-policies.1.override.network`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[1].override.network` has invalid value `5`; allowed: allow, deny, allowlist); use allow, deny or allowlist"
+      },
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          1,
+          "override",
           "approval"
         ],
         "message": "agent `runner` lost the restriction `model-policies.1.override.approval`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[1].override.approval` has invalid value `bogus`; allowed: default, auto, confirm, never); use default, auto, confirm or never"
@@ -161,17 +172,6 @@
           "effort"
         ],
         "message": "agent `runner`: `model-policies.0.override.effort: 3` ignored (not valid here); use none, low, medium, high, xhigh or max"
-      },
-      {
-        "code": "field.restriction-lost",
-        "severity": "warning",
-        "path": [
-          "model-policies",
-          1,
-          "override",
-          "network"
-        ],
-        "message": "agent `runner` lost the restriction `model-policies.1.override.network`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[1].override.network` has invalid value `5`; allowed: allow, deny, allowlist); use allow, deny or allowlist"
       }
     ]
   }

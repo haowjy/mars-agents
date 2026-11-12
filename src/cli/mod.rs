@@ -225,7 +225,7 @@ pub fn dispatch(cli: Cli) -> i32 {
                 }
                 println!("{}", payload);
             } else {
-                output::print_diagnostics(err.diagnostics());
+                output::print_diagnostics(err.diagnostics(), false);
                 eprintln!("error: {cause}");
             }
             if !json && matches!(cause, MarsError::Lock(LockError::Corrupt { .. })) {

@@ -222,7 +222,7 @@ fn run_plugin(
     if json {
         crate::cli::output::print_json(&report);
     } else {
-        crate::cli::output::print_diagnostics(&report.diagnostics);
+        crate::cli::output::print_diagnostics(&report.diagnostics, args.verbose);
         for tree in &report.trees {
             crate::cli::output::print_success(&format!(
                 "built plugin `{}` tree `{}` at {} ({} agents, {} skills, {} hooks, {} MCP servers)",

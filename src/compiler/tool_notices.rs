@@ -1,5 +1,5 @@
 //! Info-level notes about tool rules that only `mars validate` prints: rules a stricter rule
-//! covers, and the deprecated overlay lists.
+//! covers.
 //!
 //! None of these is a lost restriction, so `mars sync` stays quiet about them.
 
@@ -49,36 +49,6 @@ pub(crate) fn tool_rule_notices(
         ));
     }
 
-    let user_file = loaded.user.path.display().to_string();
-    for (file, overlays) in [
-        (user_file.as_str(), &loaded.user.local.agents),
-        ("mars.toml", &loaded.config.agents),
-        ("mars.local.toml", &loaded.local.agents),
-    ] {
-        for (name, overlay) in overlays {
-            let lists: Vec<&str> = [
-                ("allowed", overlay.tools.allowed.is_some()),
-                ("disallowed", overlay.tools.disallowed.is_some()),
-            ]
-            .into_iter()
-            .filter_map(|(list, present)| present.then_some(list))
-            .collect();
-            if !lists.is_empty() {
-                let (verb, pronoun) = if lists.len() == 1 {
-                    ("is", "it still works and keeps its")
-                } else {
-                    ("are", "they still work and keep their")
-                };
-                notes.push(info(
-                    "tool-overlay-lists-deprecated",
-                    format!(
-                        "{file} [agents.{name}.tools] `{}` {verb} deprecated: {pronoun} meaning, but rule entries (`\"bash(git push *)\" = \"ask\"`) are the form to write new overlays in",
-                        lists.join("` and `"),
-                    ),
-                ));
-            }
-        }
-    }
     notes
 }
 

@@ -139,7 +139,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
             )?,
         );
         if !json && !diagnostics.is_empty() {
-            output::print_diagnostics(&diagnostics);
+            output::print_diagnostics(&diagnostics, false);
         }
     }
 

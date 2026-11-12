@@ -1,6 +1,5 @@
 // qa-validated: harness-order-settings-audit
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -13,17 +12,18 @@ use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
 use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
+use mars_schema::keys;
 use mars_schema::manifest::ManifestRead;
 use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::names::{RenameMap, SourceSubpath};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::PermissionSet;
-use mars_schema::tool_names::{Capability, OverlayToolName};
 use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
 pub mod migrations;
+mod read;
 pub mod routing_settings;
 mod save;
 pub mod targets;
@@ -60,6 +60,12 @@ pub struct Config {
     pub agents: IndexMap<String, AgentOverlay>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub skills: IndexMap<String, SkillOverlay>,
+    /// A note for each key of the file this Mars did not read, set when the file is read.
+    #[serde(skip)]
+    pub(crate) unknown_keys: Vec<Diagnostic>,
+    /// The Mars the file's tool rules need, set when the file is read.
+    #[serde(skip)]
+    pub(crate) floor: Option<keys::Floor>,
 }
 
 pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
@@ -143,70 +149,62 @@ struct SourceManifestSections {
     models: IndexMap<String, crate::models::ModelAlias>,
 }
 
-/// Tool-policy overrides in `[agents.<name>.tools]`: the `allowed` / `disallowed` lists, and
-/// rules written as `"bash(git push *)" = "ask"`.
-///
-/// Names parse as they load, with the grammar a profile's `tools:` uses, so a malformed name
-/// fails `mars.toml` instead of reaching the policy. `allowed` and `disallowed` are not tool
-/// names, so a string-valued key beside them is a rule; any other value stays in `unknown`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(try_from = "RawAgentOverlayTools")]
-pub struct AgentOverlayTools {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed: Option<PermissionSet<OverlayToolName>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disallowed: Option<PermissionSet<OverlayToolName>>,
-    /// Entries that replace the same key in the profile and in `[settings.tools]`.
-    #[serde(flatten, default, skip_serializing_if = "ToolRuleMap::is_empty")]
-    pub rules: ToolRuleMap,
-    /// Keys Mars does not read here; kept so they save back as written. A removed `mcp` fails the load.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
-}
-
-impl AgentOverlayTools {
-    pub fn is_empty(&self) -> bool {
-        self.allowed.is_none() && self.disallowed.is_none() && self.rules.is_empty()
+/// `approval` and `sandbox` in an overlay take the values an Agent file does, and a bad one
+/// fails where it is written.
+fn overlay_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    key: &str,
+    valid: fn(&str) -> bool,
+    allowed: &str,
+) -> Result<Option<String>, D::Error> {
+    let value = Option::<String>::deserialize(deserializer)?;
+    match value {
+        Some(value) if !valid(&value) => Err(serde::de::Error::custom(format!(
+            "`{key}` has invalid value `{value}`; allowed: {allowed}"
+        ))),
+        value => Ok(value),
     }
 }
 
-#[derive(Deserialize)]
-struct RawAgentOverlayTools {
-    #[serde(default)]
-    allowed: Option<PermissionSet<OverlayToolName>>,
-    #[serde(default)]
-    disallowed: Option<PermissionSet<OverlayToolName>>,
-    #[serde(flatten)]
-    rest: IndexMap<String, toml::Value>,
+/// `effort` in an overlay takes the levels an Agent file does.
+fn overlay_effort<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<mars_schema::agent::EffortLevel>, D::Error> {
+    use mars_schema::agent::EffortLevel;
+    let Some(value) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if let Some(level) = EffortLevel::parse(&value) {
+        return Ok(Some(level));
+    }
+    Err(serde::de::Error::custom(format!(
+        "`effort` has invalid value `{value}`; allowed: {}",
+        EffortLevel::ALLOWED
+    )))
 }
 
-impl TryFrom<RawAgentOverlayTools> for AgentOverlayTools {
-    type Error = String;
+fn overlay_approval<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use mars_schema::agent::ApprovalMode;
+    overlay_value(
+        deserializer,
+        "approval",
+        |value| ApprovalMode::parse(value).is_some(),
+        ApprovalMode::ALLOWED,
+    )
+}
 
-    fn try_from(raw: RawAgentOverlayTools) -> Result<Self, String> {
-        let mut entries = Vec::new();
-        let mut unknown = BTreeMap::new();
-        for (key, value) in raw.rest {
-            match value {
-                toml::Value::String(action) => entries.push((key, action)),
-                other => {
-                    unknown.insert(key, other);
-                }
-            }
-        }
-        let rules = ToolRuleMap::deserialize(serde::de::value::MapDeserializer::<
-            '_,
-            _,
-            serde::de::value::Error,
-        >::new(entries.into_iter()))
-        .map_err(|error| error.to_string())?;
-        Ok(Self {
-            allowed: raw.allowed,
-            disallowed: raw.disallowed,
-            rules,
-            unknown,
-        })
-    }
+fn overlay_sandbox<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use mars_schema::agent::SandboxMode;
+    overlay_value(
+        deserializer,
+        "sandbox",
+        |value| SandboxMode::parse(value).is_some(),
+        SandboxMode::ALLOWED,
+    )
 }
 
 /// Per-agent launch-bundle overlay policy in mars.toml `[agents.<name>]`.
@@ -218,11 +216,23 @@ pub struct AgentOverlay {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "overlay_effort",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub effort: Option<mars_schema::agent::EffortLevel>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "overlay_approval",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub approval: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "overlay_sandbox",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub sandbox: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<NetworkPolicy>,
@@ -242,26 +252,26 @@ pub struct AgentOverlay {
     pub network_deny: PermissionSet<NetworkHost>,
     #[serde(
         default,
-        alias = "model-invocable",
+        rename = "model-invocable",
+        alias = "model_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub model_invocable: Option<bool>,
     #[serde(
         default,
-        alias = "user-invocable",
+        rename = "user-invocable",
+        alias = "user_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
-    #[serde(default, skip_serializing_if = "AgentOverlayTools::is_empty")]
-    pub tools: AgentOverlayTools,
+    #[serde(default, skip_serializing_if = "ToolRuleMap::is_empty")]
+    pub tools: ToolRuleMap,
     #[serde(
         default,
         rename = "model-policies",
         skip_serializing_if = "Option::is_none"
     )]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Per-skill overlay policy in mars.toml `[skills.<name>]`.
@@ -271,19 +281,18 @@ pub struct SkillOverlay {
     pub description: Option<String>,
     #[serde(
         default,
-        alias = "model-invocable",
+        rename = "model-invocable",
+        alias = "model_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub model_invocable: Option<bool>,
     #[serde(
         default,
-        alias = "user-invocable",
+        rename = "user-invocable",
+        alias = "user_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
-    /// Keys Mars does not read here (a retired `tools` table), kept to report them.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 impl SkillOverlay {
@@ -310,6 +319,12 @@ pub struct LocalConfig {
     pub skills: IndexMap<String, SkillOverlay>,
     #[serde(default, skip_serializing_if = "LocalSettings::is_empty")]
     pub settings: LocalSettings,
+    /// As in `Config`.
+    #[serde(skip)]
+    pub(crate) unknown_keys: Vec<Diagnostic>,
+    /// The Mars the file's tool rules need, set when the file is read.
+    #[serde(skip)]
+    pub(crate) floor: Option<keys::Floor>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -360,9 +375,6 @@ pub struct LocalSettings {
     pub meridian: MeridianSettings,
     #[serde(default, rename = "model-policies")]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
-    /// Keys Mars does not read, as in `Settings`: kept, and the stale ones warn.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Dev override — local path swap for a git source.
@@ -462,30 +474,19 @@ pub struct Settings {
         skip_serializing_if = "Option::is_none"
     )]
     pub model_policies: Option<Vec<ModelPolicyRule>>,
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) unknown: BTreeMap<String, toml::Value>,
 }
 
 /// Selective native agent emission under managed mode or `agent_emission = "never"`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct AgentCopyConfig {
     #[serde(default)]
     pub harnesses: Vec<String>,
     #[serde(default)]
     pub include_fanout: bool,
-    /// Deprecated: use `[settings.meridian.fanout].agents` instead. Parsed only to emit a migration warning.
-    #[serde(
-        default,
-        rename = "fanout_agents",
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    pub deprecated_fanout_agents: Vec<String>,
 }
 
 /// Fanout agent list for native emission qualification and `mars agents` routing output.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct FanoutConfig {
     #[serde(default)]
     pub agents: Vec<String>,
@@ -493,7 +494,6 @@ pub struct FanoutConfig {
 
 /// Meridian-managed settings nested under `[settings.meridian]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct MeridianSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_copy: Option<AgentCopyConfig>,
@@ -628,7 +628,8 @@ pub struct EffectiveProjectConfig {
     pub target_source: targets::TargetSource,
     pub models: IndexMap<String, crate::models::ModelAlias>,
     pub agents: IndexMap<String, AgentOverlay>,
-    pub warnings: Vec<String>,
+    /// What the files hold that Mars noticed: unread keys (`Info`) and a missing version floor.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -655,75 +656,6 @@ pub struct EffectiveDependency {
 
 const CONFIG_FILE: &str = "mars.toml";
 const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
-
-fn parse_without_removed_visibility<T: serde::de::DeserializeOwned>(
-    content: &str,
-    path: &Path,
-) -> Result<T, MarsError> {
-    let parse_error = |error: toml::de::Error| ConfigError::Invalid {
-        message: format!("failed to parse {}: {error}", path.display()),
-    };
-    let value: toml::Value = toml::from_str(content).map_err(parse_error)?;
-    if let Some(legacy) = value
-        .get("settings")
-        .and_then(|settings| settings.get("model_visibility"))
-    {
-        return Err(ConfigError::Invalid {
-            message: format!(
-                "{}: [settings.model_visibility] was removed. Move these display rules to mars.curated.toml (or mars.curated.local.toml for local overrides); review harness×model semantics before applying. Mars will not write the new file:\n{}",
-                path.display(), visibility_migration(legacy)
-            ),
-        }.into());
-    }
-    // Deserialize the original text, not the intermediate `toml::Value`:
-    // round-tripping through Value reorders declaration-keyed tables and can
-    // change the first dependency alias winner.
-    toml::from_str(content).map_err(|error| parse_error(error).into())
-}
-
-fn visibility_migration(legacy: &toml::Value) -> String {
-    let mut suggestions = Vec::new();
-    for (key, section) in [("include", "show"), ("exclude", "hide")] {
-        if let Some(patterns) = legacy.get(key).and_then(toml::Value::as_array) {
-            for pattern in patterns.iter().filter_map(toml::Value::as_str) {
-                let (harness, provider, model) =
-                    match pattern.split('/').collect::<Vec<_>>().as_slice() {
-                        [provider, model]
-                            if !provider.is_empty() && *provider != "*" && !model.is_empty() =>
-                        {
-                            ("*", Some(*provider), *model)
-                        }
-                        [_, _, _, ..] => ("opencode", None, pattern),
-                        _ => ("*", None, pattern),
-                    };
-                let provider = provider
-                    .map(|value| format!(" provider={}", toml::Value::String(value.into())))
-                    .unwrap_or_default();
-                suggestions.push(format!(
-                    "  {key} = {} → [[{section}]] harness={}{} model={}",
-                    toml::Value::String(pattern.into()),
-                    toml::Value::String(harness.into()),
-                    provider,
-                    toml::Value::String(model.into())
-                ));
-            }
-        }
-    }
-    if let Some(providers) = legacy.get("providers").and_then(toml::Value::as_array) {
-        for provider in providers.iter().filter_map(toml::Value::as_str) {
-            suggestions.push(format!(
-                "  providers = {} → [[show]] harness=\"*\" provider={} model=\"*\"",
-                toml::Value::String(provider.into()),
-                toml::Value::String(provider.into())
-            ));
-        }
-    }
-    if suggestions.is_empty() {
-        "  Translate include to [[show]], exclude to [[hide]], and providers to [[show]].".into()
-    } else {
-        suggestions.join("\n")
-    }
-}
 
 pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     MarsError::Io {
@@ -764,10 +696,30 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
-    let config: Config = parse_without_removed_visibility(content, path)?;
-    validate_agent_overlays(path, &config.agents)?;
-    validate_project_tools(path, Some(&config.settings.tools))?;
-    Ok(config)
+    let read::Read {
+        mut value,
+        mut unknown_keys,
+        floor,
+    } = read::read::<Config>(content, path, CONFIG_FILE)?;
+    for (table, dependencies) in [
+        ("dependencies", &value.dependencies),
+        ("local-dependencies", &value.local_dependencies),
+    ] {
+        for (name, dependency) in dependencies {
+            for key in dependency.unknown.keys() {
+                unknown_keys.push(read::unknown_key(
+                    CONFIG_FILE,
+                    &format!("{table}.{name}"),
+                    key,
+                ));
+            }
+        }
+    }
+    validate_project_tools(path, Some(&value.settings.tools))?;
+    validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
+    value.unknown_keys = unknown_keys;
+    value.floor = floor;
+    Ok(value)
 }
 
 /// Interpret consumer-owned manifest sections from bytes already normalized by
@@ -795,16 +747,26 @@ pub(crate) fn parse_prepared_manifest(
     }))
 }
 
+/// Read a `mars.local.toml`-shaped file: the project's local file and the user `config.toml`.
+/// `file` names it in what the reader reports.
+fn parse_local(content: &str, path: &Path, file: &str) -> Result<LocalConfig, MarsError> {
+    let read::Read {
+        mut value,
+        unknown_keys,
+        floor,
+    } = read::read::<LocalConfig>(content, path, file)?;
+    validate_project_tools(path, value.settings.tools.as_ref())?;
+    validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
+    value.unknown_keys = unknown_keys;
+    value.floor = floor;
+    Ok(value)
+}
+
 /// Load mars.local.toml (returns Default if absent).
 pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            let local: LocalConfig = parse_without_removed_visibility(&content, &path)?;
-            validate_agent_overlays(&path, &local.agents)?;
-            validate_project_tools(&path, local.settings.tools.as_ref())?;
-            Ok(local)
-        }
+        Ok(content) => parse_local(&content, &path, LOCAL_CONFIG_FILE),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(read_error(&path, e)),
     }
@@ -879,95 +841,8 @@ fn effective_project_config(
         target_source,
         models,
         agents,
-        warnings: project_config_warnings(config, local, user)
-            .into_iter()
-            .map(|warning| warning.message)
-            .collect(),
+        diagnostics: project_config_diagnostics(config, local, user),
     }
-}
-
-struct ProjectConfigWarning {
-    code: &'static str,
-    message: String,
-}
-
-/// Overlay keys Mars once read and now ignores.
-const STALE_AGENT_OVERLAY_KEYS: &[&str] = &["autocompact", "autocompact_pct"];
-
-const NETWORK_SETTINGS_KEYS: &str = "default_network (or default-network), network-allow (or network_allow), network-deny (or network_deny)";
-const NETWORK_OVERLAY_KEYS: &str =
-    "network, network-allow (or network_allow), network-deny (or network_deny)";
-
-/// A key that looks like network policy and is none Mars reads. It is ignored, so a mistyped
-/// `network-deny` would lose its deny without a word; the warning keeps the loss visible.
-fn looks_like_network_key(key: &str) -> bool {
-    key.starts_with("network")
-        || key.starts_with("default_network")
-        || key.starts_with("default-network")
-}
-
-fn network_key_warnings(
-    surface: &str,
-    unknown: &BTreeMap<String, toml::Value>,
-    accepted: &str,
-) -> Vec<ProjectConfigWarning> {
-    unknown
-        .keys()
-        .filter(|key| looks_like_network_key(key))
-        .map(|key| ProjectConfigWarning {
-            code: "unknown-network-key",
-            message: format!(
-                "{surface}: unknown network key `{key}` is ignored; accepted keys: {accepted}"
-            ),
-        })
-        .collect()
-}
-
-/// Unknown `[settings]` keys in the project's `mars.toml` and `mars.local.toml`, one warning
-/// each. Only `mars validate` asks for these: sync stays silent so an older Mars accepts a newer
-/// config. A network-looking key already warns as `unknown-network-key`, so it is skipped here.
-pub(crate) fn unknown_settings_diagnostics(loaded: &LoadedProjectConfig) -> Vec<Diagnostic> {
-    [
-        ("mars.toml", &loaded.config.settings.unknown),
-        ("mars.local.toml", &loaded.local.settings.unknown),
-    ]
-    .into_iter()
-    .flat_map(|(file, unknown)| {
-        unknown
-            .keys()
-            .filter(|key| !looks_like_network_key(key))
-            .map(move |key| Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "unknown-settings-key".into(),
-                message: format!(
-                    "{file} [settings]: unknown key `{key}` is ignored by this Mars version (a typo, or a setting only a newer Mars reads)"
-                ),
-                context: None,
-                category: Some(DiagnosticCategory::Validation),
-            })
-    })
-    .collect()
-}
-
-fn stale_overlay_warnings(
-    file: &str,
-    agents: &IndexMap<String, AgentOverlay>,
-) -> Vec<ProjectConfigWarning> {
-    let mut warnings = Vec::new();
-    let mut stale = |surface: String| {
-        warnings.push(ProjectConfigWarning {
-            code: "stale-config-key",
-            message: format!("{file} {surface} is no longer read and is ignored; delete it"),
-        });
-    };
-    for (name, overlay) in agents {
-        for key in STALE_AGENT_OVERLAY_KEYS {
-            if overlay.unknown.contains_key(*key) {
-                stale(format!("[agents.{name}] `{key}`"));
-            }
-        }
-    }
-    warnings
 }
 
 /// `[settings.tools]` takes no `*`: it would turn every agent into an allowlist or sit ahead of
@@ -976,212 +851,97 @@ pub(crate) fn validate_project_tools(
     file: &Path,
     tools: Option<&ToolRuleMap>,
 ) -> Result<(), MarsError> {
-    for (name, action) in tools.into_iter().flat_map(ToolRuleMap::iter) {
-        if name.parsed().capability == Capability::Any {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "{}: [settings.tools] `{}` = \"{}\": `*` is not accepted: `approval` is the default for calls no rule matches",
-                    file.display(),
-                    String::from(name.clone()),
-                    action.as_str()
-                ),
-            }
-            .into());
+    if let Some(message) = tools.and_then(|tools| {
+        tools.wildcard_refusal(
+            "[settings.tools]",
+            "`approval` is the default for calls no rule matches",
+        )
+    }) {
+        return Err(ConfigError::Invalid {
+            message: format!("{}: {message}", file.display()),
         }
+        .into());
     }
     Ok(())
 }
 
-/// `approval` and `sandbox` in an overlay take the same values as in an Agent file (`effort` is
-/// typed, so an invalid one fails when `mars.toml` is read). The removed `tools.mcp` list fails
-/// here, so all three config files reject it.
-fn validate_agent_overlays(
-    file: &Path,
-    agents: &IndexMap<String, AgentOverlay>,
-) -> Result<(), MarsError> {
-    use mars_schema::agent::{ApprovalMode, SandboxMode};
-    for (name, overlay) in agents {
-        if overlay.tools.unknown.contains_key("mcp") {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "{}: [agents.{name}.tools] `mcp` was removed; put MCP grants in `allowed` as \"mcp(server)\"",
-                    file.display()
-                ),
-            }
-            .into());
-        }
-        let values = [
-            (
-                "approval",
-                overlay.approval.as_deref(),
-                overlay
-                    .approval
-                    .as_deref()
-                    .and_then(ApprovalMode::parse)
-                    .is_some(),
-                ApprovalMode::ALLOWED,
-            ),
-            (
-                "sandbox",
-                overlay.sandbox.as_deref(),
-                overlay
-                    .sandbox
-                    .as_deref()
-                    .and_then(SandboxMode::parse)
-                    .is_some(),
-                SandboxMode::ALLOWED,
-            ),
-        ];
-        for (key, value, valid, allowed) in values {
-            if let Some(value) = value
-                && !valid
-            {
-                return Err(ConfigError::Invalid {
-                    message: format!(
-                        "{}: [agents.{name}] `{key}` has invalid value `{value}`; allowed: {allowed}",
-                        file.display()
-                    ),
-                }
-                .into());
-            }
-        }
+/// A `min_mars_version` that does not parse would let an older Mars through the one key whose job
+/// is to stop it, so the file does not load.
+fn validate_min_mars_version(file: &Path, raw: Option<&str>) -> Result<(), MarsError> {
+    if let Some(raw) = raw {
+        crate::diagnostic::parse_min_mars_version(raw).map_err(|message| ConfigError::Invalid {
+            message: format!("{}: {message}", file.display()),
+        })?;
     }
     Ok(())
 }
 
-fn project_config_warnings(
+/// What a file of the project needs of Mars beyond the `min_mars_version` it states: its own
+/// floor, from the tool rules it writes. Each file is judged alone, since `mars.toml` is shared
+/// with people whose Mars never reads the local file. A floor at or below the first Mars that
+/// reads `min_mars_version` is not worth a line: no Mars would act on it.
+fn floor_warning(
+    file: &str,
+    floor: Option<&keys::Floor>,
+    stated: Option<&str>,
+) -> Option<Diagnostic> {
+    let floor = floor.filter(|floor| floor.since > keys::MIN_MARS_VERSION_SINCE)?;
+    if mars_schema::package::requirement_has_floor(stated, &floor.since.version()) {
+        return None;
+    }
+    let stated_text = match stated {
+        Some(raw) => format!("`min_mars_version = \"{raw}\"` admits an older one"),
+        None => "no `min_mars_version` says so".to_string(),
+    };
+    Some(Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: "min-mars-version-low".into(),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
+        message: format!(
+            "{file}: {} needs Mars {}, but {stated_text}: write `min_mars_version = \"{}\"` under `[settings]` so a Mars that reads it stops instead of misreading the file (Mars before {} does not read it)",
+            floor.at,
+            floor.since,
+            floor.since,
+            keys::MIN_MARS_VERSION_SINCE
+        ),
+    })
+}
+
+fn project_config_diagnostics(
     config: &Config,
     local: &LocalConfig,
     user: &UserConfig,
-) -> Vec<ProjectConfigWarning> {
-    let mut warnings = Vec::new();
+) -> Vec<Diagnostic> {
+    let unknown_keys = [
+        &user.local.unknown_keys,
+        &config.unknown_keys,
+        &local.unknown_keys,
+    ]
+    .into_iter()
+    .flatten()
+    .cloned();
     let user_file = user.path.display().to_string();
-    for key in &user.ignored_settings {
-        warnings.push(ProjectConfigWarning {
-            code: "ignored-user-setting",
-            message: format!(
-                "{user_file} [settings] `{key}` is per project and ignored in the user config; put it in the project's mars.toml"
-            ),
-        });
-    }
-    for (file, agents, skills, settings) in [
+    let floors = [
         (
             user_file.as_str(),
-            &user.local.agents,
-            &user.local.skills,
-            &user.local.settings.unknown,
+            user.local.floor.as_ref(),
+            user.local.settings.min_mars_version.as_deref(),
         ),
         (
-            "mars.toml",
-            &config.agents,
-            &config.skills,
-            &config.settings.unknown,
+            CONFIG_FILE,
+            config.floor.as_ref(),
+            config.settings.min_mars_version.as_deref(),
         ),
         (
-            "mars.local.toml",
-            &local.agents,
-            &local.skills,
-            &local.settings.unknown,
-        ),
-    ] {
-        warnings.extend(network_key_warnings(
-            &format!("{file} [settings]"),
-            settings,
-            NETWORK_SETTINGS_KEYS,
-        ));
-        warnings.extend(stale_overlay_warnings(file, agents));
-        for (name, overlay) in agents {
-            warnings.extend(network_key_warnings(
-                &format!("{file} [agents.{name}]"),
-                &overlay.unknown,
-                NETWORK_OVERLAY_KEYS,
-            ));
-        }
-        for (name, overlay) in skills {
-            if overlay.unknown.contains_key("tools") {
-                warnings.push(ProjectConfigWarning {
-                    code: "stale-config-key",
-                    message: format!(
-                        "{file} [skills.{name}.tools] is no longer read and is ignored; delete it"
-                    ),
-                });
-            }
-        }
-    }
-    for (table, dependencies) in [
-        ("dependencies", &config.dependencies),
-        ("local-dependencies", &config.local_dependencies),
-    ] {
-        for (name, dependency) in dependencies {
-            for key in dependency.unknown.keys() {
-                warnings.push(ProjectConfigWarning {
-                    code: "field.unknown",
-                    message: format!(
-                        "mars.toml [{table}.{name}]: unknown dependency field `{key}` is preserved"
-                    ),
-                });
-            }
-        }
-    }
-    for (name, overlay) in &config.agents {
-        warnings.extend(tool_overlay_warnings(
-            "mars.toml",
-            &format!("[agents.{name}.tools]"),
-            &overlay.tools,
-            local.agents.get(name).map(|local| &local.tools),
-        ));
-    }
-    for (name, overlay) in &local.agents {
-        warnings.extend(tool_overlay_warnings(
-            "mars.local.toml",
-            &format!("[agents.{name}.tools]"),
-            &overlay.tools,
-            None,
-        ));
-    }
-    warnings
-}
-
-fn tool_overlay_warnings(
-    file: &str,
-    surface: &str,
-    tools: &AgentOverlayTools,
-    matching_local: Option<&AgentOverlayTools>,
-) -> Vec<ProjectConfigWarning> {
-    [
-        (
-            "allowed",
-            tools.allowed.as_ref(),
-            matching_local.and_then(|tools| tools.allowed.as_ref()),
-        ),
-        (
-            "disallowed",
-            tools.disallowed.as_ref(),
-            matching_local.and_then(|tools| tools.disallowed.as_ref()),
+            LOCAL_CONFIG_FILE,
+            local.floor.as_ref(),
+            local.settings.min_mars_version.as_deref(),
         ),
     ]
     .into_iter()
-    .filter_map(|(field, set, local_set)| {
-        let set = set?;
-        if !matches!(set, PermissionSet::Add(entries) if !entries.is_empty()) {
-            return None;
-        }
-        let local_replaces = local_set.is_some_and(PermissionSet::replaces);
-        let message = if matching_local.is_some() && !local_replaces {
-            format!(
-                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules and survives the matching mars.local.toml block; add `{field} = {{ replace = [...] }}` to mars.local.toml or remove the project list to preserve Mars 0.17 behavior (see docs/config/mars-toml.md, \"Adding to or replacing a permission list\")"
-            )
-        } else {
-            format!(
-                "{file} {surface}.{field} is a non-empty plain list that now adds to lower rules instead of replacing them; use `{field} = {{ replace = [...] }}` in {file} when this list should preserve Mars 0.17 replacement behavior (see docs/config/mars-toml.md, \"Adding to or replacing a permission list\")"
-            )
-        };
-        Some(ProjectConfigWarning {
-            code: "tool-overlay-additive",
-            message,
-        })
-    })
-    .collect()
+    .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
+    unknown_keys.chain(floors).collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
@@ -1231,16 +991,7 @@ pub fn merge_with_root(
     let layers = compose_layers(&config, &local, &user.local);
     let merged_settings = layers.settings;
     let mut dependencies = IndexMap::new();
-    let mut diagnostics = project_config_warnings(&config, &local, user)
-        .into_iter()
-        .map(|warning| Diagnostic {
-            level: DiagnosticLevel::Warning,
-            code: warning.code.into(),
-            message: warning.message,
-            context: None,
-            category: Some(DiagnosticCategory::Validation),
-        })
-        .collect::<Vec<_>>();
+    let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
     diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
@@ -1445,9 +1196,7 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
 pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     save::save_document(&path, local, |text| {
-        let local: LocalConfig = parse_without_removed_visibility(text, &path)?;
-        validate_agent_overlays(&path, &local.agents)?;
-        Ok(local)
+        parse_local(text, &path, LOCAL_CONFIG_FILE)
     })
 }
 
@@ -1692,11 +1441,11 @@ effort = "medium"
 approval = "default"
 sandbox = "default"
 network = "allowlist"
-network_allow = { replace = ["GitHub.COM.", "*.example.com"] }
+network-allow = { replace = ["GitHub.COM.", "*.example.com"] }
 network-deny = ["blocked.example"]
-user_invocable = false
+user-invocable = false
 model-invocable = true
-tools.disallowed = ["Bash(rm *)", "Write"]
+tools = { "Bash(rm *)" = "deny", Write = "deny" }
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "gpt55" }
@@ -1705,7 +1454,7 @@ no-fallback = true
 
 [settings]
 default-network = "deny"
-network_allow = ["settings.example"]
+network-allow = ["settings.example"]
 
 [[settings.model-policies]]
 match = { model-glob = "gpt-*" }
@@ -1735,10 +1484,7 @@ override = { effort = "high" }
         assert_eq!(config.settings.default_network, Some(NetworkPolicy::Deny));
         assert_eq!(overlay.user_invocable, Some(false));
         assert_eq!(overlay.model_invocable, Some(true));
-        assert_eq!(
-            overlay_tool_strings(overlay.tools.disallowed.as_ref().unwrap().entries()),
-            ["Bash(rm *)", "Write"]
-        );
+        assert_eq!(rule_keys(&overlay.tools), ["Bash(rm *)=deny", "Write=deny"]);
         let overlay_policies = overlay.model_policies.as_ref().unwrap();
         assert_eq!(overlay_policies.len(), 1);
         assert_eq!(overlay_policies[0].match_type, ModelPolicyMatchType::Alias);
@@ -1776,7 +1522,7 @@ override = { effort = "high" }
     #[test]
     fn tool_rules_layer_by_key_across_the_three_files() {
         let user: LocalConfig = toml::from_str(
-            "[settings.tools]\nbash = \"deny\"\nread = \"deny\"\n[agents.a.tools]\n\"bash(git push *)\" = \"ask\"\nallowed = [\"read\"]\n",
+            "[settings.tools]\nbash = \"deny\"\nread = \"deny\"\n[agents.a.tools]\n\"bash(git push *)\" = \"ask\"\n",
         )
         .unwrap();
         let config: Config = toml::from_str(
@@ -1793,39 +1539,48 @@ override = { effort = "high" }
             rule_keys(&layers.settings.tools),
             ["read=deny", "shell=deny", "Web=deny"]
         );
-        let tools = &layers.agents["a"].tools;
         assert_eq!(
-            rule_keys(&tools.rules),
+            rule_keys(&layers.agents["a"].tools),
             ["bash(git push:*)=allow", "edit=deny"]
         );
-        assert!(tools.allowed.is_some(), "the lists still compose");
     }
 
     #[test]
-    fn overlay_tools_table_splits_lists_rules_and_rejects_removed_mcp() {
-        let config: Config = toml::from_str(
-            "[agents.a.tools]\nallowed = [\"bash\"]\nweb = \"ask\"\n\"*\" = \"deny\"\nmcp = [\"x\"]\n",
-        )
-        .unwrap();
-        let tools = &config.agents["a"].tools;
-        assert!(tools.allowed.is_some());
-        assert_eq!(rule_keys(&tools.rules), ["web=ask", "*=deny"]);
-        assert!(tools.unknown.contains_key("mcp"));
-        let error = validate_agent_overlays(Path::new("mars.toml"), &config.agents)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("mars.toml: [agents.a.tools] `mcp` was removed")
-                && error.contains("mcp(server)"),
-            "{error}"
-        );
+    fn overlay_tools_table_reads_rules_and_refuses_a_list() {
+        let file = Path::new("mars.toml");
+        let config =
+            parse_config("[agents.a.tools]\nweb = \"ask\"\n\"*\" = \"deny\"\n", file).unwrap();
+        assert_eq!(rule_keys(&config.agents["a"].tools), ["web=ask", "*=deny"]);
         // What the user wrote saves back as written.
         let saved = toml::to_string(&config).unwrap();
-        assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+        let saved = toml::from_str::<Config>(&saved).unwrap();
+        assert_eq!(
+            saved,
+            Config {
+                floor: None,
+                ..config
+            }
+        );
+
+        for key in ["allowed", "disallowed", "mcp"] {
+            let error = parse_config(
+                &format!("[agents.a.tools]\n{key} = [\"x\"]\nweb = \"ask\"\n"),
+                file,
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("wanted string or table"), "{error}");
+        }
 
         for (source, expect) in [
-            ("[agents.a.tools]\nbash = \"block\"\n", "`bash`"),
-            ("[agents.a.tools]\nstray = \"yes\"\n", "`stray`"),
+            (
+                "[agents.a.tools]\nbash = \"block\"\n",
+                "unknown variant `block`",
+            ),
+            (
+                "[agents.a.tools]\nstray = \"yes\"\n",
+                "unknown variant `yes`",
+            ),
             (
                 "[agents.a.tools]\n\"bash(\" = \"deny\"\n",
                 "invalid tool name",
@@ -1880,10 +1635,6 @@ override = { effort = "high" }
         }
     }
 
-    fn overlay_tool_strings(names: &[OverlayToolName]) -> Vec<String> {
-        names.iter().cloned().map(String::from).collect()
-    }
-
     #[test]
     fn merged_agent_overlays_local_override_authored_fields() {
         let mut base_agents = IndexMap::new();
@@ -1928,11 +1679,7 @@ override = { effort = "high" }
                 effort: Some(mars_schema::agent::EffortLevel::High),
                 network: Some(NetworkPolicy::Deny),
                 network_deny: vec!["project.example".parse().unwrap()].into(),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Read".to_string().try_into().unwrap()].into()),
-                    disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
-                    ..Default::default()
-                },
+                tools: toml::from_str("Write = \"deny\"").unwrap(),
                 model_policies: Some(vec![ModelPolicyRule {
                     match_type: ModelPolicyMatchType::Alias,
                     match_value: "project-policy".to_string(),
@@ -1940,10 +1687,6 @@ override = { effort = "high" }
                     overrides: Default::default(),
                     when: None,
                 }]),
-                unknown: BTreeMap::from([(
-                    "project_future".to_string(),
-                    toml::Value::Boolean(true),
-                )]),
                 ..AgentOverlay::default()
             },
         );
@@ -1961,14 +1704,7 @@ override = { effort = "high" }
             AgentOverlay {
                 model: Some("gptmini".to_string()),
                 network_deny: vec!["local.example".parse().unwrap()].into(),
-                tools: AgentOverlayTools {
-                    allowed: Some(vec!["Bash(git *)".to_string().try_into().unwrap()].into()),
-                    disallowed: Some(PermissionSet::Replace {
-                        replace: vec!["Agent".to_string().try_into().unwrap()],
-                    }),
-                    ..Default::default()
-                },
-                unknown: BTreeMap::from([("local_future".to_string(), toml::Value::Boolean(true))]),
+                tools: toml::from_str("\"Bash(git *)\" = \"allow\"\nAgent = \"deny\"").unwrap(),
                 ..AgentOverlay::default()
             },
         );
@@ -1994,20 +1730,10 @@ override = { effort = "high" }
             ["project.example", "local.example"]
         );
         assert_eq!(
-            overlay_tool_strings(replaced.tools.allowed.as_ref().unwrap().entries()),
-            ["Read", "Bash(git *)"]
-        );
-        assert!(replaced.tools.disallowed.as_ref().unwrap().replaces());
-        assert_eq!(
-            overlay_tool_strings(replaced.tools.disallowed.as_ref().unwrap().entries()),
-            ["Agent"]
+            rule_keys(&replaced.tools),
+            ["Write=deny", "Bash(git *)=allow", "Agent=deny"]
         );
         assert_eq!(replaced.model_policies, None);
-        assert!(!replaced.unknown.contains_key("project_future"));
-        assert_eq!(
-            replaced.unknown.get("local_future"),
-            Some(&toml::Value::Boolean(true))
-        );
         assert_eq!(
             merged
                 .get("reviewer")
@@ -2088,114 +1814,110 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn policy_surfaces_warn_only_for_unknown_network_keys() {
+    fn unknown_keys_note_file_table_and_key_and_stay_in_the_file() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[settings]\nnetwork_access = 'deny'\nfuture_key = true\n[agents.coder]\ndefault_network_mode = 'deny'\nfuture_agent_key = true\n",
-        )
-        .unwrap();
+        let project = "[futuretable]\n[settings]\nnetwork_access = 'deny'\n[agents.coder]\nmodle = 'x'\n[[agents.coder.model-policies]]\nmatch = { alias = 'a' }\nbogus = 1\n[dependencies.d]\npath = '../d'\ncolour = 'red'\n";
+        std::fs::write(dir.path().join("mars.toml"), project).unwrap();
         std::fs::write(
             dir.path().join("mars.local.toml"),
-            "[agents.coder]\ndefault-network-mode = 'deny'\nfuture_local_agent_key = true\n",
+            "[agents.coder]\nnetwork-denyy = ['x.test']\n",
         )
         .unwrap();
 
         let effective = load_effective_project_config(dir.path()).unwrap();
-        assert_eq!(effective.warnings.len(), 3, "{:?}", effective.warnings);
-        for key in [
-            "network_access",
-            "default_network_mode",
-            "default-network-mode",
-        ] {
-            assert!(
-                effective
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.contains(key)
-                        && warning.contains("network-allow")
-                        && warning.contains("network_deny")),
-                "missing warning for {key}: {:?}",
-                effective.warnings
-            );
-        }
         assert!(
             effective
-                .warnings
+                .diagnostics
                 .iter()
-                .all(|warning| !warning.contains("future_")),
-            "forward-compatible keys should remain quiet: {:?}",
-            effective.warnings
+                .all(|note| note.level == DiagnosticLevel::Info && !note.shown(false))
+        );
+        let warnings = effective
+            .diagnostics
+            .iter()
+            .map(|note| note.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for (file, table, key) in [
+            ("mars.toml", "", "futuretable"),
+            ("mars.toml", "[settings] ", "network_access"),
+            ("mars.toml", "[agents.coder] ", "modle"),
+            ("mars.toml", "[agents.coder.model-policies[0]] ", "bogus"),
+            ("mars.toml", "[dependencies.d] ", "colour"),
+            ("mars.local.toml", "[agents.coder] ", "network-denyy"),
+        ] {
+            assert!(
+                warnings.contains(&format!(
+                    "{file}: {table}unknown key `{key}` is not read by Mars"
+                )),
+                "missing {file} {table}{key}: {warnings}"
+            );
+        }
+        assert_eq!(effective.diagnostics.len(), 6, "{warnings}");
+
+        // Saving changes only what the command changed.
+        let (mut config, _) = load_config_with_local(dir.path()).unwrap();
+        config.settings.default_harness = Some("claude".into());
+        save(dir.path(), &config).unwrap();
+        let saved = std::fs::read_to_string(dir.path().join("mars.toml")).unwrap();
+        assert!(
+            saved.contains("[futuretable]") && saved.contains("colour = 'red'"),
+            "{saved}"
         );
     }
 
     #[test]
-    fn tool_overlay_warnings_follow_authored_plain_lists() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            r#"
-[agents.coder.tools]
-allowed = ["Read"]
-disallowed = []
-
-[agents.quiet.tools]
-allowed = { replace = ["Read"] }
-
-[skills.review.tools]
-disallowed = ["Write"]
-
-[skills.empty.tools]
-allowed = []
-"#,
+    fn underscore_spellings_load_and_gone_keys_are_unread() {
+        let config = parse_config(
+            "[agents.a]\nmodel_invocable = false\nnetwork_deny = ['x.test']\nautocompact = 50\n\
+             [skills.s]\nuser_invocable = true\n[settings]\nnetwork_allow = ['y.test']\n\
+             [settings.meridian.agent_copy]\nfanout_agents = ['a']\n",
+            Path::new("mars.toml"),
         )
         .unwrap();
-        std::fs::write(
-            dir.path().join("mars.local.toml"),
-            r#"
-[agents.coder]
-effort = "high"
-
-[agents.local.tools]
-allowed = ["Bash"]
-
-[skills.review]
-user-invocable = false
-
-[skills.local.tools]
-allowed = { replace = ["Bash"] }
-"#,
-        )
-        .unwrap();
-
-        let effective = load_effective_project_config(dir.path()).unwrap();
-        let warnings = effective
-            .warnings
+        assert_eq!(config.agents["a"].model_invocable, Some(false));
+        assert!(!config.agents["a"].network_deny.is_noop());
+        assert_eq!(config.skills["s"].user_invocable, Some(true));
+        assert!(!config.settings.network_allow.is_noop());
+        let unread = config
+            .unknown_keys
             .iter()
-            .filter(|warning| warning.contains(".tools]."))
-            .collect::<Vec<_>>();
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
+            .map(|note| note.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            warnings
-                .iter()
-                .all(|warning| warning.contains("{ replace = [...] }"))
+            unread.contains("[agents.a] unknown key `autocompact`"),
+            "{unread}"
         );
-        assert!(warnings.iter().any(|warning| {
-            warning.contains("mars.toml [agents.coder.tools].allowed")
-                && warning.contains("mars.local.toml")
-        }));
-        assert!(
-            warnings.iter().any(|warning| {
-                warning.contains("mars.local.toml [agents.local.tools].allowed")
-            })
-        );
-        assert!(
-            warnings
-                .iter()
-                .all(|warning| !warning.contains("[agents.quiet")
-                    && !warning.contains("[skills.empty")
-                    && !warning.contains("[skills.local"))
-        );
+        assert!(unread.contains("fanout_agents"), "{unread}");
+        assert_eq!(config.unknown_keys.len(), 2, "{unread}");
+
+        let local = parse_local(
+            "[settings]\nnetwork_deny = ['x.test']\n",
+            Path::new("mars.local.toml"),
+            "mars.local.toml",
+        )
+        .unwrap();
+        assert!(local.unknown_keys.is_empty());
+        assert!(local.settings.network_deny.is_some());
+    }
+
+    #[test]
+    fn a_bad_value_is_reported_at_its_own_line() {
+        for (source, line) in [
+            (
+                "[agents.a]\nmodel = 'x'\n[agents.a.tools]\nread = 'allow'\nwrite = 'never'\n",
+                "5 | write = 'never'",
+            ),
+            (
+                "[agents.a]\nmodel = 'x'\napproval = 'sometimes'\n",
+                "3 | approval = 'sometimes'",
+            ),
+        ] {
+            let error = parse_config(source, Path::new("mars.toml"))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(line), "{source}: {error}");
+        }
     }
 
     #[test]

@@ -33,29 +33,29 @@ Default merge semantics:
   lower entry, and different keys all stay. `Bash`, `shell` and `bash` are one key, and so are
   `bash(git push:*)` and `bash(git push *)`; two spellings of one key in one table fail the load.
 - **Permission sets:** plain lists add; `{ replace = [...] }` clears lower entries first. This
-  applies only to network allow/deny hosts and tool grants/denies. See
+  applies only to network allow/deny hosts. See
   [Adding to or replacing a permission list](#adding-to-or-replacing-a-permission-list).
 
 For keyed overlay tables:
 
 - `[models]` overlays are **replace-by-key** per alias entry (no recursive field merge inside one alias block).
-- `[agents]` and `[skills]` are also **replace-by-key** for scalars, options, model policies,
-  and unknown keys. An agent's network and tool permission sets are the exception: they compose
-  across matching project/local entries with the add/replace rule.
+- `[agents]` and `[skills]` are also **replace-by-key** for scalars, options and model policies.
+  An agent's network host sets compose across matching project/local entries with the
+  add/replace rule, and its tool rule entries merge by key.
 
 ### Adding to or replacing a permission list
 
-Four lists are permission lists:
+Two lists are permission lists:
 - `network-allow`
 - `network-deny`
-- `tools.allowed`
-- `tools.disallowed`
 
 When more than one place sets one of these lists, Mars combines them. The places, from lowest
 to highest:
 
 - Network hosts: user config < `mars.toml` `[settings]` < `mars.local.toml` `[settings]` < agent profile < `[agents.<name>]` overlay < CLI flags
-- Tools: agent profile `tools` < `[agents.<name>.tools]` in the user config < `[agents.<name>.tools]` in `mars.toml` < `[agents.<name>.tools]` in `mars.local.toml`
+
+Tool rules are not a permission list: a rule entry replaces the same key, see
+[Project-wide tool rules](#project-wide-tool-rules).
 
 A plain list **adds** its entries to what lower places gave:
 
@@ -75,18 +75,14 @@ To **discard** what lower places gave and use only your entries, write the list 
 ```toml
 [agents.coder]
 network-allow = { replace = ["github.com"] }   # ignores user/project/profile hosts
-
-[agents.coder.tools]
-allowed = { replace = ["read", "grep"] }       # ignores the profile's and the project block's allows
 ```
 
 The same in profile YAML frontmatter is `network-allow: {replace: [github.com]}`.
 
 Limits:
-- A package's agent profile can't replace a **deny** list (`network-deny`), and can't use
-  `replace` for tools at all; both are errors. Profiles sit above your `[settings]` hosts, so a
-  package could otherwise erase your denies, and they sit below your tool overlays, so a package
-  has no lower tool policy to replace. Your own config files and overlays can replace anything.
+- A package's agent profile can't replace a **deny** list (`network-deny`); that is an error.
+  Profiles sit above your `[settings]` hosts, so a package could otherwise erase your denies.
+  Your own config files and overlays can replace anything.
 - CLI flags (`--network-allow`, `--network-deny`) only add.
 - An empty plain list (`[]`) adds nothing. `{ replace = [] }` clears the lower entries.
 
@@ -120,7 +116,7 @@ requires-meridian = ">=0.15.0"                       # optional
 | `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
 | `homepage` | string | no | Package or project homepage used in generated plugin manifests |
 | `license` | string | no | Package license identifier used in generated plugin manifests |
-| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A schema 1 package needs a floor of `>=0.20.0`, the first Mars that reads schema 1: `mars check` warns when one is missing or lower, and `mars migrate` adds it only when the package has none (an existing requirement is reported, never rewritten). A package whose hooks use `[hooks]` needs `>=0.25.0`; see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading) |
+| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A package needs a floor that its keys set: `schema = 1` and `uses-providers` need `>=0.20.0`, `[plugin]` `>=0.19.0`, `[hooks]` in a `hook.toml` `>=0.25.0` (see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading)), and a `deny` or `ask` in `[package.tools]` `>=0.30.0`; the highest one wins. `mars check` fails when `requires-mars` is missing or lower and names the key and the line to write. `mars version` writes the floor when the requirement is lower, and `mars migrate` adds `>=0.20.0` only when a schema 1 package has none (an existing requirement is reported, never rewritten) |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
 | `tools` | table | no | Tool rules applied to each agent this package ships. See [Package tool rules](#package-tool-rules-packagetools) |
 | `uses-providers` | string[] | no | The hosts the package expects to supply skills at sync time, such as `["meridian"]`; each is a provider name (`[a-z0-9][a-z0-9-]*`). See [Provided skills and `uses-providers`](#provided-skills-and-uses-providers) |
@@ -376,7 +372,7 @@ include_fanout = false
 | `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
-| `min_mars_version` | string | unset | Minimum Mars binary version required for this project. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. Only a user config's value is ignored |
+| `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
@@ -410,10 +406,12 @@ Under `deny`, both host sets are inert and omitted. Under `allow`, the
 allow set is inert and omitted; deny hosts still apply. `allowlist` without an allowed host
 fails closed to `deny` and adds a bundle warning.
 
-Network policy keys in `[settings]` and overlays accept separator aliases: `default_network` or
-`default-network`, and `network-allow` / `network-deny` or `network_allow` / `network_deny`.
-Mars warns when another ignored key looks network-related and lists these accepted spellings.
-(A package's Agent file is stricter: only the hyphenated keys, per [schema v1](schema-v1.md#network).)
+Network policy keys in `[settings]` and overlays are `default_network` (or `default-network`),
+`network-allow` and `network-deny`; the underscore spellings `network_allow` and `network_deny` are
+read too. A package's Agent file ([schema v1](schema-v1.md#network)) takes only the hyphenated
+spelling. A network-looking key Mars doesn't read is [an unknown key](#keys-mars-does-not-read)
+like any other: a typo such as `network-dney` restricts nothing, and `mars validate` and
+`mars check` show it.
 
 #### Package tool rules: `[package.tools]`
 
@@ -450,8 +448,8 @@ requires-mars = ">=0.30.0"
   `schema = 1`.
 - **Older Mars versions** (before 0.30.0) warn `unknown package field `tools` is preserved`
   and install the agents without the rules, exit code 0. Set `requires-mars = ">=0.30.0"`
-  so they refuse the package instead; `mars check` warns when a package with `[package.tools]`
-  does not.
+  so they refuse the package instead; `mars check` fails when a package with a `deny` or `ask`
+  in `[package.tools]` does not, and `mars version` writes it.
 - **Plugin builds** carry the rules in each agent. `[settings.tools]` stays out of a plugin:
   it belongs to the author's machine. A scoped rule that a plugin target cannot carry is
   reported by the usual lost-restriction lines.
@@ -502,9 +500,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 - **The same rule in a profile and here is one rule.** A profile that already denies
   `bash(pkill -f *)` and a project that denies the same key give one rule, which keeps
   the profile's origin (`origin: "profile"` in the launch bundle).
-- **Exempting one agent.** `[agents.<name>.tools]` takes rule entries as well as the `allowed`
-  and `disallowed` lists. An entry replaces the same key in the agent's profile and in
-  `[settings.tools]`, for that agent only:
+- **Exempting one agent.** `[agents.<name>.tools]` is a table of rule entries. An entry replaces
+  the same key in the agent's profile and in `[settings.tools]`, for that agent only, and it
+  replaces a key the profile adds later too:
 
   ```toml
   [agents.prober.tools]
@@ -513,14 +511,20 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 
   Only the exact key is replaced: `bash = "allow"` does not remove a project-wide
   `"bash(pkill -f *)" = "deny"`. An entry's value is `allow`, `deny` or `ask`; its key is any
-  profile tool key. The lists keep their meaning and add rules; `{ replace = [...] }` clears the profile's rules only, never a
-  project-wide rule or a rule entry.
+  profile tool key. The `allowed` and `disallowed` lists of Mars before 0.31.0 are no longer read:
+  the table takes rule entries only, so a list fails the load (see
+  [Rewriting the tool lists](#rewriting-the-tool-lists)).
 - **What is reported.**
   - A project-wide deny that a target's native agent files cannot carry is one line for the
     project in `mars sync`: the rule is named once per target, not once per agent, and
-    `--verbose` lists it. Native `.claude` files carry every deny, `.opencode` carries unscoped
-    ones, and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
+    `--verbose` lists it. Native `.claude` and `.opencode` files carry every deny
+    (scoped ones included), and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
     launches through Meridian.
+  - A restriction every agent must keep belongs here and not in `opencode.json`: an OpenCode
+    agent file's rules come after `opencode.json` in OpenCode's order, so an agent that carries
+    an allow or `ask` rule decides the tools it names itself (`*` rules, every tool). `mars sync`
+    prints one line when the project's `opencode.json` has a `permission` key and such an agent
+    exists; see [the OpenCode agent file](agent-compilation.md#opencodeagentsnamemd).
   - `mars check`, `mars init` and the plugin build never apply these rules, since they preview
     or build a package for other projects.
 
@@ -529,8 +533,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   fails the load on `allow` or `ask`, and applies the older precedence (a longer or narrower
   allow can beat a deny). A project that relies on a project-wide rule must make sure everyone's
   Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars older than that
-  value fails `mars sync` and `mars build launch-bundle`. A binary released before this check
-  was added still ignores it.
+  value fails `mars sync` and `mars build launch-bundle`. A binary released before 0.30.0 still
+  ignores the line, so it protects only against 0.30.0 and later, and Mars warns about a missing
+  floor only when a key needs a release newer than 0.30.0.
 
 ### User config
 
@@ -553,12 +558,13 @@ model = "opus"
   compose (user hosts first) and tool rule entries merge by key.
 - An `[agents.x]` or `[skills.x]` entry for something a project doesn't have is skipped without a
   diagnostic.
-- `[overrides]` is an error here: it would send every project to a local checkout. Put it in the
-  project's `mars.local.toml`.
-- `[settings].managed_root`, `targets` and `min_mars_version` describe one project, so they never
-  apply from this file. A sync warns and names the file when it holds one. Every other setting
-  applies, and a value the project sets explicitly always beats the user's, including
-  `models_cache_ttl_hours = 24` and `model-policies = []`.
+- A key that belongs to one project is not read from this file: `[overrides]` (it would send
+  every project to a local checkout), `[settings].managed_root` and `[settings].targets`. Like any
+  key Mars does not read, each is an `Info` (`field.unknown`) that `mars validate` shows; none of
+  them is a restriction. `min_mars_version` is a restriction, so this
+  file's value applies like any other layer's. Every other setting applies, and a value the
+  project sets explicitly always beats the user's, including `models_cache_ttl_hours = 24` and
+  `model-policies = []`.
 - Warnings and errors from the file name it by path.
 - Commands read it wherever they read the project's config. `mars build plugin` and
   `mars check` read only `mars.toml`. Outside a Mars project, a command fails to find the
@@ -605,8 +611,11 @@ user-invocable = true
 model-policies = [{ match = { model-glob = "gpt-5*" }, no-fallback = true }]
 
 [agents.reviewer.tools]
-allowed = ["bash(git *)", "read", "write", "mcp(plugin:demo)"]
-disallowed = ["agent"]
+"bash(git *)" = "allow"
+read = "allow"
+write = "allow"
+"mcp(plugin:demo)" = "allow"
+agent = "deny"
 ```
 
 | Field | Type | Description |
@@ -622,12 +631,12 @@ disallowed = ["agent"]
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | Denied host set. Plain lists add; `{ replace = [...] }` clears lower hosts first. |
 | `model-invocable` | bool | Override the profile's `model-invocable` |
 | `user-invocable` | bool | Override the profile's `user-invocable` |
-| `tools` | table | Tool rules. Rule entries (`"bash(git push *)" = "ask"`) replace the same key in the profile and in `[settings.tools]` for this agent; see [Project-wide tool rules](#project-wide-tool-rules). A string value under any other key is a rule, so a stray string key fails the load; other values stay ignored. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails `mars.toml` at load. Native agent files and the launch bundle read the same merged rules. The `allowed` and `disallowed` lists are deprecated in favor of rule entries but still read: Mars 0.29.0 warns once for each non-empty plain list and names its file, `mars validate` notes each use at `info` level, and empty lists and replacement tables do not warn. Plain lists add to the profile and preserve wildcard rules; `{ replace = [...] }` clears that action's lower rules, including `'*': allow`. Profile `ask` rules and the `'*': deny` allowlist marker always stay. For an MCP grant write `"mcp(server)" = "allow"` or `"mcp(server/tool)" = "allow"`; `mcp(...)` entries in `allowed` still work |
+| `tools` | table | Tool rules. Rule entries (`"bash(git push *)" = "ask"`) replace the same key in the profile and in `[settings.tools]` for this agent; see [Project-wide tool rules](#project-wide-tool-rules). Every key is a rule, so a value other than `allow`, `ask` or `deny` fails the load at that line, and a leftover `allowed`, `disallowed` or `mcp` list fails there. Names follow the profile grammar, and a malformed one (`mcp`, `mcp(`, `*(x)`) fails at load. Native agent files and the launch bundle read the same merged rules. For an MCP grant write `"mcp(server)" = "allow"` or `"mcp(server/tool)" = "allow"`. |
 | `model-policies` | table[] | Model policy rules; same shape as the profile's and checked when `mars.toml` loads |
 
-An overlay's `effort`, `approval`, `sandbox` and `network` take the same values as an Agent file, and `mars.toml` fails to load on any other: ``mars.toml: [agents.coder] `approval` has invalid value `yolo`; allowed: default, auto, confirm, never``.
+An overlay's `effort`, `approval`, `sandbox` and `network` take the same values as an Agent file, and the file fails to load on any other, at the line of the value: ``mars.toml: TOML parse error at line 5 ... `approval` has invalid value `yolo`; allowed: default, auto, confirm, never``.
 
-Keys that overlays no longer read are ignored, and each one warns (`stale-config-key`) with its table and name: `autocompact` and `autocompact_pct` on an agent, and `tools` on a skill. Delete them. `tools.mcp` on an agent is not ignored: it fails the load of the user config, `mars.toml` or `mars.local.toml` that holds it (`<file>: [agents.<name>.tools] \`mcp\` was removed; ...`). Put an MCP grant in `tools.allowed` (`"mcp(plugin:demo)"`; see [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references)), and compaction on the model alias. Any other unknown key is ignored silently, for forward compatibility (an older Mars must accept a newer config), except a key that looks like network policy (`network_access`, `default-network-mode`): it warns (`unknown-network-key`) with the accepted keys, because ignoring a mistyped `network-deny` would drop a deny without a word.
+An overlay's keys follow [the rules for keys Mars does not read](#keys-mars-does-not-read). The underscore spellings `model_invocable`, `user_invocable`, `network_allow` and `network_deny` are read.
 
 Each `model-policies` rule has a `match` table with exactly one of `alias`, `model`,
 or `model-glob`, plus optional `override`, `when` and `no-fallback` fields. Overlay/settings
@@ -669,12 +678,10 @@ Curation never affects routing, launch bundles, or alias resolution. Use
 for the uncurated alias inventory and `mars models catalog` for raw models.dev
 entries.
 
-The removed `[settings.model_visibility]` table is not silently ignored.
-Mars reports a file-named migration error with `[[show]]`/`[[hide]]` examples
-derived from the actual values for either project `mars.toml` or
-`mars.local.toml`. This is a **breaking** project configuration change.
-Dependency package manifests are read for exported package data; their own
-consumer-only settings do not block a consumer's `mars sync`.
+`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is no longer read, like any
+other key Mars has no field for: `mars validate` shows it, and nothing is lost by leaving it.
+Dependency package manifests are read for exported package data; their own consumer-only settings
+do not block a consumer's `mars sync`.
 
 ## OpenCode Probe
 
@@ -849,29 +856,71 @@ Local overlays can target:
 For local overlay semantics:
 
 - `[models.<alias>]` replaces the full keyed block when the same alias appears locally.
-- `[agents.<name>]` and `[skills.<name>]` replace the full keyed block for scalars, options,
-  model policies, and unknown keys.
-- `network-allow`, `network-deny`, `tools.allowed`, and `tools.disallowed` are the exception:
-  they compose across the matching project/local blocks with the permission-set add/replace rule.
-- A project tool list therefore still applies when the matching local block omits that list. To
-  discard it, add the corresponding local `{ replace = [...] }` list or remove the project list.
-  During the compatibility release, a non-empty plain project list warns and names both files
-  when a matching local block does not replace it.
+- `[agents.<name>]` and `[skills.<name>]` replace the full keyed block for scalars, options
+  and model policies.
+- `network-allow` and `network-deny` are the exception: they compose across the matching
+  project/local blocks with the permission-set add/replace rule. The `tools` rule entries merge
+  by key too, so a project rule still applies when the matching local block does not name its key.
 - Other fields still follow whole-entry replacement. For example, adding only `network-deny` to
   a local agent block drops the project block's `model`, `harness`, `description`, and
   `model-policies`; repeat the needed project scalars and model policies in the local block.
 - Other arrays replace by value when authored locally.
 
-Unknown agent-overlay keys remain tolerated for forward compatibility. An ignored key beginning
-with `network` produces a warning with the accepted keys. Unknown keys under local `[settings]`
-are kept the same way.
+### Keys Mars does not read
 
-Unknown keys under `[settings]` in `mars.toml` and `mars.local.toml` stay silent in `mars sync` and
-every other command, so an older Mars accepts a newer config, and Mars keeps them when it rewrites
-the file. `mars validate` warns about each one (`unknown-settings-key`), because a typo does nothing
-and validate is where someone asks whether the config is right. A network-looking key warns as
-`unknown-network-key` everywhere and is not repeated. `mars validate --strict` turns the warning
-into an error, like any other warning. Keys in the user config's `[settings]` (`config.toml`) are not checked: one typo there would otherwise fail `validate --strict` in every project.
+Mars has no code about a key it does not read: no list of removed keys, no advice per key. What
+happens to one is what the table it sits in does with any key it has no use for, and the kind of
+table decides:
+
+- **A table of entries**, where every key is data and its value has one type (`[settings.tools]`,
+  `[agents.<name>.tools]`, `[package.tools]`, `[dependencies]`, `[models]`): the key is an entry,
+  so a key or value that is not a valid entry fails the load at its own line.
+- **A table of fields**, a fixed set of named keys (`[settings]`, `[settings.meridian]`,
+  `[agents.<name>]`, `[skills.<name>]`, `[package]`, a dependency entry, the top level, Agent and
+  skill frontmatter): the key is not read and stays in the file. It is an `Info`, `field.unknown`,
+  with one text. `mars validate`, `mars check` and `--verbose` print it; a default `mars sync` and
+  a launch bundle do not. This is the case for a typo, for a key a newer Mars reads, and for a key
+  an older Mars once read and has deleted (`autocompact`, `[settings.model_visibility]`,
+  `fanout_agents`, `[package].bootstrap`).
+- **A table that already refuses what it does not define**: a model-policy `override`, whose every
+  key is an execution or restriction setting, and a project's own `hook.toml`. An unknown key is an
+  error that lists the keys it takes.
+
+A value of a key Mars reads stays closed: an unknown value fails the load at its line and lists
+what is allowed.
+
+```text
+$ mars sync --verbose
+  info: mars.toml: [agents.coder] unknown key `modle` is not read by Mars v0.31.0 (a typo, or a key from a newer Mars); it stays in the file
+```
+
+A typo of a key that restricts (`network-dney`, `default_netwrok`) is an `Info` like any other;
+Mars cannot tell it from a key it does not know. Run `mars validate` after editing restrictions.
+`mars validate --strict` promotes warnings to errors and leaves `Info` alone.
+
+### Rewriting the tool lists
+
+Mars 0.31.0 no longer reads the `allowed`, `disallowed` and `mcp` lists of
+`[agents.<name>.tools]` (`allowed` and `disallowed` were deprecated in 0.29.0). A list fails the
+load, in that table and in `[settings.tools]` alike, at the line of the list:
+
+```text
+error: config error: failed to parse mars.toml: TOML parse error at line 4, column 14
+  |
+4 | disallowed = ["bash(rm *)"]
+  |              ^^^^^^^^^^^^^^
+wanted string or table
+```
+
+Rewrite each list by hand as rule entries:
+
+- `disallowed = ["k"]` becomes `k = "deny"`.
+- `allowed = ["k"]` becomes `k = "allow"`. An entry replaces the same key from the profile and
+  from `[settings.tools]`, which a list entry only added beside, so drop the line where a stricter
+  rule for `k` exists.
+- `mcp = ["server"]` becomes `"mcp(server)" = "allow"`, `"ask"` or `"deny"`, as you want it.
+
+`mars migrate` does not touch these files; it upgrades a package's own definitions.
 
 `mars models list` / `mars models resolve` now return local-config parse/validation errors instead of silently falling back to defaults. Fallback-to-default only happens when `mars.toml` is absent.
 

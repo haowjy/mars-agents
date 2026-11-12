@@ -3,11 +3,8 @@
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
+use crate::keys::Floor;
 use crate::tool_rule_map::ToolRuleMap;
-
-/// The first Mars release that reads schema 1. An older one reads a `schema = 1` package as
-/// pre-v1, so a schema v1 package's `requires-mars` may not admit one.
-pub const SCHEMA_1_MARS_FLOOR: &str = "0.20.0";
 
 /// Parse a `requires-mars` or `requires-meridian` requirement. A bare version means `>=` it
 /// (`0.19.0` is `>=0.19.0`), as `mars.toml` documents both fields.
@@ -28,6 +25,15 @@ pub fn parse_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
         raw.to_string()
     };
     VersionReq::parse(&normalized)
+}
+
+/// Whether `running` meets `requirement`. A prerelease or build of a Mars meets what its release
+/// does: `0.31.0-rc.1` runs a project that asks for `0.31.0`.
+pub fn requirement_matches(requirement: &VersionReq, running: &Version) -> bool {
+    let mut stable = running.clone();
+    stable.pre = semver::Prerelease::EMPTY;
+    stable.build = semver::BuildMetadata::EMPTY;
+    requirement.matches(&stable)
 }
 
 /// Whether `requirement` demands at least `floor`, so a Mars older than one floor cannot read
@@ -67,31 +73,57 @@ fn comparator_floor(comparator: &semver::Comparator) -> Option<Version> {
     Some(version)
 }
 
-/// The advice `mars check` prints for a schema v1 package's `requires-mars`, which `mars migrate`
-/// prints with it when it leaves an authored requirement alone.
-pub fn schema_1_requires_mars_warning(requirement: Option<&str>) -> Option<String> {
-    requires_mars_floor_warning(
-        requirement,
-        SCHEMA_1_MARS_FLOOR,
-        "older Mars versions read a `schema = 1` package as pre-v1; a floor keeps them on the last release they can read",
-    )
+/// `requirement` with its lower bound raised to `floor` and every other bound kept
+/// (`>=0.20.0, <1.0.0` becomes `>=0.30.0, <1.0.0`), or `None` when the lower bound is not a
+/// plain `>=` comparator or a bare version that can be replaced without guessing (`^0.20`, `~0.20`).
+pub fn raised_requirement(requirement: &str, floor: &Floor) -> Option<String> {
+    let new = floor.requirement();
+    let parts: Vec<&str> = requirement.split(',').map(str::trim).collect();
+    let bare = |part: &str| {
+        parts.len() == 1 && parse_requirement(part).is_ok() && {
+            part.chars().all(|c| c.is_ascii_digit() || c == '.')
+        }
+    };
+    let lower = parts
+        .iter()
+        .position(|part| part.starts_with(">=") || bare(part))?;
+    let mut raised = parts.clone();
+    if parts
+        .iter()
+        .enumerate()
+        .any(|(at, part)| at != lower && (part.starts_with(">=") || part.starts_with('>')))
+    {
+        return None;
+    }
+    raised[lower] = &new;
+    Some(raised.join(", "))
 }
 
-/// The advice for a requirement that is missing or admits a Mars older than `floor`. `None` when
-/// it does not, or when it is not a requirement this Mars can read: a broken requirement is its
-/// own error.
-pub fn requires_mars_floor_warning(
-    requirement: Option<&str>,
-    floor: &str,
-    reason: &str,
-) -> Option<String> {
+/// The error for a `requires-mars` that does not state `floor`, naming the key that sets it and
+/// the line to write. `None` when it does, or when it is not a requirement this Mars can read: a
+/// broken requirement is its own error.
+pub fn requires_mars_shortfall(requirement: Option<&str>, floor: &Floor) -> Option<String> {
     if let Some(raw) = requirement {
         parse_requirement(raw).ok()?;
     }
-    let floor = Version::parse(floor).expect("a Mars floor is valid semver");
-    (!requirement_has_floor(requirement, &floor)).then(|| {
-        format!("[package] `requires-mars` should be `\">={floor}\"` or a higher floor; {reason}")
-    })
+    if requirement_has_floor(requirement, &floor.since.version()) {
+        return None;
+    }
+    let written = requirement
+        .and_then(|raw| raised_requirement(raw, floor))
+        .unwrap_or_else(|| floor.requirement());
+    let line = format!("requires-mars = \"{written}\"");
+    let stated = match requirement {
+        Some(raw) => format!(
+            "`requires-mars = \"{raw}\"` admits a Mars before {}",
+            floor.since
+        ),
+        None => "`requires-mars` is not set".to_string(),
+    };
+    Some(format!(
+        "[package] {stated}, but {} needs Mars {}: write `{line}`",
+        floor.at, floor.since
+    ))
 }
 
 /// Package metadata carried by `mars.toml`.

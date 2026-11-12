@@ -131,8 +131,9 @@ mars sync [--force] [--diff] [--frozen]
 | `--force` | Overwrite local modifications for managed files |
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
+| `--verbose` | Also print `info` notes, such as a key in `mars.toml` that Mars does not read, and every lossy field per item and target |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key Mars does not read (`field.unknown`) is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
@@ -176,7 +177,7 @@ mars migrate [--check] [--root PATH] [--json]
 | `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
 | `--json` | `{check, changed, files, fully_rewritten_files, dropped, warnings}`; `dropped` lists `{file, code, message}` for each key the migration removed, and `warnings` lists the same shape for what it left alone and why |
 
-It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`, and adds `requires-mars = ">=0.20.0"` when the manifest has no requirement; an existing requirement is reported, never rewritten) and every agent and skill definition, and writes only the files that change. A definition whose package already says `schema = 1` is rewritten too when it still carries a key that moved under `harness-overrides` (`permission`, `resident-rearm-budget`, `meridian-capabilities`), or still names a `harness-overrides` namespace `flow` or `meridian` (renamed `meridian-flow` and `meridian-cli`); every other removed key is left as it is. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
+It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`, and adds `requires-mars = ">=0.20.0"` when the manifest has no requirement; an existing requirement is reported, never rewritten) and every agent and skill definition, and writes only the files that change. A package that already says `schema = 1` is converted for the same keys: `mars migrate` and the schema 1 reader share one list of pre-v1 keys and values, so the file the reader refuses with `field.removed` (`disallowed-tools`, `permission`, `models`, `approval: yolo`, a skill's `allowed-tools`, `[package] visibility`, ...) is the file `mars migrate` converts, with the same rules as a package with no `schema`. A `permission` map moves to `harness-overrides.opencode.permission`. A `tools` list is not converted, in a schema 1 file: it could be grants (pre-v1 Mars) or an allowlist (Claude), and the two differ in what the agent may do, so the run exits 2 on `tools.list-form` and writes nothing; write the map form. Nothing else in a schema 1 file is touched, so a file with no pre-v1 key, or with a list-form `tools` or a current override, stays byte for byte. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
 
 In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
 
@@ -502,9 +503,8 @@ is not protected by the dependency pin and must coordinate both upgrades.
 `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
 `--unavailable` were removed from `models list`. Put display rules in
 [`mars.curated.toml`](../config/mars-curated.md). Legacy
-`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a targeted
-error translating the file's actual values; Mars does not rewrite config
-automatically. A dependency package's consumer-only settings are ignored by
+`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is no longer read, like any
+key Mars has no field for. A dependency package's consumer-only settings are ignored by
 manifest loading and never require the consumer to migrate upstream files.
 
 ### `mars models prompting`
@@ -577,7 +577,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
 - Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
 - Prints the `source package validates` line only when there are no errors
-- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
+- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so pre-v1 keys, invalid values and malformed YAML are errors (exit 1), unknown keys print as `info` and leave the exit code alone, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package
 - Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
@@ -586,11 +586,13 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
   version, hand-edited or missing generated files, root files left holding an earlier build's
   output, and conflicts at generated package-root paths
-- `[package].requires-mars` floor: `">=0.20.0"` (or higher) for a package that declares
-  `schema = 1`, the first Mars that reads it; `">=0.19.0"` for a plugin package with no
-  `schema`, the first that keeps `[plugin]`
+- `[package].requires-mars` against the package's floor, which is the highest first-Mars among
+  the keys it uses: `schema = 1` and `uses-providers` (0.20.0), `[plugin]` (0.19.0), `[hooks]` in a
+  `hook.toml` (0.25.0), and a `deny` or `ask` in `[package.tools]` (0.30.0). A missing or lower
+  requirement is an error that names the key and the line to write. See
+  [mars.toml](../config/mars-toml.md#package-optional)
 - Plugin compatibility: unknown `[plugin].harnesses` values
-- Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when `requires-mars` is missing or below `>=0.25.0`, when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
+- Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
@@ -615,6 +617,13 @@ mars version <patch|minor|major|X.Y.Z> [--push] [--force] [--no-plugins]
 The command requires a clean Git worktree, runs the package publish checks, updates
 `[package].version` and `CHANGELOG.md`, commits the release, and creates the annotated version
 tag. `--push` pushes the current branch and tag after the local release succeeds.
+
+When `[package].requires-mars` is missing or lower than the package's floor (what
+[`mars check`](#mars-check) derives from the keys the package uses), `mars version` writes
+`requires-mars = ">=<floor>"` in the same commit and says so; `--json` adds `requires_mars`. It
+changes that value, or adds the line after `version`, and keeps every other byte of `mars.toml`.
+It stops with the line to write when `[package]` is written as dotted keys. A `requires-mars` it
+cannot parse is left for `mars check` to report.
 
 When `[plugin]` is configured, `mars version` first stages all selected plugin trees at the new
 version. It then publishes the plugin directory and generated root catalogs/`package.json` in the
@@ -946,7 +955,7 @@ profile order, for the resolved harness. Read meaning from `capability` and emis
 | `capability` | Canonical capability (`bash`, `edit`, `web`, …), `*` for "every other tool" (an allowlist; it names no tool, so `native` and `native_tools` are empty and `native_status` is omitted), `mcp` for MCP refs, or the author's spelling when Mars does not recognize the name |
 | `pattern` | Scope inside `capability(...)`, or `null`. A `bash` prefix `X:*` is normalized to `X *`. For `mcp`, the `server/tool` reference |
 | `action` | `allow`, `deny` or `ask` |
-| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (`allowed`, `disallowed` or a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; also an `ask` cut down to an agent's own allow, when the agent closes `*`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule, and it keeps the profile's origin |
+| `origin` | Where the rule came from: `profile` (the agent's own), `overlay` (a rule entry in `[agents.<name>.tools]`) or `project` (`[settings.tools]`; also an `ask` cut down to an agent's own allow, when the agent closes `*`). Not part of a rule's identity: a profile rule and a project rule with the same key and action are one rule, and it keeps the profile's origin |
 | `native` | The harness's permission names for the rule, after scoped-name and conflict resolution. Empty unless `native_status` is `known`; a known rule is also empty when a stricter rule covers it or owns the shared permission. Already resolved: `edit: deny` + `write: allow` on Claude gives the `edit` deny `Edit`, `Write`, `NotebookEdit` and the `write` allow none, so emit `native` as given |
 | `native_tools` | The unscoped harness tool names concerned by the surviving `native` permissions. Never strip patterns or otherwise derive this field from `native`. For a `*: deny` allowlist, the availability set (such as Claude `--tools`) is the union from known `allow` and `ask` rules; a `deny` rule never grants availability. Empty whenever `native` is empty |
 | `native_status` | `known`: Mars knows the harness permission, whether it survives conflict resolution or is shadowed. `absent`: the harness has no such tool, nothing to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted for `*` |

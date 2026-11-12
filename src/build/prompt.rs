@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::compiler::variants::harness_skill_variant_path;
 use crate::content::ContentRoots;
+use crate::diagnostic::Diagnostic;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
@@ -14,7 +15,7 @@ pub struct PromptCompilation {
     pub loaded_skills: Vec<LoadedSkill>,
     pub available_skills: Vec<AvailableSkill>,
     pub missing_skills: Vec<String>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 struct LoadedSkillDocument {
@@ -76,7 +77,7 @@ pub(crate) fn compile_prompt_surface(
             Ok(SkillLoadOutcome::Missing) => missing_skills.push(skill.clone()),
 
             Err(err) => {
-                warnings.push(err);
+                warnings.push(Diagnostic::warning("skill.unloaded", err));
                 missing_skills.push(skill.clone());
             }
         }
@@ -116,7 +117,7 @@ pub(crate) fn compile_prompt_surface(
             Ok(AvailableSkillOutcome::Missing) => missing_skills.push(skill.clone()),
 
             Err(err) => {
-                warnings.push(err);
+                warnings.push(Diagnostic::warning("skill.unloaded", err));
                 missing_skills.push(skill.clone());
             }
         }
@@ -192,7 +193,7 @@ fn load_skill_document(
     content_roots: &ContentRoots,
     skill_name: &str,
     harness_id: &str,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<Diagnostic>,
 ) -> Result<SkillLoadOutcome, String> {
     let base_skill_path = content_roots.skill_file_path(skill_name);
     if !base_skill_path.is_file() {
@@ -236,7 +237,7 @@ fn load_skill_document(
 fn resolve_available_skill(
     content_roots: &ContentRoots,
     skill_name: &str,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<Diagnostic>,
 ) -> Result<AvailableSkillOutcome, String> {
     let base_skill_path = content_roots.skill_file_path(skill_name);
     if !base_skill_path.is_file() {
@@ -279,7 +280,7 @@ fn read_skill_body(skill_name: &str, skill_path: &Path) -> Result<String, String
 fn parse_skill_file(
     skill_name: &str,
     skill_path: &Path,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<Diagnostic>,
 ) -> Result<mars_schema::read::Valid<mars_schema::skill::SkillProfile>, String> {
     let raw = std::fs::read_to_string(skill_path).map_err(|err| {
         format!(
@@ -298,10 +299,13 @@ fn parse_skill_file(
             )
         })?;
     warnings.extend(valid.warnings.iter().map(|diag| {
-        format!(
-            "skill `{skill_name}` has frontmatter warning in {}: {}",
-            skill_path.display(),
-            diag.message()
+        Diagnostic::from_schema(
+            diag,
+            format!(
+                "skill `{skill_name}` has frontmatter warning in {}: {}",
+                skill_path.display(),
+                diag.message()
+            ),
         )
     }));
     Ok(valid)

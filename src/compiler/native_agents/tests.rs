@@ -273,10 +273,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         "worker".to_string(),
         crate::config::AgentOverlay {
             description: Some("Overlay description".to_string()),
-            tools: crate::config::AgentOverlayTools {
-                disallowed: Some(vec!["Write".to_string().try_into().unwrap()].into()),
-                ..Default::default()
-            },
+            tools: toml::from_str("Write = 'deny'").unwrap(),
             ..Default::default()
         },
     );
@@ -296,7 +293,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
     );
     assert!(
         native.contains("disallowed-tools:") && native.contains("Write"),
-        "overlay tools.disallowed must appear in lowered output: {native}"
+        "overlay tool rules must appear in lowered output: {native}"
     );
     assert!(
         !native.contains("Profile desc"),

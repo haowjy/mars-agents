@@ -22,7 +22,7 @@
       "path": [
         "allowed-tools"
       ],
-      "message": "`allowed-tools` was removed; remove this unused skill policy"
+      "message": "`allowed-tools` is a pre-v1 key; `mars migrate` upgrades this file"
     },
     {
       "code": "field.required",

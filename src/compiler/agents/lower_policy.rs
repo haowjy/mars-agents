@@ -1,5 +1,6 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
-use crate::compiler::agents::tool_loss::{self, Carries, DenyCarry};
+use crate::compiler::agents::opencode_permission;
+use crate::compiler::agents::tool_loss::{self, Allowlist, Carries, DenyCarry};
 use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
@@ -27,6 +28,7 @@ use crate::compiler::tool_policy::{RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::ordered::OrderedValue;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
 
@@ -144,9 +146,9 @@ enum AgentLossinessStep {
     ModeDropped,
     /// The tool rules the target's file cannot carry, per [`tool_loss::losses`].
     ToolRules(Carries),
-    /// OpenCode: unscoped `deny` rules become `permission` entries, the one tool control its
-    /// agent file has (`tools` booleans are deprecated).
-    DeniedAsPermission,
+    /// OpenCode: the tool rules become the `permission` map, the one tool control its agent
+    /// file has (`tools` booleans are deprecated).
+    PermissionMap,
     EffortApproximate(&'static str),
     MeridianOnlyFields,
     InvocationAxes,
@@ -200,7 +202,8 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
             deny: DenyCarry::All,
-            allowlist: true,
+            ask: false,
+            allowlist: Allowlist::NonEmpty,
             writes_covered: false,
             mcp_remainder: None,
         }),
@@ -220,14 +223,15 @@ const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     ],
     lossiness: &[
         AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::Unscoped,
-            allowlist: false,
+            deny: DenyCarry::All,
+            ask: true,
+            allowlist: Allowlist::Any,
             writes_covered: false,
             mcp_remainder: Some(Lossiness::Approximate {
                 note: "MCP grants on subprocess errors; streaming uses session payload",
             }),
         }),
-        AgentLossinessStep::DeniedAsPermission,
+        AgentLossinessStep::PermissionMap,
         AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
         AgentLossinessStep::MeridianOnlyFields,
         AgentLossinessStep::InvocationAxes,
@@ -247,7 +251,8 @@ const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ToolRules(Carries {
             deny: DenyCarry::Nothing,
-            allowlist: false,
+            ask: false,
+            allowlist: Allowlist::Nothing,
             writes_covered: false,
             mcp_remainder: Some(Lossiness::Approximate {
                 note: "MCP grants on subprocess errors; streaming uses session payload",
@@ -271,7 +276,8 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ToolRules(Carries {
             deny: DenyCarry::Nothing,
-            allowlist: false,
+            ask: false,
+            allowlist: Allowlist::Nothing,
             writes_covered: false,
             mcp_remainder: Some(Lossiness::Quiet {
                 why: "an MCP grant restricts nothing",
@@ -306,7 +312,7 @@ fn native_overrides<'a>(
     present: impl Fn(&str) -> bool,
     target: &str,
     lossy: &mut Vec<LossyField>,
-) -> Vec<(&'a str, serde_json::Value)> {
+) -> Vec<(&'a str, &'a OrderedValue)> {
     let Some(block) = profile.harness_overrides.get(&harness) else {
         return Vec::new();
     };
@@ -325,51 +331,10 @@ fn native_overrides<'a>(
                 },
             });
         } else {
-            allowed.push((key.as_str(), value.to_json()));
+            allowed.push((key.as_str(), value));
         }
     }
     allowed
-}
-
-/// OpenCode's `permission` map: `deny` for each tool Mars denies, over the author's
-/// `harness-overrides.opencode.permission`. An entry of theirs that disagrees with a Mars deny is
-/// dropped, as for any key Mars lowers itself; the rest of their map is kept.
-fn opencode_permission(
-    denied: &[String],
-    author: Option<serde_json::Value>,
-    target: &str,
-    lossy: &mut Vec<LossyField>,
-) -> serde_yaml::Mapping {
-    let lost = |field: String, classification| LossyField {
-        field,
-        target: target.into(),
-        classification,
-    };
-    let mut permission = match author.map(serde_yaml::to_value) {
-        Some(Ok(serde_yaml::Value::Mapping(map))) => map,
-        Some(_) => {
-            // A scalar throws away the author's whole permission policy.
-            lossy.push(lost(
-                "harness-overrides.opencode.permission".into(),
-                Lossiness::Dropped(Lost::Policy),
-            ));
-            serde_yaml::Mapping::new()
-        }
-        None => serde_yaml::Mapping::new(),
-    };
-    for name in denied {
-        if let Some(existing) = permission.insert(yk(name), yv("deny"))
-            && existing != yv("deny")
-        {
-            lossy.push(lost(
-                format!("harness-overrides.opencode.permission.{name}"),
-                Lossiness::Quiet {
-                    why: "Mars's deny wins, the stricter entry",
-                },
-            ));
-        }
-    }
-    permission
 }
 
 fn yk(s: &str) -> serde_yaml::Value {
@@ -391,8 +356,8 @@ struct AgentLoweringCtx<'a> {
     yaml: serde_yaml::Mapping,
     lossy: Vec<LossyField>,
     project_losses: Vec<ProjectLoss>,
-    /// Native names of the `deny` rules that lower to `permission` entries.
-    denied: Vec<String>,
+    /// Whether the target writes a `permission` map built from the tool rules and the override.
+    writes_permission_map: bool,
 }
 
 impl<'a> AgentLoweringCtx<'a> {
@@ -416,7 +381,7 @@ impl<'a> AgentLoweringCtx<'a> {
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
             project_losses: Vec::new(),
-            denied: Vec::new(),
+            writes_permission_map: false,
         }
     }
 
@@ -535,14 +500,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.lossy.extend(losses.agent);
                 self.project_losses.extend(losses.project);
             }
-            AgentLossinessStep::DeniedAsPermission => {
-                let projection = self.eff.tools.project(self.harness);
-                self.denied = projection
-                    .natives(ToolAction::Deny, RuleKind::All)
-                    .into_iter()
-                    .filter(|name| !name.contains('('))
-                    .collect();
-            }
+            AgentLossinessStep::PermissionMap => self.writes_permission_map = true,
             AgentLossinessStep::EffortApproximate(note) => {
                 // `none` writes nothing for these harnesses, so there is nothing to approximate.
                 if self
@@ -623,20 +581,36 @@ impl<'a> AgentLoweringCtx<'a> {
             self.target_name(),
             &mut self.lossy,
         );
-        if !self.denied.is_empty() {
+        if self.writes_permission_map {
             let author = overrides
                 .iter()
                 .position(|(key, _)| *key == "permission")
                 .map(|at| overrides.remove(at).1);
-            let permission =
-                opencode_permission(&self.denied, author, self.target_name(), &mut self.lossy);
-            self.yaml
-                .insert(yk("permission"), serde_yaml::Value::Mapping(permission));
+            let built = opencode_permission::build(
+                self.eff.tools,
+                author,
+                self.target_name(),
+                &mut self.lossy,
+            );
+            if !built.map.is_empty() {
+                self.yaml
+                    .insert(yk("permission"), serde_yaml::Value::Mapping(built.map));
+            }
+            if built.non_deny {
+                self.project_losses.push(ProjectLoss {
+                    key: opencode_permission::OUTSIDE_RULES_KEY.into(),
+                    field: LossyField {
+                        field: opencode_permission::OUTSIDE_RULES_NOTE.into(),
+                        target: self.target_name().into(),
+                        classification: Lossiness::Dropped(Lost::Policy),
+                    },
+                });
+            }
         }
         for (key, value) in overrides {
             self.yaml.insert(
                 yk(key),
-                serde_yaml::to_value(value).expect("override value should serialize"),
+                serde_yaml::to_value(value.to_json()).expect("override value should serialize"),
             );
         }
         LoweredOutput {
@@ -858,7 +832,8 @@ pub fn lower_to_codex(
         target,
         Carries {
             deny: DenyCarry::Nothing,
-            allowlist: false,
+            ask: false,
+            allowlist: Allowlist::Nothing,
             writes_covered: eff.sandbox() == Some(&mars_schema::agent::SandboxMode::ReadOnly),
             mcp_remainder: Some(Lossiness::Approximate {
                 note: "Codex per-tool MCP gating lives in server config, not the tool list",
@@ -959,7 +934,8 @@ pub fn lower_to_codex(
         let table = overrides
             .into_iter()
             .map(|(key, value)| {
-                let value = toml::Value::try_from(value).expect("override value should be TOML");
+                let value =
+                    toml::Value::try_from(value.to_json()).expect("override value should be TOML");
                 (key.to_owned(), value)
             })
             .collect::<toml::Table>();

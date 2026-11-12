@@ -1,8 +1,9 @@
 //! Skill definition reading.
 
-use crate::diagnostic::{RemovedField, unrecognized_field};
+use crate::diagnostic::unrecognized_field;
 use crate::frontmatter::Frontmatter;
 use crate::invocability::parse_invocability_axis;
+use crate::item::DefinitionKind;
 use serde_yaml::Value;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,31 +57,13 @@ pub const LOWERED_KEYS: &[&str] = &[
     "alwaysApply",
 ];
 
-/// Schema v1 skills carry no tool policy, so every spelling of one is a `discarded` key; the
-/// foreign-dialect import and the legacy upgrade drop them. The upgrade rewrites `type` and
-/// `when_to_use` and the invocability renames; the other removed keys stay for the author.
-pub(crate) const REMOVED_SKILL_FIELDS: &[RemovedField] = &[
-    RemovedField::discarded("tools", "remove this unused skill policy"),
-    RemovedField::discarded("allowed-tools", "remove this unused skill policy"),
-    RemovedField::discarded("allowed_tools", "remove this unused skill policy"),
-    RemovedField::discarded("disallowed-tools", "remove this unused skill policy"),
-    RemovedField::discarded("disallowed_tools", "remove this unused skill policy"),
-    RemovedField::discarded("disallowedTools", "remove this unused skill policy"),
-    RemovedField::replaced("type", "use `metadata.type`"),
-    RemovedField::replaced("when_to_use", "fold it into `description`"),
-    RemovedField::replaced("model_invocable", "use `model-invocable`"),
-    RemovedField::replaced("user_invocable", "use `user-invocable`"),
-    RemovedField::replaced("invocation", "use `model-invocable` and `user-invocable`"),
-    RemovedField::replaced("disable-model-invocation", "use `model-invocable`"),
-    RemovedField::replaced("allow_implicit_invocation", "use `model-invocable`"),
-];
-
 /// The keys that carry a skill's tool policy.
 pub(crate) fn tool_keys() -> impl Iterator<Item = &'static str> {
-    REMOVED_SKILL_FIELDS
+    crate::upgrade::PRE_V1
+        .skill_tool_keys
         .iter()
-        .filter(|field| field.discarded)
-        .map(|field| field.key)
+        .copied()
+        .chain(crate::tool_policy::DISALLOWED_SPELLINGS)
 }
 
 pub(crate) fn read_fields(
@@ -188,7 +171,7 @@ pub(crate) fn read_fields(
                     &mut field_diagnostics,
                 );
             }
-            _ => classification_diagnostics.push(unrecognized_field(REMOVED_SKILL_FIELDS, &key)),
+            _ => classification_diagnostics.push(unrecognized_field(DefinitionKind::Skill, &key)),
         }
     }
 

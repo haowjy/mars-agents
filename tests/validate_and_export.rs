@@ -291,7 +291,8 @@ fn validate_json_reports_skill_removed_field_error() {
         diagnostics.iter().any(|diag| {
             diag["code"] == "field.removed"
                 && diag["message"].as_str().is_some_and(|message| {
-                    message.contains("allow_implicit_invocation") && message.contains("was removed")
+                    message.contains("allow_implicit_invocation")
+                        && message.contains("is a pre-v1 key")
                 })
         }),
         "expected removed skill field error: {stdout}"

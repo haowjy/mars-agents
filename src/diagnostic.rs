@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::compiler::lossiness::{LossRecord, LossyField};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
     /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep". A schema
@@ -21,6 +21,43 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// A `Warning` with no category: the form of a problem found by code that reports strings.
+    pub(crate) fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Warning,
+            code: code.into(),
+            message: message.into(),
+            context: None,
+            category: None,
+        }
+    }
+
+    /// A schema diagnostic at the level its reader gave it, under the caller's message.
+    pub(crate) fn from_schema(
+        diagnostic: &mars_schema::diagnostic::SchemaDiagnostic,
+        message: String,
+    ) -> Self {
+        use mars_schema::diagnostic::Severity;
+        Self {
+            level: match diagnostic.severity {
+                Severity::Error => DiagnosticLevel::Error,
+                Severity::Warning => DiagnosticLevel::Warning,
+                Severity::Info => DiagnosticLevel::Info,
+            },
+            code: diagnostic.code.clone().into(),
+            message,
+            context: None,
+            category: Some(DiagnosticCategory::Validation),
+        }
+    }
+
+    /// Whether a command prints this. `detail` is true for `validate`, `check` and `--verbose`:
+    /// the commands that were asked what Mars noticed. A command fails on any `Error`
+    /// (`fail_on_errors`); that and this are the whole policy.
+    pub fn shown(&self, detail: bool) -> bool {
+        self.level != DiagnosticLevel::Info || detail
+    }
+
     /// Whether this diagnostic means the sync may have fallen short of the state it wanted
     /// (a failed write, an edit left in place), so `already up to date` is not printed.
     /// Every warning counts unless it is advisory or lossiness.
@@ -33,11 +70,18 @@ impl Diagnostic {
     }
 }
 
+/// What the user loses if they ignore a diagnostic. The code that finds a problem states it;
+/// nothing downstream decides again whether the problem is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticLevel {
+    /// Mars cannot use this input, and the command fails.
     Error,
+    /// The user loses something: a restriction not applied, a file not written, an item not
+    /// installed.
     Warning,
+    /// Nothing is lost, and it may be intended (a key Mars does not read). Shown only when
+    /// asked: [`Diagnostic::shown`].
     Info,
 }
 
@@ -92,7 +136,7 @@ pub struct DiagnosticCollector {
     rerun_verbose: &'static str,
     /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
     lossy_records: Vec<LossRecord>,
-    /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
+    /// Files that carry each repeated `field.unknown` note, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
 
@@ -136,27 +180,27 @@ impl DiagnosticCollector {
         {
             return;
         }
-        if diagnostic.severity == Severity::Error && !errors_as_warnings {
+        if diagnostic.code == "field.unknown" {
+            self.note_unknown_field(code, &diagnostic.message, context);
+        } else if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
         } else if diagnostic.severity == Severity::Info {
             self.info(code, message);
-        } else if diagnostic.code == "field.unknown" {
-            self.warn_unknown_field(code, &diagnostic.message, context);
         } else {
             self.warn_advisory(code, message);
         }
     }
 
-    /// One warning per unknown field name, listing every file that carries it: the first file
-    /// is reported as an ordinary warning, and each further one extends the same warning.
-    fn warn_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
+    /// One note per unknown field name, listing every file that carries it: the first file
+    /// is reported as an ordinary note, and each further one extends the same note.
+    fn note_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
         let sites = self.unknown_field_sites.entry(text.to_owned()).or_default();
         if sites.iter().any(|site| site == context) {
             return;
         }
         sites.push(context.to_owned());
         if sites.len() == 1 {
-            self.warn_advisory(code.clone(), format!("{context}: {text}"));
+            self.info(code.clone(), format!("{context}: {text}"));
             return;
         }
         let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));
@@ -391,142 +435,69 @@ impl Default for DiagnosticCollector {
     }
 }
 
-impl std::fmt::Display for Diagnostic {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Diagnostic {
+    /// The line a printer shows. `tagged` adds the `[code]` tag and the `(context)` suffix, which
+    /// say which rule fired and which setting or file it concerns.
+    pub fn line(&self, tagged: bool) -> String {
         let prefix = match self.level {
             DiagnosticLevel::Error => "error",
             DiagnosticLevel::Warning => "warning",
             DiagnosticLevel::Info => "info",
         };
-        write!(f, "{prefix}: {}", self.message)
-    }
-}
-
-/// Compatibility preflight: check whether the current binary version satisfies a
-/// `min_mars_version` requirement declared by the project's mars.toml.
-///
-/// Returns `None` if compatible (or no requirement is declared).
-/// Returns `Some(Diagnostic)` with `Error` level if the binary is too old.
-///
-/// Rule:
-/// - `min_required` is `None` → always compatible (old package without requirement)
-/// - `binary_version >= min_required` → compatible
-/// - `binary_version < min_required` → error: binary too old
-pub fn compatibility_preflight(
-    binary_version: &str,
-    min_required: Option<&str>,
-) -> Option<Diagnostic> {
-    let min = min_required?;
-
-    // Parse as semver. If either fails to parse, accept and emit a warning instead.
-    let bin_ver = parse_semver(binary_version);
-    let req_ver = parse_semver(min);
-
-    match (bin_ver, req_ver) {
-        (Some(bin), Some(req)) => {
-            if bin < req {
-                Some(Diagnostic {
-                    level: DiagnosticLevel::Error,
-                    code: "compat-version".into(),
-                    message: format!(
-                        "this project requires mars >= {min} but the installed binary is {binary_version}; \
-                         upgrade with: cargo install mars-agents"
-                    ),
-                    context: None,
-                    category: Some(DiagnosticCategory::Compatibility),
-                })
-            } else {
-                None
+        match (&self.context, tagged) {
+            (Some(context), true) => {
+                format!("{prefix}[{}]: {} ({context})", self.code, self.message)
             }
-        }
-        _ => {
-            // Unparseable version strings — warn and continue (forward compat: new package,
-            // unknown version scheme → don't hard-block the consumer).
-            Some(Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "compat-version-parse".into(),
-                message: format!(
-                    "could not compare mars version `{binary_version}` against requirement `{min}`; \
-                     proceeding with defaults"
-                ),
-                context: None,
-                category: Some(DiagnosticCategory::Compatibility),
-            })
+            (None, true) => format!("{prefix}[{}]: {}", self.code, self.message),
+            (_, false) => format!("{prefix}: {}", self.message),
         }
     }
 }
 
-/// Minimal semver parser: returns `(major, minor, patch)` tuple from "X.Y.Z" or "vX.Y.Z".
-fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-    let s = s.trim_start_matches('v');
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() < 3 {
-        return None;
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.line(false))
     }
-    let major = parts[0].parse::<u64>().ok()?;
-    let minor = parts[1].parse::<u64>().ok()?;
-    // Allow patch to have pre-release suffix like "1-beta.1"
-    let patch_str = parts[2].split('-').next().unwrap_or(parts[2]);
-    let patch = patch_str.parse::<u64>().ok()?;
-    Some((major, minor, patch))
+}
+
+/// A project's `min_mars_version`, read as `requires-mars` is: a bare version means that version
+/// or newer, and a range is accepted.
+pub fn parse_min_mars_version(raw: &str) -> Result<semver::VersionReq, String> {
+    mars_schema::package::parse_requirement(raw).map_err(|error| {
+        format!("`min_mars_version = \"{raw}\"` is not a version requirement: {error}")
+    })
+}
+
+/// Compatibility preflight: whether the running Mars meets a project's `min_mars_version`.
+///
+/// `None` when it does, or when the project states no requirement. A requirement that does not
+/// parse is an error: the loader refuses such a file, so this is reached only by one it has not
+/// read.
+pub fn compatibility_preflight(min_required: Option<&str>) -> Result<Option<Diagnostic>, String> {
+    let Some(min) = min_required else {
+        return Ok(None);
+    };
+    let requirement = parse_min_mars_version(min)?;
+    let running =
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver");
+    if mars_schema::package::requirement_matches(&requirement, &running) {
+        return Ok(None);
+    }
+    Ok(Some(Diagnostic {
+        level: DiagnosticLevel::Error,
+        code: "compat-version".into(),
+        message: format!(
+            "this project requires mars {requirement} but the installed binary is {running}; \
+             upgrade with: cargo install mars-agents"
+        ),
+        context: None,
+        category: Some(DiagnosticCategory::Compatibility),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn no_requirement_always_compatible() {
-        let diag = compatibility_preflight("0.5.0", None);
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_meets_requirement() {
-        let diag = compatibility_preflight("1.2.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_exactly_meets_requirement() {
-        let diag = compatibility_preflight("1.0.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_too_old_produces_error() {
-        let diag = compatibility_preflight("0.5.0", Some("1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-        assert_eq!(diag.code, "compat-version");
-        assert_eq!(diag.category, Some(DiagnosticCategory::Compatibility));
-        assert!(diag.message.contains("0.5.0"));
-        assert!(diag.message.contains("1.0.0"));
-    }
-
-    #[test]
-    fn binary_v_prefix_handled() {
-        let diag = compatibility_preflight("v1.2.0", Some("v1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_v_prefix_too_old() {
-        let diag = compatibility_preflight("v0.9.0", Some("v1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-    }
-
-    #[test]
-    fn unparseable_version_produces_warning_not_error() {
-        let diag = compatibility_preflight("dev", Some("1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-        assert_eq!(diag.code, "compat-version-parse");
-    }
-
-    #[test]
-    fn unparseable_requirement_produces_warning() {
-        let diag = compatibility_preflight("1.0.0", Some("latest")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-    }
 
     #[test]
     fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
@@ -644,12 +615,5 @@ mod tests {
             category: None,
         };
         assert_eq!(d.to_string(), "warning: heads up");
-    }
-
-    #[test]
-    fn patch_with_prerelease_suffix_parsed() {
-        // "1.2.3-beta.1" → (1, 2, 3)
-        let v = parse_semver("1.2.3-beta.1").unwrap();
-        assert_eq!(v, (1, 2, 3));
     }
 }

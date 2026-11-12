@@ -26,12 +26,12 @@
   "diagnostics": [
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "future"
       ],
-      "message": "unknown package field `future` is preserved"
+      "message": "[package] unknown key `future` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     }
   ]
 }

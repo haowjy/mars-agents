@@ -33,6 +33,20 @@ impl ToolRuleMap {
         self.entries.iter().map(|(name, action)| (name, *action))
     }
 
+    /// The message that refuses a `*` rule in `table`, where it was written: `*` is one agent's
+    /// default, so only a table that speaks for one agent may set it. `reason` says why this
+    /// table cannot.
+    pub fn wildcard_refusal(&self, table: &str, reason: &str) -> Option<String> {
+        let (name, action) = self
+            .iter()
+            .find(|(name, _)| name.parsed().capability == crate::tool_names::Capability::Any)?;
+        Some(format!(
+            "`{table}` `{}` = \"{}\": `*` is not accepted: {reason}",
+            String::from(name.clone()),
+            action.as_str()
+        ))
+    }
+
     pub fn contains_key(&self, key: &ParsedToolName) -> bool {
         self.entries.iter().any(|(name, _)| name.parsed() == key)
     }
@@ -75,9 +89,7 @@ impl<'de> Deserialize<'de> for ToolRuleMap {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut entries: Vec<(OverlayToolName, ToolAction)> = Vec::new();
                 while let Some(raw) = map.next_key::<String>()? {
-                    let action = map
-                        .next_value::<ToolAction>()
-                        .map_err(|error| A::Error::custom(format!("`{raw}`: {error}")))?;
+                    let action = map.next_value::<ToolAction>()?;
                     let name = OverlayToolName::try_from(raw).map_err(A::Error::custom)?;
                     if let Some((earlier, _)) = entries
                         .iter()

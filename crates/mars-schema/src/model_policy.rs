@@ -153,79 +153,62 @@ impl ModelPolicyRuleParseError {
     }
 }
 
-pub(crate) fn parse_model_policy_rule_value(
-    value: &serde_yaml::Value,
-) -> Result<ModelPolicyRule, ModelPolicyRuleParseError> {
-    let rule = value
-        .as_mapping()
-        .ok_or_else(|| ModelPolicyRuleParseError::RuleMustBeMapping {
-            found: crate::ordered::plain(value),
-        })?;
+/// The keys of a rule that Mars reads. A key beside them is unknown. An `override` takes only
+/// the fields below, every one of them an execution or restriction setting, so an unknown key
+/// there is an error rather than a note.
+const RULE_KEYS: &[&str] = &["match", "override", "no-fallback", "when"];
+const OVERRIDE_KEYS: &[&str] = &[
+    "effort",
+    "sandbox",
+    "approval",
+    "network",
+    "network-allow",
+    "network-deny",
+];
 
-    let match_value = rule.get(serde_yaml::Value::String("match".to_string()));
-    let match_mapping = match match_value {
-        Some(value) => {
-            value
-                .as_mapping()
-                .ok_or_else(|| ModelPolicyRuleParseError::MatchMustBeMapping {
+/// What reading one rule found, all in one pass: the rule when nothing in it is rejected, every
+/// rejection when something is, and the unknown keys either way.
+pub(crate) struct RuleReading {
+    pub rule: Result<ModelPolicyRule, Vec<ModelPolicyRuleParseError>>,
+    pub unknown: Vec<String>,
+}
+
+pub(crate) fn read_model_policy_rule(value: &serde_yaml::Value) -> RuleReading {
+    use ModelPolicyRuleParseError as Error;
+    let Some(rule) = value.as_mapping() else {
+        return RuleReading {
+            rule: Err(vec![Error::RuleMustBeMapping {
+                found: crate::ordered::plain(value),
+            }]),
+            unknown: Vec::new(),
+        };
+    };
+    let mut errors = Vec::new();
+    let unknown = unknown_keys(rule, RULE_KEYS);
+
+    let matched = read_match(rule).map_err(|error| errors.push(error)).ok();
+
+    let overrides = match rule.get(serde_yaml::Value::String("override".to_string())) {
+        Some(value) if !value.is_null() => match value.as_mapping() {
+            Some(mapping) => read_overrides(mapping, &mut errors),
+            None => {
+                errors.push(Error::OverrideMustBeMapping {
                     found: crate::ordered::plain(value),
-                })?
-        }
-        None => return Err(ModelPolicyRuleParseError::MatchMissing),
+                });
+                ModelPolicyOverride::default()
+            }
+        },
+        _ => ModelPolicyOverride::default(),
     };
-
-    let mut entries = match_mapping.iter();
-    let Some((match_key, match_value)) = entries.next() else {
-        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: crate::ordered::plain(&serde_yaml::Value::Mapping(match_mapping.clone())),
-        });
-    };
-    if entries.next().is_some() {
-        return Err(ModelPolicyRuleParseError::MatchMustContainExactlyOne {
-            found: crate::ordered::plain(&serde_yaml::Value::Mapping(match_mapping.clone())),
-        });
-    }
-
-    let key =
-        match_key
-            .as_str()
-            .ok_or_else(|| ModelPolicyRuleParseError::MatchKeyMustBeString {
-                found: crate::ordered::plain(match_key),
-            })?;
-    let value =
-        match_value
-            .as_str()
-            .ok_or_else(|| ModelPolicyRuleParseError::MatchValueMustBeString {
-                key: key.to_string(),
-                found: crate::ordered::plain(match_value),
-            })?;
-    let match_value = value.to_string();
-    if match_value.is_empty() {
-        return Err(ModelPolicyRuleParseError::MatchValueEmpty {
-            key: key.to_string(),
-        });
-    }
-
-    let match_type = match key {
-        "model" => ModelPolicyMatchType::Model,
-        "alias" => ModelPolicyMatchType::Alias,
-        "model-glob" => ModelPolicyMatchType::ModelGlob,
-        _ => {
-            return Err(ModelPolicyRuleParseError::UnknownMatchKey {
-                key: key.to_string(),
-            });
-        }
-    };
-
-    let overrides = parse_overrides(rule.get(serde_yaml::Value::String("override".to_string())))?;
 
     let no_fallback = match rule.get(serde_yaml::Value::String("no-fallback".to_string())) {
         None | Some(serde_yaml::Value::Null) => false,
         Some(serde_yaml::Value::Bool(value)) => *value,
         Some(value) => {
-            return Err(ModelPolicyRuleParseError::NoFallbackMustBeBoolean {
+            errors.push(Error::NoFallbackMustBeBoolean {
                 found: crate::ordered::plain(value),
             });
+            false
         }
     };
 
@@ -237,91 +220,137 @@ pub(crate) fn parse_model_policy_rule_value(
             Some(value.clone())
         }
         Some(value) => {
-            return Err(ModelPolicyRuleParseError::WhenInvalid {
+            errors.push(Error::WhenInvalid {
                 found: crate::ordered::plain(value),
             });
+            None
         }
     };
 
-    Ok(ModelPolicyRule {
-        match_type,
-        match_value,
-        no_fallback,
-        overrides,
-        when,
-    })
+    let rule = match matched {
+        Some((match_type, match_value)) if errors.is_empty() => Ok(ModelPolicyRule {
+            match_type,
+            match_value,
+            no_fallback,
+            overrides,
+            when,
+        }),
+        _ => Err(errors),
+    };
+    RuleReading { rule, unknown }
 }
 
-fn parse_overrides(
-    value: Option<&serde_yaml::Value>,
-) -> Result<ModelPolicyOverride, ModelPolicyRuleParseError> {
-    let Some(value) = value.filter(|value| !value.is_null()) else {
-        return Ok(ModelPolicyOverride::default());
-    };
-    let mapping =
-        value
+fn unknown_keys(mapping: &serde_yaml::Mapping, known: &[&str]) -> Vec<String> {
+    mapping
+        .keys()
+        .filter(|key| !key.as_str().is_some_and(|key| known.contains(&key)))
+        .map(|key| {
+            key.as_str()
+                .map_or_else(|| crate::ordered::plain(key), str::to_owned)
+        })
+        .collect()
+}
+
+fn read_match(
+    rule: &serde_yaml::Mapping,
+) -> Result<(ModelPolicyMatchType, String), ModelPolicyRuleParseError> {
+    use ModelPolicyRuleParseError as Error;
+    let match_mapping = match rule.get(serde_yaml::Value::String("match".to_string())) {
+        Some(value) => value
             .as_mapping()
-            .ok_or_else(|| ModelPolicyRuleParseError::OverrideMustBeMapping {
+            .ok_or_else(|| Error::MatchMustBeMapping {
                 found: crate::ordered::plain(value),
-            })?;
-    let mut overrides = ModelPolicyOverride::default();
-    for (key, value) in mapping {
-        let key = key
-            .as_str()
-            .ok_or_else(|| ModelPolicyRuleParseError::UnknownOverrideKey {
-                key: crate::ordered::plain(key),
-            })?;
-        if matches!(key, "network-allow" | "network-deny") {
-            return Err(ModelPolicyRuleParseError::NetworkHostsNotAllowed {
+            })?,
+        None => return Err(Error::MatchMissing),
+    };
+    let exactly_one = || Error::MatchMustContainExactlyOne {
+        found: crate::ordered::plain(&serde_yaml::Value::Mapping(match_mapping.clone())),
+    };
+    let mut entries = match_mapping.iter();
+    let Some((match_key, match_value)) = entries.next() else {
+        return Err(exactly_one());
+    };
+    if entries.next().is_some() {
+        return Err(exactly_one());
+    }
+
+    let key = match_key
+        .as_str()
+        .ok_or_else(|| Error::MatchKeyMustBeString {
+            found: crate::ordered::plain(match_key),
+        })?;
+    let value = match_value
+        .as_str()
+        .ok_or_else(|| Error::MatchValueMustBeString {
+            key: key.to_string(),
+            found: crate::ordered::plain(match_value),
+        })?;
+    if value.is_empty() {
+        return Err(Error::MatchValueEmpty {
+            key: key.to_string(),
+        });
+    }
+    let match_type = match key {
+        "model" => ModelPolicyMatchType::Model,
+        "alias" => ModelPolicyMatchType::Alias,
+        "model-glob" => ModelPolicyMatchType::ModelGlob,
+        _ => {
+            return Err(Error::UnknownMatchKey {
                 key: key.to_string(),
             });
         }
-        let raw =
-            value
-                .as_str()
-                .ok_or_else(|| ModelPolicyRuleParseError::OverrideValueInvalid {
-                    key: key.to_string(),
-                    found: crate::ordered::plain(value),
-                    allowed: allowed_override_values(key),
-                })?;
-        let invalid = || ModelPolicyRuleParseError::OverrideValueInvalid {
+    };
+    Ok((match_type, value.to_string()))
+}
+
+/// The override keys Mars reads; each rejected one adds its own error.
+fn read_overrides(
+    mapping: &serde_yaml::Mapping,
+    errors: &mut Vec<ModelPolicyRuleParseError>,
+) -> ModelPolicyOverride {
+    let mut overrides = ModelPolicyOverride::default();
+    for (key, value) in mapping {
+        let Some(key) = key.as_str().filter(|key| OVERRIDE_KEYS.contains(key)) else {
+            errors.push(ModelPolicyRuleParseError::UnknownOverrideKey {
+                key: key
+                    .as_str()
+                    .map_or_else(|| crate::ordered::plain(key), str::to_owned),
+            });
+            continue;
+        };
+        if matches!(key, "network-allow" | "network-deny") {
+            errors.push(ModelPolicyRuleParseError::NetworkHostsNotAllowed {
+                key: key.to_string(),
+            });
+            continue;
+        }
+        let invalid = |found: String| ModelPolicyRuleParseError::OverrideValueInvalid {
             key: key.to_string(),
-            found: raw.to_string(),
+            found,
             allowed: allowed_override_values(key),
         };
+        let Some(raw) = value.as_str() else {
+            errors.push(invalid(crate::ordered::plain(value)));
+            continue;
+        };
+        let parsed = match key {
+            "effort" => EffortLevel::parse(raw).map(|value| value.as_str().to_string()),
+            "sandbox" => SandboxMode::parse(raw).map(|value| value.as_str().to_string()),
+            "approval" => ApprovalMode::parse(raw).map(|value| value.as_str().to_string()),
+            _ => NetworkPolicy::parse(raw).map(|value| value.as_str().to_string()),
+        };
+        let Some(parsed) = parsed else {
+            errors.push(invalid(raw.to_string()));
+            continue;
+        };
         match key {
-            "effort" => {
-                overrides.effort =
-                    Some(EffortLevel::parse(raw).ok_or_else(invalid)?.as_str().into());
-            }
-            "sandbox" => {
-                overrides.sandbox =
-                    Some(SandboxMode::parse(raw).ok_or_else(invalid)?.as_str().into());
-            }
-            "approval" => {
-                overrides.approval = Some(
-                    ApprovalMode::parse(raw)
-                        .ok_or_else(invalid)?
-                        .as_str()
-                        .into(),
-                );
-            }
-            "network" => {
-                overrides.network = Some(
-                    NetworkPolicy::parse(raw)
-                        .ok_or_else(invalid)?
-                        .as_str()
-                        .into(),
-                );
-            }
-            _ => {
-                return Err(ModelPolicyRuleParseError::UnknownOverrideKey {
-                    key: key.to_string(),
-                });
-            }
+            "effort" => overrides.effort = Some(parsed),
+            "sandbox" => overrides.sandbox = Some(parsed),
+            "approval" => overrides.approval = Some(parsed),
+            _ => overrides.network = Some(parsed),
         }
     }
-    Ok(overrides)
+    overrides
 }
 
 fn allowed_override_values(key: &str) -> &'static str {
@@ -339,9 +368,44 @@ impl<'de> Deserialize<'de> for ModelPolicyRule {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = serde_yaml::Value::deserialize(deserializer)?;
-        parse_model_policy_rule_value(&value)
-            .map_err(|err| serde::de::Error::custom(err.deserialize_message()))
+        /// Takes the keys a rule reads and hands every other value to serde as ignored, so a
+        /// reader that reports ignored keys sees an unknown field of a rule or of its `override`.
+        struct RuleVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for RuleVisitor {
+            type Value = ModelPolicyRule;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a model policy rule mapping")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut rule = serde_yaml::Mapping::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if RULE_KEYS.contains(&key.as_str()) {
+                        rule.insert(key.into(), map.next_value::<serde_yaml::Value>()?);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                read_model_policy_rule(&serde_yaml::Value::Mapping(rule))
+                    .rule
+                    .map_err(|errors| {
+                        serde::de::Error::custom(
+                            errors
+                                .iter()
+                                .map(ModelPolicyRuleParseError::deserialize_message)
+                                .collect::<Vec<_>>()
+                                .join("; "),
+                        )
+                    })
+            }
+        }
+
+        deserializer.deserialize_map(RuleVisitor)
     }
 }
 

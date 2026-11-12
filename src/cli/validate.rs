@@ -78,17 +78,10 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
     };
 
     // Load config for the notes that only
-    // validate reports (unknown `[settings]` keys, tool rules set aside or about to change). This is a lightweight read that doesn't
+    // validate reports (tool rules set aside or about to change). This is a lightweight read that doesn't
     // acquire the sync lock.
     let config_notes = match crate::config::load_project_config_layers(&ctx.project_root) {
-        Ok(loaded) => {
-            let mut notes = crate::config::unknown_settings_diagnostics(&loaded);
-            notes.extend(crate::compiler::tool_notices::tool_rule_notices(
-                &ctx.project_root,
-                &loaded,
-            ));
-            notes
-        }
+        Ok(loaded) => crate::compiler::tool_notices::tool_rule_notices(&ctx.project_root, &loaded),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => Vec::new(),
         Err(err) => return Err(err),
     };
@@ -122,7 +115,14 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         };
         super::output::print_json(&validate_report);
     } else {
-        print_text_report(&all_diagnostics, args.strict);
+        let shown: Vec<Diagnostic> = all_diagnostics
+            .iter()
+            .map(|d| Diagnostic {
+                level: effective_level(d.level, args.strict),
+                ..d.clone()
+            })
+            .collect();
+        super::output::print_tagged_diagnostics(&shown);
         println!();
         if clean && warning_count == 0 {
             super::output::print_success("validate: clean");
@@ -141,18 +141,6 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
     }
 
     if clean { Ok(0) } else { Ok(1) }
-}
-
-fn print_text_report(diagnostics: &[Diagnostic], strict: bool) {
-    for diag in diagnostics {
-        let level = effective_level(diag.level, strict);
-        let prefix = level_str(level);
-        if let Some(ctx) = &diag.context {
-            eprintln!("  {prefix}[{}]: {} ({})", diag.code, diag.message, ctx);
-        } else {
-            eprintln!("  {prefix}[{}]: {}", diag.code, diag.message);
-        }
-    }
 }
 
 fn effective_level(level: DiagnosticLevel, strict: bool) -> DiagnosticLevel {

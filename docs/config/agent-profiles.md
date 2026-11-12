@@ -207,7 +207,7 @@ Permission approval policy for tool calls.
 
 Omitting `approval` leaves it unset. `default` is an accepted explicit value, but it is not the same as an omitted field in the parsed profile.
 
-`yolo`, the earlier spelling of `never`, was removed: it is an error that names `never`, and `mars migrate` rewrites it.
+`yolo`, the earlier spelling of `never`, is a pre-v1 value: it is an error, and `mars migrate` rewrites it to `never`.
 
 ```yaml
 approval: auto
@@ -284,8 +284,7 @@ Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trai
 canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
 ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
 internationalized names must use punycode. A malformed value or host is an error
-(`field.value`), and the underscore spellings `network_allow` and `network_deny` are
-removed keys that name their replacement. An empty `allowlist` fails closed to `deny` with a
+(`field.value`), and the underscore spellings `network_allow` and `network_deny` are pre-v1 keys: in a schema 1 file they are a `field.removed` error that `mars migrate` converts to `network-allow` and `network-deny`. An empty `allowlist` fails closed to `deny` with a
 warning in the launch bundle.
 
 A natively run Codex agent keeps Codex's own network default: Mars reports `network` as dropped
@@ -557,9 +556,9 @@ Mars reads every profile with the schema reader and reports diagnostics, each wi
 
 | Condition | Severity |
 |---|---|
-| A removed key (`disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
+| A pre-v1 key (`disallowed-tools`, `fanout`, ...), a list-form `tools`, an invalid value (`effort: ultra`, `approval: yolo`), malformed `model-policies`, an unclosed or non-mapping frontmatter, a duplicate key | Error |
 | An unknown harness name in `harness:` | Error |
-| An unknown top-level field | Warning — the field stays in the file but reaches no native file; put harness-specific keys under `harness-overrides.<harness>` |
+| An unknown top-level field | Info — the field stays in the file but reaches no native file; put harness-specific keys under `harness-overrides.<harness>` |
 | An unknown name in `harness-overrides` (other than `meridian-flow` and `meridian-cli`) | Warning — the block is preserved |
 
 Errors fail `mars sync`, `mars check` and `mars validate` for the package that carries them, before any content is written. `mars check` exits 1 when it finds errors; `mars sync` exits 2. A profile of a package without `schema = 1` is upgraded in memory first, with one warning that names `mars migrate`; see [Migrating to schema v1](migrating-to-schema-v1.md).

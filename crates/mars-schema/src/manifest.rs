@@ -101,28 +101,19 @@ fn read_package(
     }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
-        if key == "visibility" {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.removed",
-                Severity::Error,
-                child_path("package", "visibility"),
-                "`package.visibility` was removed; remove it",
-            ));
-        } else if key == "bootstrap" {
-            // Docs once showed `[package.bootstrap] path = ...`; nothing reads it.
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
-                child_path("package", "bootstrap"),
-                "`package.bootstrap` is not read; Mars finds bootstrap docs in \
-                 `bootstrap/<name>/BOOTSTRAP.md` — move the doc there and remove the field",
+        if crate::upgrade::PRE_V1
+            .package_dropped
+            .contains(&key.as_str())
+        {
+            diagnostics.push(crate::upgrade::pre_v1_key(
+                child_path("package", key),
+                &format!("package.{key}"),
             ));
         } else if !known.contains(&key.as_str()) {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
+            diagnostics.push(crate::diagnostic::unknown_field(
                 child_path("package", key),
-                format!("unknown package field `{key}` is preserved"),
+                "package",
+                key,
             ));
         }
     }
@@ -178,15 +169,16 @@ fn read_package(
     }
     let fields = match toml::Value::Table(package.clone()).try_into::<PackageMetadata>() {
         Ok(fields) => {
-            for (name, _) in fields.tools.iter() {
-                if name.parsed().capability == crate::tool_names::Capability::Any {
-                    diagnostics.push(SchemaDiagnostic::new(
-                        "field.value",
-                        Severity::Error,
-                        child_path("package", "tools"),
-                        "`package.tools` does not accept `*`: an agent's own `'*'` rule is its default",
-                    ));
-                }
+            if let Some(message) = fields.tools.wildcard_refusal(
+                "[package.tools]",
+                "an agent's own `'*'` rule is its default",
+            ) {
+                diagnostics.push(SchemaDiagnostic::new(
+                    "field.value",
+                    Severity::Error,
+                    child_path("package", "tools"),
+                    message,
+                ));
             }
             Some(fields)
         }

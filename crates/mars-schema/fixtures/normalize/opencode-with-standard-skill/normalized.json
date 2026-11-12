@@ -192,11 +192,11 @@
               "diagnostics": [
                 {
                   "code": "field.unknown",
-                  "severity": "warning",
+                  "severity": "info",
                   "path": [
                     "argument-hint"
                   ],
-                  "message": "unknown field `argument-hint` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+                  "message": "unknown key `argument-hint` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
                 }
               ]
             },

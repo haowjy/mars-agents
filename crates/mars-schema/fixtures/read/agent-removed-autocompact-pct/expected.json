@@ -36,7 +36,7 @@
       "path": [
         "autocompact_pct"
       ],
-      "message": "`autocompact_pct` was removed; configure compaction on the model alias"
+      "message": "`autocompact_pct` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

@@ -13,6 +13,7 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 
+use mars_schema::keys;
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
 
@@ -90,18 +91,14 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             }
         }
     }
-    report
-        .warnings
-        .extend(requires_mars_warnings(&prepared, &lens));
-    let requires_mars = lens
-        .manifest
-        .as_ref()
-        .and_then(|config| config.package.as_ref())
-        .map(|package| package.requires_mars.as_deref());
-    let (hook_errors, hook_warnings) =
-        crate::compiler::hooks::check_hooks(&authored_base, requires_mars, &mut publish_diag)?;
-    report.errors.extend(hook_errors);
-    report.warnings.extend(hook_warnings);
+    let hooks = crate::compiler::hooks::check_hooks(&authored_base, &mut publish_diag)?;
+    if let Some(manifest) = authored_manifest(&lens)?
+        && let Some(floor) = package_floor(&manifest, &prepared, &hooks.portable)
+    {
+        report.errors.extend(requires_mars_shortfall(&lens, &floor));
+    }
+    report.errors.extend(hooks.errors);
+    report.warnings.extend(hooks.warnings);
     report
         .warnings
         .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
@@ -127,12 +124,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 
     if json {
         let mut json_report = report;
-        for diag in diagnostics
-            .iter()
-            .filter(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info)
-        {
-            json_report.warnings.push(diag.to_string());
-        }
+        json_report
+            .warnings
+            .extend(diagnostics.iter().map(ToString::to_string));
         output::print_json(&json_report);
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
@@ -143,11 +137,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
         println!();
 
-        let has_non_info_diagnostics = diagnostics
-            .iter()
-            .any(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info);
-        if clean && report.warnings.is_empty() && !has_non_info_diagnostics {
-            output::print_diagnostics(&diagnostics);
+        let has_warnings = diagnostics.iter().any(|diag| diag.shown(false));
+        if clean && report.warnings.is_empty() && !has_warnings {
+            output::print_diagnostics(&diagnostics, true);
             output::print_success("all checks passed");
         } else {
             for e in &report.errors {
@@ -156,7 +148,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             for w in &report.warnings {
                 output::print_warn(w);
             }
-            output::print_diagnostics(&diagnostics);
+            output::print_diagnostics(&diagnostics, true);
             if !clean {
                 println!();
                 println!("  {} error(s) found", report.errors.len());
@@ -167,48 +159,63 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     if clean { Ok(0) } else { Ok(1) }
 }
 
-/// The first Mars whose `mars version` keeps `[plugin]`.
-const PLUGIN_MARS_FLOOR: &str = "0.19.0";
-
-/// The first Mars that applies `[package.tools]`.
-const PACKAGE_TOOLS_MARS_FLOOR: &str = "0.30.0";
-
-fn requires_mars_warnings(
+/// The Mars the package needs, from the keys it uses. `None` for a tree with no `[package]`:
+/// `requires-mars` is a `[package]` key. `manifest` is the `mars.toml` text, as written for
+/// `mars check` and as it will be written for `mars migrate`.
+pub(crate) fn package_floor(
+    manifest: &str,
     prepared: &mars_schema::prepare::Prepared,
-    lens: &crate::resolve::PublishLens,
-) -> Vec<String> {
-    let Some(config) = lens.manifest.as_ref() else {
-        return Vec::new();
-    };
-    let Some(package) = config.package.as_ref() else {
-        return Vec::new();
-    };
-    if crate::resolve::validate_package_requirement_syntax(package).is_err() {
-        return Vec::new();
+    portable_hooks: &[String],
+) -> Option<keys::Floor> {
+    let manifest: toml::Table = manifest.parse().ok()?;
+    manifest.get("package")?;
+    let mut uses = keys::used(&manifest, keys::Document::Package);
+    // Only a schema 1 package states its tool rules in a form an older Mars can misread.
+    if uses.iter().any(|used| used.key == "schema") {
+        for definition in &prepared.definitions {
+            let Reading::Agent(reading) = &definition.reading else {
+                continue;
+            };
+            for rule in reading.fields.iter().flat_map(|agent| &agent.tools.rules) {
+                uses.push(keys::Used::profile_rule(
+                    &definition.slug,
+                    &rule.render(),
+                    rule.action.as_str(),
+                ));
+            }
+        }
     }
-    let requires = package.requires_mars.as_deref();
-    let schema_1 = (prepared.classification == Classification::Schema1)
-        .then(|| mars_schema::package::schema_1_requires_mars_warning(requires))
-        .flatten();
-    let plugin = (prepared.classification != Classification::Schema1 && config.plugin.is_some())
-        .then(|| {
-            mars_schema::package::requires_mars_floor_warning(
-                requires,
-                PLUGIN_MARS_FLOOR,
-                "older Mars versions may drop [plugin] during `mars version`",
-            )
-        })
-        .flatten();
-    let tools = (!package.tools.is_empty())
-        .then(|| {
-            mars_schema::package::requires_mars_floor_warning(
-                requires,
-                PACKAGE_TOOLS_MARS_FLOOR,
-                "an older Mars installs this package's agents without the `[package.tools]` rules, with only a warning",
-            )
-        })
-        .flatten();
-    [schema_1, plugin, tools].into_iter().flatten().collect()
+    uses.extend(portable_hooks.iter().map(|name| keys::Used::hook(name)));
+    keys::floor(uses)
+}
+
+/// What `mars version` writes into `requires-mars`: the floor, when the package states less.
+pub(crate) fn requires_mars_to_write(base: &Path) -> Result<Option<keys::Floor>, MarsError> {
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
+    let hooks = crate::compiler::hooks::check_hooks(base, &mut diag)?;
+    let Some(manifest) = authored_manifest(&lens)? else {
+        return Ok(None);
+    };
+    Ok(package_floor(&manifest, &prepared, &hooks.portable)
+        .filter(|floor| requires_mars_shortfall(&lens, floor).is_some()))
+}
+
+fn authored_manifest(lens: &crate::resolve::PublishLens) -> Result<Option<String>, MarsError> {
+    if lens.manifest.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(std::fs::read_to_string(
+        lens.package_root().join("mars.toml"),
+    )?))
+}
+
+fn requires_mars_shortfall(
+    lens: &crate::resolve::PublishLens,
+    floor: &keys::Floor,
+) -> Option<String> {
+    let package = lens.manifest.as_ref()?.package.as_ref()?;
+    mars_schema::package::requires_mars_shortfall(package.requires_mars.as_deref(), floor)
 }
 
 fn plugin_warnings(

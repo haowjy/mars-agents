@@ -32,7 +32,7 @@ impl ToolAction {
         }
     }
 
-    fn parse(raw: &str) -> Option<Self> {
+    pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "allow" => Some(Self::Allow),
             "deny" => Some(Self::Deny),
@@ -242,6 +242,11 @@ pub fn append_mcp_server_entries_to_tools(fm: &mut Frontmatter, servers: &[Strin
         }
     }
 }
+
+/// The spellings of an Agent's deny list that Claude and pre-v1 Mars wrote; every translation
+/// reads them as one set, and each name in it is a `deny` rule.
+pub(crate) const DISALLOWED_SPELLINGS: [&str; 3] =
+    ["disallowedTools", "disallowed-tools", "disallowed_tools"];
 
 /// The tool names in a `tools:` / `disallowed-tools:` value. A scalar is Claude's own
 /// agent-file spelling, `tools: Read, Grep`: a comma-separated list. Commas inside a scope

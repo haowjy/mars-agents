@@ -36,7 +36,7 @@
       "path": [
         "permission"
       ],
-      "message": "`permission` was removed; move it under `harness-overrides.meridian-flow.permission`"
+      "message": "`permission` is a pre-v1 key; `mars migrate` upgrades this file"
     }
   ]
 }

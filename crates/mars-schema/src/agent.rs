@@ -3,47 +3,15 @@
 use crate::HarnessId;
 use serde_yaml::Value;
 
-use crate::diagnostic::{RemovedField, RemovedValue, push_invalid, unrecognized_field};
+use crate::diagnostic::{push_invalid, unrecognized_field};
 use crate::frontmatter::{Frontmatter, SkillsSpec};
 use crate::harness_overrides::{HarnessOverrides, parse_harness_overrides};
 use crate::invocability::parse_invocability_axis;
+use crate::item::DefinitionKind;
 use crate::model_policy::ModelPolicyRule;
 use crate::network::{NetworkHost, NetworkPolicy};
 use crate::permission_set::PermissionSet;
 use crate::tool_policy::{self, EffectiveToolPolicy};
-
-/// `lift_mars_only_keys` drops the `discarded` keys; the legacy upgrade rewrites the rest.
-pub(crate) const REMOVED_AGENT_FIELDS: &[RemovedField] = &[
-    RemovedField::discarded("fanout", "use consumer `[settings.meridian.fanout]`"),
-    RemovedField::discarded("models", "use `model-policies`"),
-    RemovedField::discarded("mcp-tools", "put MCP capability references in `tools`"),
-    RemovedField::discarded("autocompact", "configure compaction on the model alias"),
-    RemovedField::discarded("autocompact_pct", "configure compaction on the model alias"),
-    RemovedField::replaced("disallowed-tools", "use `tools: {<capability>: deny}`"),
-    RemovedField::replaced("model_invocable", "use `model-invocable`"),
-    RemovedField::replaced("user_invocable", "use `user-invocable`"),
-    RemovedField::replaced("network_allow", "use `network-allow`"),
-    RemovedField::replaced("network_deny", "use `network-deny`"),
-    RemovedField::replaced(
-        "permission",
-        "move it under `harness-overrides.meridian-flow.permission`",
-    ),
-    RemovedField::replaced(
-        "resident-rearm-budget",
-        "move it under `harness-overrides.meridian-cli.resident-rearm-budget`",
-    ),
-    RemovedField::replaced(
-        "meridian-capabilities",
-        "move it under `harness-overrides.meridian-cli.capabilities`",
-    ),
-];
-
-/// Values `lift_mars_only_keys` rewrites; the reader refuses them.
-pub(crate) const REMOVED_AGENT_VALUES: &[RemovedValue] = &[
-    RemovedValue::new("approval", "yolo", "never"),
-    RemovedValue::new("effort", "adaptive", "medium"),
-    RemovedValue::new("effort", "disabled", "none"),
-];
 
 /// The Agent keys Mars lowers into a harness's native file itself, by the field that owns them.
 /// A `harness-overrides` entry never replaces one (native lowering keeps Mars's value and reports
@@ -384,6 +352,16 @@ fn push_model_policy_parse_error(
         crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_agent_invalid(diags, child("override"), found, "mapping");
         }
+        crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key }
+            if crate::upgrade::PRE_V1
+                .policy_override_dropped
+                .contains(&key.as_str()) =>
+        {
+            diags.push(crate::upgrade::pre_v1_key(
+                grandchild("override", &key),
+                &key,
+            ));
+        }
         crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
             push_agent_invalid(
                 diags,
@@ -399,6 +377,15 @@ fn push_model_policy_parse_error(
                 key,
                 "network host sets on settings, profile, overlay, or CLI",
             );
+        }
+        crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
+            key, found, ..
+        } if crate::upgrade::PRE_V1.value(&key, &found) => {
+            diags.push(crate::upgrade::pre_v1_value(
+                grandchild("override", &key),
+                &key,
+                &found,
+            ));
         }
         crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
             key,
@@ -432,9 +419,24 @@ fn parse_model_policies(
 
     let mut out = Vec::new();
     for (index, entry) in seq.iter().enumerate() {
-        match crate::model_policy::parse_model_policy_rule_value(entry) {
+        let reading = crate::model_policy::read_model_policy_rule(entry);
+        for unknown in reading.unknown {
+            let mut path = crate::diagnostic::key_path("model-policies");
+            path.push(crate::diagnostic::PathSegment::Index(index));
+            path.push(crate::diagnostic::PathSegment::Key(unknown.clone()));
+            diags.push(crate::diagnostic::unknown_field(
+                path,
+                &format!("model-policies[{index}]"),
+                &unknown,
+            ));
+        }
+        match reading.rule {
             Ok(rule) => out.push(rule),
-            Err(error) => push_model_policy_parse_error(diags, index, error),
+            Err(errors) => {
+                for error in errors {
+                    push_model_policy_parse_error(diags, index, error);
+                }
+            }
         }
     }
     out
@@ -687,10 +689,12 @@ pub(crate) fn read_fields(
             "approval" => {
                 profile.approval =
                     read_string(value, "approval", false, diags).and_then(|approval| {
-                        if let Some(removed) =
-                            RemovedValue::find(REMOVED_AGENT_VALUES, "approval", &approval)
-                        {
-                            diags.push(removed.diagnostic());
+                        if crate::upgrade::PRE_V1.value("approval", &approval) {
+                            diags.push(crate::upgrade::pre_v1_value(
+                                key_path("approval"),
+                                "approval",
+                                &approval,
+                            ));
                             return None;
                         }
                         ApprovalMode::parse(&approval).or_else(|| {
@@ -704,7 +708,6 @@ pub(crate) fn read_fields(
                         })
                     });
             }
-            "permission" => diags.push(removed_permission(value)),
             "sandbox" => {
                 profile.sandbox = read_string(value, "sandbox", false, diags).and_then(|sandbox| {
                     SandboxMode::parse(&sandbox).or_else(|| {
@@ -739,10 +742,12 @@ pub(crate) fn read_fields(
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
-                    if let Some(removed) =
-                        RemovedValue::find(REMOVED_AGENT_VALUES, "effort", &effort)
-                    {
-                        diags.push(removed.diagnostic());
+                    if crate::upgrade::PRE_V1.value("effort", &effort) {
+                        diags.push(crate::upgrade::pre_v1_value(
+                            key_path("effort"),
+                            "effort",
+                            &effort,
+                        ));
                         return None;
                     }
                     EffortLevel::parse(&effort).or_else(|| {
@@ -774,39 +779,11 @@ pub(crate) fn read_fields(
                 profile.harness_overrides = parse_harness_overrides("agent", value, diags);
             }
             "model-policies" => profile.model_policies = parse_model_policies(value, diags),
-            _ => diags.push(unrecognized_field(REMOVED_AGENT_FIELDS, &key)),
+            _ => diags.push(unrecognized_field(DefinitionKind::Agent, &key)),
         }
     }
 
     profile
-}
-
-/// What the reader tells an author whose top-level `permission` schema 1 removed.
-///
-/// Meridian Flow defines `read` and `edit`, and OpenCode's format is a map; any other value names where it
-/// can live instead of sending the author to a block that would reject it again.
-fn removed_permission(value: &Value) -> crate::diagnostic::SchemaDiagnostic {
-    use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
-    match value {
-        Value::Mapping(_) => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path("permission"),
-            "`permission` as a map is OpenCode's format; put it under \
-             `harness-overrides.opencode.permission`",
-        ),
-        Value::String(permission) if matches!(permission.as_str(), "read" | "edit") => {
-            unrecognized_field(REMOVED_AGENT_FIELDS, "permission")
-        }
-        _ => SchemaDiagnostic::new(
-            "field.removed",
-            Severity::Error,
-            key_path("permission"),
-            "`permission` was removed; Meridian Flow reads only `read` or `edit`, at \
-             `harness-overrides.meridian-flow.permission`. Grant what it allowed with \
-             `tools: {<capability>: allow}`",
-        ),
-    }
 }
 
 /// Read an Agent definition through the versioned schema contract.

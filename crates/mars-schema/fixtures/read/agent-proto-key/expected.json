@@ -35,7 +35,7 @@
       "path": [
         "x-u"
       ],
-      "message": "unknown field `x-u` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
+      "message": "unknown key `x-u` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
     },
     {
       "code": "yaml.non-json-value",

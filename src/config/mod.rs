@@ -10,6 +10,7 @@ use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
 use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
+use mars_schema::diagnostic::removed_value_message;
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
 use mars_schema::keys::{self, Surface};
@@ -23,6 +24,7 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
 pub mod migrations;
+pub(crate) use read::tolerating_removed_keys;
 mod read;
 pub mod routing_settings;
 mod save;
@@ -63,6 +65,9 @@ pub struct Config {
     /// A warning for each key of the file this Mars did not read, set when the file is read.
     #[serde(skip)]
     pub(crate) unknown_keys: Vec<String>,
+    /// The Mars the file's tool rules need, set when the file is read.
+    #[serde(skip)]
+    pub(crate) floor: Option<keys::Floor>,
 }
 
 pub(crate) fn validate_plugin_dir(dir: &Path) -> Result<(), ConfigError> {
@@ -167,11 +172,33 @@ fn overlay_value<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value = Option::<String>::deserialize(deserializer)?;
     match value {
-        Some(value) if !valid(&value) => Err(serde::de::Error::custom(format!(
-            "`{key}` has invalid value `{value}`; allowed: {allowed}"
-        ))),
+        Some(value) if !valid(&value) => Err(serde::de::Error::custom(
+            removed_value_message(Surface::AgentOverlay, key, &value).unwrap_or_else(|| {
+                format!("`{key}` has invalid value `{value}`; allowed: {allowed}")
+            }),
+        )),
         value => Ok(value),
     }
+}
+
+/// `effort` in an overlay takes the levels an Agent file does.
+fn overlay_effort<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<mars_schema::agent::EffortLevel>, D::Error> {
+    use mars_schema::agent::EffortLevel;
+    let Some(value) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    EffortLevel::parse(&value).map(Some).ok_or_else(|| {
+        serde::de::Error::custom(
+            removed_value_message(Surface::AgentOverlay, "effort", &value).unwrap_or_else(|| {
+                format!(
+                    "`effort` has invalid value `{value}`; allowed: {}",
+                    EffortLevel::ALLOWED
+                )
+            }),
+        )
+    })
 }
 
 fn overlay_approval<'de, D: serde::Deserializer<'de>>(
@@ -207,7 +234,11 @@ pub struct AgentOverlay {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "overlay_effort",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub effort: Option<mars_schema::agent::EffortLevel>,
     #[serde(
         default,
@@ -307,6 +338,9 @@ pub struct LocalConfig {
     /// As in `Config`.
     #[serde(skip)]
     pub(crate) unknown_keys: Vec<String>,
+    /// The Mars the file's tool rules need, set when the file is read.
+    #[serde(skip)]
+    pub(crate) floor: Option<keys::Floor>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -676,6 +710,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
     let read::Read {
         mut value,
         mut unknown_keys,
+        floor,
     } = read::read::<Config>(content, path, CONFIG_FILE)?;
     for (table, dependencies) in [
         ("dependencies", &value.dependencies),
@@ -694,6 +729,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
     validate_project_tools(path, Some(&value.settings.tools))?;
     validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
     value.unknown_keys = unknown_keys;
+    value.floor = floor;
     Ok(value)
 }
 
@@ -728,10 +764,12 @@ fn parse_local(content: &str, path: &Path, file: &str) -> Result<LocalConfig, Ma
     let read::Read {
         mut value,
         unknown_keys,
+        floor,
     } = read::read::<LocalConfig>(content, path, file)?;
     validate_project_tools(path, value.settings.tools.as_ref())?;
     validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
     value.unknown_keys = unknown_keys;
+    value.floor = floor;
     Ok(value)
 }
 
@@ -859,27 +897,14 @@ fn validate_min_mars_version(file: &Path, raw: Option<&str>) -> Result<(), MarsE
 
 /// What a file of the project needs of Mars beyond the `min_mars_version` it states: its own
 /// floor, from the tool rules it writes. Each file is judged alone, since `mars.toml` is shared
-/// with people whose Mars never reads the local file.
+/// with people whose Mars never reads the local file. A floor at or below the first Mars that
+/// reads `min_mars_version` is not worth a line: no Mars would act on it.
 fn floor_warning(
     file: &str,
-    settings_tools: Option<&ToolRuleMap>,
-    agents: &IndexMap<String, AgentOverlay>,
+    floor: Option<&keys::Floor>,
     stated: Option<&str>,
 ) -> Option<ProjectConfigWarning> {
-    let agent_tables: Vec<(String, &ToolRuleMap)> = agents
-        .iter()
-        .map(|(name, agent)| (format!("agents.{name}.tools"), &agent.tools))
-        .collect();
-    let floor = keys::floor(
-        settings_tools
-            .into_iter()
-            .flat_map(|tools| tools.used(Surface::Settings, "settings.tools"))
-            .chain(
-                agent_tables
-                    .iter()
-                    .flat_map(|(table, tools)| tools.used(Surface::AgentOverlay, table)),
-            ),
-    )?;
+    let floor = floor.filter(|floor| floor.since > keys::MIN_MARS_VERSION_SINCE)?;
     if mars_schema::package::requirement_has_floor(stated, &floor.since.version()) {
         return None;
     }
@@ -890,8 +915,11 @@ fn floor_warning(
     Some(ProjectConfigWarning {
         code: "min-mars-version-low",
         message: format!(
-            "{file}: {} needs Mars {}, but {stated_text}: write `min_mars_version = \"{}\"` under `[settings]` so a Mars that reads it stops instead of ignoring the rule (Mars before 0.30.0 does not enforce it)",
-            floor.at, floor.since, floor.since
+            "{file}: {} needs Mars {}, but {stated_text}: write `min_mars_version = \"{}\"` under `[settings]` so a Mars that reads it stops instead of misreading the file (Mars before {} does not read it)",
+            floor.at,
+            floor.since,
+            floor.since,
+            keys::MIN_MARS_VERSION_SINCE
         ),
     })
 }
@@ -916,25 +944,22 @@ fn project_config_warnings(
     let floors = [
         (
             user_file.as_str(),
-            user.local.settings.tools.as_ref(),
-            &user.local.agents,
+            user.local.floor.as_ref(),
             user.local.settings.min_mars_version.as_deref(),
         ),
         (
             CONFIG_FILE,
-            Some(&config.settings.tools),
-            &config.agents,
+            config.floor.as_ref(),
             config.settings.min_mars_version.as_deref(),
         ),
         (
             LOCAL_CONFIG_FILE,
-            local.settings.tools.as_ref(),
-            &local.agents,
+            local.floor.as_ref(),
             local.settings.min_mars_version.as_deref(),
         ),
     ]
     .into_iter()
-    .filter_map(|(file, tools, agents, stated)| floor_warning(file, tools, agents, stated));
+    .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
     user.misplaced
         .iter()
         .cloned()
@@ -962,6 +987,32 @@ pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, Ma
 }
 
 /// The user's `config.toml` layer (empty when the file is absent).
+/// The tool rules the files give: each agent's overlay and `[settings.tools]`, layered as the
+/// project is (user, then `mars.toml`, then `mars.local.toml`), from the text of each file. It
+/// ignores removed keys, so `mars migrate` can read a file before and after rewriting it.
+pub(crate) fn tool_rules_of(
+    user: Option<&str>,
+    project: Option<&str>,
+    local: Option<&str>,
+) -> Result<(IndexMap<String, AgentOverlay>, ToolRuleMap), MarsError> {
+    read::tolerating_removed_keys(|| {
+        let config = match project {
+            Some(text) => parse_config(text, Path::new(CONFIG_FILE))?,
+            None => Config::default(),
+        };
+        let local = match local {
+            Some(text) => parse_local(text, Path::new(LOCAL_CONFIG_FILE), LOCAL_CONFIG_FILE)?,
+            None => LocalConfig::default(),
+        };
+        let user = match user {
+            Some(text) => parse_local(text, Path::new("config.toml"), "config.toml")?,
+            None => LocalConfig::default(),
+        };
+        let composed = layering::compose_layers(&config, &local, &user);
+        Ok((composed.agents, composed.settings.tools))
+    })
+}
+
 pub(crate) fn load_user_config() -> Result<UserConfig, MarsError> {
     user::load()
 }
@@ -1565,7 +1616,14 @@ override = { effort = "high" }
         assert_eq!(rule_keys(&config.agents["a"].tools), ["web=ask", "*=deny"]);
         // What the user wrote saves back as written.
         let saved = toml::to_string(&config).unwrap();
-        assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+        let saved = toml::from_str::<Config>(&saved).unwrap();
+        assert_eq!(
+            saved,
+            Config {
+                floor: None,
+                ..config
+            }
+        );
 
         for key in ["allowed", "disallowed", "mcp"] {
             let error = parse_config(

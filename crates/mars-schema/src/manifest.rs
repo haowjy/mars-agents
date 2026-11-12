@@ -102,7 +102,7 @@ fn read_package(
     }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
-        if let Some((_, removal)) = keys::removed_key(Surface::Package, key) {
+        if let Some(removal) = keys::removed_key(Surface::Package, key) {
             diagnostics.push(SchemaDiagnostic::new(
                 "field.removed",
                 Severity::Error,

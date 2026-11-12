@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::error::MarsError;
 
-use mars_schema::keys::{self, Surface};
+use mars_schema::keys;
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
 
@@ -92,7 +92,9 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
     }
     let hooks = crate::compiler::hooks::check_hooks(&authored_base, &mut publish_diag)?;
-    if let Some(floor) = package_floor(&lens, &prepared, &hooks.portable) {
+    if let Some(manifest) = authored_manifest(&lens)?
+        && let Some(floor) = package_floor(&manifest, &prepared, &hooks.portable)
+    {
         report.errors.extend(requires_mars_shortfall(&lens, &floor));
     }
     report.errors.extend(hooks.errors);
@@ -163,49 +165,32 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 }
 
 /// The Mars the package needs, from the keys it uses. `None` for a tree with no `[package]`:
-/// `requires-mars` is a `[package]` key.
+/// `requires-mars` is a `[package]` key. `manifest` is the `mars.toml` text, as written for
+/// `mars check` and as it will be written for `mars migrate`.
 pub(crate) fn package_floor(
-    lens: &crate::resolve::PublishLens,
+    manifest: &str,
     prepared: &mars_schema::prepare::Prepared,
     portable_hooks: &[String],
 ) -> Option<keys::Floor> {
-    let config = lens.manifest.as_ref()?;
-    let package = config.package.as_ref()?;
-    let used = |surface, key, value, at: String| keys::Used {
-        surface,
-        key,
-        value,
-        at,
-    };
-    let mut uses = Vec::new();
-    if prepared.classification == Classification::Schema1 {
-        uses.push(used(
-            Surface::Package,
-            "schema",
-            None,
-            "`schema = 1`".into(),
-        ));
+    let manifest: toml::Table = manifest.parse().ok()?;
+    manifest.get("package")?;
+    let mut uses = keys::used(&manifest, keys::Document::Package);
+    // Only a schema 1 package states its tool rules in a form an older Mars can misread.
+    if uses.iter().any(|used| used.key == "schema") {
+        for definition in &prepared.definitions {
+            let Reading::Agent(reading) = &definition.reading else {
+                continue;
+            };
+            for rule in reading.fields.iter().flat_map(|agent| &agent.tools.rules) {
+                uses.push(keys::Used::profile_rule(
+                    &definition.slug,
+                    &rule.render(),
+                    rule.action.as_str(),
+                ));
+            }
+        }
     }
-    if !package.uses_providers.is_empty() {
-        uses.push(used(
-            Surface::Package,
-            "uses-providers",
-            None,
-            "`uses-providers`".into(),
-        ));
-    }
-    if config.plugin.is_some() {
-        uses.push(used(Surface::Manifest, "plugin", None, "`[plugin]`".into()));
-    }
-    uses.extend(package.tools.used(Surface::Package, "[package.tools]"));
-    for name in portable_hooks {
-        uses.push(used(
-            Surface::HookToml,
-            "hooks",
-            None,
-            format!("hook `{name}` using `[hooks]`"),
-        ));
-    }
+    uses.extend(portable_hooks.iter().map(|name| keys::Used::hook(name)));
     keys::floor(uses)
 }
 
@@ -214,8 +199,20 @@ pub(crate) fn requires_mars_to_write(base: &Path) -> Result<Option<keys::Floor>,
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
     let hooks = crate::compiler::hooks::check_hooks(base, &mut diag)?;
-    Ok(package_floor(&lens, &prepared, &hooks.portable)
+    let Some(manifest) = authored_manifest(&lens)? else {
+        return Ok(None);
+    };
+    Ok(package_floor(&manifest, &prepared, &hooks.portable)
         .filter(|floor| requires_mars_shortfall(&lens, floor).is_some()))
+}
+
+fn authored_manifest(lens: &crate::resolve::PublishLens) -> Result<Option<String>, MarsError> {
+    if lens.manifest.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(std::fs::read_to_string(
+        lens.package_root().join("mars.toml"),
+    )?))
 }
 
 fn requires_mars_shortfall(

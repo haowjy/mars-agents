@@ -33,25 +33,6 @@ impl ToolRuleMap {
         self.entries.iter().map(|(name, action)| (name, *action))
     }
 
-    /// The rules as the keys the version floor reads: each is a use of `tools` on `surface`,
-    /// and `table` (`[package.tools]`) names where it was written.
-    pub fn used<'a>(
-        &'a self,
-        surface: crate::keys::Surface,
-        table: &'a str,
-    ) -> impl Iterator<Item = crate::keys::Used<'a>> {
-        self.iter().map(move |(name, action)| crate::keys::Used {
-            surface,
-            key: "tools",
-            value: Some(action.as_str()),
-            at: format!(
-                "`{table}` `{}` = \"{}\"",
-                String::from(name.clone()),
-                action.as_str()
-            ),
-        })
-    }
-
     /// The message that refuses a `*` rule in `table`, where it was written: `*` is one agent's
     /// default, so only a table that speaks for one agent may set it. `reason` says why this
     /// table cannot.

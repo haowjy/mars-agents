@@ -108,6 +108,10 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let next_version = next.to_string();
     let tag = format!("v{next_version}");
     let raised_floor = check::requires_mars_to_write(&ctx.project_root)?;
+    let requires_mars = raised_floor
+        .as_ref()
+        .map(|floor| raised_requirement(package.requires_mars.as_deref(), floor))
+        .transpose()?;
 
     ensure_tag_not_exists(&ctx.project_root, &tag)?;
 
@@ -167,14 +171,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let release_result = (|| {
         update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
 
-        update_package_manifest(
-            &ctx.project_root,
-            &next_version,
-            raised_floor
-                .as_ref()
-                .map(|floor| floor.requirement())
-                .as_deref(),
-        )?;
+        update_package_manifest(&ctx.project_root, &next_version, requires_mars.as_deref())?;
 
         let plugin_report = staged_plugin.map(|staged| staged.publish()).transpose()?;
 
@@ -227,8 +224,8 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             "tag": tag,
             "pushed": args.push,
         });
-        if let Some(floor) = &raised_floor {
-            result["requires_mars"] = serde_json::json!(floor.requirement());
+        if let Some(requirement) = &requires_mars {
+            result["requires_mars"] = serde_json::json!(requirement);
         }
         if let Some(report) = &plugin_report {
             result["plugin"] = serde_json::json!({
@@ -244,18 +241,39 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         if let Some(report) = &plugin_report {
             output::print_diagnostics(&report.diagnostics);
         }
-        if let Some(floor) = &raised_floor {
+        if let (Some(floor), Some(requirement)) = (&raised_floor, &requires_mars) {
             output::print_info(&format!(
-                "[package] `requires-mars` is now \"{}\": {} needs Mars {}",
-                floor.requirement(),
-                floor.at,
-                floor.since
+                "[package] `requires-mars` is now \"{requirement}\": {} needs Mars {}",
+                floor.at, floor.since
             ));
         }
         println!("{tag}");
     }
 
     Ok(0)
+}
+
+/// The `requires-mars` to write for `floor`: the floor itself when the package states none, else
+/// the stated requirement with its lower bound raised and its other bounds kept. A requirement
+/// whose lower bound cannot be replaced without guessing stops the release with the line to write.
+fn raised_requirement(
+    stated: Option<&str>,
+    floor: &mars_schema::keys::Floor,
+) -> Result<String, MarsError> {
+    let Some(stated) = stated else {
+        return Ok(floor.requirement());
+    };
+    mars_schema::package::raised_requirement(stated, floor).ok_or_else(|| {
+        ConfigError::Invalid {
+            message: format!(
+                "`requires-mars = \"{stated}\"` admits a Mars before {}, but {} needs it, and mars version cannot raise it without losing a bound: write `requires-mars = \"{}\"` with the upper bound you want",
+                floor.since,
+                floor.at,
+                floor.requirement()
+            ),
+        }
+        .into()
+    })
 }
 
 /// Write the new version into mars.toml, and `requires_mars` when the package needs a higher

@@ -54,23 +54,27 @@ and rules, so never add a binary-side copy.
 
 ## Config keys
 
-`keys::KEYS` is the one table of config keys: which surfaces a key appears on, the Mars
-that first read it (`since`), whether a value restricts, and whether it is current, an
-alias, deprecated, removed (with advice, and a rewrite `mars migrate` applies: drop,
-rename or a value) or `Elsewhere` (a key that belongs in a project's files, which the
-user config warns about and drops). Add a new key as a row and nowhere else: no
-removed-key list, version-floor constant or per-key check beside the table. A reader asks
-`keys::removed_key`, `keys::removals`, `keys::dropped_keys` or `keys::elsewhere_key`.
+`keys.rs` holds three tables of config keys, each row naming the surfaces (files and tables) it
+holds on: `REMOVED` (a key or one value Mars no longer reads, with advice and the rewrite
+`mars migrate` applies: drop, rename or a value), `GATED` (a key an older Mars ignores or
+misreads, with the release that first read it) and `ELSEWHERE` (a key that belongs in a
+project's files, which the user config warns about and drops). A new key is a row in one of
+them and nowhere else: no removed-key list, version-floor constant or per-key check beside the
+tables. A reader asks `removed_key`, `removed_value_of`, `removals`, `dropped_keys` or
+`elsewhere_key`.
 
-A version floor is a row's `since`, and nothing else names one. A file's floor is
-`keys::floor` over the keys it uses: the highest `since` among those whose `restricts` holds
-for the value written (`allow` is no restriction; `deny` and `ask` are). A caller lists the
-keys present as `keys::Used` and compares the result with what the file states:
-`package::requires_mars_shortfall` for `requires-mars`, `mars check` and `mars version` for a
-package, `config::floor_warning` for `min_mars_version`. Give a row a `since` when an older
-Mars ignores the key or reads it wrongly, and say in a comment on the row which.
+A file's version floor is `keys::floor` over the keys it uses, and every caller gets those from
+`keys::used(document, Document)`, which walks a parsed `mars.toml`. The uses that live in other
+files are the caller's to add as `Used::hook` and `Used::profile_rule` (`check::package_floor`
+does, and `mars check`, `mars version` and `mars migrate` all call it); the consumer reader
+(`config/read.rs`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
+key's presence) or `Gate::Rules` (each rule whose action restricts: `deny` and `ask`, not
+`allow`). Say on the row's comment what the older Mars does with the key. A consumer floor is
+reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older than that ignores
+`min_mars_version`.
 
-A removed key is an error on every surface the row lists, a key no row names is a warning
-(`diagnostic::unknown_key_message`, one text for packages and consumer config), and an
+A removed key is an error on every surface its row lists, and the same goes for a removed value
+(`approval = "yolo"`, on a profile and an overlay alike). A key no row names is a warning with
+one text (`diagnostic::unknown_key_message`) in packages, frontmatter and consumer config; an
 unknown value is an error. Don't give one surface a different answer for the same key. The
 consumer config reader is `src/config/read.rs`; see `src/config/AGENTS.md`.

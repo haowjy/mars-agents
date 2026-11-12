@@ -372,7 +372,7 @@ include_fanout = false
 | `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
-| `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when the tool rules in that file (`[settings.tools]` or `[agents.<name>.tools]` with a `deny` or `ask`) need Mars 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key |
+| `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
@@ -528,9 +528,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   fails the load on `allow` or `ask`, and applies the older precedence (a longer or narrower
   allow can beat a deny). A project that relies on a project-wide rule must make sure everyone's
   Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars older than that
-  value fails `mars sync` and `mars build launch-bundle`. A binary released before this check
-  was added still ignores it. `mars sync` and `mars validate` warn when a file holds a `deny`
-  or `ask` and does not state that floor, with the exact `min_mars_version` line to write.
+  value fails `mars sync` and `mars build launch-bundle`. A binary released before 0.30.0 still
+  ignores the line, so it protects only against 0.30.0 and later, and Mars warns about a missing
+  floor only when a key needs a release newer than 0.30.0.
 
 ### User config
 
@@ -889,14 +889,17 @@ in the user config, not an error: [User config](#user-config).
 
 Mars 0.31.0 removes the `allowed` and `disallowed` lists of `[agents.<name>.tools]`. `mars migrate`
 rewrites them in `mars.toml`, `mars.local.toml` and the user config, and never widens an agent's
-access:
+access. It reads the profiles it needs by resolving the project's dependencies, so it works on a
+fresh clone with no `.mars/`. After rewriting, it reads the files back through the readers and
+compares each agent's tool rules with the ones before: an agent whose rule would loosen (a
+higher layer's `k = "allow"` replacing the `deny` a list became) keeps its lists, and the report
+says which rule and why.
 
 - `disallowed = ["k"]` becomes `k = "deny"`.
 - `allowed = ["k"]` becomes `k = "allow"` only where no stricter rule for the same key exists in
   the agent's installed profile, `[settings.tools]` or another layer's entries for the agent: a
   rule entry replaces that key, so `allow` would lift a stricter rule the list entry never
-  beat. Those entries are dropped, and migrate says which. It reads the profile from `.mars/`, so
-  run `mars sync` first.
+  beat. Those entries are dropped, and migrate says which.
 - `{ replace = [...] }` becomes rule entries only for an agent whose profile has `'*': deny`, as
   `k = "allow"` for each listed key and `k = "deny"` for each allow it cleared. Otherwise
   migrate leaves the table as it is, says why and describes the nearest rewrite; the file then

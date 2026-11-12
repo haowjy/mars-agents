@@ -19,9 +19,12 @@
 //! (translating `bash` to `shell` and keeping key order), the plugin build reads it, and an
 //! agent file with a `permissions` array would ignore `name` and the rest of the v1 fields.
 //!
-//! An allow is written only where it carves an exception: under a restricting `*`, or beside
-//! a rule of the same action that is not an allow. Elsewhere it restates OpenCode's default and
-//! would override the project's own `opencode.json` rules, so it is left out.
+//! An allow is written only under a restricting `*`, where it carves an exception to it.
+//! Elsewhere it restates OpenCode's default, and because the last match wins it would also
+//! land after the project's `opencode.json` rules and OpenCode's built-in ones and override
+//! them. Under a restricting `*` that cannot be avoided, and it is a loss: an allowlist
+//! agent's allows beat the project's deny for the same tool, and `read: allow` beats OpenCode's
+//! built-in `read *.env: ask`.
 //!
 //! OpenCode's `execute` (code mode) runs arbitrary code and stays offered when only the shell
 //! is restricted, and an `ask` on it is not raised for code that calls no gated tool (checked
@@ -59,14 +62,14 @@ pub(super) fn rules(tools: &EffectiveToolPolicy) -> Vec<ActionRules> {
         add_rule(&mut groups, "execute", STAR, ToolAction::Deny);
     }
 
-    let restricting = star.is_some();
-    groups.retain(|group| {
-        restricting
-            || group
+    if star.is_none() {
+        for group in &mut groups {
+            group
                 .rules
-                .iter()
-                .any(|(_, effect)| *effect != ToolAction::Allow)
-    });
+                .retain(|(_, effect)| *effect != ToolAction::Allow);
+        }
+        groups.retain(|group| !group.rules.is_empty());
+    }
     for group in &mut groups {
         group.rules.sort_by_key(|(_, effect)| effect.strictness());
     }
@@ -80,6 +83,18 @@ pub(super) fn rules(tools: &EffectiveToolPolicy) -> Vec<ActionRules> {
         );
     }
     groups
+}
+
+/// Whether the rules allow reading every path under a restricting `*`: such an allow lands
+/// after OpenCode's built-in `read *.env: ask`, so `.env` files are read without asking.
+pub(super) fn overrides_env_ask(groups: &[ActionRules]) -> bool {
+    groups.iter().any(|group| group.action == STAR)
+        && groups.iter().any(|group| {
+            group.action == "read"
+                && group.rules.iter().any(|(resource, effect)| {
+                    *effect == ToolAction::Allow && matches!(resource.as_str(), "*" | "**")
+                })
+        })
 }
 
 /// The `*` rule's effect when it restricts: `allow` is OpenCode's default and is not written.
@@ -129,7 +144,11 @@ fn add_rule(groups: &mut Vec<ActionRules>, action: &str, resource: &str, effect:
             groups.len() - 1
         }
     };
-    let rules = &mut groups[at].rules;
+    merge_rule(&mut groups[at].rules, resource, effect);
+}
+
+/// Add a rule; a resource already there keeps the stricter effect.
+fn merge_rule(rules: &mut Vec<(String, ToolAction)>, resource: &str, effect: ToolAction) {
     match rules.iter_mut().find(|(existing, _)| existing == resource) {
         Some((_, existing)) => {
             if effect.strictness() > existing.strictness() {
@@ -140,59 +159,116 @@ fn add_rule(groups: &mut Vec<ActionRules>, action: &str, resource: &str, effect:
     }
 }
 
-/// `groups` over the author's `harness-overrides.opencode.permission`. Mars's entry for an
-/// action replaces the author's for it; the rest of their map is kept. `*` stays first.
+/// `groups` over the author's `harness-overrides.opencode.permission`. Where both set an
+/// action, the two lists merge and the stricter rule wins for a resource they share, and the
+/// action's list is sorted again; the same holds for `*`. The rest of the author's map is kept.
+/// `*` stays first. An author rule the merge changes or reorders is reported by default: it no
+/// longer does what it said.
 pub(super) fn permission_map(
     groups: &[ActionRules],
     author: Option<serde_json::Value>,
     target: &str,
     lossy: &mut Vec<LossyField>,
 ) -> Mapping {
-    let lost = |field: String, classification| LossyField {
-        field,
+    let lost = |field: String| LossyField {
+        field: format!("harness-overrides.opencode.permission{field}"),
         target: target.into(),
-        classification,
+        classification: Lossiness::Dropped(Lost::Policy),
     };
     let mut author = match author.map(serde_yaml::to_value) {
         Some(Ok(Value::Mapping(map))) => map,
         Some(_) => {
             // A scalar throws away the author's whole permission policy.
-            lossy.push(lost(
-                "harness-overrides.opencode.permission".into(),
-                Lossiness::Dropped(Lost::Policy),
-            ));
+            lossy.push(lost(String::new()));
             Mapping::new()
         }
         None => Mapping::new(),
     };
     let mut map = Mapping::new();
-    let mars_star = groups.iter().find(|group| group.action == STAR);
-    if mars_star.is_none()
-        && let Some(value) = author.remove(STAR)
-    {
-        map.insert(Value::String(STAR.into()), value);
-    }
-    if let Some(group) = mars_star {
-        map.insert(Value::String(STAR.into()), group.value());
-    }
-    for (key, value) in author {
-        if key.as_str() != Some(STAR) {
-            map.insert(key, value);
+    let author_star = author.remove(STAR);
+    match (
+        groups.iter().find(|group| group.action == STAR),
+        author_star,
+    ) {
+        (Some(mars), Some(written)) => {
+            let merged = merge(mars, &written);
+            if merged.rules != read_rules(&written).unwrap_or_default() {
+                lossy.push(lost(format!(".{STAR}")));
+            }
+            map.insert(Value::String(STAR.into()), merged.value());
         }
+        (Some(mars), None) => {
+            map.insert(Value::String(STAR.into()), mars.value());
+        }
+        (None, Some(written)) => {
+            map.insert(Value::String(STAR.into()), written);
+        }
+        (None, None) => {}
+    }
+    for (key, written) in author {
+        let Some(mars) = key
+            .as_str()
+            .and_then(|key| groups.iter().find(|group| group.action == key))
+        else {
+            map.insert(key, written);
+            continue;
+        };
+        let merged = merge(mars, &written);
+        if !keeps_author(&merged.rules, read_rules(&written).as_deref()) {
+            lossy.push(lost(format!(".{}", mars.action)));
+        }
+        map.insert(key, merged.value());
     }
     for group in groups.iter().filter(|group| group.action != STAR) {
-        if let Some(existing) = map.insert(Value::String(group.action.clone()), group.value())
-            && existing != group.value()
-        {
-            lossy.push(lost(
-                format!("harness-overrides.opencode.permission.{}", group.action),
-                Lossiness::Quiet {
-                    why: "Mars's rules for this tool win",
-                },
-            ));
-        }
+        map.entry(Value::String(group.action.clone()))
+            .or_insert_with(|| group.value());
     }
     map
+}
+
+/// An author's action value as rules: `deny` is `*: deny`, a map is `pattern: action`.
+fn read_rules(written: &Value) -> Option<Vec<(String, ToolAction)>> {
+    match written {
+        Value::String(action) => Some(vec![(STAR.into(), ToolAction::parse(action)?)]),
+        Value::Mapping(map) => map
+            .iter()
+            .map(|(resource, action)| {
+                Some((
+                    resource.as_str()?.to_owned(),
+                    ToolAction::parse(action.as_str()?)?,
+                ))
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// Mars's rules with the author's, the stricter for a resource both name, sorted for
+/// last-match-wins. An author value Mars cannot read leaves Mars's alone.
+fn merge(mars: &ActionRules, written: &Value) -> ActionRules {
+    let mut rules = mars.rules.clone();
+    for (resource, effect) in read_rules(written).unwrap_or_default() {
+        merge_rule(&mut rules, &resource, effect);
+    }
+    rules.sort_by_key(|(_, effect)| effect.strictness());
+    ActionRules {
+        action: mars.action.clone(),
+        rules,
+    }
+}
+
+/// Whether the author's rules all stand in `merged`, in their own order.
+fn keeps_author(merged: &[(String, ToolAction)], author: Option<&[(String, ToolAction)]>) -> bool {
+    let Some(author) = author else { return false };
+    let standing: Vec<_> = merged
+        .iter()
+        .filter(|(resource, _)| author.iter().any(|(named, _)| named == resource))
+        .collect();
+    standing.len() == author.len()
+        && standing
+            .iter()
+            .zip(author)
+            .all(|(held, kept)| *held == kept)
 }
 
 impl ActionRules {

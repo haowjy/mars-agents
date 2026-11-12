@@ -64,11 +64,11 @@ impl SchemaDiagnostic {
 }
 
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when the key table removes it on `surface`, else `field.unknown` (a warning). An unknown key stays in the
-/// authored file and reaches no native file.
+/// error) when the key table removes it on `surface`, else `field.unknown` (a warning). An
+/// unknown key stays in the authored file and reaches no native file.
 pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnostic {
     match keys::removed_key(surface, key) {
-        Some((_, removal)) => SchemaDiagnostic::new(
+        Some(removal) => SchemaDiagnostic::new(
             "field.removed",
             Severity::Error,
             key_path(key),
@@ -78,9 +78,7 @@ pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnosti
             "field.unknown",
             Severity::Warning,
             key_path(key),
-            format!(
-                "unknown field `{key}` is kept in the file but written to no native file; put harness-specific keys under `harness-overrides.<harness>`"
-            ),
+            unknown_key_message("", key),
         ),
     }
 }
@@ -100,18 +98,25 @@ pub fn unknown_key_message(table: &str, key: &str) -> String {
     )
 }
 
-/// What the reader reports for a value the key table removed from a field that remains. The legacy
-/// upgrade rewrites it to the row's replacement.
-pub(crate) fn removed_value(surface: Surface, key: &str, value: &str) -> Option<SchemaDiagnostic> {
-    let (_, removal) = keys::removed_value_of(surface, key, value)?;
+/// What a reader tells the author about a value the key table removed from a field that remains.
+pub fn removed_value_message(surface: Surface, key: &str, value: &str) -> Option<String> {
+    let removal = keys::removed_value_of(surface, key, value)?;
     let Rewrite::Value(replacement) = removal.rewrite else {
         return None;
     };
+    Some(format!(
+        "{key} value `{value}` was removed; use `{replacement}`"
+    ))
+}
+
+/// The schema reader's `field.removed` error for such a value. The legacy upgrade rewrites it to
+/// the row's replacement.
+pub(crate) fn removed_value(surface: Surface, key: &str, value: &str) -> Option<SchemaDiagnostic> {
     Some(SchemaDiagnostic::new(
         "field.removed",
         Severity::Error,
         key_path(key),
-        format!("{key} value `{value}` was removed; use `{replacement}`"),
+        removed_value_message(surface, key, value)?,
     ))
 }
 

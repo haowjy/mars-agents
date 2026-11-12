@@ -188,6 +188,7 @@ pub fn lift_frontmatter(
             &mut lifted,
             kind,
             crate::set_aside::Destination::for_dialect(dialect),
+            crate::set_aside::Reach::Everything,
             &mut changes,
         );
     }
@@ -320,7 +321,7 @@ fn lift_opencode_agent(fm: &mut Frontmatter, changes: &mut Vec<SchemaDiagnostic>
     let mut changed = false;
 
     let mut denied = Vec::new();
-    for key in ["disallowedTools", "disallowed-tools", "disallowed_tools"] {
+    for key in tool_policy::DISALLOWED_SPELLINGS {
         if let Some(value) = fm.remove(key) {
             changed = true;
             denied.extend(tool_policy::tool_entries(&value));

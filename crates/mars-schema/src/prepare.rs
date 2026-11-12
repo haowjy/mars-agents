@@ -262,8 +262,8 @@ pub(crate) struct RootOptions<'a> {
     pub selection: Option<&'a BTreeSet<String>>,
     /// Names a root `SKILL.md` when its own `name` cannot.
     pub fallback_name: Option<&'a str>,
-    /// Repair what a schema 1 definition can still need: the replacement of an Agent key schema 1
-    /// removed in favour of a `harness-overrides` key. Only `mars migrate` asks, because it
+    /// Convert what a schema 1 package still carries of pre-v1 Mars (`upgrade::PRE_V1`), in its
+    /// definitions and its `mars.toml`. Only `mars migrate` asks, because it
     /// writes the result back; a reader leaves it off, because an authored schema 1 file is read
     /// exactly as written.
     pub migrate: bool,
@@ -319,7 +319,8 @@ pub(crate) fn prepare_root(
     let mut manifest = manifest_bytes.as_deref().map(|bytes| {
         prepare_manifest(
             bytes,
-            classification == Classification::MarsLegacy,
+            classification == Classification::MarsLegacy
+                || (options.migrate && classification == Classification::Schema1),
             &mut diagnostics,
             &mut changes,
         )
@@ -540,9 +541,7 @@ impl Shaping {
         match classification {
             Classification::MarsLegacy => Self::Rewrite(crate::upgrade::upgrade_definition),
             // Only `mars migrate` writes the result back, so only it repairs a schema 1 file.
-            Classification::Schema1 if migrate => {
-                Self::Rewrite(crate::upgrade::relocate_removed_fields)
-            }
+            Classification::Schema1 if migrate => Self::Rewrite(crate::upgrade::migrate_definition),
             Classification::Foreign(choice) => Self::Foreign(choice.dialect),
             _ => Self::None,
         }

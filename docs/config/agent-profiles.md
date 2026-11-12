@@ -284,8 +284,7 @@ Wildcards require at least two DNS labels. Mars lowercases hosts, removes a trai
 canonicalizes IPv4-mapped IPv6 to IPv4, deduplicates, and sorts them. It rejects URLs, schemes,
 ports, paths, numeric or `0x`-style terminal DNS labels, empty strings, and a bare `*`;
 internationalized names must use punycode. A malformed value or host is an error
-(`field.value`), and the underscore spellings `network_allow` and `network_deny` are
-removed keys that name their replacement. An empty `allowlist` fails closed to `deny` with a
+(`field.value`), and the underscore spellings `network_allow` and `network_deny` are pre-v1 keys: in a schema 1 file they are a `field.removed` error that `mars migrate` converts to `network-allow` and `network-deny`. An empty `allowlist` fails closed to `deny` with a
 warning in the launch bundle.
 
 A natively run Codex agent keeps Codex's own network default: Mars reports `network` as dropped

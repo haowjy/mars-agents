@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 
 use super::LocalConfig;
@@ -48,10 +49,27 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
     ];
     for (table, key, present) in unread {
         if present {
-            local
-                .unknown_keys
-                .push(super::read::unknown_key(&file, table, key));
+            local.unknown_keys.push(not_read_here(&file, table, key));
         }
     }
     Ok(UserConfig { path, local })
+}
+
+/// A real key of another config file that this one leaves unread. It is not a typo or a newer
+/// key, so the message does not guess at why it is here.
+fn not_read_here(file: &str, table: &str, key: &str) -> Diagnostic {
+    let table = if table.is_empty() {
+        String::new()
+    } else {
+        format!("[{table}] ")
+    };
+    Diagnostic {
+        level: DiagnosticLevel::Info,
+        code: "field.unknown".into(),
+        message: format!(
+            "{file}: {table}`{key}` is not read in the user config; it stays in the file"
+        ),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
+    }
 }

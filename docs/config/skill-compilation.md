@@ -156,7 +156,7 @@ Importing a Claude skill moves Claude's own keys (`argument-hint`, `arguments`, 
 
 ## Unknown Fields
 
-A skill frontmatter field not listed above is kept in the authored file but written to **no** native file, so a Claude-only key never leaks into a Codex or OpenCode skill. Each one produces a `field.unknown` warning that says where harness-specific keys belong: `harness-overrides.<harness>`.
+A skill frontmatter field not listed above is kept in the authored file but written to **no** native file, so a Claude-only key never leaks into a Codex or OpenCode skill. Each one produces a `field.unknown` info note (`mars validate`, `mars check` and `--verbose` print it) that says where harness-specific keys belong: `harness-overrides.<harness>`.
 
 ## Per-Harness Lowering
 

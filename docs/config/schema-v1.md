@@ -68,13 +68,13 @@ Field-by-field behaviour is in [Agent profiles](agent-profiles.md).
 
 ### Removed Agent keys
 
-A schema 1 file that carries one of these is in the pre-v1 format and is an error (`field.removed`): ``` `disallowed-tools` is a pre-v1 key; `mars migrate` upgrades this file ```, one text for every key. The pre-v1 upgrade (`crates/mars-schema/src/upgrade.rs`) owns the list; the table below says what each key became. [`mars migrate`](migrating-to-schema-v1.md) applies the replacement where one can be applied mechanically.
+A schema 1 file that carries one of these is in the pre-v1 format and is an error (`field.removed`): ``` `disallowed-tools` is a pre-v1 key; `mars migrate` upgrades this file ```, one text for every key. The pre-v1 upgrade (`crates/mars-schema/src/upgrade.rs`) owns the list; the table below says what each key became. [`mars migrate`](migrating-to-schema-v1.md) converts every key and value in the list, in a schema 1 file as in a package with no `schema`, because the reader and `mars migrate` read the same list. A key with no replacement (a `permission` map) is dropped and listed as `field.restriction-lost`.
 
 The consumer tables of `mars.toml`, `mars.local.toml` and the user `config.toml` are not part of the schema and have no pre-v1 keys of their own: a key they do not read is an `Info`. See [Keys Mars does not read](mars-toml.md#keys-mars-does-not-read).
 
 | Removed | Replace with |
 |---|---|
-| `disallowed-tools` | `tools: {<capability>: deny}` |
+| `disallowed-tools`, `disallowed_tools`, `disallowedTools` | `tools: {<capability>: deny}` |
 | `tools` as a list | a `tools` map (`tools.list-form`) |
 | `mcp-tools` | `mcp(server)` or `mcp(server/tool)` entries in `tools` |
 | `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
@@ -219,7 +219,7 @@ harness-overrides:
 
 ### Unknown keys
 
-An unknown key is an `Info` (`field.unknown`) and stays in the authored file, but it reaches **no** native file, in Agents and skills alike. This includes a key of a `model-policies` rule and of its `override`. Harness-specific keys belong under `harness-overrides.<harness>`, where they go to that harness alone.
+An unknown key is an `Info` (`field.unknown`) and stays in the authored file, but it reaches **no** native file, in Agents and skills alike. This includes a key of a `model-policies` rule; a key of its `override` is an error (the table takes `effort`, `sandbox`, `approval` and `network`). Harness-specific keys belong under `harness-overrides.<harness>`, where they go to that harness alone.
 
 ## Tool capabilities
 

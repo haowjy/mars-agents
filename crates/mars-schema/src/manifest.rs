@@ -170,15 +170,16 @@ fn read_package(
     }
     let fields = match toml::Value::Table(package.clone()).try_into::<PackageMetadata>() {
         Ok(fields) => {
-            for (name, _) in fields.tools.iter() {
-                if name.parsed().capability == crate::tool_names::Capability::Any {
-                    diagnostics.push(SchemaDiagnostic::new(
-                        "field.value",
-                        Severity::Error,
-                        child_path("package", "tools"),
-                        "`package.tools` does not accept `*`: an agent's own `'*'` rule is its default",
-                    ));
-                }
+            if let Some(message) = fields.tools.wildcard_refusal(
+                "[package.tools]",
+                "an agent's own `'*'` rule is its default",
+            ) {
+                diagnostics.push(SchemaDiagnostic::new(
+                    "field.value",
+                    Severity::Error,
+                    child_path("package", "tools"),
+                    message,
+                ));
             }
             Some(fields)
         }

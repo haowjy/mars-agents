@@ -219,7 +219,7 @@ harness-overrides:
 
 ### Unknown keys
 
-An unknown key is a warning (`field.unknown`) and stays in the authored file, but it reaches **no** native file, in Agents and skills alike. Harness-specific keys belong under `harness-overrides.<harness>`, where they go to that harness alone.
+An unknown key is a warning (`field.unknown`) and stays in the authored file, but it reaches **no** native file, in Agents and skills alike. This includes a key of a `model-policies` rule and of its `override`. Harness-specific keys belong under `harness-overrides.<harness>`, where they go to that harness alone.
 
 ## Tool capabilities
 

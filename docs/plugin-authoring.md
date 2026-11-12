@@ -164,9 +164,9 @@ Run `mars check` before building or releasing. In addition to source validation,
 reports configured plugin output that is missing, stale, hand-edited, skipped, or in
 conflict with a package-root generated file. It also warns when:
 
-- `[package].requires-mars` allows a Mars older than 0.20.0, the first that reads
-  `schema = 1` (0.19.0 for a plugin package with no `schema`, the first that keeps
-  `[plugin]`);
+- `[package].requires-mars` allows a Mars older than the package's floor (0.20.0 for
+  `schema = 1`, 0.19.0 for a plugin package with no `schema`, the first that keeps `[plugin]`);
+  this is an error, and `mars version` raises it;
 - plugin-only package or `[plugin]` metadata is invalid, including an unknown harness;
 - generated output records a different package version;
 - generated output was built by a different Mars version, which may write different files

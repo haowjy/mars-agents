@@ -402,131 +402,44 @@ impl std::fmt::Display for Diagnostic {
     }
 }
 
-/// Compatibility preflight: check whether the current binary version satisfies a
-/// `min_mars_version` requirement declared by the project's mars.toml.
-///
-/// Returns `None` if compatible (or no requirement is declared).
-/// Returns `Some(Diagnostic)` with `Error` level if the binary is too old.
-///
-/// Rule:
-/// - `min_required` is `None` → always compatible (old package without requirement)
-/// - `binary_version >= min_required` → compatible
-/// - `binary_version < min_required` → error: binary too old
-pub fn compatibility_preflight(
-    binary_version: &str,
-    min_required: Option<&str>,
-) -> Option<Diagnostic> {
-    let min = min_required?;
-
-    // Parse as semver. If either fails to parse, accept and emit a warning instead.
-    let bin_ver = parse_semver(binary_version);
-    let req_ver = parse_semver(min);
-
-    match (bin_ver, req_ver) {
-        (Some(bin), Some(req)) => {
-            if bin < req {
-                Some(Diagnostic {
-                    level: DiagnosticLevel::Error,
-                    code: "compat-version".into(),
-                    message: format!(
-                        "this project requires mars >= {min} but the installed binary is {binary_version}; \
-                         upgrade with: cargo install mars-agents"
-                    ),
-                    context: None,
-                    category: Some(DiagnosticCategory::Compatibility),
-                })
-            } else {
-                None
-            }
-        }
-        _ => {
-            // Unparseable version strings — warn and continue (forward compat: new package,
-            // unknown version scheme → don't hard-block the consumer).
-            Some(Diagnostic {
-                level: DiagnosticLevel::Warning,
-                code: "compat-version-parse".into(),
-                message: format!(
-                    "could not compare mars version `{binary_version}` against requirement `{min}`; \
-                     proceeding with defaults"
-                ),
-                context: None,
-                category: Some(DiagnosticCategory::Compatibility),
-            })
-        }
-    }
+/// A project's `min_mars_version`, read as `requires-mars` is: a bare version means that version
+/// or newer, and a range is accepted.
+pub fn parse_min_mars_version(raw: &str) -> Result<semver::VersionReq, String> {
+    mars_schema::package::parse_requirement(raw).map_err(|error| {
+        format!("`min_mars_version = \"{raw}\"` is not a version requirement: {error}")
+    })
 }
 
-/// Minimal semver parser: returns `(major, minor, patch)` tuple from "X.Y.Z" or "vX.Y.Z".
-fn parse_semver(s: &str) -> Option<(u64, u64, u64)> {
-    let s = s.trim_start_matches('v');
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() < 3 {
-        return None;
+/// Compatibility preflight: whether the running Mars meets a project's `min_mars_version`.
+///
+/// `None` when it does, or when the project states no requirement. A requirement that does not
+/// parse is an error: the loader refuses such a file, so this is reached only by one it has not
+/// read.
+pub fn compatibility_preflight(min_required: Option<&str>) -> Result<Option<Diagnostic>, String> {
+    let Some(min) = min_required else {
+        return Ok(None);
+    };
+    let requirement = parse_min_mars_version(min)?;
+    let running =
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver");
+    if mars_schema::package::requirement_matches(&requirement, &running) {
+        return Ok(None);
     }
-    let major = parts[0].parse::<u64>().ok()?;
-    let minor = parts[1].parse::<u64>().ok()?;
-    // Allow patch to have pre-release suffix like "1-beta.1"
-    let patch_str = parts[2].split('-').next().unwrap_or(parts[2]);
-    let patch = patch_str.parse::<u64>().ok()?;
-    Some((major, minor, patch))
+    Ok(Some(Diagnostic {
+        level: DiagnosticLevel::Error,
+        code: "compat-version".into(),
+        message: format!(
+            "this project requires mars {requirement} but the installed binary is {running}; \
+             upgrade with: cargo install mars-agents"
+        ),
+        context: None,
+        category: Some(DiagnosticCategory::Compatibility),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn no_requirement_always_compatible() {
-        let diag = compatibility_preflight("0.5.0", None);
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_meets_requirement() {
-        let diag = compatibility_preflight("1.2.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_exactly_meets_requirement() {
-        let diag = compatibility_preflight("1.0.0", Some("1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_too_old_produces_error() {
-        let diag = compatibility_preflight("0.5.0", Some("1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-        assert_eq!(diag.code, "compat-version");
-        assert_eq!(diag.category, Some(DiagnosticCategory::Compatibility));
-        assert!(diag.message.contains("0.5.0"));
-        assert!(diag.message.contains("1.0.0"));
-    }
-
-    #[test]
-    fn binary_v_prefix_handled() {
-        let diag = compatibility_preflight("v1.2.0", Some("v1.0.0"));
-        assert!(diag.is_none());
-    }
-
-    #[test]
-    fn binary_v_prefix_too_old() {
-        let diag = compatibility_preflight("v0.9.0", Some("v1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Error);
-    }
-
-    #[test]
-    fn unparseable_version_produces_warning_not_error() {
-        let diag = compatibility_preflight("dev", Some("1.0.0")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-        assert_eq!(diag.code, "compat-version-parse");
-    }
-
-    #[test]
-    fn unparseable_requirement_produces_warning() {
-        let diag = compatibility_preflight("1.0.0", Some("latest")).unwrap();
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-    }
 
     #[test]
     fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
@@ -644,12 +557,5 @@ mod tests {
             category: None,
         };
         assert_eq!(d.to_string(), "warning: heads up");
-    }
-
-    #[test]
-    fn patch_with_prerelease_suffix_parsed() {
-        // "1.2.3-beta.1" → (1, 2, 3)
-        let v = parse_semver("1.2.3-beta.1").unwrap();
-        assert_eq!(v, (1, 2, 3));
     }
 }

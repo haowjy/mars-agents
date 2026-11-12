@@ -176,6 +176,12 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     let package = document
         .get_mut("package")
         .ok_or(UpgradeError::MissingPackage)?;
+    let Some(floor) = schema_1_floor() else {
+        return Ok(FloorOutcome {
+            text: text.to_string(),
+            warning: None,
+        });
+    };
     let requirement = package
         .as_table_like()
         .and_then(|table| table.get("requires-mars"))
@@ -184,10 +190,7 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     if requirement.is_none()
         && let Some(table) = package.as_table_mut()
     {
-        table.insert(
-            "requires-mars",
-            toml_edit::value(format!(">={}", keys::since(Surface::Package, "schema"))),
-        );
+        table.insert("requires-mars", toml_edit::value(floor.requirement()));
         return Ok(FloorOutcome {
             text: with_line_ending_of(text, document.to_string()),
             warning: None,
@@ -195,8 +198,18 @@ pub fn ensure_requires_mars_floor(text: &str) -> Result<FloorOutcome, UpgradeErr
     }
     Ok(FloorOutcome {
         text: text.to_string(),
-        warning: crate::package::schema_1_requires_mars_warning(requirement.as_deref()),
+        warning: crate::package::requires_mars_shortfall(requirement.as_deref(), &floor),
     })
+}
+
+/// What a `schema = 1` package needs: the first Mars that reads it as schema 1.
+fn schema_1_floor() -> Option<keys::Floor> {
+    keys::floor([keys::Used {
+        surface: Surface::Package,
+        key: "schema",
+        value: None,
+        at: "`schema = 1`".to_string(),
+    }])
 }
 
 fn package_path(key: &str) -> Vec<PathSegment> {

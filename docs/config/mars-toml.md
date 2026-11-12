@@ -116,7 +116,7 @@ requires-meridian = ">=0.15.0"                       # optional
 | `authors` | string[] or table[] | no | Package authors as `"Name <email>"` strings or `{ name, email }` tables; the first author supplies generated plugin owner metadata |
 | `homepage` | string | no | Package or project homepage used in generated plugin manifests |
 | `license` | string | no | Package license identifier used in generated plugin manifests |
-| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A schema 1 package needs a floor of `>=0.20.0`, the first Mars that reads schema 1: `mars check` warns when one is missing or lower, and `mars migrate` adds it only when the package has none (an existing requirement is reported, never rewritten). A package whose hooks use `[hooks]` needs `>=0.25.0`; see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading) |
+| `requires-mars` | semver requirement | no | Mars versions that can consume this package. A package needs a floor that its keys set: `schema = 1` and `uses-providers` need `>=0.20.0`, `[plugin]` `>=0.19.0`, `[hooks]` in a `hook.toml` `>=0.25.0` (see [Using `[hooks]` in a package](mcp-and-hooks.md#upgrading)), and a `deny` or `ask` in `[package.tools]` `>=0.30.0`; the highest one wins. `mars check` fails when `requires-mars` is missing or lower and names the key and the line to write. `mars version` writes the floor when the requirement is lower, and `mars migrate` adds `>=0.20.0` only when a schema 1 package has none (an existing requirement is reported, never rewritten) |
 | `requires-meridian` | semver requirement | no | Meridian versions that can consume this package; skipped when Mars runs standalone |
 | `tools` | table | no | Tool rules applied to each agent this package ships. See [Package tool rules](#package-tool-rules-packagetools) |
 | `uses-providers` | string[] | no | The hosts the package expects to supply skills at sync time, such as `["meridian"]`; each is a provider name (`[a-z0-9][a-z0-9-]*`). See [Provided skills and `uses-providers`](#provided-skills-and-uses-providers) |
@@ -372,7 +372,7 @@ include_fanout = false
 | `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
-| `min_mars_version` | string | unset | Minimum Mars binary version required for this project. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too |
+| `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when the tool rules in that file (`[settings.tools]` or `[agents.<name>.tools]` with a `deny` or `ask`) need Mars 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
@@ -447,8 +447,8 @@ requires-mars = ">=0.30.0"
   `schema = 1`.
 - **Older Mars versions** (before 0.30.0) warn `unknown package field `tools` is preserved`
   and install the agents without the rules, exit code 0. Set `requires-mars = ">=0.30.0"`
-  so they refuse the package instead; `mars check` warns when a package with `[package.tools]`
-  does not.
+  so they refuse the package instead; `mars check` fails when a package with a `deny` or `ask`
+  in `[package.tools]` does not, and `mars version` writes it.
 - **Plugin builds** carry the rules in each agent. `[settings.tools]` stays out of a plugin:
   it belongs to the author's machine. A scoped rule that a plugin target cannot carry is
   reported by the usual lost-restriction lines.
@@ -529,7 +529,8 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   allow can beat a deny). A project that relies on a project-wide rule must make sure everyone's
   Mars is new enough. Set `min_mars_version = "0.30.0"` or higher: a Mars older than that
   value fails `mars sync` and `mars build launch-bundle`. A binary released before this check
-  was added still ignores it.
+  was added still ignores it. `mars sync` and `mars validate` warn when a file holds a `deny`
+  or `ask` and does not state that floor, with the exact `min_mars_version` line to write.
 
 ### User config
 

@@ -60,8 +60,15 @@ alias, deprecated, removed (with advice, and a rewrite `mars migrate` applies: d
 rename or a value) or `Elsewhere` (a key that belongs in a project's files, which the
 user config warns about and drops). Add a new key as a row and nowhere else: no
 removed-key list, version-floor constant or per-key check beside the table. A reader asks
-`keys::removed_key`, `keys::removals`, `keys::dropped_keys`, `keys::elsewhere_key` or
-`keys::since`.
+`keys::removed_key`, `keys::removals`, `keys::dropped_keys` or `keys::elsewhere_key`.
+
+A version floor is a row's `since`, and nothing else names one. A file's floor is
+`keys::floor` over the keys it uses: the highest `since` among those whose `restricts` holds
+for the value written (`allow` is no restriction; `deny` and `ask` are). A caller lists the
+keys present as `keys::Used` and compares the result with what the file states:
+`package::requires_mars_shortfall` for `requires-mars`, `mars check` and `mars version` for a
+package, `config::floor_warning` for `min_mars_version`. Give a row a `since` when an older
+Mars ignores the key or reads it wrongly, and say in a comment on the row which.
 
 A removed key is an error on every surface the row lists, a key no row names is a warning
 (`diagnostic::unknown_key_message`, one text for packages and consumer config), and an

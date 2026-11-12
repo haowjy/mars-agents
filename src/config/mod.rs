@@ -19,7 +19,6 @@ use mars_schema::names::{RenameMap, SourceSubpath};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 pub use mars_schema::package::PackageMetadata as PackageInfo;
 use mars_schema::permission_set::PermissionSet;
-use mars_schema::tool_names::Capability;
 use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
@@ -693,6 +692,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
         }
     }
     validate_project_tools(path, Some(&value.settings.tools))?;
+    validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
     value.unknown_keys = unknown_keys;
     Ok(value)
 }
@@ -730,6 +730,7 @@ fn parse_local(content: &str, path: &Path, file: &str) -> Result<LocalConfig, Ma
         unknown_keys,
     } = read::read::<LocalConfig>(content, path, file)?;
     validate_project_tools(path, value.settings.tools.as_ref())?;
+    validate_min_mars_version(path, value.settings.min_mars_version.as_deref())?;
     value.unknown_keys = unknown_keys;
     Ok(value)
 }
@@ -831,20 +832,68 @@ pub(crate) fn validate_project_tools(
     file: &Path,
     tools: Option<&ToolRuleMap>,
 ) -> Result<(), MarsError> {
-    for (name, action) in tools.into_iter().flat_map(ToolRuleMap::iter) {
-        if name.parsed().capability == Capability::Any {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "{}: [settings.tools] `{}` = \"{}\": `*` is not accepted: `approval` is the default for calls no rule matches",
-                    file.display(),
-                    String::from(name.clone()),
-                    action.as_str()
-                ),
-            }
-            .into());
+    if let Some(message) = tools.and_then(|tools| {
+        tools.wildcard_refusal(
+            "[settings.tools]",
+            "`approval` is the default for calls no rule matches",
+        )
+    }) {
+        return Err(ConfigError::Invalid {
+            message: format!("{}: {message}", file.display()),
         }
+        .into());
     }
     Ok(())
+}
+
+/// A `min_mars_version` that does not parse would let an older Mars through the one key whose job
+/// is to stop it, so the file does not load.
+fn validate_min_mars_version(file: &Path, raw: Option<&str>) -> Result<(), MarsError> {
+    if let Some(raw) = raw {
+        crate::diagnostic::parse_min_mars_version(raw).map_err(|message| ConfigError::Invalid {
+            message: format!("{}: {message}", file.display()),
+        })?;
+    }
+    Ok(())
+}
+
+/// What a file of the project needs of Mars beyond the `min_mars_version` it states: its own
+/// floor, from the tool rules it writes. Each file is judged alone, since `mars.toml` is shared
+/// with people whose Mars never reads the local file.
+fn floor_warning(
+    file: &str,
+    settings_tools: Option<&ToolRuleMap>,
+    agents: &IndexMap<String, AgentOverlay>,
+    stated: Option<&str>,
+) -> Option<ProjectConfigWarning> {
+    let agent_tables: Vec<(String, &ToolRuleMap)> = agents
+        .iter()
+        .map(|(name, agent)| (format!("agents.{name}.tools"), &agent.tools))
+        .collect();
+    let floor = keys::floor(
+        settings_tools
+            .into_iter()
+            .flat_map(|tools| tools.used(Surface::Settings, "settings.tools"))
+            .chain(
+                agent_tables
+                    .iter()
+                    .flat_map(|(table, tools)| tools.used(Surface::AgentOverlay, table)),
+            ),
+    )?;
+    if mars_schema::package::requirement_has_floor(stated, &floor.since.version()) {
+        return None;
+    }
+    let stated_text = match stated {
+        Some(raw) => format!("`min_mars_version = \"{raw}\"` admits an older one"),
+        None => "no `min_mars_version` says so".to_string(),
+    };
+    Some(ProjectConfigWarning {
+        code: "min-mars-version-low",
+        message: format!(
+            "{file}: {} needs Mars {}, but {stated_text}: write `min_mars_version = \"{}\"` under `[settings]` so a Mars that reads it stops instead of ignoring the rule (Mars before 0.30.0 does not enforce it)",
+            floor.at, floor.since, floor.since
+        ),
+    })
 }
 
 fn project_config_warnings(
@@ -863,6 +912,29 @@ fn project_config_warnings(
         code: "field.unknown",
         message: message.clone(),
     });
+    let user_file = user.path.display().to_string();
+    let floors = [
+        (
+            user_file.as_str(),
+            user.local.settings.tools.as_ref(),
+            &user.local.agents,
+            user.local.settings.min_mars_version.as_deref(),
+        ),
+        (
+            CONFIG_FILE,
+            Some(&config.settings.tools),
+            &config.agents,
+            config.settings.min_mars_version.as_deref(),
+        ),
+        (
+            LOCAL_CONFIG_FILE,
+            local.settings.tools.as_ref(),
+            &local.agents,
+            local.settings.min_mars_version.as_deref(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(file, tools, agents, stated)| floor_warning(file, tools, agents, stated));
     user.misplaced
         .iter()
         .cloned()
@@ -871,6 +943,7 @@ fn project_config_warnings(
             message,
         })
         .chain(unknown_keys)
+        .chain(floors)
         .collect()
 }
 

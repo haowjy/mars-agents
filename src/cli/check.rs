@@ -137,9 +137,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
         println!();
 
-        let has_warnings = diagnostics
-            .iter()
-            .any(|diag| diag.level != crate::diagnostic::DiagnosticLevel::Info);
+        let has_warnings = diagnostics.iter().any(|diag| diag.shown(false));
         if clean && report.warnings.is_empty() && !has_warnings {
             output::print_diagnostics(&diagnostics, true);
             output::print_success("all checks passed");

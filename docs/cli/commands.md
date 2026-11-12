@@ -131,6 +131,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--force` | Overwrite local modifications for managed files |
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode) |
+| `--verbose` | Also print `info` notes, such as a key in `mars.toml` that Mars does not read, and every lossy field per item and target |
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (`field.unknown`, the lossiness a target cannot express) are printed and the sync goes on. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
@@ -502,8 +503,8 @@ is not protected by the dependency pin and must coordinate both upgrades.
 `--include`, `--exclude`, `--providers`, `--no-visibility`, `--catalog`, and
 `--unavailable` were removed from `models list`. Put display rules in
 [`mars.curated.toml`](../config/mars-curated.md). Legacy
-`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is a removed key and
-an error that translates the file's actual values; Mars does not rewrite it. A dependency package's consumer-only settings are ignored by
+`[settings.model_visibility]` in `mars.toml` or `mars.local.toml` is no longer read, like any
+key Mars has no field for. A dependency package's consumer-only settings are ignored by
 manifest loading and never require the consumer to migrate upstream files.
 
 ### `mars models prompting`
@@ -576,7 +577,7 @@ Does not require a mars project (no `mars.toml` needed). Validates:
 - `requires-mars` and `requires-meridian` syntax when `[package]` is present
 - Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
 - Prints the `source package validates` line only when there are no errors
-- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so removed keys, invalid values and malformed YAML are errors (exit 1), unknown keys warn, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
+- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so pre-v1 keys, invalid values and malformed YAML are errors (exit 1), unknown keys print as `info` and leave the exit code alone, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
 - Frontmatter: name, description presence and consistency
 - Duplicate `(kind, name)` discoveries within the package
 - Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine

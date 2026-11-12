@@ -352,6 +352,14 @@ fn push_model_policy_parse_error(
         crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_agent_invalid(diags, child("override"), found, "mapping");
         }
+        crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
+            push_agent_invalid(
+                diags,
+                grandchild("override", &key),
+                key,
+                "effort, sandbox, approval, network",
+            );
+        }
         crate::model_policy::ModelPolicyRuleParseError::NetworkHostsNotAllowed { key } => {
             push_agent_invalid(
                 diags,
@@ -396,17 +404,15 @@ fn parse_model_policies(
         for unknown in reading.unknown {
             let mut path = crate::diagnostic::key_path("model-policies");
             path.push(crate::diagnostic::PathSegment::Index(index));
-            let mut table = format!("model-policies[{index}]");
-            if unknown.in_override {
-                path.push(crate::diagnostic::PathSegment::Key("override".to_owned()));
-                table.push_str(".override");
-            }
-            path.push(crate::diagnostic::PathSegment::Key(unknown.key.clone()));
+            path.push(crate::diagnostic::PathSegment::Key(unknown.clone()));
             diags.push(crate::diagnostic::SchemaDiagnostic::new(
                 "field.unknown",
                 crate::diagnostic::Severity::Warning,
                 path,
-                crate::diagnostic::unknown_key_message(&table, &unknown.key),
+                crate::diagnostic::unknown_key_message(
+                    &format!("model-policies[{index}]"),
+                    &unknown,
+                ),
             ));
         }
         match reading.rule {

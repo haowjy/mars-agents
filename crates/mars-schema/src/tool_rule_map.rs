@@ -77,18 +77,7 @@ impl Serialize for ToolRuleMap {
 
 impl<'de> Deserialize<'de> for ToolRuleMap {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::deserialize_skipping(deserializer, |_| false)
-    }
-}
-
-impl ToolRuleMap {
-    /// Read a table as `Deserialize` does, leaving out the keys `skip` names. Their values are
-    /// handed to serde as ignored, so a reader that reports ignored keys sees them.
-    pub fn deserialize_skipping<'de, D: Deserializer<'de>>(
-        deserializer: D,
-        skip: fn(&str) -> bool,
-    ) -> Result<Self, D::Error> {
-        struct MapVisitor(fn(&str) -> bool);
+        struct MapVisitor;
 
         impl<'de> Visitor<'de> for MapVisitor {
             type Value = ToolRuleMap;
@@ -100,10 +89,6 @@ impl ToolRuleMap {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut entries: Vec<(OverlayToolName, ToolAction)> = Vec::new();
                 while let Some(raw) = map.next_key::<String>()? {
-                    if (self.0)(&raw) {
-                        map.next_value::<serde::de::IgnoredAny>()?;
-                        continue;
-                    }
                     let action = map.next_value::<ToolAction>()?;
                     let name = OverlayToolName::try_from(raw).map_err(A::Error::custom)?;
                     if let Some((earlier, _)) = entries
@@ -122,7 +107,7 @@ impl ToolRuleMap {
             }
         }
 
-        deserializer.deserialize_map(MapVisitor(skip))
+        deserializer.deserialize_map(MapVisitor)
     }
 }
 

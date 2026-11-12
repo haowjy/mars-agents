@@ -10,10 +10,9 @@ use crate::error::{ConfigError, MarsError};
 use crate::types::managed_cmd;
 use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
 use mars_schema::dependency::{Entry, RawEntry, Source, Strictness};
-use mars_schema::diagnostic::removed_value_message;
 use mars_schema::dialect::Dialect;
 use mars_schema::filter::FilterMode;
-use mars_schema::keys::{self, Surface};
+use mars_schema::keys;
 use mars_schema::manifest::ManifestRead;
 use mars_schema::model_policy::ModelPolicyRule;
 use mars_schema::names::{RenameMap, SourceSubpath};
@@ -24,7 +23,6 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
 pub mod migrations;
-pub(crate) use read::tolerating_removals;
 mod read;
 pub mod routing_settings;
 mod save;
@@ -151,17 +149,6 @@ struct SourceManifestSections {
     models: IndexMap<String, crate::models::ModelAlias>,
 }
 
-/// `[agents.<name>.tools]` is a table of rules, `"bash(git push *)" = "ask"`. A rule replaces the
-/// same key in the profile and in `[settings.tools]` for that agent. The lists a retired grammar
-/// took (`allowed`, `disallowed`, `mcp`) are key-table removals, so the load names them.
-fn overlay_tools<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<ToolRuleMap, D::Error> {
-    ToolRuleMap::deserialize_skipping(deserializer, |key| {
-        keys::removed_key(Surface::AgentOverlayTools, key).is_some()
-    })
-}
-
 /// `approval` and `sandbox` in an overlay take the values an Agent file does, and a bad one
 /// fails where it is written.
 fn overlay_value<'de, D: serde::Deserializer<'de>>(
@@ -172,15 +159,9 @@ fn overlay_value<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value = Option::<String>::deserialize(deserializer)?;
     match value {
-        Some(value) if !valid(&value) => {
-            let removed = removed_value_message(Surface::AgentOverlay, key, &value);
-            if removed.is_some() && read::removals_tolerated() {
-                return Ok(None);
-            }
-            Err(serde::de::Error::custom(removed.unwrap_or_else(|| {
-                format!("`{key}` has invalid value `{value}`; allowed: {allowed}")
-            })))
-        }
+        Some(value) if !valid(&value) => Err(serde::de::Error::custom(format!(
+            "`{key}` has invalid value `{value}`; allowed: {allowed}"
+        ))),
         value => Ok(value),
     }
 }
@@ -196,16 +177,10 @@ fn overlay_effort<'de, D: serde::Deserializer<'de>>(
     if let Some(level) = EffortLevel::parse(&value) {
         return Ok(Some(level));
     }
-    let removed = removed_value_message(Surface::AgentOverlay, "effort", &value);
-    if removed.is_some() && read::removals_tolerated() {
-        return Ok(None);
-    }
-    Err(serde::de::Error::custom(removed.unwrap_or_else(|| {
-        format!(
-            "`effort` has invalid value `{value}`; allowed: {}",
-            EffortLevel::ALLOWED
-        )
-    })))
+    Err(serde::de::Error::custom(format!(
+        "`effort` has invalid value `{value}`; allowed: {}",
+        EffortLevel::ALLOWED
+    )))
 }
 
 fn overlay_approval<'de, D: serde::Deserializer<'de>>(
@@ -264,32 +239,32 @@ pub struct AgentOverlay {
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_allow: PermissionSet<NetworkHost>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
     #[serde(
         default,
         rename = "model-invocable",
+        alias = "model_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub model_invocable: Option<bool>,
     #[serde(
         default,
         rename = "user-invocable",
+        alias = "user_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
-    #[serde(
-        default,
-        deserialize_with = "overlay_tools",
-        skip_serializing_if = "ToolRuleMap::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "ToolRuleMap::is_empty")]
     pub tools: ToolRuleMap,
     #[serde(
         default,
@@ -307,12 +282,14 @@ pub struct SkillOverlay {
     #[serde(
         default,
         rename = "model-invocable",
+        alias = "model_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub model_invocable: Option<bool>,
     #[serde(
         default,
         rename = "user-invocable",
+        alias = "user_invocable",
         skip_serializing_if = "Option::is_none"
     )]
     pub user_invocable: Option<bool>,
@@ -373,12 +350,14 @@ pub struct LocalSettings {
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "Option::is_none"
     )]
     pub network_allow: Option<PermissionSet<NetworkHost>>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "Option::is_none"
     )]
     pub network_deny: Option<PermissionSet<NetworkHost>>,
@@ -445,12 +424,14 @@ pub struct Settings {
     #[serde(
         default,
         rename = "network-allow",
+        alias = "network_allow",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_allow: PermissionSet<NetworkHost>,
     #[serde(
         default,
         rename = "network-deny",
+        alias = "network_deny",
         skip_serializing_if = "PermissionSet::is_noop"
     )]
     pub network_deny: PermissionSet<NetworkHost>,
@@ -967,16 +948,7 @@ fn project_config_warnings(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    user.misplaced
-        .iter()
-        .cloned()
-        .map(|message| ProjectConfigWarning {
-            code: "ignored-user-setting",
-            message,
-        })
-        .chain(unknown_keys)
-        .chain(floors)
-        .collect()
+    unknown_keys.chain(floors).collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
@@ -994,32 +966,6 @@ pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, Ma
 }
 
 /// The user's `config.toml` layer (empty when the file is absent).
-/// The tool rules the files give: each agent's overlay and `[settings.tools]`, layered as the
-/// project is (user, then `mars.toml`, then `mars.local.toml`), from the text of each file. It
-/// ignores removed keys, so `mars migrate` can read a file before and after rewriting it.
-pub(crate) fn tool_rules_of(
-    user: Option<&str>,
-    project: Option<&str>,
-    local: Option<&str>,
-) -> Result<(IndexMap<String, AgentOverlay>, ToolRuleMap), MarsError> {
-    read::tolerating_removals(|| {
-        let config = match project {
-            Some(text) => parse_config(text, Path::new(CONFIG_FILE))?,
-            None => Config::default(),
-        };
-        let local = match local {
-            Some(text) => parse_local(text, Path::new(LOCAL_CONFIG_FILE), LOCAL_CONFIG_FILE)?,
-            None => LocalConfig::default(),
-        };
-        let user = match user {
-            Some(text) => parse_local(text, Path::new("config.toml"), "config.toml")?,
-            None => LocalConfig::default(),
-        };
-        let composed = layering::compose_layers(&config, &local, &user);
-        Ok((composed.agents, composed.settings.tools))
-    })
-}
-
 pub(crate) fn load_user_config() -> Result<UserConfig, MarsError> {
     user::load()
 }
@@ -1616,7 +1562,7 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn overlay_tools_table_reads_rules_and_names_each_removed_key() {
+    fn overlay_tools_table_reads_rules_and_refuses_a_list() {
         let file = Path::new("mars.toml");
         let config =
             parse_config("[agents.a.tools]\nweb = \"ask\"\n\"*\" = \"deny\"\n", file).unwrap();
@@ -1639,10 +1585,7 @@ override = { effort = "high" }
             )
             .unwrap_err()
             .to_string();
-            assert!(
-                error.contains(&format!("[agents.a.tools] `{key}` was removed")),
-                "{error}"
-            );
+            assert!(error.contains("wanted string or table"), "{error}");
         }
 
         for (source, expect) in [
@@ -1928,47 +1871,34 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn removed_keys_fail_every_surface_with_their_replacement() {
-        for (source, expect) in [
-            (
-                "[agents.a]\nautocompact = 50\n",
-                "`autocompact` was removed; configure compaction",
-            ),
-            (
-                "[agents.a]\nmodel_invocable = false\n",
-                "use `model-invocable`",
-            ),
-            (
-                "[agents.a]\nnetwork_deny = ['x.test']\n",
-                "use `network-deny`",
-            ),
-            (
-                "[skills.s]\nuser_invocable = true\n",
-                "use `user-invocable`",
-            ),
-            (
-                "[skills.s.tools]\nallowed = ['x']\n",
-                "[skills.s] `tools` was removed",
-            ),
-            (
-                "[settings]\nnetwork_allow = ['x.test']\n",
-                "use `network-allow`",
-            ),
-            (
-                "[settings.meridian.agent_copy]\nfanout_agents = ['a']\n",
-                "use `[settings.meridian.fanout].agents`",
-            ),
-        ] {
-            let error = parse_config(source, Path::new("mars.toml"))
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains(expect), "{source}: {error}");
-            // The local file reads the same table.
-            let error = parse_local(source, Path::new("mars.local.toml"), "mars.local.toml")
-                .unwrap_err()
-                .to_string();
-            assert!(error.contains(expect), "{source}: {error}");
-        }
+    fn underscore_spellings_load_and_gone_keys_are_unread() {
+        let config = parse_config(
+            "[agents.a]\nmodel_invocable = false\nnetwork_deny = ['x.test']\nautocompact = 50\n\
+             [skills.s]\nuser_invocable = true\n[settings]\nnetwork_allow = ['y.test']\n\
+             [settings.meridian.agent_copy]\nfanout_agents = ['a']\n",
+            Path::new("mars.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.agents["a"].model_invocable, Some(false));
+        assert!(!config.agents["a"].network_deny.is_noop());
+        assert_eq!(config.skills["s"].user_invocable, Some(true));
+        assert!(!config.settings.network_allow.is_noop());
+        let unread = config.unknown_keys.join("\n");
+        assert!(
+            unread.contains("[agents.a] unknown key `autocompact`"),
+            "{unread}"
+        );
+        assert!(unread.contains("fanout_agents"), "{unread}");
+        assert_eq!(config.unknown_keys.len(), 2, "{unread}");
+
+        let local = parse_local(
+            "[settings]\nnetwork_deny = ['x.test']\n",
+            Path::new("mars.local.toml"),
+            "mars.local.toml",
+        )
+        .unwrap();
+        assert!(local.unknown_keys.is_empty());
+        assert!(local.settings.network_deny.is_some());
     }
 
     #[test]

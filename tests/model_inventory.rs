@@ -256,7 +256,7 @@ fn declared_uninstalled_and_malformed_curated_are_visible() {
 }
 
 #[test]
-fn removed_flags_and_visibility_config_report_migration() {
+fn removed_flags_report_migration_and_visibility_config_is_unread() {
     let server = MockServer::start();
     let (temp, root) = setup_project(&server);
     for flag in [
@@ -316,16 +316,10 @@ fn removed_flags_and_visibility_config_report_migration() {
             .args(["--json", "models", "aliases", "--no-refresh-models"])
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(2));
+        // The table is not read, so the command gets as far as the empty cache.
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         let msg = value["error"]["message"].as_str().unwrap();
-        assert!(msg.contains(name), "{msg}");
-        if name == "mars.toml" {
-            assert!(msg.contains("include = \"gpt-*\" → [[show]]"), "{msg}");
-            assert!(!msg.contains("[[hide]]"), "{msg}");
-        } else {
-            assert!(msg.contains("providers = \"openai\" → [[show]]"), "{msg}");
-        }
+        assert!(msg.contains("models cache is empty"), "{name}: {msg}");
         fs::write(&path, "[settings]\n").unwrap();
     }
 }

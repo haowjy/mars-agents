@@ -59,7 +59,11 @@ pub const LOWERED_KEYS: &[&str] = &[
 
 /// The keys that carry a skill's tool policy.
 pub(crate) fn tool_keys() -> impl Iterator<Item = &'static str> {
-    crate::upgrade::PRE_V1.skill_tool_keys.iter().copied()
+    crate::upgrade::PRE_V1
+        .skill_tool_keys
+        .iter()
+        .copied()
+        .chain(crate::tool_policy::DISALLOWED_SPELLINGS)
 }
 
 pub(crate) fn read_fields(

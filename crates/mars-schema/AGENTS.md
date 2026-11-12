@@ -83,9 +83,13 @@ A value of a key Mars reads stays closed: an unknown value is an error listing w
 
 The only code that names an old key is a translator from another format. `upgrade::PRE_V1` is
 the pre-v1 Mars grammar: every key and value the pre-v1 upgrade drops, renames, moves or
-rewrites. The upgrade functions iterate it and the strict readers ask it (`PreV1::key`,
-`PreV1::value`), so a file the upgrade would change is a file the reader refuses with
-`field.removed` and one text. It is an error and not an unread key because a schema 1 file in
+rewrites. The upgrade functions iterate it, `mars migrate` runs the same conversion on a schema 1 file
+(`migrate_definition`, limited to `PRE_V1`'s keys), and the strict readers ask it
+(`PreV1::key`, `PreV1::value`), so the file the reader refuses with `field.removed` and one
+text is the file `mars migrate` converts. The spellings of the Agent deny list come from
+`tool_policy::DISALLOWED_SPELLINGS`, which the translators read too. A row is a conversion; a
+key the upgrade only sets aside (`permission` as a map) is dropped with `field.restriction-lost`.
+`upgrade::tests` checks this against the list. It is an error and not an unread key because a schema 1 file in
 this format would lose a restriction silently (`disallowed-tools`, `network_deny`, a `permission`
 map); `read::installed` and `set_aside` key on that error, so a translated definition still
-records `field.restriction-lost`. A new key goes in `PRE_V1` only if the upgrade handles it.
+records `field.restriction-lost`. A new key goes in `PRE_V1` only as a conversion the upgrade performs, and `upgrade::tests` fails when a row is refused but not converted, or converted but not refused.

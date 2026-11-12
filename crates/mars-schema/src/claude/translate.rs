@@ -7,7 +7,6 @@ use crate::HarnessId;
 use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
 use crate::harness_overrides::move_harness_only_keys;
-use crate::invocability::find_invocability_field;
 use crate::item::DefinitionKind;
 use crate::lift::{claude_task_to_agent, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
@@ -121,17 +120,8 @@ fn lift_skill(
         );
     }
 
-    if find_invocability_field(fm, "model-invocable").is_none()
-        && let Some(disable) = fm.remove("disable-model-invocation")
-    {
-        changed = true;
-        if disable.as_bool() == Some(true) {
-            fm.insert("model-invocable", Value::Bool(false));
-        }
-    } else if fm.remove("disable-model-invocation").is_some() {
-        changed = true;
-    }
-    changed |= !remove_keys(fm, ["invocation", "allow_implicit_invocation"]).is_empty();
+    changed |= crate::upgrade::fold_disable_model_invocation(fm);
+    changed |= !remove_keys(fm, crate::upgrade::PRE_V1.skill_dropped.iter().copied()).is_empty();
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.
     if matches!(fm.get("metadata"), None | Some(Value::Mapping(_))) {
@@ -214,7 +204,7 @@ fn lift_agent(
 ) -> bool {
     let mut changed = false;
     let mut denied = Vec::new();
-    for key in ["disallowedTools", "disallowed-tools", "disallowed_tools"] {
+    for key in tool_policy::DISALLOWED_SPELLINGS {
         if let Some(value) = fm.remove(key) {
             changed = true;
             denied.extend(tool_policy::tool_entries(&value));

@@ -60,9 +60,9 @@ pub struct Config {
     pub agents: IndexMap<String, AgentOverlay>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub skills: IndexMap<String, SkillOverlay>,
-    /// A warning for each key of the file this Mars did not read, set when the file is read.
+    /// A note for each key of the file this Mars did not read, set when the file is read.
     #[serde(skip)]
-    pub(crate) unknown_keys: Vec<String>,
+    pub(crate) unknown_keys: Vec<Diagnostic>,
     /// The Mars the file's tool rules need, set when the file is read.
     #[serde(skip)]
     pub(crate) floor: Option<keys::Floor>,
@@ -321,7 +321,7 @@ pub struct LocalConfig {
     pub settings: LocalSettings,
     /// As in `Config`.
     #[serde(skip)]
-    pub(crate) unknown_keys: Vec<String>,
+    pub(crate) unknown_keys: Vec<Diagnostic>,
     /// The Mars the file's tool rules need, set when the file is read.
     #[serde(skip)]
     pub(crate) floor: Option<keys::Floor>,
@@ -628,7 +628,8 @@ pub struct EffectiveProjectConfig {
     pub target_source: targets::TargetSource,
     pub models: IndexMap<String, crate::models::ModelAlias>,
     pub agents: IndexMap<String, AgentOverlay>,
-    pub warnings: Vec<String>,
+    /// What the files hold that Mars noticed: unread keys (`Info`) and a missing version floor.
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -706,7 +707,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
     ] {
         for (name, dependency) in dependencies {
             for key in dependency.unknown.keys() {
-                unknown_keys.push(read::unknown_key_warning(
+                unknown_keys.push(read::unknown_key(
                     CONFIG_FILE,
                     &format!("{table}.{name}"),
                     key,
@@ -840,16 +841,8 @@ fn effective_project_config(
         target_source,
         models,
         agents,
-        warnings: project_config_warnings(config, local, user)
-            .into_iter()
-            .map(|warning| warning.message)
-            .collect(),
+        diagnostics: project_config_diagnostics(config, local, user),
     }
-}
-
-struct ProjectConfigWarning {
-    code: &'static str,
-    message: String,
 }
 
 /// `[settings.tools]` takes no `*`: it would turn every agent into an allowlist or sit ahead of
@@ -891,7 +884,7 @@ fn floor_warning(
     file: &str,
     floor: Option<&keys::Floor>,
     stated: Option<&str>,
-) -> Option<ProjectConfigWarning> {
+) -> Option<Diagnostic> {
     let floor = floor.filter(|floor| floor.since > keys::MIN_MARS_VERSION_SINCE)?;
     if mars_schema::package::requirement_has_floor(stated, &floor.since.version()) {
         return None;
@@ -900,8 +893,11 @@ fn floor_warning(
         Some(raw) => format!("`min_mars_version = \"{raw}\"` admits an older one"),
         None => "no `min_mars_version` says so".to_string(),
     };
-    Some(ProjectConfigWarning {
-        code: "min-mars-version-low",
+    Some(Diagnostic {
+        level: DiagnosticLevel::Warning,
+        code: "min-mars-version-low".into(),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
         message: format!(
             "{file}: {} needs Mars {}, but {stated_text}: write `min_mars_version = \"{}\"` under `[settings]` so a Mars that reads it stops instead of misreading the file (Mars before {} does not read it)",
             floor.at,
@@ -912,11 +908,11 @@ fn floor_warning(
     })
 }
 
-fn project_config_warnings(
+fn project_config_diagnostics(
     config: &Config,
     local: &LocalConfig,
     user: &UserConfig,
-) -> Vec<ProjectConfigWarning> {
+) -> Vec<Diagnostic> {
     let unknown_keys = [
         &user.local.unknown_keys,
         &config.unknown_keys,
@@ -924,10 +920,7 @@ fn project_config_warnings(
     ]
     .into_iter()
     .flatten()
-    .map(|message| ProjectConfigWarning {
-        code: "field.unknown",
-        message: message.clone(),
-    });
+    .cloned();
     let user_file = user.path.display().to_string();
     let floors = [
         (
@@ -998,16 +991,7 @@ pub fn merge_with_root(
     let layers = compose_layers(&config, &local, &user.local);
     let merged_settings = layers.settings;
     let mut dependencies = IndexMap::new();
-    let mut diagnostics = project_config_warnings(&config, &local, user)
-        .into_iter()
-        .map(|warning| Diagnostic {
-            level: DiagnosticLevel::Warning,
-            code: warning.code.into(),
-            message: warning.message,
-            context: None,
-            category: Some(DiagnosticCategory::Validation),
-        })
-        .collect::<Vec<_>>();
+    let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
     diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
@@ -1830,7 +1814,7 @@ override = { effort = "high" }
     }
 
     #[test]
-    fn unknown_keys_warn_with_file_table_and_key_and_stay_in_the_file() {
+    fn unknown_keys_note_file_table_and_key_and_stay_in_the_file() {
         let dir = TempDir::new().unwrap();
         let project = "[futuretable]\n[settings]\nnetwork_access = 'deny'\n[agents.coder]\nmodle = 'x'\n[[agents.coder.model-policies]]\nmatch = { alias = 'a' }\nbogus = 1\n[dependencies.d]\npath = '../d'\ncolour = 'red'\n";
         std::fs::write(dir.path().join("mars.toml"), project).unwrap();
@@ -1841,7 +1825,18 @@ override = { effort = "high" }
         .unwrap();
 
         let effective = load_effective_project_config(dir.path()).unwrap();
-        let warnings = effective.warnings.join("\n");
+        assert!(
+            effective
+                .diagnostics
+                .iter()
+                .all(|note| note.level == DiagnosticLevel::Info && !note.shown(false))
+        );
+        let warnings = effective
+            .diagnostics
+            .iter()
+            .map(|note| note.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         for (file, table, key) in [
             ("mars.toml", "", "futuretable"),
             ("mars.toml", "[settings] ", "network_access"),
@@ -1857,7 +1852,7 @@ override = { effort = "high" }
                 "missing {file} {table}{key}: {warnings}"
             );
         }
-        assert_eq!(effective.warnings.len(), 6, "{warnings}");
+        assert_eq!(effective.diagnostics.len(), 6, "{warnings}");
 
         // Saving changes only what the command changed.
         let (mut config, _) = load_config_with_local(dir.path()).unwrap();
@@ -1883,7 +1878,12 @@ override = { effort = "high" }
         assert!(!config.agents["a"].network_deny.is_noop());
         assert_eq!(config.skills["s"].user_invocable, Some(true));
         assert!(!config.settings.network_allow.is_noop());
-        let unread = config.unknown_keys.join("\n");
+        let unread = config
+            .unknown_keys
+            .iter()
+            .map(|note| note.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
             unread.contains("[agents.a] unknown key `autocompact`"),
             "{unread}"

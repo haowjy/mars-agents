@@ -64,7 +64,7 @@ impl SchemaDiagnostic {
 }
 
 /// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when the key table removes it on `surface`, else `field.unknown` (a warning). An
+/// error) when the key table removes it on `surface`, else `field.unknown` (an `Info`). An
 /// unknown key stays in the authored file and reaches no native file.
 pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnostic {
     match keys::removed_key(surface, key) {
@@ -74,13 +74,20 @@ pub(crate) fn unrecognized_field(surface: Surface, key: &str) -> SchemaDiagnosti
             key_path(key),
             format!("`{key}` was removed; {}", removal.advice),
         ),
-        None => SchemaDiagnostic::new(
-            "field.unknown",
-            Severity::Warning,
-            key_path(key),
-            unknown_key_message("", key),
-        ),
+        None => unknown_field(key_path(key), "", key),
     }
+}
+
+/// A key a reader has no field for. Nothing is lost by ignoring it and it may be intended
+/// (a typo, or a key from a newer Mars), so it is `Info`: `validate`, `check` and `--verbose`
+/// show it. `table` is as in [`unknown_key_message`].
+pub(crate) fn unknown_field(path: Vec<PathSegment>, table: &str, key: &str) -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "field.unknown",
+        Severity::Info,
+        path,
+        unknown_key_message(table, key),
+    )
 }
 
 /// The one warning for a key that a project, package or user config file carries and this Mars

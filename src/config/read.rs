@@ -10,14 +10,15 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde_ignored::Path as IgnoredPath;
 
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
 use mars_schema::keys;
 
-/// A file read: the value, one warning for each key Mars did not read, and the Mars its tool
+/// A file read: the value, one `Info` for each key Mars did not read, and the Mars its tool
 /// rules need.
 pub(super) struct Read<T> {
     pub(super) value: T,
-    pub(super) unknown_keys: Vec<String>,
+    pub(super) unknown_keys: Vec<Diagnostic>,
     pub(super) floor: Option<keys::Floor>,
 }
 
@@ -49,7 +50,7 @@ pub(super) fn read<T: DeserializeOwned>(
         {
             continue;
         }
-        unknown_keys.push(unknown_key_warning(file, &table_name(&at), &key));
+        unknown_keys.push(unknown_key(file, &table_name(&at), &key));
     }
     let floor = content
         .parse::<toml::Table>()
@@ -62,11 +63,19 @@ pub(super) fn read<T: DeserializeOwned>(
     })
 }
 
-pub(super) fn unknown_key_warning(file: &str, table: &str, key: &str) -> String {
-    format!(
-        "{file}: {}",
-        mars_schema::diagnostic::unknown_key_message(table, key)
-    )
+/// A key of a consumer config file that Mars has no field for: nothing is lost and it may be
+/// intended, so `validate`, `check` and `--verbose` show it and a sync does not.
+pub(super) fn unknown_key(file: &str, table: &str, key: &str) -> Diagnostic {
+    Diagnostic {
+        level: DiagnosticLevel::Info,
+        code: "field.unknown".into(),
+        message: format!(
+            "{file}: {}",
+            mars_schema::diagnostic::unknown_key_message(table, key)
+        ),
+        context: None,
+        category: Some(DiagnosticCategory::Validation),
+    }
 }
 
 fn segments(at: &IgnoredPath<'_>) -> Vec<Segment> {

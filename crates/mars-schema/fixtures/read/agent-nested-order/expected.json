@@ -102,7 +102,7 @@
   "diagnostics": [
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "z"
       ],
@@ -110,7 +110,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "x-last"
       ],

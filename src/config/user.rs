@@ -50,7 +50,7 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
         if present {
             local
                 .unknown_keys
-                .push(super::read::unknown_key_warning(&file, table, key));
+                .push(super::read::unknown_key(&file, table, key));
         }
     }
     Ok(UserConfig { path, local })

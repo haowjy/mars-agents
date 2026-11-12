@@ -61,7 +61,7 @@
           },
           {
             "code": "field.unknown",
-            "severity": "warning",
+            "severity": "info",
             "path": [
               "future"
             ],

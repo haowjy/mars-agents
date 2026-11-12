@@ -239,7 +239,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         output::print_json(&result);
     } else {
         if let Some(report) = &plugin_report {
-            output::print_diagnostics(&report.diagnostics);
+            output::print_diagnostics(&report.diagnostics, false);
         }
         if let (Some(floor), Some(requirement)) = (&raised_floor, &requires_mars) {
             output::print_info(&format!(

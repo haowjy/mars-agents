@@ -110,11 +110,10 @@ fn read_package(
                 format!("`package.{key}` was removed; {}", removal.advice),
             ));
         } else if !known.contains(&key.as_str()) {
-            diagnostics.push(SchemaDiagnostic::new(
-                "field.unknown",
-                Severity::Warning,
+            diagnostics.push(crate::diagnostic::unknown_field(
                 child_path("package", key),
-                crate::diagnostic::unknown_key_message("package", key),
+                "package",
+                key,
             ));
         }
     }

@@ -405,14 +405,10 @@ fn parse_model_policies(
             let mut path = crate::diagnostic::key_path("model-policies");
             path.push(crate::diagnostic::PathSegment::Index(index));
             path.push(crate::diagnostic::PathSegment::Key(unknown.clone()));
-            diags.push(crate::diagnostic::SchemaDiagnostic::new(
-                "field.unknown",
-                crate::diagnostic::Severity::Warning,
+            diags.push(crate::diagnostic::unknown_field(
                 path,
-                crate::diagnostic::unknown_key_message(
-                    &format!("model-policies[{index}]"),
-                    &unknown,
-                ),
+                &format!("model-policies[{index}]"),
+                &unknown,
             ));
         }
         match reading.rule {

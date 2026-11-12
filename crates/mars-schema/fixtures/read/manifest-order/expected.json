@@ -50,7 +50,7 @@
   "diagnostics": [
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "__proto__"
@@ -59,7 +59,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "alpha"
@@ -68,7 +68,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "big"
@@ -77,7 +77,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "meta"
@@ -86,7 +86,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "nan-value"
@@ -95,7 +95,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "table"
@@ -104,7 +104,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "when"
@@ -113,7 +113,7 @@
     },
     {
       "code": "field.unknown",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "zeta"

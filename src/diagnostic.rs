@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::compiler::lossiness::{LossRecord, LossyField};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
     /// Machine-readable code, e.g. "shadow-collision", "manifest-path-dep". A schema
@@ -21,6 +21,43 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// A `Warning` with no category: the form of a problem found by code that reports strings.
+    pub(crate) fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Warning,
+            code: code.into(),
+            message: message.into(),
+            context: None,
+            category: None,
+        }
+    }
+
+    /// A schema diagnostic at the level its reader gave it, under the caller's message.
+    pub(crate) fn from_schema(
+        diagnostic: &mars_schema::diagnostic::SchemaDiagnostic,
+        message: String,
+    ) -> Self {
+        use mars_schema::diagnostic::Severity;
+        Self {
+            level: match diagnostic.severity {
+                Severity::Error => DiagnosticLevel::Error,
+                Severity::Warning => DiagnosticLevel::Warning,
+                Severity::Info => DiagnosticLevel::Info,
+            },
+            code: diagnostic.code.clone().into(),
+            message,
+            context: None,
+            category: Some(DiagnosticCategory::Validation),
+        }
+    }
+
+    /// Whether a command prints this. `detail` is true for `validate`, `check` and `--verbose`:
+    /// the commands that were asked what Mars noticed. A command fails on any `Error`
+    /// (`fail_on_errors`); that and this are the whole policy.
+    pub fn shown(&self, detail: bool) -> bool {
+        self.level != DiagnosticLevel::Info || detail
+    }
+
     /// Whether this diagnostic means the sync may have fallen short of the state it wanted
     /// (a failed write, an edit left in place), so `already up to date` is not printed.
     /// Every warning counts unless it is advisory or lossiness.
@@ -33,11 +70,18 @@ impl Diagnostic {
     }
 }
 
+/// What the user loses if they ignore a diagnostic. The code that finds a problem states it;
+/// nothing downstream decides again whether the problem is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticLevel {
+    /// Mars cannot use this input, and the command fails.
     Error,
+    /// The user loses something: a restriction not applied, a file not written, an item not
+    /// installed.
     Warning,
+    /// Nothing is lost, and it may be intended (a key Mars does not read). Shown only when
+    /// asked: [`Diagnostic::shown`].
     Info,
 }
 
@@ -92,7 +136,7 @@ pub struct DiagnosticCollector {
     rerun_verbose: &'static str,
     /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
     lossy_records: Vec<LossRecord>,
-    /// Files that carry each repeated `field.unknown` warning, by the warning's own text.
+    /// Files that carry each repeated `field.unknown` note, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
 
@@ -136,27 +180,27 @@ impl DiagnosticCollector {
         {
             return;
         }
-        if diagnostic.severity == Severity::Error && !errors_as_warnings {
+        if diagnostic.code == "field.unknown" {
+            self.note_unknown_field(code, &diagnostic.message, context);
+        } else if diagnostic.severity == Severity::Error && !errors_as_warnings {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
         } else if diagnostic.severity == Severity::Info {
             self.info(code, message);
-        } else if diagnostic.code == "field.unknown" {
-            self.warn_unknown_field(code, &diagnostic.message, context);
         } else {
             self.warn_advisory(code, message);
         }
     }
 
-    /// One warning per unknown field name, listing every file that carries it: the first file
-    /// is reported as an ordinary warning, and each further one extends the same warning.
-    fn warn_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
+    /// One note per unknown field name, listing every file that carries it: the first file
+    /// is reported as an ordinary note, and each further one extends the same note.
+    fn note_unknown_field(&mut self, code: Cow<'static, str>, text: &str, context: &str) {
         let sites = self.unknown_field_sites.entry(text.to_owned()).or_default();
         if sites.iter().any(|site| site == context) {
             return;
         }
         sites.push(context.to_owned());
         if sites.len() == 1 {
-            self.warn_advisory(code.clone(), format!("{context}: {text}"));
+            self.info(code.clone(), format!("{context}: {text}"));
             return;
         }
         let message = format!("{text} (in {} files: {})", sites.len(), sites.join(", "));

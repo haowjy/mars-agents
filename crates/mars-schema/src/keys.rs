@@ -321,7 +321,7 @@ pub static REMOVED: &[Removed] = &[
     removed(
         "mcp",
         &[AgentOverlayTools],
-        "write an MCP grant as a rule: `\"mcp(server)\" = \"allow\"`",
+        "`mars migrate` does not rewrite this list; write each server as a rule entry, `\"mcp(server)\" = \"allow\"`, `\"ask\"` or `\"deny\"`, as you want it",
         Rewrite::None,
     ),
     // The lists `mars migrate` rewrites into rule entries; what it cannot rewrite it says.

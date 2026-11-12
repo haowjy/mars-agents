@@ -25,13 +25,18 @@ thread_local! {
     static REMOVED_KEYS_TOLERATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Run `f` with the readers ignoring removed keys, as they ignore any key they have no field
-/// for. `mars migrate` reads files that still hold them: it is the command that removes them.
-pub(crate) fn tolerating_removed_keys<R>(f: impl FnOnce() -> R) -> R {
+/// Run `f` with the readers ignoring removed keys and removed values, as they ignore any key
+/// they have no field for. `mars migrate` reads files that still hold them: it is the command
+/// that removes them.
+pub(crate) fn tolerating_removals<R>(f: impl FnOnce() -> R) -> R {
     let before = REMOVED_KEYS_TOLERATED.replace(true);
     let result = f();
     REMOVED_KEYS_TOLERATED.set(before);
     result
+}
+
+pub(super) fn removals_tolerated() -> bool {
+    REMOVED_KEYS_TOLERATED.get()
 }
 
 pub(super) enum Segment {
@@ -82,7 +87,7 @@ pub(super) fn read<T: DeserializeOwned>(
             None => unknown_keys.push(unknown_key_warning(file, &table, &key)),
         }
     }
-    if !removed.is_empty() && !REMOVED_KEYS_TOLERATED.get() {
+    if !removed.is_empty() && !removals_tolerated() {
         return Err(ConfigError::Invalid {
             message: removed.join("\n"),
         }

@@ -24,7 +24,7 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 
 pub mod layering;
 pub mod migrations;
-pub(crate) use read::tolerating_removed_keys;
+pub(crate) use read::tolerating_removals;
 mod read;
 pub mod routing_settings;
 mod save;
@@ -172,11 +172,15 @@ fn overlay_value<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value = Option::<String>::deserialize(deserializer)?;
     match value {
-        Some(value) if !valid(&value) => Err(serde::de::Error::custom(
-            removed_value_message(Surface::AgentOverlay, key, &value).unwrap_or_else(|| {
+        Some(value) if !valid(&value) => {
+            let removed = removed_value_message(Surface::AgentOverlay, key, &value);
+            if removed.is_some() && read::removals_tolerated() {
+                return Ok(None);
+            }
+            Err(serde::de::Error::custom(removed.unwrap_or_else(|| {
                 format!("`{key}` has invalid value `{value}`; allowed: {allowed}")
-            }),
-        )),
+            })))
+        }
         value => Ok(value),
     }
 }
@@ -189,16 +193,19 @@ fn overlay_effort<'de, D: serde::Deserializer<'de>>(
     let Some(value) = Option::<String>::deserialize(deserializer)? else {
         return Ok(None);
     };
-    EffortLevel::parse(&value).map(Some).ok_or_else(|| {
-        serde::de::Error::custom(
-            removed_value_message(Surface::AgentOverlay, "effort", &value).unwrap_or_else(|| {
-                format!(
-                    "`effort` has invalid value `{value}`; allowed: {}",
-                    EffortLevel::ALLOWED
-                )
-            }),
+    if let Some(level) = EffortLevel::parse(&value) {
+        return Ok(Some(level));
+    }
+    let removed = removed_value_message(Surface::AgentOverlay, "effort", &value);
+    if removed.is_some() && read::removals_tolerated() {
+        return Ok(None);
+    }
+    Err(serde::de::Error::custom(removed.unwrap_or_else(|| {
+        format!(
+            "`effort` has invalid value `{value}`; allowed: {}",
+            EffortLevel::ALLOWED
         )
-    })
+    })))
 }
 
 fn overlay_approval<'de, D: serde::Deserializer<'de>>(
@@ -995,7 +1002,7 @@ pub(crate) fn tool_rules_of(
     project: Option<&str>,
     local: Option<&str>,
 ) -> Result<(IndexMap<String, AgentOverlay>, ToolRuleMap), MarsError> {
-    read::tolerating_removed_keys(|| {
+    read::tolerating_removals(|| {
         let config = match project {
             Some(text) => parse_config(text, Path::new(CONFIG_FILE))?,
             None => Config::default(),

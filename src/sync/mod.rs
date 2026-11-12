@@ -209,7 +209,7 @@ pub(crate) fn execute_validation(
 
 /// Each agent's own tool rules as a sync of the project would install them, read from the
 /// project's files and dependencies without the project's `.mars/` and without the consumer's
-/// overlays and `[settings.tools]`. Nothing is written. Removed keys in the consumer files are
+/// overlays and `[settings.tools]`. Nothing is written. Removed keys and values in the consumer files are
 /// ignored: `mars migrate` asks before it has rewritten them.
 pub(crate) fn resolved_agent_tools(
     ctx: &MarsContext,
@@ -225,7 +225,7 @@ pub(crate) fn resolved_agent_tools(
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
     let mut diag = DiagnosticCollector::new();
-    let targeted = crate::config::tolerating_removed_keys(|| {
+    let targeted = crate::config::tolerating_removals(|| {
         let ir = crate::reader::read(ctx, &request, &mut diag, false)?;
         build_target(ctx, ir.resolved, ir.local_items, &request, &mut diag)
     })?;

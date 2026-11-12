@@ -258,14 +258,13 @@ fn widened(
                 .filter(|rule| rule.render() == key)
                 .map(|rule| rule.action)
                 .max_by_key(|action| action.strictness());
-            if now.is_some_and(|now| now.strictness() < was.strictness()) {
-                let now = now.expect("checked above");
+            if now.is_none_or(|now| now.strictness() < was.strictness()) {
+                let now = now.map_or("no rule", ToolAction::as_str);
                 widened.insert(
                     agent.clone(),
                     format!(
-                        "it would loosen `{key}` from `{}` to `{}`: a rule entry in a higher layer replaces the rule the list becomes. Write the rule you want by hand",
+                        "it would loosen `{key}` from `{}` to `{now}`: a rule entry in a higher layer replaces the rule the list becomes. Write the rule you want by hand",
                         was.as_str(),
-                        now.as_str()
                     ),
                 );
                 break;
@@ -712,5 +711,13 @@ fn apply(doc: &mut DocumentMut, agent: &str, list_name: &str, rules: &[(String, 
                 tools.insert(name, value(*action));
             }
         }
+    }
+    if tools.is_empty()
+        && let Some(agent) = doc
+            .get_mut("agents")
+            .and_then(|agents| agents.get_mut(agent))
+            .and_then(Item::as_table_like_mut)
+    {
+        agent.remove("tools");
     }
 }

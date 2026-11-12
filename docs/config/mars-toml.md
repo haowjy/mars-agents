@@ -520,6 +520,11 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
     `--verbose` lists it. Native `.claude` and `.opencode` files carry every deny
     (scoped ones included), and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
     launches through Meridian.
+  - A restriction every agent must keep belongs here and not in `opencode.json`: an OpenCode
+    agent file's rules come after `opencode.json` in OpenCode's order, so an agent that carries
+    an allow or `ask` rule decides the tools it names itself (`*` rules, every tool). `mars sync`
+    prints one line when the project's `opencode.json` has a `permission` key and such an agent
+    exists; see [the OpenCode agent file](agent-compilation.md#opencodeagentsnamemd).
   - `mars check`, `mars init` and the plugin build never apply these rules, since they preview
     or build a package for other projects.
 

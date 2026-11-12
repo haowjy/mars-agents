@@ -1,5 +1,5 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
-use crate::compiler::agents::opencode_permission::{self, ActionRules};
+use crate::compiler::agents::opencode_permission;
 use crate::compiler::agents::tool_loss::{self, Allowlist, Carries, DenyCarry};
 use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
@@ -28,6 +28,7 @@ use crate::compiler::tool_policy::{RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
+use mars_schema::ordered::OrderedValue;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
 
@@ -311,7 +312,7 @@ fn native_overrides<'a>(
     present: impl Fn(&str) -> bool,
     target: &str,
     lossy: &mut Vec<LossyField>,
-) -> Vec<(&'a str, serde_json::Value)> {
+) -> Vec<(&'a str, &'a OrderedValue)> {
     let Some(block) = profile.harness_overrides.get(&harness) else {
         return Vec::new();
     };
@@ -330,7 +331,7 @@ fn native_overrides<'a>(
                 },
             });
         } else {
-            allowed.push((key.as_str(), value.to_json()));
+            allowed.push((key.as_str(), value));
         }
     }
     allowed
@@ -355,8 +356,8 @@ struct AgentLoweringCtx<'a> {
     yaml: serde_yaml::Mapping,
     lossy: Vec<LossyField>,
     project_losses: Vec<ProjectLoss>,
-    /// The `permission` entries, for a target that writes them.
-    permission: Vec<ActionRules>,
+    /// Whether the target writes a `permission` map built from the tool rules and the override.
+    writes_permission_map: bool,
 }
 
 impl<'a> AgentLoweringCtx<'a> {
@@ -380,7 +381,7 @@ impl<'a> AgentLoweringCtx<'a> {
             yaml: serde_yaml::Mapping::new(),
             lossy: Vec::new(),
             project_losses: Vec::new(),
-            permission: Vec::new(),
+            writes_permission_map: false,
         }
     }
 
@@ -499,16 +500,7 @@ impl<'a> AgentLoweringCtx<'a> {
                 self.lossy.extend(losses.agent);
                 self.project_losses.extend(losses.project);
             }
-            AgentLossinessStep::PermissionMap => {
-                self.permission = opencode_permission::rules(self.eff.tools);
-                if opencode_permission::overrides_env_ask(&self.permission) {
-                    self.lossy.push(LossyField {
-                        field: "permission.read: allow also reads `.env` files, which OpenCode asks about by default".into(),
-                        target: self.target_name().into(),
-                        classification: Lossiness::Dropped(Lost::Tool),
-                    });
-                }
-            }
+            AgentLossinessStep::PermissionMap => self.writes_permission_map = true,
             AgentLossinessStep::EffortApproximate(note) => {
                 // `none` writes nothing for these harnesses, so there is nothing to approximate.
                 if self
@@ -589,24 +581,36 @@ impl<'a> AgentLoweringCtx<'a> {
             self.target_name(),
             &mut self.lossy,
         );
-        if !self.permission.is_empty() {
+        if self.writes_permission_map {
             let author = overrides
                 .iter()
                 .position(|(key, _)| *key == "permission")
                 .map(|at| overrides.remove(at).1);
-            let permission = opencode_permission::permission_map(
-                &self.permission,
+            let built = opencode_permission::build(
+                self.eff.tools,
                 author,
                 self.target_name(),
                 &mut self.lossy,
             );
-            self.yaml
-                .insert(yk("permission"), serde_yaml::Value::Mapping(permission));
+            if !built.map.is_empty() {
+                self.yaml
+                    .insert(yk("permission"), serde_yaml::Value::Mapping(built.map));
+            }
+            if built.non_deny {
+                self.project_losses.push(ProjectLoss {
+                    key: opencode_permission::OUTSIDE_RULES_KEY.into(),
+                    field: LossyField {
+                        field: opencode_permission::OUTSIDE_RULES_NOTE.into(),
+                        target: self.target_name().into(),
+                        classification: Lossiness::Dropped(Lost::Policy),
+                    },
+                });
+            }
         }
         for (key, value) in overrides {
             self.yaml.insert(
                 yk(key),
-                serde_yaml::to_value(value).expect("override value should serialize"),
+                serde_yaml::to_value(value.to_json()).expect("override value should serialize"),
             );
         }
         LoweredOutput {
@@ -930,7 +934,8 @@ pub fn lower_to_codex(
         let table = overrides
             .into_iter()
             .map(|(key, value)| {
-                let value = toml::Value::try_from(value).expect("override value should be TOML");
+                let value =
+                    toml::Value::try_from(value.to_json()).expect("override value should be TOML");
                 (key.to_owned(), value)
             })
             .collect::<toml::Table>();

@@ -6,11 +6,13 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
+use crate::compiler::agents::opencode_permission;
 use crate::compiler::tool_policy::{
     NativeStatus, RuleKind, ToolPolicyRuntime, project_platform_capability,
 };
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
+use mars_schema::HarnessId;
 use mars_schema::tool_policy::ToolAction;
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
@@ -242,7 +244,7 @@ pub(crate) fn load_effective_project_config_or_default(
 /// `warnings[]` at every launch, so a rule Mars cannot name or enforce goes out with
 /// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
 /// author hears about a typo.
-fn resolve_bundle_tools(
+pub(crate) fn resolve_bundle_tools(
     profile: &mars_schema::agent::AgentProfile,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
@@ -295,6 +297,16 @@ fn resolve_bundle_tools(
         allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
+        opencode_permission: (descriptor.kind == HarnessId::OpenCode).then(|| {
+            // The notes about what the file cannot hold are for `mars sync`, not a launch.
+            opencode_permission::build(
+                &profile.tools,
+                opencode_permission::author_override(profile),
+                "opencode",
+                &mut Vec::new(),
+            )
+            .rules
+        }),
     })
 }
 

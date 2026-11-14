@@ -1,0 +1,68 @@
+{
+  "host": "claude",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "bash",
+        "pattern": "git *",
+        "action": "ask",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "Bash(git *)"
+      ],
+      "native_tools": [
+        "Bash"
+      ],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "bash",
+        "pattern": "git push *",
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "Bash(git push *)"
+      ],
+      "native_tools": [
+        "Bash"
+      ],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "write",
+        "pattern": null,
+        "action": "deny",
+        "origin": "package"
+      },
+      "status": "known",
+      "native": [
+        "Write"
+      ],
+      "native_tools": [
+        "Write"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [
+    "Bash(git push *)",
+    "Write"
+  ],
+  "ask": [
+    "Bash(git *)"
+  ],
+  "available": [
+    "Bash(git *)"
+  ]
+}

@@ -21,6 +21,8 @@ struct RuleInput {
     capability: String,
     pattern: Option<String>,
     action: ToolAction,
+    #[serde(default)]
+    origin: mars_schema::tool_policy::RuleOrigin,
 }
 
 #[test]
@@ -35,6 +37,7 @@ fn project_fixtures_match() {
                 .map(|rule| {
                     ToolRule::from_wire(&rule.capability, rule.pattern.as_deref(), rule.action)
                         .unwrap()
+                        .with_origin(rule.origin)
                 })
                 .collect(),
         };

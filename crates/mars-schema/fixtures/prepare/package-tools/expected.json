@@ -1,0 +1,213 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "p"
+        ],
+        [
+          "version",
+          "0.1.0"
+        ],
+        [
+          "schema",
+          1
+        ],
+        [
+          "tools",
+          {
+            "write": "deny",
+            "bash(git *)": "ask",
+            "read": "deny",
+            "bash(rm:*)": "deny"
+          }
+        ]
+      ],
+      "fields": {
+        "name": "p",
+        "version": "0.1.0",
+        "schema": 1,
+        "tools": {
+          "bash(git *)": "ask",
+          "bash(rm:*)": "deny",
+          "read": "deny",
+          "write": "deny"
+        }
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "a",
+      "source_path": "agents/a.md",
+      "output_path": "agents/a.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "A"
+          ],
+          [
+            "tools",
+            {
+              "read": "allow",
+              "bash(rm *)": "allow"
+            }
+          ]
+        ],
+        "fields": {
+          "name": "A",
+          "description": null,
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "read",
+              "pattern": null,
+              "action": "allow",
+              "origin": "profile"
+            },
+            {
+              "capability": "bash",
+              "pattern": "rm *",
+              "action": "allow",
+              "origin": "profile"
+            },
+            {
+              "capability": "bash",
+              "pattern": "git *",
+              "action": "ask",
+              "origin": "package"
+            },
+            {
+              "capability": "write",
+              "pattern": null,
+              "action": "deny",
+              "origin": "package"
+            }
+          ],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    },
+    {
+      "kind": "agent",
+      "slug": "b",
+      "source_path": "agents/b.md",
+      "output_path": "agents/b.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "B"
+          ]
+        ],
+        "fields": {
+          "name": "B",
+          "description": null,
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [
+            {
+              "capability": "bash",
+              "pattern": "git *",
+              "action": "ask",
+              "origin": "package"
+            },
+            {
+              "capability": "bash",
+              "pattern": "rm *",
+              "action": "deny",
+              "origin": "package"
+            },
+            {
+              "capability": "read",
+              "pattern": null,
+              "action": "deny",
+              "origin": "package"
+            },
+            {
+              "capability": "write",
+              "pattern": null,
+              "action": "deny",
+              "origin": "package"
+            }
+          ],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "body\n",
+        "diagnostics": []
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "a",
+        "output_path": "agents/a.md",
+        "skills": []
+      },
+      {
+        "kind": "agent",
+        "slug": "b",
+        "output_path": "agents/b.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {}
+}

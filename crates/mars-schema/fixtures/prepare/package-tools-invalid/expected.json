@@ -1,0 +1,112 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "p"
+        ],
+        [
+          "version",
+          "0.1.0"
+        ],
+        [
+          "schema",
+          1
+        ],
+        [
+          "tools",
+          {
+            "write": "deny",
+            "read": "maybe"
+          }
+        ]
+      ],
+      "fields": null,
+      "body": null,
+      "diagnostics": [
+        {
+          "code": "manifest.invalid-field",
+          "severity": "error",
+          "path": [
+            "package"
+          ],
+          "message": "invalid package field: unknown variant `maybe`, expected one of `allow`, `deny`, `ask`\nin `tools.read`\n"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "b",
+      "source_path": "agents/b.md",
+      "output_path": "agents/b.md",
+      "reading": {
+        "frontmatter": [
+          [
+            "name",
+            "B"
+          ]
+        ],
+        "fields": {
+          "name": "B",
+          "description": null,
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "body\n",
+        "diagnostics": [
+          {
+            "code": "package-tools.unreadable",
+            "severity": "error",
+            "path": [],
+            "message": "the package's mars.toml has an error, so its `[package.tools]` rules cannot be added and `mars sync` refuses the package: invalid package field: unknown variant `maybe`, expected one of `allow`, `deny`, `ask`\nin `tools.read`\n"
+          }
+        ]
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "b",
+        "output_path": "agents/b.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {}
+}

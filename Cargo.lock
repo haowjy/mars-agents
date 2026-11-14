@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "mars-agents"
-version = "0.31.1"
+version = "0.32.0"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "mars-schema"
-version = "0.31.1"
+version = "0.32.0"
 dependencies = [
  "indexmap",
  "regex",
@@ -1368,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "mars-schema-wasm"
-version = "0.31.1"
+version = "0.32.0"
 dependencies = [
  "js-sys",
  "mars-schema",

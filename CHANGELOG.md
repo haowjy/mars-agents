@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-14
+
+### Added
+- `project(rules, host)` in `mars-schema` and `@meridian-flow/mars-schema`: lowers an Agent's tool rules onto a host (`claude`, `codex`, `pi`, `opencode`, `cursor` or `meridian-flow`) with the code `mars sync` uses, and reports the native names for allow, deny and ask, each rule's gap or stricter rule, whether a pattern can be scoped, and the `default` an unmatched tool gets from a `*` rule. On `meridian-flow` the tool set is closed: a tool Flow lacks (`bash`, `web_search`, MCP refs and so on) is `absent`, so `unknown` there means only a name Mars does not recognize. See [the package README](https://github.com/haowjy/mars-agents/blob/main/npm/@meridian-flow/mars-schema/README.md#project).
+
 ## [0.31.1] - 2026-11-12
 
 ### Added

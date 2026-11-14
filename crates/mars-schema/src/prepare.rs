@@ -13,6 +13,7 @@ use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_definition};
 use crate::selection::{Definition, Request, SelectionFacts};
+use crate::tool_policy::{RuleOrigin, ToolRule};
 use crate::tree::TreeSource;
 use crate::upgrade::{UpgradeError, UpgradeResult};
 
@@ -347,7 +348,12 @@ pub(crate) fn prepare_root(
         selected
             .iter()
             .map(|definition| {
-                prepare_definition(source, definition, shaping, &mut diagnostics, &mut changes)
+                let mut prepared =
+                    prepare_definition(source, definition, shaping, &mut diagnostics, &mut changes);
+                if let Some(manifest) = &manifest {
+                    add_package_tools(&mut prepared, &manifest.reading);
+                }
+                prepared
             })
             .collect::<Vec<_>>()
     } else {
@@ -410,6 +416,40 @@ pub(crate) fn prepare_root(
     Rooted {
         prepared,
         dispatched,
+    }
+}
+
+/// Add the package's `[package.tools]` rules to an Agent's reading, as `mars sync` writes them
+/// into the installed file (`package_tools::missing`). `normalized_bytes` stay the file's: the
+/// rules belong to the package, not to the authored profile.
+fn add_package_tools(
+    definition: &mut PreparedDefinition,
+    manifest: &crate::manifest::ManifestRead,
+) {
+    let Reading::Agent(read) = &mut definition.reading else {
+        return;
+    };
+    let (Some(package), Some(fields)) = (
+        manifest
+            .package
+            .fields
+            .as_ref()
+            .map(|package| &package.tools),
+        read.fields.as_mut(),
+    ) else {
+        return;
+    };
+    // The reading's own `frontmatter` is ordered JSON; the shared rule reads the YAML mapping.
+    let Some(profile) = std::str::from_utf8(&definition.normalized_bytes)
+        .ok()
+        .and_then(|text| Frontmatter::parse(text).ok())
+    else {
+        return;
+    };
+    for (name, action) in crate::package_tools::missing(&profile, package) {
+        fields.tools.push_unique(
+            ToolRule::from_parsed(name.parsed().clone(), action).with_origin(RuleOrigin::Package),
+        );
     }
 }
 

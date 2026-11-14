@@ -1,0 +1,10 @@
+[package]
+name = "p"
+version = "0.1.0"
+schema = 1
+
+[package.tools]
+write = "deny"
+"bash(git *)" = "ask"
+read = "deny"
+"bash(rm:*)" = "deny"

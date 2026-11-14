@@ -28,10 +28,11 @@ pub(crate) fn parse_agent_tool_rules(json: &str) -> Result<Vec<ToolRule>, MarsEr
         let origin = match value.get("origin").and_then(|origin| origin.as_str()) {
             Some("profile") => RuleOrigin::Profile,
             Some("overlay") => RuleOrigin::Overlay,
+            Some("package") => RuleOrigin::Package,
             Some("project") => continue,
             Some(other) => {
                 return Err(fail(format!(
-                    "`origin` must be `profile`, `overlay` or `project`, not `{other}`"
+                    "`origin` must be `profile`, `overlay`, `package` or `project`, not `{other}`"
                 )));
             }
             None => return Err(fail("`origin` must be a string".to_string())),

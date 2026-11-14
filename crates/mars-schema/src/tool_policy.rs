@@ -53,6 +53,8 @@ pub enum RuleOrigin {
     Overlay,
     /// `[settings.tools]`, which holds for every agent.
     Project,
+    /// `[package.tools]`, added to every Agent the package ships that does not name the key.
+    Package,
 }
 
 impl RuleOrigin {
@@ -61,6 +63,7 @@ impl RuleOrigin {
             Self::Profile => "profile",
             Self::Overlay => "overlay",
             Self::Project => "project",
+            Self::Package => "package",
         }
     }
 }

@@ -6,7 +6,6 @@
 
 use mars_schema::frontmatter;
 use mars_schema::item::ItemKind;
-use mars_schema::tool_names::OverlayToolName;
 use mars_schema::tool_rule_map::ToolRuleMap;
 use serde_yaml::{Mapping, Value};
 
@@ -72,29 +71,19 @@ fn fold_content(content: &str, package_tools: &ToolRuleMap) -> Option<String> {
     // An unreadable profile or a list-form `tools:` is reported where the profile is
     // compiled; the fold has nothing to add to it.
     let mut profile = frontmatter::parse(content).ok()?;
+    let missing = mars_schema::package_tools::missing(&profile, package_tools);
+    if missing.is_empty() {
+        return None;
+    }
     let mut tools = match profile.get("tools") {
-        None | Some(Value::Null) => Mapping::new(),
         Some(Value::Mapping(map)) => map.clone(),
-        Some(_) => return None,
+        _ => Mapping::new(),
     };
-    let own: Vec<OverlayToolName> = tools
-        .keys()
-        .filter_map(|key| key.as_str())
-        .filter_map(|key| OverlayToolName::try_from(key.to_owned()).ok())
-        .collect();
-    let mut added = false;
-    for (name, action) in package_tools.iter() {
-        if own.iter().any(|own| own.parsed() == name.parsed()) {
-            continue;
-        }
+    for (name, action) in missing {
         tools.insert(
             Value::String(String::from(name.clone())),
             Value::String(action.as_str().to_owned()),
         );
-        added = true;
-    }
-    if !added {
-        return None;
     }
     profile.insert("tools", Value::Mapping(tools));
     Some(profile.render())

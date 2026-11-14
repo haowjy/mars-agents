@@ -88,6 +88,12 @@ export interface ToolRule {
   capability: string;
   pattern: string | null;
   action: "allow" | "deny" | "ask";
+  /**
+   * Where the rule came from: `"profile"` (the Agent's own `tools`) or `"package"` (the package's
+   * `[package.tools]`, added by `prepare` to an Agent that does not name the key). `read` of one
+   * file reports only `"profile"`; the launch bundle also has `"overlay"` and `"project"`.
+   */
+  origin: "profile" | "package" | "overlay" | "project";
 }
 
 export interface ModelPolicyRule {
@@ -253,8 +259,8 @@ export type Host = Harness | "meridian-flow";
 
 /** One rule's lowering on a host. */
 export interface ProjectedRule {
-  /** The rule as given, in the shape `read` reports it (`origin` is `"profile"`). */
-  rule: ToolRule & { origin: string };
+  /** The rule as given, in the shape `read` reports it. `origin` is `"profile"`: `project` takes none. */
+  rule: ToolRule;
   /**
    * `known`: Mars names the tool; `absent`: the host has no such tool; `unknown`: Mars cannot
    * name it (the host has no switch for it, Mars has no row, or it is not a tool Mars knows),
@@ -287,12 +293,12 @@ export interface ToolProjection {
 }
 
 /**
- * Lower tool rules (an Agent's `tools` as `read` reports it) onto a host, the way `mars sync`
+ * Lower tool rules (an Agent's `tools` as `prepare` reports it) onto a host, the way `mars sync`
  * does for a harness. Throws `input.invalid` for an unknown host or a rule that does not parse.
  * A consumer must refuse a rule whose `status` is `unscopable` or `unknown` rather than read only
  * `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves `allow: ["read"]` granting every read.
  */
-export function project(rules: { capability: string; pattern: string | null; action: "allow" | "deny" | "ask" }[], host: Host): ToolProjection;
+export function project(rules: { /** A capability, or a whole key such as `bash(git *)` or `Bash(git push:*)` when `pattern` is absent. */ capability: string; pattern?: string | null; action: "allow" | "deny" | "ask" }[], host: Host): ToolProjection;
 
 // ---------------------------------------------------------------------------------------
 // prepare, inspect, normalize

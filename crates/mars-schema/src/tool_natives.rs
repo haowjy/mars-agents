@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::HarnessId;
+use crate::{HarnessId, Host};
 
 /// What a harness calls a capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,8 +60,8 @@ use Native::{Absent, NoSwitch, ScopedTools, Tools};
 type Table = &'static [(&'static str, Native)];
 
 /// The row for `capability` on `harness`, or `None` when Mars has no entry.
-pub fn lookup(capability: &str, harness: HarnessId) -> Option<Native> {
-    table(harness)
+pub fn lookup(capability: &str, host: impl Into<Host>) -> Option<Native> {
+    table(host.into())
         .iter()
         .find(|(name, _)| *name == capability)
         .map(|(_, native)| *native)
@@ -120,24 +120,24 @@ pub fn vocabulary() -> Vocabulary {
             .map(|(name, native)| (*name, NativeEntry::from(*native)))
             .collect()
     };
-    let mut natives: BTreeMap<_, _> = crate::harness::ALL
+    let natives = Host::ALL
         .iter()
         .map(|host| (host.as_str(), rows(table(*host))))
         .collect();
-    natives.insert("meridian-flow", rows(FLOW));
     Vocabulary {
         capabilities: crate::tool_names::capabilities(),
         natives,
     }
 }
 
-fn table(harness: HarnessId) -> Table {
-    match harness {
-        HarnessId::Claude => CLAUDE,
-        HarnessId::Codex => CODEX,
-        HarnessId::OpenCode => OPENCODE,
-        HarnessId::Pi => PI,
-        HarnessId::Cursor => CURSOR,
+fn table(host: Host) -> Table {
+    match host {
+        Host::Harness(HarnessId::Claude) => CLAUDE,
+        Host::Harness(HarnessId::Codex) => CODEX,
+        Host::Harness(HarnessId::OpenCode) => OPENCODE,
+        Host::Harness(HarnessId::Pi) => PI,
+        Host::Harness(HarnessId::Cursor) => CURSOR,
+        Host::MeridianFlow => FLOW,
     }
 }
 
@@ -438,9 +438,11 @@ const CURSOR: Table = &[
 ];
 
 /// Meridian Flow's own tools (mars-agents#207). Flow is a consumer, not a `HarnessId`, so
-/// its table is published in the vocabulary but never used to lower a native file. Flow's
+/// its table lowers a policy for Flow to read but never a native file. Flow's
 /// tool keeps the capability's name, `ask_user`; `ask` is only a tool-policy action word. Flow
-/// ships no `glob` tool yet, so `glob` is absent.
+/// ships no `glob` tool yet, so `glob` is absent. Flow's tool set is closed: every canonical
+/// capability has a row, `Absent` where Flow lacks the tool, so `unknown` on Flow only ever
+/// means a name Mars does not recognize.
 const FLOW: Table = &[
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),
@@ -461,6 +463,24 @@ const FLOW: Table = &[
         ]),
     ),
     ("work", Tools(&["work"])),
+    ("bash", Absent),
+    ("task", Absent),
+    ("workflow", Absent),
+    ("notebook", Absent),
+    ("web", Absent),
+    ("web_search", Absent),
+    ("web_fetch", Absent),
+    ("cron", Absent),
+    ("notifications", Absent),
+    ("plan_mode", Absent),
+    ("worktree", Absent),
+    ("lsp", Absent),
+    ("monitor", Absent),
+    ("send_user_file", Absent),
+    ("schedule_wakeup", Absent),
+    ("remote_trigger", Absent),
+    ("tool_search", Absent),
+    ("image", Absent),
 ];
 
 #[cfg(test)]
@@ -604,7 +624,7 @@ mod tests {
     fn every_native_name_and_native_tool_is_a_real_tool_of_its_harness() {
         for &harness in crate::harness::ALL {
             let real = real_tools(harness);
-            for (capability, native) in table(harness) {
+            for (capability, native) in table(Host::Harness(harness)) {
                 let lists: &[&[&str]] = match native {
                     Tools(names) => &[names],
                     ScopedTools {
@@ -678,7 +698,7 @@ mod tests {
     fn every_row_is_a_canonical_capability_named_once() {
         for &harness in crate::harness::ALL {
             let mut seen = std::collections::HashSet::new();
-            for (capability, _) in table(harness) {
+            for (capability, _) in table(Host::Harness(harness)) {
                 assert!(
                     crate::tool_names::is_canonical_capability(capability),
                     "{harness:?} has a row for `{capability}`, which is not a canonical capability"
@@ -688,6 +708,16 @@ mod tests {
                     "{harness:?} repeats `{capability}`"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn flow_answers_for_every_canonical_capability() {
+        for capability in crate::tool_names::canonical_capabilities() {
+            assert!(
+                lookup(capability, Host::MeridianFlow).is_some(),
+                "Flow has no row for `{capability}`"
+            );
         }
     }
 

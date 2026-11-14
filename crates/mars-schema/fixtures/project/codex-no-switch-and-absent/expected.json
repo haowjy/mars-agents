@@ -1,0 +1,49 @@
+{
+  "host": "codex",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "read",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "unknown",
+      "native": [],
+      "native_tools": [],
+      "note": "codex reads files through its shell; no switch",
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "web_fetch",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "unknown",
+      "native": [],
+      "native_tools": [],
+      "note": "codex opens pages through hosted web_search; no separate switch",
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "notebook",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "absent",
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [],
+  "available": []
+}

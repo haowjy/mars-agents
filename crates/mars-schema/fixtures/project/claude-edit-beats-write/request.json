@@ -1,0 +1,15 @@
+{
+  "host": "claude",
+  "rules": [
+    {
+      "capability": "edit",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "write",
+      "pattern": null,
+      "action": "allow"
+    }
+  ]
+}

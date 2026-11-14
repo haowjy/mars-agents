@@ -5,10 +5,10 @@
 //! from a lowered field.
 
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost, ProjectLoss};
-use crate::compiler::tool_policy::ToolPolicyRuntime;
 use mars_schema::HarnessId;
 use mars_schema::tool_names::Capability;
 use mars_schema::tool_policy::{EffectiveToolPolicy, RuleOrigin, ToolAction, ToolRule};
+use mars_schema::tool_project::project;
 
 /// How much of the deny side a target's file can write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +75,7 @@ pub(super) fn losses(
     target: &str,
     carries: Carries,
 ) -> ToolLosses {
-    let projection = tools.project(harness);
+    let projection = project(tools, harness);
     let mut lost: Vec<(Lost, String)> = Vec::new();
     let mut covered: Vec<String> = Vec::new();
     let mut project: Vec<ProjectLoss> = Vec::new();

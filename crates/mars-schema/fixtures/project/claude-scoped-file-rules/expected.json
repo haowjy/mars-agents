@@ -1,0 +1,68 @@
+{
+  "host": "claude",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "write",
+        "pattern": "src/**",
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [],
+      "native_tools": [],
+      "note": "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out",
+      "covered_by": {
+        "action": "ask",
+        "key": "edit(src/**)"
+      }
+    },
+    {
+      "rule": {
+        "capability": "edit",
+        "pattern": "src/**",
+        "action": "ask",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "Edit(src/**)"
+      ],
+      "native_tools": [
+        "Edit",
+        "Write",
+        "NotebookEdit"
+      ],
+      "note": "Claude uses Edit(path) to scope every built-in file-editing tool",
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "read",
+        "pattern": "src/**",
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "Read(src/**)"
+      ],
+      "native_tools": [
+        "Read"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [
+    "Read(src/**)"
+  ],
+  "ask": [
+    "Edit(src/**)"
+  ],
+  "available": [
+    "Edit(src/**)"
+  ]
+}

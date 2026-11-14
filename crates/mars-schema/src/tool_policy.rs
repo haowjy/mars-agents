@@ -69,7 +69,7 @@ impl RuleOrigin {
 ///
 /// Rules are kept in profile order, which carries no precedence: of the rules that match a call,
 /// the strictest action wins (deny, then ask, then allow), however narrow a key is.
-/// [`EffectiveToolPolicy::project`] applies the same order to a native name two rules share, and
+/// [`crate::tool_project::project`] applies the same order to a native name two rules share, and
 /// gives a rule that a stricter one covers no native name.
 #[derive(Debug, Clone)]
 pub struct ToolRule {
@@ -100,6 +100,20 @@ impl ToolRule {
             action,
             origin: RuleOrigin::Profile,
         }
+    }
+
+    /// A rule from its wire shape (`{capability, pattern, action}`, as `agent::read` reports
+    /// it and `Serialize` writes it), parsed like the authored key it renders to.
+    pub fn from_wire(
+        capability: &str,
+        pattern: Option<&str>,
+        action: ToolAction,
+    ) -> Result<Self, crate::tool_names::ToolNameParseError> {
+        let key = match (capability, pattern) {
+            ("mcp", Some(pattern)) => format!("mcp({pattern})"),
+            _ => render_scoped(capability, pattern),
+        };
+        Ok(Self::from_parsed(parse_mars_tool_name(&key)?, action))
     }
 
     pub fn with_origin(mut self, origin: RuleOrigin) -> Self {

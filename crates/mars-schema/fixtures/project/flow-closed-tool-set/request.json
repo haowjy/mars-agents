@@ -1,0 +1,10 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    { "capability": "*", "pattern": null, "action": "deny" },
+    { "capability": "bash", "pattern": null, "action": "allow" },
+    { "capability": "mcp(github)", "pattern": null, "action": "allow" },
+    { "capability": "mcp__github__x", "pattern": null, "action": "deny" },
+    { "capability": "bogus_tool", "pattern": null, "action": "allow" }
+  ]
+}

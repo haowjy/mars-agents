@@ -1,0 +1,15 @@
+{
+  "host": "claude",
+  "rules": [
+    {
+      "capability": "shell",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "exec_command",
+      "pattern": null,
+      "action": "allow"
+    }
+  ]
+}

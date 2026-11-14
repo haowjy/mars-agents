@@ -1,0 +1,15 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    {
+      "capability": "*",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "read",
+      "pattern": null,
+      "action": "allow"
+    }
+  ]
+}

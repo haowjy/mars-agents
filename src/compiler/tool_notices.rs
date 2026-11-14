@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::compiler::effective_tools::covered;
 use crate::compiler::{ToolConfig, installed_agent_tools};
 use crate::config::LoadedProjectConfig;
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
+use mars_schema::tool_cover::covered;
 
 pub(crate) fn tool_rule_notices(
     project_root: &Path,

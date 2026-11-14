@@ -18,13 +18,11 @@ pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
-pub(crate) mod mcp_ref;
 pub(crate) mod native_agent_manifest;
 mod native_agents;
 /// Skill frontmatter compiler lane: universal schema parsing and native lowering.
 pub mod skills;
 pub(crate) mod tool_notices;
-pub(crate) mod tool_policy;
 /// Skill variant layout validation, indexing, and projection helpers.
 pub mod variants;
 

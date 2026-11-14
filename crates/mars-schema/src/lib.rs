@@ -21,7 +21,7 @@ pub mod selection;
 pub mod skill;
 pub mod tree;
 
-pub use harness::HarnessId;
+pub use harness::{HarnessId, Host};
 
 pub mod claude;
 pub mod frontmatter;
@@ -41,6 +41,7 @@ pub mod tool_names;
 pub mod tool_natives;
 
 pub mod tool_policy;
+pub mod tool_project;
 pub mod tool_rule_map;
 
 pub mod model_policy;

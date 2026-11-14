@@ -1,0 +1,75 @@
+{
+  "host": "meridian-flow",
+  "default": "deny",
+  "rules": [
+    {
+      "rule": {
+        "capability": "*",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": null,
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "bash",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "absent",
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "github/*",
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "absent",
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "mcp__github__x",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "absent",
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "bogus_tool",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "unknown",
+      "native": [],
+      "native_tools": [],
+      "note": "no native name known for this tool on this harness; left out",
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [],
+  "available": []
+}

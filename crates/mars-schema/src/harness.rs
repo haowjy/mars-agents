@@ -33,6 +33,48 @@ impl fmt::Display for HarnessId {
     }
 }
 
+/// Where a tool policy is lowered to: a harness Mars writes files for, or Meridian Flow, which
+/// is a consumer of the result and not a harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Host {
+    Harness(HarnessId),
+    MeridianFlow,
+}
+
+impl From<HarnessId> for Host {
+    fn from(harness: HarnessId) -> Self {
+        Self::Harness(harness)
+    }
+}
+
+impl Host {
+    pub const ALL: &'static [Host] = &[
+        Self::Harness(HarnessId::Claude),
+        Self::Harness(HarnessId::Codex),
+        Self::Harness(HarnessId::Pi),
+        Self::Harness(HarnessId::OpenCode),
+        Self::Harness(HarnessId::Cursor),
+        Self::MeridianFlow,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Harness(harness) => harness.as_str(),
+            Self::MeridianFlow => "meridian-flow",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|host| host.as_str() == name)
+    }
+}
+
+impl Serialize for Host {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 pub const ALL: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,

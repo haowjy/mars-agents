@@ -1,0 +1,20 @@
+{
+  "host": "codex",
+  "rules": [
+    {
+      "capability": "read",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "web_fetch",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "notebook",
+      "pattern": null,
+      "action": "deny"
+    }
+  ]
+}

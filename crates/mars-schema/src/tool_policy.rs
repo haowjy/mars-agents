@@ -69,7 +69,7 @@ impl RuleOrigin {
 ///
 /// Rules are kept in profile order, which carries no precedence: of the rules that match a call,
 /// the strictest action wins (deny, then ask, then allow), however narrow a key is.
-/// [`EffectiveToolPolicy::project`] applies the same order to a native name two rules share, and
+/// [`crate::tool_project::project`] applies the same order to a native name two rules share, and
 /// gives a rule that a stricter one covers no native name.
 #[derive(Debug, Clone)]
 pub struct ToolRule {

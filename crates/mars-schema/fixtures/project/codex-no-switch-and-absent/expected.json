@@ -1,6 +1,6 @@
 {
   "host": "codex",
-  "ask_handling": "unconfirmed",
+  "default": null,
   "rules": [
     {
       "rule": {

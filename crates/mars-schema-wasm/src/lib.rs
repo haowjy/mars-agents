@@ -185,7 +185,7 @@ struct RuleInput {
 /// host handles `ask`. The same code `mars sync` lowers an agent's tools with.
 #[wasm_bindgen]
 pub fn project(rules: JsValue, host: &str) -> Result<JsValue, JsValue> {
-    let host = mars_schema::tool_project::Host::parse(host)
+    let host = mars_schema::Host::parse(host)
         .ok_or_else(|| fail("input.invalid", format!("unknown host `{host}`")))?;
     let rules: Vec<RuleInput> = parse_input(rules)?;
     let policy = mars_schema::tool_policy::EffectiveToolPolicy {

@@ -8,67 +8,17 @@
 //! launch bundle and the WASM export all read that projection; nothing else turns a rule into
 //! native permission names or unscoped harness tool names.
 
-use crate::HarnessId;
 use crate::mcp::{McpRef, McpSegment};
 use crate::tool_cover::covered;
 use crate::tool_names::{Capability, is_mcp_wire_token, render_scoped};
 use crate::tool_natives::{self, Native};
 use crate::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
+use crate::{HarnessId, Host};
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
-/// Where a policy is lowered to: a harness Mars writes files for, or Meridian Flow, which is a
-/// consumer of the result and not a harness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Host {
-    Harness(HarnessId),
-    MeridianFlow,
-}
-
-impl From<HarnessId> for Host {
-    fn from(harness: HarnessId) -> Self {
-        Self::Harness(harness)
-    }
-}
-
-/// How a host treats an `ask` rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AskHandling {
-    /// The host stops and asks the user before each matching call.
-    PerUse,
-    /// The host has no per-call confirmation: the tool is available and nothing asks.
-    Unconfirmed,
-}
-
+/// What a host does with a tool name, which only this module's lowering needs.
 impl Host {
-    pub const ALL: &'static [Host] = &[
-        Self::Harness(HarnessId::Claude),
-        Self::Harness(HarnessId::Codex),
-        Self::Harness(HarnessId::Pi),
-        Self::Harness(HarnessId::OpenCode),
-        Self::Harness(HarnessId::Cursor),
-        Self::MeridianFlow,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Harness(harness) => harness.as_str(),
-            Self::MeridianFlow => "meridian-flow",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|host| host.as_str() == name)
-    }
-
-    pub fn ask_handling(self) -> AskHandling {
-        match self {
-            Self::Harness(HarnessId::Claude | HarnessId::OpenCode) => AskHandling::PerUse,
-            _ => AskHandling::Unconfirmed,
-        }
-    }
-
     /// Whether a tool name can be narrowed to a pattern. A harness spells the scope in the
     /// permission name (`Bash(git push *)`); Flow's tools take no scope.
     fn scopes_patterns(self) -> bool {
@@ -96,16 +46,9 @@ impl Host {
             Self::Harness(HarnessId::Codex) => {
                 Err("Codex per-tool MCP gating lives in server config, not the tool list")
             }
-            Self::Harness(HarnessId::Pi) | Self::MeridianFlow => {
-                Err("Harness has no MCP tool surface")
-            }
+            Self::Harness(HarnessId::Pi) => Err("Harness has no MCP tool surface"),
+            Self::MeridianFlow => unreachable!("Flow's MCP refs are absent in `project_rule`"),
         }
-    }
-}
-
-impl Serialize for Host {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -137,7 +80,7 @@ impl NativeStatus {
         }
     }
 
-    /// Why Mars could not name the rule, for `unknown`.
+    /// Why Mars could not name the rule, for `unknown` and `unscopable`.
     pub fn note(self) -> Option<&'static str> {
         match self {
             Self::Unknown(note) => Some(note),
@@ -306,6 +249,13 @@ fn project_rule(rule: &ToolRule, host: Host) -> ProjectedRule {
             note: None,
             covered_by: None,
         },
+        // Flow's tool set is closed: it has no MCP tools, whatever the ref or wire token.
+        Capability::Mcp(_) if host == Host::MeridianFlow => {
+            ProjectedRule::with_status(NativeStatus::Absent)
+        }
+        Capability::Unknown(name) if is_mcp_wire_token(name) && host == Host::MeridianFlow => {
+            ProjectedRule::with_status(NativeStatus::Absent)
+        }
         Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {
             Ok(token) => ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None),
             Err(reason) => ProjectedRule::with_status(NativeStatus::Unknown(reason)),
@@ -428,6 +378,15 @@ impl<'a> PolicyProjection<'a> {
         &self.rules
     }
 
+    /// What a tool no rule names gets: the strictest `*` rule's action, or `None` without one.
+    pub fn default_action(&self) -> Option<ToolAction> {
+        self.rules
+            .iter()
+            .filter(|(rule, _)| rule.is_wildcard())
+            .map(|(rule, _)| rule.action)
+            .max_by_key(|action| action.strictness())
+    }
+
     /// The projected `kind` rules with `action`: built-in tools first, then MCP refs.
     fn select(&self, action: ToolAction, kind: RuleKind) -> Vec<&ProjectedRule> {
         let mut picked: Vec<_> = self
@@ -485,7 +444,7 @@ impl<'a> PolicyProjection<'a> {
 /// The published shape of a projection (`project` in the WASM package): per rule, then the
 /// native names each action ends with. A consumer decides from these what to warn about: a
 /// `status` other than `known`, a `covered_by` or a `note` is something the author may not
-/// have meant, and `ask_handling` says whether an `ask` rule confirms anything.
+/// have meant.
 impl Serialize for PolicyProjection<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         struct Rule<'r>(&'r ToolRule, &'r ProjectedRule);
@@ -505,7 +464,7 @@ impl Serialize for PolicyProjection<'_> {
         let rules: Vec<Rule> = self.rules.iter().map(|(r, p)| Rule(r, p)).collect();
         let mut out = serializer.serialize_struct("ToolProjection", 7)?;
         out.serialize_field("host", &self.host)?;
-        out.serialize_field("ask_handling", &self.host.ask_handling())?;
+        out.serialize_field("default", &self.default_action().map(ToolAction::as_str))?;
         out.serialize_field("rules", &rules)?;
         out.serialize_field("allow", &self.natives(ToolAction::Allow, RuleKind::All))?;
         out.serialize_field("deny", &self.natives(ToolAction::Deny, RuleKind::All))?;

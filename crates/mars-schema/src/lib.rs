@@ -21,7 +21,7 @@ pub mod selection;
 pub mod skill;
 pub mod tree;
 
-pub use harness::HarnessId;
+pub use harness::{HarnessId, Host};
 
 pub mod claude;
 pub mod frontmatter;

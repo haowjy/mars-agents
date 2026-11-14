@@ -1,6 +1,6 @@
 {
   "host": "meridian-flow",
-  "ask_handling": "unconfirmed",
+  "default": null,
   "rules": [
     {
       "rule": {
@@ -9,10 +9,10 @@
         "action": "allow",
         "origin": "profile"
       },
-      "status": "unknown",
+      "status": "absent",
       "native": [],
       "native_tools": [],
-      "note": "no native name known for this tool on this harness; left out",
+      "note": null,
       "covered_by": null
     },
     {

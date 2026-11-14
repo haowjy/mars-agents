@@ -3,8 +3,9 @@
 
 use std::fs;
 
+use mars_schema::Host;
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
-use mars_schema::tool_project::{Host, project};
+use mars_schema::tool_project::project;
 use serde::Deserialize;
 
 mod common;

@@ -101,7 +101,7 @@ natives["meridian-flow"].work;                 // { kind: "tools", tools: ["work
 const { tools } = read("agents/a.md", text).fields;      // [{ capability, pattern, action }, ...]
 const p = project(tools, "meridian-flow");
 p.allow; p.deny; p.ask;     // native tool names after stricter rules win shared names
-p.ask_handling;             // "unconfirmed": Flow has no per-use confirmation, so `ask` leaves the tool available
+p.default;                  // "deny" for `{"*": deny}`: what a tool no rule names gets; null without a `*` rule
 p.rules[0].status;          // "known" | "absent" | "unknown" | "unscopable" | null (for `*`)
 ```
 

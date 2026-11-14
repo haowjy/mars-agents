@@ -1,6 +1,6 @@
 {
   "host": "meridian-flow",
-  "ask_handling": "unconfirmed",
+  "default": null,
   "rules": [
     {
       "rule": {

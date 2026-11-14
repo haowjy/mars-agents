@@ -1,6 +1,6 @@
 {
   "host": "claude",
-  "ask_handling": "per-use",
+  "default": null,
   "rules": [
     {
       "rule": {

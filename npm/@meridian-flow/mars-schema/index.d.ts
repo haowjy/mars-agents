@@ -274,8 +274,8 @@ export interface ProjectedRule {
 
 export interface ToolProjection {
   host: Host;
-  /** `per-use`: the host confirms each matching call; `unconfirmed`: an `ask` tool is just available. */
-  ask_handling: "per-use" | "unconfirmed";
+  /** What a tool no rule names gets: the strictest `*` rule's action, or `null` without one. */
+  default: "allow" | "deny" | "ask" | null;
   /** In the order given. */
   rules: ProjectedRule[];
   /** The native names that end up allowed, denied and asked, after stricter rules win shared names. */
@@ -289,6 +289,8 @@ export interface ToolProjection {
 /**
  * Lower tool rules (an Agent's `tools` as `read` reports it) onto a host, the way `mars sync`
  * does for a harness. Throws `input.invalid` for an unknown host or a rule that does not parse.
+ * A consumer must refuse a rule whose `status` is `unscopable` or `unknown` rather than read only
+ * `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves `allow: ["read"]` granting every read.
  */
 export function project(rules: { capability: string; pattern: string | null; action: "allow" | "deny" | "ask" }[], host: Host): ToolProjection;
 

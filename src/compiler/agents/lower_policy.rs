@@ -24,13 +24,13 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// unclassified site is loud. Codex lowers `network` as dropped, because its native artifact
 /// carries `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, ProjectLoss};
-use crate::compiler::tool_policy::{RuleKind, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
 use mars_schema::ordered::OrderedValue;
 pub use mars_schema::tool_policy::EffectiveToolPolicy;
 use mars_schema::tool_policy::ToolAction;
+use mars_schema::tool_project::{RuleKind, project};
 
 /// Effective field values read from top-level Mars semantics.
 struct Effective<'a> {
@@ -430,7 +430,7 @@ impl<'a> AgentLoweringCtx<'a> {
 
     fn insert_claude_tools(&mut self) {
         let target = self.target_name();
-        let projection = self.eff.tools.project(self.harness);
+        let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
         let disallowed = projection.natives(ToolAction::Deny, RuleKind::All);
         for note in projection.gaps(ToolAction::Allow, RuleKind::All) {

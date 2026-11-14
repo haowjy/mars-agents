@@ -1,5 +1,5 @@
 # Compiler follow-ups
 
-- Check Pi's MCP token shape against the installed Pi: `project_mcp_ref` currently reports every Pi MCP rule as unsupported, but Pi has an MCP surface.
+- Check Pi's MCP token shape against the installed Pi: `Host::mcp_token` currently reports every Pi MCP rule as unsupported, but Pi has an MCP surface.
 - Lower OpenCode `ask` rules and scoped denies in `src/compiler/agents/lower_policy.rs`; they are currently reported as dropped.
 - Untangle in the rewrite: `src/compiler/config_entries/mod.rs:45` and its write phase at lines 518–605 thread target decisions through parallel maps and twelve arguments. A typed per-target plan could carry hooks, files, records, and outcomes together, while retaining the global removal-before-write gate and ownership permits.

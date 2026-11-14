@@ -7,13 +7,11 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::agents::opencode_permission;
-use crate::compiler::tool_policy::{
-    NativeStatus, RuleKind, ToolPolicyRuntime, project_platform_capability,
-};
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use mars_schema::HarnessId;
 use mars_schema::tool_policy::ToolAction;
+use mars_schema::tool_project::{NativeStatus, RuleKind, project, project_platform_capability};
 use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
@@ -249,7 +247,7 @@ pub(crate) fn resolve_bundle_tools(
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
     let descriptor = parse_harness_descriptor(harness)?;
-    let projection = profile.tools.project(descriptor.kind);
+    let projection = project(&profile.tools, descriptor.kind);
 
     let rules = projection
         .rules()
@@ -274,7 +272,7 @@ pub(crate) fn resolve_bundle_tools(
     let capability_natives = ["agent", "task"]
         .into_iter()
         .map(|capability| {
-            let projected = project_platform_capability(capability, descriptor.kind);
+            let projected = project_platform_capability(capability, descriptor.kind.into());
             let status = projected
                 .status
                 .expect("a builtin capability always has a native status");

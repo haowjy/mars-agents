@@ -1,0 +1,10 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    {
+      "capability": "write",
+      "pattern": "kb/**",
+      "action": "deny"
+    }
+  ]
+}

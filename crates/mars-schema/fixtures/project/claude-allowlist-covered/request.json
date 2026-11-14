@@ -1,0 +1,20 @@
+{
+  "host": "claude",
+  "rules": [
+    {
+      "capability": "*",
+      "pattern": null,
+      "action": "deny"
+    },
+    {
+      "capability": "bash",
+      "pattern": "git status *",
+      "action": "allow"
+    },
+    {
+      "capability": "bash",
+      "pattern": null,
+      "action": "deny"
+    }
+  ]
+}

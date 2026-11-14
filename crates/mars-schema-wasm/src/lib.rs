@@ -172,6 +172,47 @@ pub fn vocabulary() -> Result<JsValue, JsValue> {
     to_js(&mars_schema::tool_natives::vocabulary())
 }
 
+/// One rule in the shape `read` reports a profile's `tools` in.
+#[derive(serde::Deserialize)]
+struct RuleInput {
+    capability: String,
+    pattern: Option<String>,
+    action: mars_schema::tool_policy::ToolAction,
+}
+
+/// Lower tool rules onto a host (`claude`, `codex`, `pi`, `opencode`, `cursor` or
+/// `meridian-flow`): the native names per action, each rule's gap or coverage, and how the
+/// host handles `ask`. The same code `mars sync` lowers an agent's tools with.
+#[wasm_bindgen]
+pub fn project(rules: JsValue, host: &str) -> Result<JsValue, JsValue> {
+    let host = mars_schema::Host::parse(host)
+        .ok_or_else(|| fail("input.invalid", format!("unknown host `{host}`")))?;
+    let rules: Vec<RuleInput> = parse_input(rules)?;
+    let policy = mars_schema::tool_policy::EffectiveToolPolicy {
+        rules: rules
+            .iter()
+            .map(|rule| {
+                mars_schema::tool_policy::ToolRule::from_wire(
+                    &rule.capability,
+                    rule.pattern.as_deref(),
+                    rule.action,
+                )
+                .map_err(|error| {
+                    fail(
+                        "input.invalid",
+                        format!(
+                            "tool rule `{}`: expected {}",
+                            rule.capability,
+                            error.allowed()
+                        ),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    to_js(&mars_schema::tool_project::project(&policy, host))
+}
+
 fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::FileTree, JsValue> {
     mars_schema::tree::FileTree::from_files(
         files

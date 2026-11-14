@@ -1,0 +1,20 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    {
+      "capability": "bash",
+      "pattern": null,
+      "action": "allow"
+    },
+    {
+      "capability": "glob",
+      "pattern": null,
+      "action": "allow"
+    },
+    {
+      "capability": "ask_user",
+      "pattern": null,
+      "action": "ask"
+    }
+  ]
+}

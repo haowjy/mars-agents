@@ -172,7 +172,7 @@ pub struct ToolRuleSpec {
     /// this harness), as its author wrote it. Present means the rule never applies; `native`
     /// and `native_tools` are then empty. Omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub covered_by: Option<crate::compiler::tool_policy::CoveredBy>,
+    pub covered_by: Option<mars_schema::tool_project::CoveredBy>,
 }
 
 #[derive(Debug, Clone, Serialize)]

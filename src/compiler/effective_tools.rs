@@ -162,37 +162,10 @@ fn parsed_key(rule: &ToolRule) -> ParsedToolName {
     }
 }
 
-/// Each allow or ask in `policy`, by index, with the stricter rule that covers it or has its
-/// key: a call it matches also matches that rule, so under strictest-wins it never applies.
-/// `*` takes no part, and a pair [`relation`] cannot decide is left out: the enforcer matches
-/// the real call.
-pub(crate) fn covered(policy: &EffectiveToolPolicy) -> Vec<(usize, &ToolRule)> {
-    policy
-        .rules
-        .iter()
-        .enumerate()
-        .filter(|(_, rule)| rule.action != ToolAction::Deny && !rule.is_wildcard())
-        .filter_map(|(index, rule)| {
-            policy
-                .rules
-                .iter()
-                .filter(|other| other.action.strictness() > rule.action.strictness())
-                .filter(|other| !other.is_wildcard())
-                .filter(|other| {
-                    matches!(
-                        relation(ToolKey::from(*other), ToolKey::from(rule)),
-                        Relation::Equal | Relation::Covers
-                    )
-                })
-                .min_by_key(|other| std::cmp::Reverse(other.action.strictness()))
-                .map(|other| (index, other))
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mars_schema::tool_cover::covered;
     use mars_schema::tool_names::parse_mars_tool_name;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {

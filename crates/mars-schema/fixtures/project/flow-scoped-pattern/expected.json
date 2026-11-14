@@ -1,0 +1,23 @@
+{
+  "host": "meridian-flow",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "write",
+        "pattern": "kb/**",
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "unscopable",
+      "native": [],
+      "native_tools": [],
+      "note": "this host's tool takes no pattern, so the rule cannot be scoped",
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [],
+  "available": []
+}

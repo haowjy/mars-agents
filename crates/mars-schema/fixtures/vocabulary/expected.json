@@ -626,6 +626,12 @@
           "ask_user"
         ]
       },
+      "bash": {
+        "kind": "absent"
+      },
+      "cron": {
+        "kind": "absent"
+      },
       "edit": {
         "kind": "tools",
         "tools": [
@@ -641,11 +647,29 @@
           "grep"
         ]
       },
+      "image": {
+        "kind": "absent"
+      },
       "ls": {
         "kind": "tools",
         "tools": [
           "ls"
         ]
+      },
+      "lsp": {
+        "kind": "absent"
+      },
+      "monitor": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "absent"
+      },
+      "notifications": {
+        "kind": "absent"
+      },
+      "plan_mode": {
+        "kind": "absent"
       },
       "read": {
         "kind": "tools",
@@ -653,17 +677,47 @@
           "read"
         ]
       },
+      "remote_trigger": {
+        "kind": "absent"
+      },
+      "schedule_wakeup": {
+        "kind": "absent"
+      },
+      "send_user_file": {
+        "kind": "absent"
+      },
       "skill": {
         "kind": "tools",
         "tools": [
           "skill"
         ]
       },
+      "task": {
+        "kind": "absent"
+      },
+      "tool_search": {
+        "kind": "absent"
+      },
+      "web": {
+        "kind": "absent"
+      },
+      "web_fetch": {
+        "kind": "absent"
+      },
+      "web_search": {
+        "kind": "absent"
+      },
       "work": {
         "kind": "tools",
         "tools": [
           "work"
         ]
+      },
+      "workflow": {
+        "kind": "absent"
+      },
+      "worktree": {
+        "kind": "absent"
       },
       "write": {
         "kind": "tools",

@@ -579,7 +579,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
 Implementation: grammar in [`crates/mars-schema/src/mcp.rs`](../../crates/mars-schema/src/mcp.rs),
-projection in [`src/compiler/mcp_ref.rs`](../../src/compiler/mcp_ref.rs) (`project_mcp_ref`). Foreign
+projection in [`Host::mcp_token`](../../crates/mars-schema/src/tool_project.rs). Foreign
 spellings are lifted by [`crates/mars-schema/src/lift.rs`](../../crates/mars-schema/src/lift.rs).
 
 ## Lossiness Model

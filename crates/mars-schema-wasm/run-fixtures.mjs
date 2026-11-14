@@ -220,6 +220,14 @@ for (const name of cases("selection")) {
 // vocabulary
 check(wasm.vocabulary(), json("vocabulary", "expected.json"), "vocabulary");
 
+// project: one rule list lowered onto one host
+for (const name of cases("project")) {
+  const { host, rules } = json("project", name, "request.json");
+  check(wasm.project(rules, host), json("project", name, "expected.json"), `project/${name}`);
+}
+assert.equal(attempt(() => wasm.project([], "gemini")).error?.code, "input.invalid", "unknown host");
+assert.equal(attempt(() => wasm.project([{ capability: "mcp", pattern: null, action: "deny" }], "claude")).error?.code, "input.invalid", "bare mcp");
+
 // emit: byte-exact, then spliced into a real frontmatter and read back by Mars and by `yaml`
 const splice = (emitted, indent) => {
   let out = "---\nname: probe\n";

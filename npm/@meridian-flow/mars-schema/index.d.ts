@@ -246,6 +246,53 @@ export interface Vocabulary {
 export function vocabulary(): Vocabulary;
 
 // ---------------------------------------------------------------------------------------
+// project
+// ---------------------------------------------------------------------------------------
+
+export type Host = Harness | "meridian-flow";
+
+/** One rule's lowering on a host. */
+export interface ProjectedRule {
+  /** The rule as given, in the shape `read` reports it (`origin` is `"profile"`). */
+  rule: ToolRule & { origin: string };
+  /**
+   * `known`: Mars names the tool; `absent`: the host has no such tool; `unknown`: Mars cannot
+   * name it (the host has no switch for it, Mars has no row, or it is not a tool Mars knows),
+   * with the reason in `note`; `unscopable`: the rule has a pattern and the host's tool takes
+   * none. `null` for `*`, which names no tool.
+   */
+  status: "known" | "absent" | "unknown" | "unscopable" | null;
+  /** The permission names the rule keeps. Empty for a gap, and when a stricter rule won every name. */
+  native: string[];
+  /** The unscoped tool names behind `native`. */
+  native_tools: string[];
+  /** Why the rule is not applied as written: the gap's reason, or the overlap with a stricter rule. */
+  note: string | null;
+  /** The stricter rule (`deny bash`) that wins every call or name this rule has. */
+  covered_by: { action: "allow" | "deny" | "ask"; key: string } | null;
+}
+
+export interface ToolProjection {
+  host: Host;
+  /** `per-use`: the host confirms each matching call; `unconfirmed`: an `ask` tool is just available. */
+  ask_handling: "per-use" | "unconfirmed";
+  /** In the order given. */
+  rules: ProjectedRule[];
+  /** The native names that end up allowed, denied and asked, after stricter rules win shared names. */
+  allow: string[];
+  deny: string[];
+  ask: string[];
+  /** Every allow and ask rule's names before conflicts were resolved: what an allowlist keeps available. */
+  available: string[];
+}
+
+/**
+ * Lower tool rules (an Agent's `tools` as `read` reports it) onto a host, the way `mars sync`
+ * does for a harness. Throws `input.invalid` for an unknown host or a rule that does not parse.
+ */
+export function project(rules: { capability: string; pattern: string | null; action: "allow" | "deny" | "ask" }[], host: Host): ToolProjection;
+
+// ---------------------------------------------------------------------------------------
 // prepare, inspect, normalize
 // ---------------------------------------------------------------------------------------
 

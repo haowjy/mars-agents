@@ -24,7 +24,7 @@
 
 use crate::mcp::{McpRef, McpSegment};
 use crate::tool_names::{Capability, ParsedToolName, is_mcp_wire_token};
-use crate::tool_policy::ToolRule;
+use crate::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
 
 /// How the scope of key `a` stands to the scope of key `b`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +213,34 @@ fn segment_relation(a: &McpSegment, b: &McpSegment) -> Relation {
         (McpSegment::Named(x), McpSegment::Named(y)) if x == y => Relation::Equal,
         (McpSegment::Named(_), McpSegment::Named(_)) => Relation::Disjoint,
     }
+}
+
+/// Each allow or ask in `policy`, by index, with the stricter rule that covers it or has its
+/// key: a call it matches also matches that rule, so under strictest-wins it never applies.
+/// `*` takes no part, and a pair [`relation`] cannot decide is left out: the enforcer matches
+/// the real call.
+pub fn covered(policy: &EffectiveToolPolicy) -> Vec<(usize, &ToolRule)> {
+    policy
+        .rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule.action != ToolAction::Deny && !rule.is_wildcard())
+        .filter_map(|(index, rule)| {
+            policy
+                .rules
+                .iter()
+                .filter(|other| other.action.strictness() > rule.action.strictness())
+                .filter(|other| !other.is_wildcard())
+                .filter(|other| {
+                    matches!(
+                        relation(ToolKey::from(*other), ToolKey::from(rule)),
+                        Relation::Equal | Relation::Covers
+                    )
+                })
+                .min_by_key(|other| std::cmp::Reverse(other.action.strictness()))
+                .map(|other| (index, other))
+        })
+        .collect()
 }
 
 #[cfg(test)]

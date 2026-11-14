@@ -1,23 +1,117 @@
-//! Typed tool policy for agent and skill frontmatter.
+//! Lowering a tool policy onto one host: the native names each rule becomes, the gaps Mars
+//! cannot name, and which stricter rule wins a shared name.
 //!
 //! Canonical Mars profiles express tool gating with a `tools:` action map (`rule: allow`,
 //! `deny` or `ask`), whole-server or per-tool MCP grants being `mcp(...)` keys in it.
-//! `mars_schema::agent::read` reads them once into an [`EffectiveToolPolicy`]: one list
-//! of [`ToolRule`]s that the profile stores, a `mars.toml` overlay edits, and
-//! [`EffectiveToolPolicy::project`] spells for a harness. Native agent lowering, skill lowering
-//! and the launch bundle all read that projection; nothing else turns a rule into native
-//! permission names or unscoped harness tool names.
+//! [`project`] spells a policy for one [`Host`]: a harness the binary writes files for, or
+//! Meridian Flow, which only consumes the result. Native agent lowering, skill lowering, the
+//! launch bundle and the WASM export all read that projection; nothing else turns a rule into
+//! native permission names or unscoped harness tool names.
 
-use crate::compiler::effective_tools::covered;
-use crate::compiler::mcp_ref::{McpProjection, project_mcp_ref};
-use mars_schema::HarnessId;
-use mars_schema::tool_names::{Capability, is_mcp_wire_token, render_scoped};
-use mars_schema::tool_natives::{self, Native};
-use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
+use crate::HarnessId;
+use crate::mcp::{McpRef, McpSegment};
+use crate::tool_cover::covered;
+use crate::tool_names::{Capability, is_mcp_wire_token, render_scoped};
+use crate::tool_natives::{self, Native};
+use crate::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
+use serde::Serialize;
+use serde::ser::{SerializeStruct, Serializer};
+
+/// Where a policy is lowered to: a harness Mars writes files for, or Meridian Flow, which is a
+/// consumer of the result and not a harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Host {
+    Harness(HarnessId),
+    MeridianFlow,
+}
+
+impl From<HarnessId> for Host {
+    fn from(harness: HarnessId) -> Self {
+        Self::Harness(harness)
+    }
+}
+
+/// How a host treats an `ask` rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AskHandling {
+    /// The host stops and asks the user before each matching call.
+    PerUse,
+    /// The host has no per-call confirmation: the tool is available and nothing asks.
+    Unconfirmed,
+}
+
+impl Host {
+    pub const ALL: &'static [Host] = &[
+        Self::Harness(HarnessId::Claude),
+        Self::Harness(HarnessId::Codex),
+        Self::Harness(HarnessId::Pi),
+        Self::Harness(HarnessId::OpenCode),
+        Self::Harness(HarnessId::Cursor),
+        Self::MeridianFlow,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Harness(harness) => harness.as_str(),
+            Self::MeridianFlow => "meridian-flow",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|host| host.as_str() == name)
+    }
+
+    pub fn ask_handling(self) -> AskHandling {
+        match self {
+            Self::Harness(HarnessId::Claude | HarnessId::OpenCode) => AskHandling::PerUse,
+            _ => AskHandling::Unconfirmed,
+        }
+    }
+
+    /// Whether a tool name can be narrowed to a pattern. A harness spells the scope in the
+    /// permission name (`Bash(git push *)`); Flow's tools take no scope.
+    fn scopes_patterns(self) -> bool {
+        !matches!(self, Self::MeridianFlow)
+    }
+
+    /// An MCP ref as this host names it. Server and tool segments are kept verbatim, never
+    /// re-cased.
+    fn mcp_token(self, r: &McpRef) -> Result<String, &'static str> {
+        let segment = |segment: &McpSegment| match segment {
+            McpSegment::Any => "*".to_owned(),
+            McpSegment::Named(name) => name.clone(),
+        };
+        let (server, tool) = (segment(&r.server), segment(&r.tool));
+        match self {
+            Self::Harness(HarnessId::Claude) => match (&r.server, &r.tool) {
+                (McpSegment::Any, McpSegment::Named(_)) => {
+                    Err("Claude cannot scope a single MCP tool across all servers")
+                }
+                (McpSegment::Any, McpSegment::Any) => Ok("mcp__*".to_owned()),
+                _ => Ok(format!("mcp__{server}__{tool}")),
+            },
+            Self::Harness(HarnessId::Cursor) => Ok(format!("Mcp({server}:{tool})")),
+            Self::Harness(HarnessId::OpenCode) => Ok(format!("{server}_{tool}")),
+            Self::Harness(HarnessId::Codex) => {
+                Err("Codex per-tool MCP gating lives in server config, not the tool list")
+            }
+            Self::Harness(HarnessId::Pi) | Self::MeridianFlow => {
+                Err("Harness has no MCP tool surface")
+            }
+        }
+    }
+}
+
+impl Serialize for Host {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
 
 /// Whether Mars can name a rule's tools on a harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NativeStatus {
+pub enum NativeStatus {
     /// Mars knows the native name(s). A stricter rule on the same native name can leave this
     /// rule no surviving name.
     Known,
@@ -27,6 +121,9 @@ pub(crate) enum NativeStatus {
     /// for it, Mars has no row for it, or the name is not one Mars recognizes (a typo). The
     /// launch bundle reports the reason in `note` and nowhere else.
     Unknown(&'static str),
+    /// The rule has a pattern and the host's tools take no scope, so it cannot be applied as
+    /// written. Only a host that does not scope patterns reports it.
+    Unscopable,
 }
 
 impl NativeStatus {
@@ -36,6 +133,7 @@ impl NativeStatus {
             Self::Known => "known",
             Self::Absent => "absent",
             Self::Unknown(_) => "unknown",
+            Self::Unscopable => "unscopable",
         }
     }
 
@@ -43,15 +141,17 @@ impl NativeStatus {
     pub fn note(self) -> Option<&'static str> {
         match self {
             Self::Unknown(note) => Some(note),
+            Self::Unscopable => Some(UNSCOPABLE_NOTE),
             Self::Known | Self::Absent => None,
         }
     }
 }
 
+const UNSCOPABLE_NOTE: &str = "this host's tool takes no pattern, so the rule cannot be scoped";
 const NO_NATIVE_NAME: &str = "no native name known for this tool on this harness; left out";
 
 /// The stricter rule that wins a covered rule's calls, as its author wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CoveredBy {
     pub action: ToolAction,
     pub key: String,
@@ -111,7 +211,7 @@ impl NativeBinding {
 
 /// A rule as one harness spells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProjectedRule {
+pub struct ProjectedRule {
     /// Every name the rule makes available. The ones not `beaten_by` are what it tells the
     /// permission engine ([`Self::native`]); a covered rule tells it nothing, so a reader that
     /// ignores `covered_by` cannot let through a call the covering rule refuses.
@@ -198,7 +298,7 @@ impl ProjectedRule {
 
 /// Project `rule` onto `harness`. The one place a capability becomes native permission names
 /// and unscoped harness tool names.
-fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
+fn project_rule(rule: &ToolRule, host: Host) -> ProjectedRule {
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
@@ -206,13 +306,9 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
             note: None,
             covered_by: None,
         },
-        Capability::Mcp(mcp_ref) => match project_mcp_ref(mcp_ref, harness) {
-            McpProjection::Token(token) => {
-                ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None)
-            }
-            McpProjection::Unsupported(reason) => {
-                ProjectedRule::with_status(NativeStatus::Unknown(reason.message()))
-            }
+        Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {
+            Ok(token) => ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None),
+            Err(reason) => ProjectedRule::with_status(NativeStatus::Unknown(reason)),
         },
         Capability::Unknown(name) if is_mcp_wire_token(name) => ProjectedRule::known(
             vec![NativeBinding::direct(name, rule.pattern.as_deref())],
@@ -220,7 +316,7 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
         ),
         Capability::Unknown(_) => ProjectedRule::with_status(NativeStatus::Unknown(NO_NATIVE_NAME)),
         Capability::Builtin(name) => {
-            project_builtin_capability(name, rule.pattern.as_deref(), harness)
+            project_builtin_capability(name, rule.pattern.as_deref(), host)
         }
     }
 }
@@ -228,19 +324,23 @@ fn project_rule(rule: &ToolRule, harness: HarnessId) -> ProjectedRule {
 /// Project one canonical builtin capability through the same table and status semantics as a
 /// profile rule. Launch-bundle platform rules use this without inventing a second native-name
 /// projection path.
-pub(crate) fn project_platform_capability(
-    capability: &'static str,
-    harness: HarnessId,
-) -> ProjectedRule {
-    project_builtin_capability(capability, None, harness)
+pub fn project_platform_capability(capability: &'static str, host: Host) -> ProjectedRule {
+    project_builtin_capability(capability, None, host)
 }
 
 fn project_builtin_capability(
     capability: &str,
     pattern: Option<&str>,
-    harness: HarnessId,
+    host: Host,
 ) -> ProjectedRule {
-    match tool_natives::lookup(capability, harness) {
+    let row = tool_natives::lookup(capability, host);
+    if pattern.is_some()
+        && !host.scopes_patterns()
+        && matches!(row, Some(Native::Tools(_) | Native::ScopedTools { .. }))
+    {
+        return ProjectedRule::with_status(NativeStatus::Unscopable);
+    }
+    match row {
         Some(Native::Tools(names)) => ProjectedRule::known(
             names
                 .iter()
@@ -279,28 +379,25 @@ fn project_builtin_capability(
     }
 }
 
-pub(crate) trait ToolPolicyRuntime {
-    fn project(&self, harness: HarnessId) -> PolicyProjection<'_>;
-}
-
-impl ToolPolicyRuntime for EffectiveToolPolicy {
-    fn project(&self, harness: HarnessId) -> PolicyProjection<'_> {
-        let mut rules: Vec<(&ToolRule, ProjectedRule)> = self
-            .rules
-            .iter()
-            .map(|rule| (rule, project_rule(rule, harness)))
-            .collect();
-        keep_strictest_per_native(&mut rules);
-        for (index, by) in covered(self) {
-            rules[index].1.beat(CoveredBy::new(by));
-        }
-        PolicyProjection { rules }
+/// Lower `policy` onto `host`. The one place a rule list becomes native names, gaps and
+/// coverage; pure over the rules, the host and the published native tables.
+pub fn project(policy: &EffectiveToolPolicy, host: impl Into<Host>) -> PolicyProjection<'_> {
+    let host = host.into();
+    let mut rules: Vec<(&ToolRule, ProjectedRule)> = policy
+        .rules
+        .iter()
+        .map(|rule| (rule, project_rule(rule, host)))
+        .collect();
+    keep_strictest_per_native(&mut rules);
+    for (index, by) in covered(policy) {
+        rules[index].1.beat(CoveredBy::new(by));
     }
+    PolicyProjection { host, rules }
 }
 
 /// Which rules that name tools a query covers. `*` names none, so no kind covers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuleKind {
+pub enum RuleKind {
     /// Built-in tools: everything but MCP refs.
     Builtin,
     Mcp,
@@ -321,7 +418,8 @@ impl RuleKind {
 const STRICTER_RULE_NOTE: &str = "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out";
 
 /// A policy's rules spelled for one harness, in profile order.
-pub(crate) struct PolicyProjection<'a> {
+pub struct PolicyProjection<'a> {
+    host: Host,
     rules: Vec<(&'a ToolRule, ProjectedRule)>,
 }
 
@@ -384,6 +482,39 @@ impl<'a> PolicyProjection<'a> {
     }
 }
 
+/// The published shape of a projection (`project` in the WASM package): per rule, then the
+/// native names each action ends with. A consumer decides from these what to warn about: a
+/// `status` other than `known`, a `covered_by` or a `note` is something the author may not
+/// have meant, and `ask_handling` says whether an `ask` rule confirms anything.
+impl Serialize for PolicyProjection<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        struct Rule<'r>(&'r ToolRule, &'r ProjectedRule);
+        impl Serialize for Rule<'_> {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let Rule(rule, projected) = self;
+                let mut out = serializer.serialize_struct("ProjectedRule", 6)?;
+                out.serialize_field("rule", rule)?;
+                out.serialize_field("status", &projected.status.map(NativeStatus::as_str))?;
+                out.serialize_field("native", &projected.native())?;
+                out.serialize_field("native_tools", &projected.native_tools())?;
+                out.serialize_field("note", &projected.note())?;
+                out.serialize_field("covered_by", &projected.covered_by)?;
+                out.end()
+            }
+        }
+        let rules: Vec<Rule> = self.rules.iter().map(|(r, p)| Rule(r, p)).collect();
+        let mut out = serializer.serialize_struct("ToolProjection", 7)?;
+        out.serialize_field("host", &self.host)?;
+        out.serialize_field("ask_handling", &self.host.ask_handling())?;
+        out.serialize_field("rules", &rules)?;
+        out.serialize_field("allow", &self.natives(ToolAction::Allow, RuleKind::All))?;
+        out.serialize_field("deny", &self.natives(ToolAction::Deny, RuleKind::All))?;
+        out.serialize_field("ask", &self.natives(ToolAction::Ask, RuleKind::All))?;
+        out.serialize_field("available", &self.available())?;
+        out.end()
+    }
+}
+
 /// Of the rules that name one native permission, the strictest action keeps it (deny, then ask,
 /// then allow), as Claude's own lists do. `edit: deny` beside `write: allow` leaves the allow
 /// no `Write` on Claude and no `write` on Pi; capabilities a harness cannot tell apart
@@ -417,14 +548,13 @@ fn keep_strictest_per_native(rules: &mut [(&ToolRule, ProjectedRule)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mars_schema::HarnessId;
-    use mars_schema::frontmatter::Frontmatter;
-    use mars_schema::tool_names::parse_mars_tool_name;
-    use mars_schema::tool_policy::append_mcp_server_entries_to_tools;
+    use crate::frontmatter::Frontmatter;
+    use crate::tool_names::parse_mars_tool_name;
+    use crate::tool_policy::append_mcp_server_entries_to_tools;
     use serde_yaml::Value;
 
     fn agent_policy(yaml: &str) -> EffectiveToolPolicy {
-        let reading = mars_schema::agent::read(yaml);
+        let reading = crate::agent::read(yaml);
         assert!(
             reading.diagnostics.is_empty(),
             "agent diags: {:?}",
@@ -435,9 +565,7 @@ mod tests {
 
     /// Native names and status of a raw tool entry on a harness, via parse then table.
     fn natives(raw: &str, harness: &str) -> (Vec<String>, &'static str) {
-        let kind = crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
-            .expect("test harness exists")
-            .kind;
+        let kind = Host::parse(harness).expect("test host exists");
         let parsed = parse_mars_tool_name(raw).unwrap();
         let projected = project_rule(&ToolRule::from_parsed(parsed, ToolAction::Deny), kind);
         (
@@ -457,7 +585,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  '*': deny\n  write: allow\n  edit: deny\n  'bash(git status *)': allow\n  bash: ask\n---\n",
         );
-        let projection = policy.project(HarnessId::Claude);
+        let projection = project(&policy, HarnessId::Claude);
         assert_eq!(
             projection.natives(ToolAction::Allow, RuleKind::All),
             Vec::<String>::new()
@@ -562,7 +690,7 @@ mod tests {
             let policy = agent_policy(&format!(
                 "---\nname: a\ndescription: d\ntools:\n  {deny}: deny\n  {allow}: allow\n---\n"
             ));
-            let projection = policy.project(*harness);
+            let projection = project(&policy, *harness);
             assert_eq!(
                 projection.rules()[1].1.native(),
                 *allowed,
@@ -582,7 +710,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  bash: allow\n  'bash(git push *)': deny\n---\n",
         );
-        let projection = policy.project(HarnessId::Claude);
+        let projection = project(&policy, HarnessId::Claude);
         assert_eq!(projection.rules()[0].1.native(), ["Bash"]);
         assert_eq!(projection.rules()[1].1.native(), ["Bash(git push *)"]);
     }
@@ -596,7 +724,7 @@ mod tests {
             &mut fm,
             &["context7".to_string()]
         ));
-        let policy = mars_schema::agent::read(&fm.render()).fields.unwrap().tools;
+        let policy = crate::agent::read(&fm.render()).fields.unwrap().tools;
         assert_eq!(policy.describe(), vec!["allow:mcp(context7/*)"]);
         assert!(!policy.is_allowlist());
     }
@@ -650,7 +778,7 @@ mod tests {
             let parsed = parse_mars_tool_name(rule).unwrap();
             let projected = project_rule(
                 &ToolRule::from_parsed(parsed, ToolAction::Deny),
-                HarnessId::Claude,
+                Host::Harness(HarnessId::Claude),
             );
             assert_eq!(projected.native_tools(), native_tools, "{rule}");
         }
@@ -660,7 +788,7 @@ mod tests {
                 parse_mars_tool_name("write(src/**)").unwrap(),
                 ToolAction::Allow,
             ),
-            HarnessId::Claude,
+            Host::Harness(HarnessId::Claude),
         );
         assert!(
             write
@@ -676,7 +804,7 @@ mod tests {
         let policy = agent_policy(
             "---\nname: a\ndescription: d\ntools:\n  'write(src/**)': allow\n  'edit(src/**)': ask\n  'notebook(src/**)': deny\n---\n",
         );
-        let projection = policy.project(HarnessId::Claude);
+        let projection = project(&policy, HarnessId::Claude);
         assert!(projection.rules()[0].1.native().is_empty(), "allow loses");
         assert!(
             projection.rules()[0].1.native_tools().is_empty(),
@@ -750,10 +878,7 @@ mod tests {
         ] {
             for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
                 assert_eq!(natives(raw, harness), known(&[raw]), "{raw} on {harness}");
-                let kind =
-                    crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness)
-                        .expect("test harness exists")
-                        .kind;
+                let kind = Host::parse(harness).expect("test host exists");
                 let projected = project_rule(
                     &ToolRule::from_parsed(parse_mars_tool_name(raw).unwrap(), ToolAction::Deny),
                     kind,

@@ -1,0 +1,57 @@
+{
+  "host": "meridian-flow",
+  "ask_handling": "unconfirmed",
+  "rules": [
+    {
+      "rule": {
+        "capability": "bash",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "unknown",
+      "native": [],
+      "native_tools": [],
+      "note": "no native name known for this tool on this harness; left out",
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "glob",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "absent",
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "ask_user",
+        "pattern": null,
+        "action": "ask",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "ask_user"
+      ],
+      "native_tools": [
+        "ask_user"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [
+    "ask_user"
+  ],
+  "available": [
+    "ask_user"
+  ]
+}

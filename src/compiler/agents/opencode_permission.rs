@@ -2,7 +2,7 @@
 //!
 //! Three names:
 //!
-//! - **policy**: the agent's tool rules as `tools.project(OpenCode)` spells them, with the
+//! - **policy**: the agent's tool rules as `project(tools, OpenCode)` spells them, with the
 //!   `execute: deny` rule added when the shell is restricted. Mars semantics: the strictest named
 //!   rule that matches decides, and `*` (`s`) decides a call no named rule matches.
 //! - **override**: the author's `harness-overrides.opencode.permission`. It is written in
@@ -61,12 +61,12 @@
 //! on OpenCode 2.2.5), so a shell deny or ask denies `execute`.
 
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost};
-use crate::compiler::tool_policy::{PolicyProjection, ToolPolicyRuntime};
 use mars_schema::HarnessId;
 use mars_schema::agent::AgentProfile;
 use mars_schema::ordered::OrderedValue;
 use mars_schema::tool_natives::opencode_v2_action;
 use mars_schema::tool_policy::{EffectiveToolPolicy, ToolAction};
+use mars_schema::tool_project::{PolicyProjection, project};
 use serde_yaml::{Mapping, Value};
 
 const STAR: &str = "*";
@@ -100,7 +100,7 @@ pub(super) struct PolicyRules {
 }
 
 pub(super) fn policy_rules(tools: &EffectiveToolPolicy) -> PolicyRules {
-    let projection = tools.project(HarnessId::OpenCode);
+    let projection = project(tools, HarnessId::OpenCode);
     let star = tools
         .rules
         .iter()

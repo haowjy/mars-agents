@@ -1,0 +1,29 @@
+{
+  "host": "meridian-flow",
+  "ask_handling": "unconfirmed",
+  "rules": [
+    {
+      "rule": {
+        "capability": "write",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "write"
+      ],
+      "native_tools": [
+        "write"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [
+    "write"
+  ],
+  "ask": [],
+  "available": []
+}

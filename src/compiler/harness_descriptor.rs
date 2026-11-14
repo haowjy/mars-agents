@@ -2,21 +2,12 @@
 //!
 //! This module is the compiler-side owner for facts that used to be duplicated
 //! across lowerers: canonical ids, skill variant keys,
-//! MCP projection policy, and lowering-policy selection hooks. The
+//! and lowering-policy selection hooks. The
 //! descriptor is keyed by [`HarnessId`] so compiler code does not re-match raw
 //! `"claude"`/`"codex"` strings at each call site.
 
 use crate::config::Settings;
 use mars_schema::HarnessId;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum McpProjectionPolicy {
-    ClaudeToolList,
-    CodexServerConfig,
-    CursorToolList,
-    OpenCodeToolList,
-    Unsupported,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentLoweringPolicyKind {
@@ -42,7 +33,6 @@ pub(crate) struct CompilerHarnessDescriptor {
     pub display_name: &'static str,
     pub variant_key: &'static str,
     pub target_dir: &'static str,
-    pub mcp_projection: McpProjectionPolicy,
     pub agent_policy: AgentLoweringPolicyKind,
     pub skill_policy: SkillLoweringPolicyKind,
 }
@@ -55,7 +45,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         display_name: "Claude",
         variant_key: "claude",
         target_dir: ".claude",
-        mcp_projection: McpProjectionPolicy::ClaudeToolList,
         agent_policy: AgentLoweringPolicyKind::Claude,
         skill_policy: SkillLoweringPolicyKind::Claude,
     },
@@ -66,7 +55,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         display_name: "Codex",
         variant_key: "codex",
         target_dir: ".codex",
-        mcp_projection: McpProjectionPolicy::CodexServerConfig,
         agent_policy: AgentLoweringPolicyKind::Codex,
         skill_policy: SkillLoweringPolicyKind::Codex,
     },
@@ -77,7 +65,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         display_name: "Pi",
         variant_key: "pi",
         target_dir: ".pi",
-        mcp_projection: McpProjectionPolicy::Unsupported,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::Pi,
     },
@@ -88,7 +75,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         display_name: "OpenCode",
         variant_key: "opencode",
         target_dir: ".opencode",
-        mcp_projection: McpProjectionPolicy::OpenCodeToolList,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::OpenCode,
     },
@@ -99,7 +85,6 @@ const DESCRIPTORS: &[CompilerHarnessDescriptor] = &[
         display_name: "Cursor",
         variant_key: "cursor",
         target_dir: ".cursor",
-        mcp_projection: McpProjectionPolicy::CursorToolList,
         agent_policy: AgentLoweringPolicyKind::Markdown,
         skill_policy: SkillLoweringPolicyKind::Cursor,
     },

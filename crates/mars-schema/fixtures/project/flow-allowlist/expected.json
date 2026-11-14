@@ -1,0 +1,44 @@
+{
+  "host": "meridian-flow",
+  "ask_handling": "unconfirmed",
+  "rules": [
+    {
+      "rule": {
+        "capability": "*",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": null,
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "read",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "read"
+      ],
+      "native_tools": [
+        "read"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [
+    "read"
+  ],
+  "deny": [],
+  "ask": [],
+  "available": [
+    "read"
+  ]
+}

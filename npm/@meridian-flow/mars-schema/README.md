@@ -29,6 +29,7 @@ await init();
 | `emitValue(value, indent)` | YAML for one value, to splice after a key. |
 | `rewriteBlock(frontmatter)` | The whole frontmatter block between the `---` fences for ordered `[key, value]` pairs. |
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
+| `project(rules, host)` | Lowers an Agent's tool rules onto a host with the code `mars sync` uses: the native names each action ends with, each rule's gap or stricter rule, and how the host handles `ask`. |
 | `prepare({files, context?, declaredDialect?, migrate?})` | Reads one root held in memory: classifies it, upgrades or translates it, and returns each definition's normalized bytes, typed reading and change record. `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a `harness-overrides` key moves there. |
 | `inspect({tree, hint?})` | Reports what a repository is: a marketplace's plugins, a plugin's or skill tree's items, the dialect and the evidence for it. |
 | `normalize({tree, source?, hint?, selection?})` | Turns a selection into schema v1 packages with a generated `mars.toml` and provenance. |
@@ -94,6 +95,18 @@ natives["meridian-flow"].work;                 // { kind: "tools", tools: ["work
 
 `natives` has one table for each of `claude`, `codex`, `opencode`, `pi`, `cursor` and `meridian-flow` (Meridian Flow's own tools, which is not a harness). An entry is the host's tool names (`tools`), file tools scoped through a permission category (`scoped-tools`), `absent` (the host has no such tool) or `no-switch` (the host can do it but has no tool to turn off). The capability table is explained in [Tool capabilities](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#tool-capabilities).
 
+### `project`
+
+```ts
+const { tools } = read("agents/a.md", text).fields;      // [{ capability, pattern, action }, ...]
+const p = project(tools, "meridian-flow");
+p.allow; p.deny; p.ask;     // native tool names after stricter rules win shared names
+p.ask_handling;             // "unconfirmed": Flow has no per-use confirmation, so `ask` leaves the tool available
+p.rules[0].status;          // "known" | "absent" | "unknown" | "unscopable" | null (for `*`)
+```
+
+`host` is `claude`, `codex`, `pi`, `opencode`, `cursor` or `meridian-flow`. A rule with a gap has `status` other than `known`, no `native` names and the reason in `note`; a rule a stricter rule beats keeps its place in `rules` with `covered_by` set or the shared name missing from `native`. The result decides nothing: whether a gap is a warning or an error is the caller's policy. Meridian Flow's tools take no scope, so a rule with a pattern there is `unscopable`.
+
 ### `prepare`, `inspect`, `normalize`
 
 `prepare` is the single-root core. It classifies the root (`schema-1`, `mars-legacy`, `schema-newer`, a foreign dialect, `marketplace`, `invalid` or `empty`), selects definitions, upgrades a pre-v1 package or translates a foreign one, and reads each result. For each definition it returns the source and output paths, the normalized bytes, the typed reading, and a change record (`none`, `generated`, `edited` with the changed key paths, or `fully-rewritten`); payload files come back as source-to-output paths without bytes. Findings are keyed by source path in `diagnostics`; what preparing dropped, moved or repaired in each file (a pre-v1 upgrade's removals, a foreign translation's moves) is keyed the same way in `changes`, and a file counts as changed when its change record is not `none` or `generated`. `context` is `"package"` (the default), `"authored-local"` (a consumer project's `.mars-src`) or `"project"` (a project directory: a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content). A tree with no manifest is read as one dialect, Claude unless an Agent has a `permission` map or a `tools` map of booleans (OpenCode), and the keys only pre-v1 Mars defined are rewritten one by one whatever that dialect is, so they never change how the rest of the tree is read. A translated or upgraded definition is never refused: what schema v1 does not accept is moved under `harness-overrides.<dialect>` or dropped, except a key Mars lowers itself (`model`, `effort`, `tools`, `disallowed-tools`, `skills`, `mode`), which is never moved: a mapping loses only its invalid entries and a scalar is dropped. Losing a restriction is a change coded `field.restriction-lost` that names the agent; report these every time, since each leaves an agent less restricted than its file says. `prepare` is supported on its own, for reading one root without choosing items; `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance.
@@ -133,6 +146,7 @@ Each package's edges and `uses-providers` are read from `prepared.selection`, so
 | `prepare` | `input/`, `request.json`, `expected.json` | classifying and reading one root, and with `"migrate": true` the repair `mars migrate` writes back |
 | `normalize` | `input/`, `request.json`, `inspection.json`, `normalized.json`, `expected/` | reading a foreign repository |
 | `vocabulary` | `expected.json` | the capabilities, aliases and native tools |
+| `project` | `request.json`, `expected.json` | `project` for one rule list on one host |
 | `version` | `input.json`, `expected.json` | `satisfies`, `satisfiesRequirement` and `selectVersion`, with the `code` of each refusal (the Rust leg also pins `parse-constraint` and `parse-tag`, which are not exported) |
 | `selection` | `request.json`, `packages/` (or `packages_from`: a sibling case's), `expected.json` | `selectItems` over packages prepared from `packages/` |
 

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-11-14
+
+### Fixed
+- `@meridian-flow/mars-schema`: `prepare` now adds a package's `[package.tools]` rules to each shipped Agent's `tools` reading, as `mars sync` writes them into the installed file. An Agent that names the same key keeps its own rule, and an added rule has `origin: "package"`. Before, a package's `deny` was missing from every Agent reading. `project(rules, host)` and `ToolRule.origin` are now documented for whole keys such as `bash(git *)`, and `project` keeps each rule's `origin`. When a package's `mars.toml` has any error (an invalid `[package.tools]` entry included), `prepare` gives each of its Agents a `package-tools.unreadable` error, as `mars sync` refuses that package. `--agent-tool-rules` and the bundle's `origin` column list `package`.
+
 ## [0.32.0] - 2026-11-14
 
 ### Added

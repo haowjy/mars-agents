@@ -429,6 +429,20 @@ fn add_package_tools(
     let Reading::Agent(read) = &mut definition.reading else {
         return;
     };
+    // `mars sync` refuses a manifest with any error and installs none of its Agents, so an
+    // Agent read beside one carries the failure instead of reading clean without the rules.
+    if let Some(error) = manifest.first_error() {
+        read.diagnostics.push(SchemaDiagnostic::new(
+            "package-tools.unreadable",
+            Severity::Error,
+            Vec::new(),
+            format!(
+                "the package's mars.toml has an error, so its `[package.tools]` rules cannot be added and `mars sync` refuses the package: {}",
+                error.message
+            ),
+        ));
+        return;
+    }
     let (Some(package), Some(fields)) = (
         manifest
             .package

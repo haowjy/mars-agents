@@ -41,7 +41,7 @@
         "capability": "write",
         "pattern": null,
         "action": "deny",
-        "origin": "profile"
+        "origin": "package"
       },
       "status": "known",
       "native": [

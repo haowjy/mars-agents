@@ -51,6 +51,14 @@ pub fn read(content: &str) -> ManifestRead {
 }
 
 impl ManifestRead {
+    /// The first error of the reading: a manifest with any error is refused whole.
+    pub fn first_error(&self) -> Option<&SchemaDiagnostic> {
+        self.package
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.is_error())
+    }
+
     /// A manifest that could not be read: no fields, only why.
     pub fn unread(diagnostics: Vec<SchemaDiagnostic>) -> Self {
         Self {

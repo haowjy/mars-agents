@@ -178,6 +178,8 @@ struct RuleInput {
     capability: String,
     pattern: Option<String>,
     action: mars_schema::tool_policy::ToolAction,
+    #[serde(default)]
+    origin: mars_schema::tool_policy::RuleOrigin,
 }
 
 /// Lower tool rules onto a host (`claude`, `codex`, `pi`, `opencode`, `cursor` or
@@ -197,6 +199,7 @@ pub fn project(rules: JsValue, host: &str) -> Result<JsValue, JsValue> {
                     rule.pattern.as_deref(),
                     rule.action,
                 )
+                .map(|projected| projected.with_origin(rule.origin))
                 .map_err(|error| {
                     fail(
                         "input.invalid",

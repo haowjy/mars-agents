@@ -3,6 +3,6 @@
   "rules": [
     { "capability": "bash(git *)", "pattern": null, "action": "ask" },
     { "capability": "Bash(git push:*)", "pattern": null, "action": "deny" },
-    { "capability": "write", "pattern": null, "action": "deny" }
+    { "capability": "write", "pattern": null, "action": "deny", "origin": "package" }
   ]
 }

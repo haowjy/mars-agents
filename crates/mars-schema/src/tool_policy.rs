@@ -44,7 +44,8 @@ impl ToolAction {
 
 /// Where a rule came from. It is not part of a rule's identity: two rules with the same
 /// capability, pattern and action are one rule whatever their origin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RuleOrigin {
     /// The agent's or skill's own profile.
     #[default]

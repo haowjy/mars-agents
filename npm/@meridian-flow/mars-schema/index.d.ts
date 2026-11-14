@@ -259,7 +259,7 @@ export type Host = Harness | "meridian-flow";
 
 /** One rule's lowering on a host. */
 export interface ProjectedRule {
-  /** The rule as given, in the shape `read` reports it. `origin` is `"profile"`: `project` takes none. */
+  /** The rule as given, in the shape `read` reports it. `origin` is the input's, `"profile"` when it gave none. */
   rule: ToolRule;
   /**
    * `known`: Mars names the tool; `absent`: the host has no such tool; `unknown`: Mars cannot
@@ -298,7 +298,7 @@ export interface ToolProjection {
  * A consumer must refuse a rule whose `status` is `unscopable` or `unknown` rather than read only
  * `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves `allow: ["read"]` granting every read.
  */
-export function project(rules: { /** A capability, or a whole key such as `bash(git *)` or `Bash(git push:*)` when `pattern` is absent. */ capability: string; pattern?: string | null; action: "allow" | "deny" | "ask" }[], host: Host): ToolProjection;
+export function project(rules: { /** A capability, or a whole key such as `bash(git *)` or `Bash(git push:*)` when `pattern` is absent. */ capability: string; pattern?: string | null; action: "allow" | "deny" | "ask"; origin?: ToolRule["origin"] }[], host: Host): ToolProjection;
 
 // ---------------------------------------------------------------------------------------
 // prepare, inspect, normalize

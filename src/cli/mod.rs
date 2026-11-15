@@ -133,8 +133,6 @@ pub enum Command {
     /// Upgrade dependency versions to newest compatible releases.
     Upgrade(upgrade::UpgradeArgs),
 
-    /// Upgrade the package's authored definition format to schema v1.
-
     /// Show available updates without applying.
     Outdated(outdated::OutdatedArgs),
 

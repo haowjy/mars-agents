@@ -13,24 +13,21 @@ store in `.mars/`.
 - **Meridian and the harnesses,** which read `.mars/` and the target files. The package
   format and what a sync writes are contracts they build on.
 
-## Invariants
+## Engineering
 
-These hold however the code changes, but they can change too. When evidence shows one
-no longer serves the users, propose the change to Jimmy as its own step, never as a
-side effect of getting a task to pass. How the code keeps each one, what checks it and
-where it falls short: [.context/invariants.md](.context/invariants.md).
+This codebase is yours: how it's built is your call, and you'll keep building on it.
+Product decisions are Jimmy's.
 
-- **Your files stay yours.** Mars overwrites or deletes only what it installed and
-  recorded; anything else it leaves alone and reports, because people keep their own
-  files beside installed ones.
-- **Only what it was given.** Mars reads only the sources and config it was given, and a
-  package can't read outside its root or write outside the destination: packages come
-  from other people's repositories.
-- **Private content stays private.** Exported metadata carries no agent or skill bodies,
-  and an imported MCP server gets no credential Claude would withhold.
-- **Nothing lost silently.** A lost restriction that changes what an agent can do is
-  shown by default, and every other field a harness can't express shows under
-  `--verbose`: the author and the user must know what an agent can actually do.
+**Choose the simpler system, not the smaller change.** When a case doesn't fit, change the
+design so it does instead of adding a branch, flag or special case. Judge a choice by the
+code it leaves: a bigger change, or more deletion, is the right one when less is left to
+understand. Fix structural debt in the same PR, whatever its size; a found fix too large for
+the PR gets its own PR now.
+
+**Fix the root cause.** Gather the problems a probe, a review or Jimmy finds, trace each to
+its cause, and fix the cause: no guard, retry or special case where the problem showed up.
+Several problems often share one cause. A rare edge case with no fix at its cause can be left
+as it is.
 
 ## Errors and Warnings
 
@@ -54,6 +51,14 @@ a translator from another format, such as the pre-v1 upgrade in `upgrade.rs`.
 
 ## Design Constraints
 
+- Mars overwrites or deletes only what it installed and recorded; anything else it leaves
+  alone and reports, because people keep their own files beside installed ones.
+- Packages come from other people's repositories: Mars reads only the sources and config it
+  was given, and a package can't read outside its root or write outside the destination.
+- Exported metadata carries no agent or skill bodies, and an imported MCP server gets no
+  credential Claude would withhold.
+- A lost restriction that changes what an agent can do is shown by default, and every other
+  field a harness can't express shows under `--verbose`.
 - Resolve first, then act: if resolution fails anywhere, nothing on disk changes.
 - Config, lock and installed files are written atomically (tmp+rename).
 - Windows is first-class: no POSIX-only assumptions.
@@ -64,6 +69,9 @@ a translator from another format, such as the pre-v1 upgrade in `upgrade.rs`.
   it keeps working but isn't tested or extended. `.pi` is still being designed.
 - Comments only for what the code can't show and a wrong edit would break silently; no
   decision IDs.
+
+How the code keeps the first four today, what checks them and where it falls short:
+[.context/invariants.md](.context/invariants.md).
 
 ## Commands
 
@@ -91,7 +99,7 @@ Docs-only changes and tiny, obvious bug fixes go straight to `main`. Everything 
 merging one into `main` takes Jimmy's approval in this conversation, per PR, unless your
 global instructions grant your model more. A change that crosses a boundary others
 depend on (CLI commands, flags or output, `mars.toml` or `mars.lock`, the package format,
-what a sync writes into a target, an invariant) needs his approval before it starts.
+what a sync writes into a target) needs his approval before it starts.
 
 CI tags and publishes releases: never tag, edit version numbers, or push with
 `--no-verify`. Before opening a PR or merging, read

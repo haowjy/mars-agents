@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.6] - 2026-11-15
+
+### Fixed
+- After a `mars sync` was killed while writing `mars.lock`, running `mars link`, `mars unlink` or `mars resolve` left every later `mars sync` and `mars repair` failing with "mars.lock changed since the pending write". These commands now recover the interrupted write first. The error no longer suggests `mars repair`, which could not clear it.
+
 ## [0.33.5] - 2026-11-15
 
 ### Fixed

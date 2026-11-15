@@ -1,0 +1,42 @@
+{
+  "diagnostics": {
+    "skills/lint/SKILL.md": [
+      {
+        "code": "skill.name-invalid",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "name `Linter Tool` has characters outside `a-z`, `0-9` and `-`"
+      },
+      {
+        "code": "skill.description-too-long",
+        "severity": "info",
+        "path": [
+          "description"
+        ],
+        "message": "description is over 1024 characters"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "skill folder `lint` doesn't match its `name` `Linter Tool`; the item loads under both"
+      }
+    ],
+    "skills/ok/SKILL.md": [
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "skill folder `ok` doesn't match its `name` `renamed`; the item loads under both"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

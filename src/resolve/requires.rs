@@ -27,18 +27,6 @@ fn parse_requirement(
     })
 }
 
-pub(crate) fn validate_package_requirement_syntax(
-    package: &PackageInfo,
-) -> Result<(), ResolutionError> {
-    if let Some(requirement) = package.requires_mars.as_deref() {
-        parse_requirement(&package.name, "mars", requirement)?;
-    }
-    if let Some(requirement) = package.requires_meridian.as_deref() {
-        parse_requirement(&package.name, "meridian", requirement)?;
-    }
-    Ok(())
-}
-
 fn check_engine_requirement(
     package: &str,
     engine: &'static str,

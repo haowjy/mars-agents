@@ -415,16 +415,16 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
     }
 
     match check::check_dir(project_root) {
-        Ok(report) if report.errors.is_empty() => Ok(()),
+        Ok(report) if report.errors().is_empty() => Ok(()),
         Ok(report) if force => {
-            for error in &report.errors {
+            for error in report.errors() {
                 eprintln!("warning (--force): {error}");
             }
             Ok(())
         }
         Ok(report) => {
             let mut message = "package check failed:".to_string();
-            for error in &report.errors {
+            for error in report.errors() {
                 message.push_str(&format!("\n  - {error}"));
             }
             Err(ConfigError::Invalid { message }.into())

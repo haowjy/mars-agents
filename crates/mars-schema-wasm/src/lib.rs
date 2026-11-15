@@ -534,3 +534,43 @@ pub fn render_hooks(
         targets,
     })
 }
+
+/// What a package's files say is wrong with it, from `{files, context?, declaredDialect?,
+/// dependencies?}`: `prepare`, `links::package` and `mars_schema::check::check`, in that order.
+/// `dependencies` is `{name: {prepared}}`, the shape of `selectItems`' `packages` (only each
+/// `prepared.selection` is read), so one value serves both.
+#[wasm_bindgen]
+pub fn check(argument: JsValue) -> Result<JsValue, JsValue> {
+    use mars_schema::selection::PackageInput;
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Input {
+        files: BTreeMap<String, ByteBuf>,
+        context: Option<mars_schema::prepare::PrepareContext>,
+        declared_dialect: Option<mars_schema::dialect::Dialect>,
+        #[serde(default)]
+        dependencies: BTreeMap<String, PackageInput>,
+    }
+    check_keys::<Input>(&argument)?;
+    if let Some(dependencies) = js_sys::Reflect::get(&argument, &"dependencies".into())
+        .ok()
+        .and_then(|value| value.dyn_into::<js_sys::Object>().ok())
+    {
+        js_sys::Object::values(&dependencies)
+            .iter()
+            .try_for_each(|package| check_keys::<PackageInput>(&package))?;
+    }
+    let input: Input = parse_input(argument)?;
+    let tree = file_tree(input.files)?;
+    let context = input
+        .context
+        .unwrap_or(mars_schema::prepare::PrepareContext::Package);
+    let mut prepared = mars_schema::prepare::prepare(&tree, context, input.declared_dialect);
+    mars_schema::links::package(&mut prepared);
+    let dependencies = input
+        .dependencies
+        .into_iter()
+        .map(|(name, package)| (name, mars_schema::selection::PackageView::from(package).facts))
+        .collect();
+    to_js(&mars_schema::check::check(&tree, &prepared, &dependencies))
+}

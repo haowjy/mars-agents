@@ -1,0 +1,96 @@
+{
+  "diagnostics": {
+    "agents/a.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `dup` is also the name of `agents/b.md`, `agents/c.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `a.md` doesn't match its `name` `dup`; the item loads under both"
+      }
+    ],
+    "agents/b.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `dup` is also the name of `agents/a.md`, `agents/c.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `b.md` doesn't match its `name` `dup`; the item loads under both"
+      }
+    ],
+    "agents/c.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `dup` is also the name of `agents/a.md`, `agents/b.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `c.md` doesn't match its `name` `dup`; the item loads under both"
+      }
+    ],
+    "skills/s1/SKILL.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "skill name `same` is also the name of `skills/s2/SKILL.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "skill folder `s1` doesn't match its `name` `same`; the item loads under both"
+      }
+    ],
+    "skills/s2/SKILL.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "skill name `same` is also the name of `skills/s1/SKILL.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "skill folder `s2` doesn't match its `name` `same`; the item loads under both"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

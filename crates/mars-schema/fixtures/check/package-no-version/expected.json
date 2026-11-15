@@ -1,0 +1,17 @@
+{
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "manifest.version-missing",
+        "severity": "info",
+        "path": [
+          "package",
+          "version"
+        ],
+        "message": "package version is missing"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

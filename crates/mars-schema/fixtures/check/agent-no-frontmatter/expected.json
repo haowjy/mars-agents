@@ -1,0 +1,14 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "frontmatter.missing",
+        "severity": "error",
+        "path": [],
+        "message": "an Agent's frontmatter must open with a first line that is exactly `---`; without it every field takes its default"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

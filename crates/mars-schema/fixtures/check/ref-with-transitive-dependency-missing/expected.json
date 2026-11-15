@@ -1,0 +1,10 @@
+{
+  "diagnostics": {},
+  "dependency_diagnostics": {},
+  "missing_dependencies": [
+    {
+      "name": "two",
+      "declared_in": "one"
+    }
+  ]
+}

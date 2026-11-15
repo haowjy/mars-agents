@@ -1,0 +1,16 @@
+{
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "selection.duplicate-slug",
+        "severity": "warning",
+        "path": [
+          "dependencies"
+        ],
+        "message": "skill `x` is installed from `one`, `two`, which ship it under one name"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

@@ -1,0 +1,32 @@
+{
+  "diagnostics": {
+    "agents/g.md": [
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "mode"
+        ],
+        "message": "agent `g`: `mode: 3` ignored (not a string); use primary or subagent"
+      },
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "effort"
+        ],
+        "message": "agent `g`: `effort: 2` ignored (not a string); use none, low, medium, high, xhigh or max"
+      },
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "harness"
+        ],
+        "message": "agent `g`: `harness: 7` ignored (not a string); use claude, codex, opencode, cursor or pi"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

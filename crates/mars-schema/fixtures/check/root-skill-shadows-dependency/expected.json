@@ -1,0 +1,22 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "selection.duplicate-slug",
+        "severity": "info",
+        "path": [],
+        "message": "agent `coder` is also shipped by `dep`; this package's is the one installed"
+      }
+    ],
+    "skills/x/SKILL.md": [
+      {
+        "code": "selection.duplicate-slug",
+        "severity": "info",
+        "path": [],
+        "message": "skill `x` is also shipped by `dep`; this package's is the one installed"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

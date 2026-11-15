@@ -513,7 +513,7 @@ pub(crate) const REPAIRED: &str = "frontmatter.repaired";
 pub(crate) fn repaired_diagnostic(keys: &[String]) -> SchemaDiagnostic {
     SchemaDiagnostic::new(
         REPAIRED,
-        Severity::Warning,
+        Severity::Info,
         key_path(&keys[0]),
         format!(
             "the unquoted value of {} is not valid plain YAML; it was quoted",

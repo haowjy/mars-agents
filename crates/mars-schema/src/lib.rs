@@ -4,6 +4,7 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod agent;
+pub mod check;
 pub mod dependency;
 pub mod dialect;
 pub mod discover;

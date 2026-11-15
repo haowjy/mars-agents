@@ -166,7 +166,7 @@ fn read_package(
     match package.get("version") {
         None => diagnostics.push(SchemaDiagnostic::new(
             "manifest.version-missing",
-            Severity::Warning,
+            Severity::Info,
             child_path("package", "version"),
             "package version is missing",
         )),

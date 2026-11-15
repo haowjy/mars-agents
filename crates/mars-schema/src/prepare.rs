@@ -640,10 +640,7 @@ fn translate_foreign(
     changes.extend(lifted.changes);
     let mut findings = lifted.findings;
     if claude && selected.kind == DefinitionKind::Skill {
-        findings.extend(crate::claude::checks::skill_checks(
-            selected,
-            &lifted.frontmatter,
-        ));
+        findings.extend(crate::claude::checks::skill_checks(&lifted.frontmatter));
     }
     let (bytes, change) = if lifted.changed || repaired {
         (

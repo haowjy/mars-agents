@@ -7,6 +7,13 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.5] - 2026-11-15
+
+### Fixed
+- `mars unlink` finishes an interrupted `link` or `unlink` instead of leaving the target's lock records behind.
+- `mars unlink` removes a target listed in `mars.local.toml`; before, it said the target wasn't managed, and the next `sync` installed it again.
+- `mars link .mars` and `mars unlink .mars` are refused. `unlink .mars` could delete the canonical store, edits included.
+
 ## [0.33.4] - 2026-11-15
 
 ### Fixed

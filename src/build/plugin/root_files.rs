@@ -313,9 +313,22 @@ struct CatalogOwner<'a> {
 #[derive(Serialize)]
 struct CatalogPlugin<'a> {
     name: &'a str,
-    source: &'a str,
+    source: CatalogSource<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum CatalogSource<'a> {
+    Relative(&'a str),
+    GitSubdir {
+        source: &'static str,
+        url: &'a str,
+        path: &'a str,
+        #[serde(rename = "ref")]
+        git_ref: String,
+    },
 }
 
 fn render_root_file(
@@ -325,9 +338,23 @@ fn render_root_file(
     metadata: &PackageMetadata,
 ) -> Result<Vec<u8>, MarsError> {
     match root_file {
-        RootFile::Marketplace { source_prefix, .. } => {
+        RootFile::Marketplace {
+            source_prefix,
+            tag_pin,
+            ..
+        } => {
             let owner = metadata.author();
-            let source = format!("{source_prefix}{output_relative}/{tree_key}");
+            let path = format!("{output_relative}/{tree_key}");
+            let relative = format!("{source_prefix}{path}");
+            let source = match &metadata.marketplace_repository {
+                Some(url) if tag_pin => CatalogSource::GitSubdir {
+                    source: "git-subdir",
+                    url,
+                    path: &path,
+                    git_ref: format!("v{}", metadata.version),
+                },
+                _ => CatalogSource::Relative(&relative),
+            };
             super::tree::pretty_json_bytes(
                 &Catalog {
                     name: &metadata.marketplace,
@@ -337,7 +364,7 @@ fn render_root_file(
                     },
                     plugins: [CatalogPlugin {
                         name: &metadata.name,
-                        source: &source,
+                        source,
                         description: metadata.description.as_deref(),
                     }],
                 },

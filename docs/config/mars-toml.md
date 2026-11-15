@@ -178,6 +178,7 @@ harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
 | `name` | string | `[package].name` | Plugin identifier and namespace |
 | `marketplace` | string | `[package].name` | Marketplace/catalog identifier used with `name@marketplace` installs |
 | `description` | string | `[package].description` | Plugin-facing description |
+| `marketplace-repository` | string | unset | Repository that hosts the package (`owner/repo` for GitHub, or an `https://` or `ssh://` URL). Set, the Claude marketplace entry's `source` becomes `{ "source": "git-subdir", "url": <this>, "path": "<dir>/claude", "ref": "v<[package].version>" }`, so a marketplace install serves the release tag instead of `main`. Needs `claude` among the harnesses. Cursor's catalog takes a local path only, so it stays unpinned |
 | `harnesses` | string[] | every supported harness | Harnesses the build serves: `claude`, `codex`, `grok`, `cursor`, and `opencode`. Harnesses added in later releases join the default |
 
 `dir` must stay inside the package and cannot be `.`, `..`, a dot directory, or an

@@ -36,6 +36,13 @@ and marketplace default to `[package].name`, description defaults to the package
 description, and every harness Mars supports is selected by default. A harness added in a later Mars release joins the default, so a package without `harnesses` starts building for it on its next release; list `harnesses` to opt out. See the
 [`mars.toml` reference](config/mars-toml.md#plugin-optional) for field and naming rules.
 
+To make Claude marketplace installs serve the release tag instead of whatever `main` holds,
+set `marketplace-repository = "owner/repo"` in `[plugin]`. The generated
+`.claude-plugin/marketplace.json` then lists the plugin as a `git-subdir` source at
+`v<[package].version>`. The ref is read from `mars.toml` at build time, so `mars version`
+writes the new tag's ref into the release commit. Install from that catalog fails until the tag
+is pushed. Cursor's catalog has no repository form and keeps its relative path.
+
 Build the configured output with:
 
 ```bash

@@ -18,6 +18,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     root_file: RootFile::Marketplace {
         file: CLAUDE_ROOT_FILE,
         source_prefix: "./",
+        tag_pin: true,
         name_rule: NameRule {
             validate: valid_claude_plugin_name,
             message: "Claude marketplace names cannot contain spaces, `@`, `:`, path separators, control characters, or bidirectional formatting characters",

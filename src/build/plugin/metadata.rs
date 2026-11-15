@@ -18,6 +18,8 @@ pub(crate) struct PackageAuthor {
 pub(crate) struct PackageMetadata {
     pub name: String,
     pub marketplace: String,
+    /// Set: a catalog whose format allows it pins its plugin source to `v<version>` of this repository.
+    pub marketplace_repository: Option<String>,
     pub version: String,
     pub description: Option<String>,
     pub authors: Vec<PackageAuthor>,
@@ -69,6 +71,27 @@ pub(crate) fn validate(config: &Config) -> Result<PackageMetadata, ConfigError> 
         plugin.and_then(|plugin| plugin.get("marketplace")),
     )?
     .unwrap_or_else(|| package.name.clone());
+    let marketplace_repository = optional_string(
+        "[plugin].marketplace-repository",
+        plugin.and_then(|plugin| plugin.get("marketplace-repository")),
+    )?;
+    if let Some(repository) = &marketplace_repository {
+        if let Some(reason) = mars_schema::claude::manifest::repository_refusal(
+            &mars_schema::claude::manifest::repository_url(repository),
+        ) {
+            return Err(invalid(format!(
+                "mars.toml [plugin].marketplace-repository is invalid: {reason}"
+            )));
+        }
+        if !harnesses
+            .iter()
+            .any(|spec| spec.tree.root_file.pins_to_tag())
+        {
+            return Err(invalid(
+                "mars.toml [plugin].marketplace-repository needs `claude` in [plugin].harnesses; no selected harness has a marketplace that can pin a tag",
+            ));
+        }
+    }
     let description = optional_string(
         "[plugin].description",
         plugin.and_then(|plugin| plugin.get("description")),
@@ -113,6 +136,7 @@ pub(crate) fn validate(config: &Config) -> Result<PackageMetadata, ConfigError> 
     Ok(PackageMetadata {
         name,
         marketplace,
+        marketplace_repository,
         version: package.version.clone(),
         description,
         authors,

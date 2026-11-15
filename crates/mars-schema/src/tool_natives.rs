@@ -184,7 +184,14 @@ const CLAUDE: Table = &[
             note: "Claude scopes NotebookEdit through Edit(path), which also covers other built-in file edits at that path",
         },
     ),
-    ("agent", Tools(&["Agent", "SendMessage", "ListAgents"])),
+    (
+        "agent",
+        ScopedTools {
+            unscoped: &["Agent", "SendMessage", "ListAgents"],
+            scoped: &["Agent"],
+            note: "Claude's `Agent(type, ...)` limits which sub-agent types can be started; SendMessage and ListAgents take no scope",
+        },
+    ),
     ("skill", Tools(&["Skill"])),
     ("workflow", Tools(&["Workflow"])),
     (

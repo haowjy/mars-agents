@@ -88,7 +88,7 @@ A skill carries no tool policy, and schema 1 rejects these keys with an error th
 | `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
 | `invocation`, `disable-model-invocation`, `allow_implicit_invocation` | `model-invocable` and `user-invocable` |
 
-`mars migrate` makes these changes. A pre-v1 dependency gets the same upgrade in memory, and dropping a skill's tool keys warns with the file's name. Foreign skills (a Claude plugin's `allowed-tools`, for example) are translated when Mars imports them: the tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
+`mars migrate` makes these changes. A pre-v1 dependency gets the same upgrade in memory, and dropping a skill's tool keys warns with the file's name. A Claude skill's `allowed-tools` and `disallowed-tools` are Claude's own keys: Mars imports them into `harness-overrides.claude`, so `.claude/` output keeps them and no other harness sees them. The other tool keys of a foreign skill are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
 
 ---
 

@@ -108,7 +108,7 @@ fn record_agent_invocation_lossiness(
 /// Lower an agent profile to Claude-native markdown format.
 ///
 /// Per agent-compilation-mapping.md V0 §10:
-/// - Preserved: name, description, model, tools, disallowed-tools, body
+/// - Preserved: name, description, model, tools, disallowedTools, body
 /// - Skills: load is native-preloaded where supported; other channels use designed body guidance
 /// - Meridian-only (launch-time): approval, sandbox, mode,, model-policies, fanout
 /// - Dropped: harness, legacy-models. `harness-overrides.<harness>` keys are added unless Mars lowers that key
@@ -201,7 +201,7 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::All,
+            deny: DenyCarry::Unscoped,
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
@@ -432,10 +432,14 @@ impl<'a> AgentLoweringCtx<'a> {
         let target = self.target_name();
         let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
-        let disallowed = projection.natives(ToolAction::Deny, RuleKind::All);
-        for note in projection.gaps(ToolAction::Allow, RuleKind::All) {
+        let disallowed: Vec<_> = projection
+            .natives(ToolAction::Deny, RuleKind::All)
+            .into_iter()
+            .filter(|tool| !tool.contains('('))
+            .collect();
+        for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
             self.lossy.push(LossyField {
-                field: "tools".into(),
+                field: format!("tools (allow {rule})"),
                 target: target.into(),
                 classification: Lossiness::Approximate { note },
             });
@@ -451,9 +455,12 @@ impl<'a> AgentLoweringCtx<'a> {
                 serde_yaml::Value::Sequence(allowed.iter().map(|tool| yv(tool)).collect()),
             );
         }
+        // A scoped entry in `disallowedTools` removes the whole tool in Claude, so only whole-tool
+        // denies are written; `tool_loss` reports the scoped ones as lost.
+        // The key Claude reads in an agent file is camelCase; `disallowed-tools` is a skill's.
         if !disallowed.is_empty() {
             self.yaml.insert(
-                yk("disallowed-tools"),
+                yk("disallowedTools"),
                 serde_yaml::Value::Sequence(disallowed.iter().map(|tool| yv(tool)).collect()),
             );
         }

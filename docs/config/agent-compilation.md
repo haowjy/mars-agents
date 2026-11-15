@@ -80,7 +80,7 @@ Mars does not merge `harness-overrides.<target>` into top-level profile values. 
 
 Each harness's own block is written into its native file: `harness-overrides.claude` into `.claude/agents/*.md` and the Claude plugin tree, `harness-overrides.codex` into the Codex TOML, and so on. A block never reaches another harness's file. Mars validates the outer shape and serializability, then leaves nested keys and values alone.
 
-A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowed-tools` and `effort` for Claude; the fields of each target's table below). The override is dropped. A key that carries permissions (`tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`) counts as a lost restriction, and every sync reports it. Any other dropped key (`name`, `model`, `developer_instructions`, an unknown key) is not known to restrict, so only `mars sync --verbose` shows it: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
+A key Mars lowers itself keeps Mars's value, whether or not the profile set it (`name`, `description`, `model`, `skills`, `tools`, `disallowedTools` and `effort` for Claude; the fields of each target's table below). The override is dropped. A key that carries permissions (`tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`) counts as a lost restriction, and every sync reports it. Any other dropped key (`name`, `model`, `developer_instructions`, an unknown key) is not known to restrict, so only `mars sync --verbose` shows it: ``agent `x`: 1 field dropped for .claude (harness-overrides.claude.model)``.
 
 For launch bundles, Mars also selects the `harness-overrides.<resolved-harness>` block and preserves that mapping exactly in `execution_policy.native_config`.
 
@@ -139,7 +139,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `skills.load` | `skills:` plus the end-of-body reminder used by `claude --agent` | exact for subagents; approximate for `--agent` |
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
-| `tools` denials | `disallowed-tools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names |
+| `tools` denials | `disallowedTools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names. Claude reads `disallowedTools` in an agent file and ignores `disallowed-tools` (a skill's key); a scoped entry such as `Bash(git push *)` would remove the whole tool there, so only whole-tool denies are written and each scoped deny is a lost shell or tool restriction, shown by default (one line for the project, one per agent with `--verbose`) |
 | `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
 | `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |
@@ -159,7 +159,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 `mars sync` writes each agent's rules after joining the project's `[settings.tools]` rules and
 the agent's `[agents.<name>.tools]` overlay (the launch bundle builds the same rules; see
 [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)). An unscoped project-wide deny
-reaches `.claude` as a `disallowed-tools` entry and `.opencode` as a permission entry, like the
+reaches `.claude` as a `disallowedTools` entry and `.opencode` as a permission entry, like the
 agent's own denies; the other targets carry none. A rule that a stricter one covers stays in the
 bundle with no native name and a `note`, and is not written to the file.
 
@@ -572,7 +572,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 
 | Surface | MCP behavior |
 |---|---|
-| Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowed-tools:` (denials) |
+| Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowedTools:` (denials) |
 | Skill native files | None: a skill carries no tool policy |
 | OpenCode agent native | An MCP ref is a `permission` entry (`<server>_<tool>: <effect>`) |
 | Codex / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |

@@ -9,7 +9,7 @@ use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
-use crate::frontmatter::Frontmatter;
+use crate::frontmatter::{Frontmatter, FrontmatterError};
 use crate::item::DefinitionKind;
 use crate::read::{DefinitionRead, Reading, read_authored, read_definition};
 use crate::selection::{Definition, Request, SelectionFacts};
@@ -215,6 +215,18 @@ impl Prepared {
             changes
                 .iter()
                 .filter(|change| change.code == crate::set_aside::EXECUTION_IGNORED)
+                .map(move |change| (path.as_str(), change))
+        })
+    }
+
+    /// The changes that quoted a value YAML could not read as plain text, by source path. Like
+    /// [`Self::ignored_execution_fields`], `mars check` prints them for the author to fix and a
+    /// sync only counts the file.
+    pub fn repaired_values(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
+        self.changes.iter().flat_map(|(path, changes)| {
+            changes
+                .iter()
+                .filter(|change| change.code == crate::claude::translate::REPAIRED)
                 .map(move |change| (path.as_str(), change))
         })
     }
@@ -731,8 +743,8 @@ impl Translated {
 }
 
 /// Lift a foreign definition's frontmatter into schema v1. Frontmatter that cannot be read
-/// stays as written, with the reader's error; only a Claude skill's unquoted `description`
-/// colon is repaired first.
+/// stays as written, with the reader's error; a Claude definition's unquoted values that YAML
+/// cannot read are quoted first.
 fn translate_foreign(
     text: &str,
     dialect: Dialect,
@@ -744,13 +756,13 @@ fn translate_foreign(
     let mut repaired = false;
     let frontmatter = match Frontmatter::parse(text) {
         Ok(frontmatter) => frontmatter,
-        Err(_) if claude && selected.kind == DefinitionKind::Skill => {
-            match crate::claude::translate::repair_description(text)
-                .and_then(|fixed| Frontmatter::parse(&fixed).ok())
+        Err(FrontmatterError::MalformedYaml(_)) if claude => {
+            match crate::claude::translate::repair_plain_values(text)
+                .and_then(|(fixed, keys)| Some((Frontmatter::parse(&fixed).ok()?, keys)))
             {
-                Some(frontmatter) => {
+                Some((frontmatter, keys)) => {
                     repaired = true;
-                    changes.push(crate::claude::translate::repaired_diagnostic());
+                    changes.push(crate::claude::translate::repaired_diagnostic(&keys));
                     frontmatter
                 }
                 None => return Translated::untouched(bytes),

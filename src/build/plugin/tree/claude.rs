@@ -104,9 +104,6 @@ fn apply_agent_policy(
             plugin.insert(field, value.clone());
         }
     }
-    if let Some(value) = plugin.remove("disallowed-tools") {
-        plugin.insert("disallowedTools", value);
-    }
 
     for &field in PROFILE.dropped_agent_fields {
         if source.get(field).is_some() {

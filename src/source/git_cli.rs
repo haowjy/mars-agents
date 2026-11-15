@@ -100,7 +100,8 @@ pub(crate) fn fetch_git_clone(
     let cache_path = cache.git_dir().join(cache_name);
     std::fs::create_dir_all(cache.git_dir())?;
 
-    // Acquire per-entry lock to prevent cross-repo races on the same cache entry.
+    // Serialize fetches into a cache entry. `with_extension` swaps the text after the last `.` in
+    // the entry name, so entries on one host (`github.com_...`) can share one lock file.
     // Held through fetch + checkout, released when _lock drops at function return.
     let lock_path = cache_path.with_extension("lock");
     let _lock = crate::fs::FileLock::acquire(&lock_path)?;

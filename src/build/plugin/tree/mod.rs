@@ -483,6 +483,18 @@ fn lower_agent(
     // author's own project-wide rules are not part of it.
     let mut effective =
         crate::compiler::effective_native_profile(&profile, overlay, &ToolRuleMap::default());
+    effective
+        .name
+        .get_or_insert_with(|| item.id.name.to_string());
+    if tree_profile.harness == mars_schema::HarnessId::Claude && effective.description.is_none() {
+        diag.warn(
+            "native-agent-no-description",
+            format!(
+                "Claude does not load an Agent without a `description`; add one to: {}",
+                item.id.name
+            ),
+        );
+    }
     qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_model(
         effective.model.as_deref(),

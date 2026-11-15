@@ -8,14 +8,15 @@ use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
 use crate::harness_overrides::move_harness_only_keys;
 use crate::item::DefinitionKind;
-use crate::lift::{claude_task_to_agent, lift_foreign_tools};
+use crate::lift::{ClaudeTool, claude_tool, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
+use crate::tool_names::{Capability, parse_mars_tool_name};
+use crate::tool_natives;
 use crate::tool_policy;
 
 /// Skill keys Claude reads and schema v1 does not define. They move to
 /// `harness-overrides.claude`, which only `.claude/` output receives. (`model` and `effort`
-/// have v1 meaning on Agents only; a skill carries neither.) `tools` and the `allowed-tools`
-/// family have their own warning.
+/// have v1 meaning on Agents only; a skill carries neither.) `tools` has its own warning.
 const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "argument-hint",
     "arguments",
@@ -26,6 +27,9 @@ const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "hooks",
     "paths",
     "shell",
+    "allowed-tools",
+    "disallowed-tools",
+    "disallowedTools",
 ];
 
 /// Spellings only Claude writes, which a manifest-free tree can be predicted Claude from.
@@ -50,6 +54,9 @@ const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "background",
     "isolation",
     "hooks",
+    "autoCompactWindow",
+    "omitClaudeMd",
+    "experimental",
 ];
 
 /// `changes` gets what the lift dropped or moved; `findings` what it could not convert.
@@ -69,6 +76,15 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
     diagnostics.push(SchemaDiagnostic::new(
         code,
         Severity::Warning,
+        Vec::new(),
+        message,
+    ));
+}
+
+fn info(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
+    diagnostics.push(SchemaDiagnostic::new(
+        code,
+        Severity::Info,
         Vec::new(),
         message,
     ));
@@ -158,16 +174,20 @@ fn lift_skill(
         }
     }
 
-    // `allowed-tools` is a turn-scoped grant that restricts nothing, and schema v1 has no
-    // skill tool rules, so the keys go rather than becoming a restriction.
-    let dropped = remove_keys(fm, crate::skill::tool_keys());
+    // `allowed-tools` pre-approves tools while the skill runs and `disallowed-tools` removes them;
+    // schema v1 has no skill tool rules, so both stay Claude's (see `CLAUDE_ONLY_SKILL_KEYS`).
+    // The other tool keys mean nothing to Claude and go.
+    let dropped = remove_keys(
+        fm,
+        crate::skill::tool_keys().filter(|key| !CLAUDE_ONLY_SKILL_KEYS.contains(key)),
+    );
     if !dropped.is_empty() {
         changed = true;
         warn(
             changes,
             "skill.tools-dropped",
             format!(
-                "removed {}: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting",
+                "removed {}: schema v1 has no skill tool rules",
                 dropped.join(", ")
             ),
         );
@@ -195,6 +215,119 @@ fn mcp_server_names(value: &Value) -> (Vec<String>, bool) {
         other => collect(other),
     }
     (names, has_definitions)
+}
+
+/// Bring the entries of `tools` to the names Claude uses today, and say what that does to what
+/// the agent can use.
+///
+/// A name Claude renamed becomes its new name; a retired one is removed (Claude ignores it too).
+/// Mars reads each remaining name as a capability, and Claude lowers a capability to all of its
+/// tools, so a grant can reach more than the author listed (`Edit` also enables `Write` and
+/// `NotebookEdit`). That widening is a finding: the list was a restriction.
+fn rename_claude_tools(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let Some(Value::Mapping(tools)) = fm.get("tools") else {
+        return false;
+    };
+    let mut renamed = Mapping::new();
+    let mut retired = Vec::new();
+    let mut changed = false;
+    for (key, action) in tools {
+        let name = match key.as_str().map(claude_tool) {
+            Some(ClaudeTool::Renamed(name)) => name,
+            Some(ClaudeTool::Retired) => {
+                retired.extend(key.as_str().map(str::to_owned));
+                changed = true;
+                continue;
+            }
+            Some(ClaudeTool::Current) | None => {
+                renamed.insert(key.clone(), action.clone());
+                continue;
+            }
+        };
+        changed = true;
+        // Two entries meeting under one name keep the stricter action.
+        let stricter = |kept: &Value, new: &Value| match (kept.as_str(), new.as_str()) {
+            (Some("deny"), _) => kept.clone(),
+            (_, Some("deny")) => new.clone(),
+            (Some("ask"), _) => kept.clone(),
+            (_, Some("ask")) => new.clone(),
+            _ => kept.clone(),
+        };
+        let key = Value::String(name);
+        let action = match renamed.get(&key) {
+            Some(kept) => stricter(kept, action),
+            None => action.clone(),
+        };
+        renamed.insert(key, action);
+    }
+    if !retired.is_empty() {
+        info(
+            changes,
+            "agent.tools-retired",
+            format!(
+                "removed {}: Claude no longer has the tool",
+                retired
+                    .iter()
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    widened(&renamed, findings);
+    if changed {
+        fm.insert("tools", Value::Mapping(renamed));
+    }
+    changed
+}
+
+/// Report what an allowlist grants on Claude beyond the tools it names.
+fn widened(tools: &Mapping, findings: &mut Vec<SchemaDiagnostic>) {
+    if tools.get("*").and_then(Value::as_str) != Some("deny") {
+        return;
+    }
+    let granted: Vec<&str> = tools
+        .iter()
+        .filter(|(_, action)| action.as_str() == Some("allow"))
+        .filter_map(|(key, _)| key.as_str())
+        .collect();
+    let mut extra = Vec::new();
+    for name in &granted {
+        let Ok(parsed) = parse_mars_tool_name(name) else {
+            continue;
+        };
+        if parsed.pattern.is_some() {
+            continue;
+        }
+        let Capability::Builtin(capability) = parsed.capability else {
+            continue;
+        };
+        let Some(row) = tool_natives::lookup(capability, HarnessId::Claude) else {
+            continue;
+        };
+        for tool in row.native_tools() {
+            if !granted.iter().any(|name| name.eq_ignore_ascii_case(tool))
+                && !matches!(claude_tool(tool), ClaudeTool::Retired)
+                && !extra.contains(tool)
+            {
+                extra.push(*tool);
+            }
+        }
+    }
+    if !extra.is_empty() {
+        warn(
+            findings,
+            "agent.tools-widened",
+            format!(
+                "Mars reads each tool as a capability, so Claude also gets {}, which the list did not name",
+                extra.join(", ")
+            ),
+        );
+    }
 }
 
 fn lift_agent(
@@ -234,12 +367,12 @@ fn lift_agent(
         for entry in denied {
             let name = parse_foreign_mcp_token(&entry, ForeignMcpDialect::Claude)
                 .map(|mcp_ref| mcp_ref.to_canonical())
-                .or_else(|| claude_task_to_agent(&entry))
                 .unwrap_or(entry);
             tools.insert(Value::String(name), Value::String("deny".into()));
         }
         fm.insert("tools", Value::Mapping(tools));
     }
+    changed |= rename_claude_tools(fm, changes, findings);
 
     if fm
         .get("model")
@@ -248,15 +381,26 @@ fn lift_agent(
     {
         fm.remove("model");
         changed = true;
+        info(
+            changes,
+            "agent.model-inherit",
+            "removed `model: inherit`: a Claude agent with no `model` runs on the model of the session that starts it".into(),
+        );
     }
 
     changed |= move_to_claude_overrides(fm, DefinitionKind::Agent, changes);
     changed
 }
 
-/// Quote an unquoted `description:` whose value holds a colon: the most common invalid YAML
-/// in real skills. Returns the repaired document, or `None` when there is nothing to quote.
-pub(crate) fn repair_description(text: &str) -> Option<String> {
+/// Quote the unquoted top-level `key: value` lines that YAML cannot read as plain scalars,
+/// using the rule Claude Code applies when its own frontmatter parse fails: a key of letters,
+/// `_` or `-`, and a value containing any of `{}[]*&#!|>%@`, a backtick, or `: `. A value
+/// already wholly quoted, or a `[...]` that parses as a list, is left alone. Mars is more
+/// lenient in three ways: it also quotes a value ending in `:`, folds the indented
+/// continuation lines of a value it quotes, and leaves a block scalar header (`|`, `>-`) and
+/// CRLF line ends alone. Returns the repaired document and the keys it quoted, or `None` when
+/// nothing needed quoting.
+pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
     let lines = text.split_inclusive('\n').collect::<Vec<_>>();
     if lines.first().map(|line| line.trim_end()) != Some("---") {
         return None;
@@ -266,38 +410,89 @@ pub(crate) fn repair_description(text: &str) -> Option<String> {
         .skip(1)
         .position(|line| line.trim_end() == "---")?
         + 1;
-    let index = (1..close).find(|&index| lines[index].starts_with("description:"))?;
-    let value = lines[index]["description:".len()..].trim();
-    let plain = !value.is_empty()
-        && !value.starts_with(['"', '\'', '|', '>', '[', '{', '&', '*', '!', '#']);
-    if !plain || !(value.contains(": ") || value.ends_with(':')) {
-        return None;
+    let mut repaired = String::with_capacity(text.len() + 16);
+    let mut quoted_keys = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        let entry = (index <= close && index > 1)
+            .then(|| plain_entry(line))
+            .flatten();
+        let Some((key, value)) = entry else {
+            repaired.push_str(line);
+            continue;
+        };
+        // Continuation lines of a plain scalar are indented and fold into one line.
+        let start = index - 1;
+        let mut folded = value.to_owned();
+        while index < close
+            && lines[index].starts_with([' ', '\t'])
+            && !lines[index].trim().is_empty()
+        {
+            folded.push(' ');
+            folded.push_str(lines[index].trim());
+            index += 1;
+        }
+        // `[Read,` plus an indented `Grep]` is a flow list across lines.
+        if is_flow_list(&folded) {
+            lines[start..index]
+                .iter()
+                .for_each(|line| repaired.push_str(line));
+            continue;
+        }
+        repaired.push_str(&format!(
+            "{key}: {}\n",
+            serde_json::to_string(&folded).ok()?
+        ));
+        quoted_keys.push(key.to_owned());
     }
-    // Continuation lines of a plain scalar are indented and fold into one line.
-    let mut folded = value.to_owned();
-    let mut next = index + 1;
-    while next < close && lines[next].starts_with([' ', '\t']) && !lines[next].trim().is_empty() {
-        folded.push(' ');
-        folded.push_str(lines[next].trim());
-        next += 1;
-    }
-    let quoted = serde_json::to_string(&folded).ok()?;
-    let mut repaired = String::with_capacity(text.len() + 8);
-    lines[..index]
-        .iter()
-        .for_each(|line| repaired.push_str(line));
-    repaired.push_str(&format!("description: {quoted}\n"));
-    lines[next..]
-        .iter()
-        .for_each(|line| repaired.push_str(line));
-    Some(repaired)
+    (!quoted_keys.is_empty()).then_some((repaired, quoted_keys))
 }
 
-pub(crate) fn repaired_diagnostic() -> SchemaDiagnostic {
+/// A top-level `key: value` line Claude Code would quote.
+fn plain_entry(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(':')?;
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'-'))
+        || !value.starts_with([' ', '\t'])
+    {
+        return None;
+    }
+    let value = value.trim();
+    let wholly_quoted = value.len() >= 2
+        && ['"', '\'']
+            .iter()
+            .any(|quote| value.starts_with(*quote) && value.ends_with(*quote));
+    let block_header = value
+        .strip_prefix(['|', '>'])
+        .is_some_and(|rest| rest.chars().all(|c| matches!(c, '+' | '-' | '0'..='9')));
+    let needs_quotes = value.contains(|c| "{}[]*&#!|>%@`".contains(c))
+        || value.contains(": ")
+        || value.ends_with(':');
+    (!value.is_empty() && needs_quotes && !wholly_quoted && !block_header && !is_flow_list(value))
+        .then_some((key, value))
+}
+
+fn is_flow_list(value: &str) -> bool {
+    value.starts_with('[') && matches!(serde_yaml::from_str::<Value>(value), Ok(Value::Sequence(_)))
+}
+
+pub(crate) const REPAIRED: &str = "frontmatter.repaired";
+
+pub(crate) fn repaired_diagnostic(keys: &[String]) -> SchemaDiagnostic {
     SchemaDiagnostic::new(
-        "skill.description-repaired",
+        REPAIRED,
         Severity::Warning,
-        key_path("description"),
-        "the unquoted `description` held a colon, which YAML cannot read; it was quoted",
+        key_path(&keys[0]),
+        format!(
+            "the unquoted value of {} is not valid plain YAML; it was quoted",
+            keys.iter()
+                .map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     )
 }

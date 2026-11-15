@@ -14,8 +14,11 @@ use mars_schema::tool_project::project;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DenyCarry {
     Nothing,
-    /// Every rule Mars can name (Claude `disallowed-tools`, OpenCode `permission`).
+    /// Every rule Mars can name (OpenCode `permission`).
     All,
+    /// Only a deny of a whole tool (Claude `disallowedTools`). A scoped entry there removes the
+    /// whole tool, so a rule with a pattern is lost rather than written.
+    Unscoped,
 }
 
 /// How much of an allowlist (`'*': deny` plus allows) a target's file can write.
@@ -91,7 +94,12 @@ pub(super) fn losses(
         };
         match rule.action {
             ToolAction::Deny if !rule.is_wildcard() => {
-                let carried = projected.gap().is_none() && carries.deny == DenyCarry::All;
+                let carried = projected.gap().is_none()
+                    && match carries.deny {
+                        DenyCarry::All => true,
+                        DenyCarry::Unscoped => rule.pattern.is_none(),
+                        DenyCarry::Nothing => false,
+                    };
                 if carried {
                     continue;
                 }

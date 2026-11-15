@@ -22,33 +22,33 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
     let mut config = crate::config::load(&ctx.project_root)?;
+    let mut local = crate::config::load_local(&ctx.project_root)?;
     let mut lock = crate::lock::load(&ctx.project_root)?;
     let mut settings_updated = false;
+    let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if config
-        .settings
-        .managed_root
-        .as_deref()
-        .map(crate::config::migrations::link::normalize_link)
-        .is_some_and(|link| link.target == target_name)
-    {
-        config.settings.managed_root = None;
+    if unset_managed_root(&mut config.settings.managed_root, &target_name) {
         settings_updated = true;
         target_was_managed = true;
     }
+    if unset_target(&mut config.settings.targets, &target_name) {
+        settings_updated = true;
+        target_was_managed = true;
+    }
+    if unset_managed_root(&mut local.settings.managed_root, &target_name) {
+        local_updated = true;
+        target_was_managed = true;
+    }
+    if unset_target(&mut local.settings.targets, &target_name) {
+        local_updated = true;
+        target_was_managed = true;
+    }
 
-    if let Some(targets) = config.settings.targets.as_mut() {
-        let old_len = targets.len();
-        targets
-            .retain(|t| crate::config::migrations::link::normalize_link(t).target != target_name);
-        if targets.len() != old_len {
-            settings_updated = true;
-            target_was_managed = true;
-        }
-        if targets.is_empty() {
-            config.settings.targets = None;
-        }
+    // A kill between link's lock write and its settings write leaves a claim in the lock
+    // that no settings file lists; the lock is what `unlink` has to clean up.
+    if super::target::lock_claims(&lock, &target_name) {
+        target_was_managed = true;
     }
 
     let target_dir = ctx.project_root.join(&target_name);
@@ -62,6 +62,9 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if settings_updated {
         crate::config::save(&ctx.project_root, &config)?;
     }
+    if local_updated {
+        crate::config::save_local(&ctx.project_root, &local)?;
+    }
     if target_was_managed {
         crate::lock::write(&ctx.project_root, &lock)?;
     }
@@ -70,7 +73,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         output::print_json(&serde_json::json!({
             "ok": true,
             "target": target_name,
-            "settings_updated": settings_updated,
+            "settings_updated": settings_updated || local_updated,
             "removed_dir": removed_dir,
             "removed_outputs": removed_outputs,
             "diagnostics": diagnostics,
@@ -88,6 +91,30 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     Ok(0)
+}
+
+fn unset_managed_root(managed_root: &mut Option<String>, target_name: &str) -> bool {
+    let matches = managed_root
+        .as_deref()
+        .map(crate::config::migrations::link::normalize_link)
+        .is_some_and(|link| link.target == target_name);
+    if matches {
+        *managed_root = None;
+    }
+    matches
+}
+
+fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
+    let Some(list) = targets.as_mut() else {
+        return false;
+    };
+    let old_len = list.len();
+    list.retain(|t| crate::config::migrations::link::normalize_link(t).target != target_name);
+    let removed = list.len() != old_len;
+    if list.is_empty() {
+        *targets = None;
+    }
+    removed
 }
 
 fn remove_owned_target_content(

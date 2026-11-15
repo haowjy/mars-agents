@@ -135,20 +135,7 @@ fn link_target(
         diagnostics.push(diagnostic);
     }
 
-    if !force
-        && diagnostics
-            .iter()
-            .any(|d| d.code == "target-unmanaged-collision")
-    {
-        return Err(MarsError::Link {
-            target: target_name.to_string(),
-            message: format!(
-                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
-                 run `{}` to adopt",
-                managed_cmd(&format!("mars link {target_name} --force")),
-            ),
-        });
-    }
+    reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
     let Some(outcome) = target_outcomes.first() else {
         return Err(MarsError::Link {
@@ -179,20 +166,7 @@ fn link_target(
         );
     diagnostics.extend(diag.drain());
 
-    if !force
-        && diagnostics
-            .iter()
-            .any(|d| d.code == "target-unmanaged-collision")
-    {
-        return Err(MarsError::Link {
-            target: target_name.to_string(),
-            message: format!(
-                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
-                 run `{}` to adopt",
-                managed_cmd(&format!("mars link {target_name} --force")),
-            ),
-        });
-    }
+    reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
@@ -231,6 +205,30 @@ fn link_target(
     }
 
     Ok(0)
+}
+
+/// Checked after the file copy and again after native agents are written: each step
+/// reports its own collisions.
+fn reject_unmanaged_collision(
+    diagnostics: &[Diagnostic],
+    target_name: &str,
+    force: bool,
+) -> Result<(), MarsError> {
+    if !force
+        && diagnostics
+            .iter()
+            .any(|d| d.code == "target-unmanaged-collision")
+    {
+        return Err(MarsError::Link {
+            target: target_name.to_string(),
+            message: format!(
+                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
+                 run `{}` to adopt",
+                managed_cmd(&format!("mars link {target_name} --force")),
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {

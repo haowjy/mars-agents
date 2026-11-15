@@ -68,7 +68,11 @@ fn assert_promise(case: &std::path::Path, prepared: &Prepared) {
         assert_eq!(text(kept), text(want), "{} {path}", case.display());
     }
     for path in expected.keys() {
-        assert!(result.diagnostics.contains_key(*path), "{} {path}", case.display());
+        assert!(
+            result.diagnostics.contains_key(*path),
+            "{} {path}",
+            case.display()
+        );
     }
 }
 
@@ -76,7 +80,11 @@ fn assert_promise(case: &std::path::Path, prepared: &Prepared) {
 fn check_fixtures_match() {
     for case in common::cases("check") {
         let request = request(&case);
-        let root = prepared(&case.join("input"), request.context, request.declared_dialect);
+        let root = prepared(
+            &case.join("input"),
+            request.context,
+            request.declared_dialect,
+        );
         let tree = common::load_tree(&case.join("input"));
         let mut dependencies = BTreeMap::new();
         let deps = case.join("deps");
@@ -100,7 +108,11 @@ fn check_never_disagrees_with_prepare() {
     for suite in ["prepare", "check"] {
         for case in common::cases(suite) {
             let request = request(&case);
-            let root = prepared(&case.join("input"), request.context, request.declared_dialect);
+            let root = prepared(
+                &case.join("input"),
+                request.context,
+                request.declared_dialect,
+            );
             assert_promise(&case, &root);
         }
     }

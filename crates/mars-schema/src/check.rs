@@ -160,7 +160,10 @@ impl Found {
                 SchemaDiagnostic::new(
                     "package.requirement",
                     Severity::Error,
-                    vec![PathSegment::Key("package".into()), PathSegment::Key(key.into())],
+                    vec![
+                        PathSegment::Key("package".into()),
+                        PathSegment::Key(key.into()),
+                    ],
                     message,
                 ),
             );
@@ -205,10 +208,10 @@ impl Found {
                 ),
             );
         }
-        for item in items
-            .iter()
-            .filter(|item| item.declared.is_some_and(|name| name != item.definition.slug))
-        {
+        for item in items.iter().filter(|item| {
+            item.declared
+                .is_some_and(|name| name != item.definition.slug)
+        }) {
             let (noun, file) = if item.agent {
                 ("agent file", format!("{}.md", item.definition.slug))
             } else {
@@ -436,7 +439,11 @@ impl<'a> Named<'a> {
             }
             Reading::Skill(reading) => {
                 let profile = reading.fields.as_ref()?;
-                (profile.name.as_deref(), profile.description.is_some(), false)
+                (
+                    profile.name.as_deref(),
+                    profile.description.is_some(),
+                    false,
+                )
             }
             Reading::Manifest(_) => return None,
         };
@@ -570,10 +577,8 @@ fn missing_message(missing: &MissingSkill) -> String {
         Some(package) => {
             format!("use a version of `{package}` that ships it, or add a dependency that does")
         }
-        None => {
-            "add the skill's source package as a dependency, or remove the skill reference"
-                .to_string()
-        }
+        None => "add the skill's source package as a dependency, or remove the skill reference"
+            .to_string(),
     };
     let searched = std::iter::once("(this package)")
         .chain(missing.searched.iter().map(String::as_str))

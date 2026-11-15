@@ -570,7 +570,12 @@ pub fn check(argument: JsValue) -> Result<JsValue, JsValue> {
     let dependencies = input
         .dependencies
         .into_iter()
-        .map(|(name, package)| (name, mars_schema::selection::PackageView::from(package).facts))
+        .map(|(name, package)| {
+            (
+                name,
+                mars_schema::selection::PackageView::from(package).facts,
+            )
+        })
         .collect();
     to_js(&mars_schema::check::check(&tree, &prepared, &dependencies))
 }

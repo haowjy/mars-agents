@@ -251,8 +251,7 @@ pub(crate) fn package_floor(
 /// What `mars version` writes into `requires-mars`: the floor, when the package states less.
 pub(crate) fn requires_mars_to_write(base: &Path) -> Result<Option<keys::Floor>, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let (lens, prepared) =
-        crate::resolve::PublishLens::load(base, FileFindings::Leave, &mut diag)?;
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, FileFindings::Leave, &mut diag)?;
     let hooks = crate::compiler::hooks::check_hooks(base, &mut diag)?;
     let Some(manifest) = authored_manifest(&lens)? else {
         return Ok(None);
@@ -448,7 +447,10 @@ fn file_findings(
             diag.schema(diagnostic, &label, false);
             None
         } else {
-            Some(format!("[{}] {label}: {}", diagnostic.code, diagnostic.message))
+            Some(format!(
+                "[{}] {label}: {}",
+                diagnostic.code, diagnostic.message
+            ))
         };
         findings.push(FileFinding {
             source_path: source_path.to_owned(),

@@ -394,37 +394,49 @@ struct RequestInput {
     only_agents: bool,
 }
 
+/// The values of a `{name: value}` argument: an object's own values or a `Map`'s, the two forms
+/// `serde-wasm-bindgen` reads as a map. `None` for anything else, which `parse_input` reports.
+fn map_values(value: &JsValue) -> Option<Vec<JsValue>> {
+    if let Some(map) = value.dyn_ref::<js_sys::Map>() {
+        Some(map.values().into_iter().filter_map(Result::ok).collect())
+    } else {
+        value
+            .dyn_ref::<js_sys::Object>()
+            .map(|object| js_sys::Object::values(object).iter().collect())
+    }
+}
+
+/// Refuses an unknown key in a package an argument holds, and in its `extra_items`.
+fn check_package_keys(package: &JsValue) -> Result<(), JsValue> {
+    check_keys::<mars_schema::selection::PackageInput>(package)?;
+    let extra_items =
+        js_sys::Reflect::get(package, &"extra_items".into()).unwrap_or(JsValue::UNDEFINED);
+    // Absent or not an array: `parse_input` reports it.
+    if js_sys::Array::is_array(&extra_items) {
+        js_sys::Array::from(&extra_items)
+            .iter()
+            .try_for_each(|item| check_keys::<mars_schema::selection::Item>(&item))?;
+    }
+    Ok(())
+}
+
 /// `selectItems`'s argument has keys at four depths; each is checked against its structure.
 fn check_select_items_keys(argument: &JsValue) -> Result<(), JsValue> {
-    use mars_schema::selection::{Item, PackageInput};
     let get = |object: &JsValue, key: &str| {
         js_sys::Reflect::get(object, &key.into()).unwrap_or(JsValue::UNDEFINED)
     };
-    // Absent or not an array: `parse_input` reports it.
-    let elements = |value: &JsValue| {
-        if js_sys::Array::is_array(value) {
-            js_sys::Array::from(value).iter().collect()
-        } else {
-            Vec::new()
-        }
-    };
-    let check_package = |package: &JsValue| {
-        check_keys::<PackageInput>(package)?;
-        elements(&get(package, "extra_items"))
-            .iter()
-            .try_for_each(check_keys::<Item>)
-    };
     check_keys::<SelectItemsInput>(argument)?;
-    elements(&get(argument, "requests"))
-        .iter()
-        .try_for_each(check_keys::<RequestInput>)?;
-    let packages = get(argument, "packages");
-    if let Some(packages) = packages.dyn_ref::<js_sys::Object>() {
-        js_sys::Object::values(packages)
+    let requests = get(argument, "requests");
+    if js_sys::Array::is_array(&requests) {
+        js_sys::Array::from(&requests)
             .iter()
-            .try_for_each(|package| check_package(&package))?;
+            .try_for_each(|request| check_keys::<RequestInput>(&request))?;
     }
-    check_package(&get(argument, "root"))
+    map_values(&get(argument, "packages"))
+        .into_iter()
+        .flatten()
+        .try_for_each(|package| check_package_keys(&package))?;
+    check_package_keys(&get(argument, "root"))
 }
 
 /// The items a graph installs: `{requests, packages, root?}` to a `SelectionResult`. `packages` is
@@ -537,8 +549,8 @@ pub fn render_hooks(
 
 /// What a package's files say is wrong with it, from `{files, context?, declaredDialect?,
 /// dependencies?}`: `prepare`, `links::package` and `mars_schema::check::check`, in that order.
-/// `dependencies` is `{name: {prepared}}`, the shape of `selectItems`' `packages` (only each
-/// `prepared.selection` is read), so one value serves both.
+/// `dependencies` is `{name: {prepared, extra_items?}}`, a plain object or a `Map`, the shape of
+/// `selectItems`' `packages` (only each `prepared.selection` is read), so one value serves both.
 #[wasm_bindgen]
 pub fn check(argument: JsValue) -> Result<JsValue, JsValue> {
     use mars_schema::selection::PackageInput;
@@ -552,14 +564,12 @@ pub fn check(argument: JsValue) -> Result<JsValue, JsValue> {
         dependencies: BTreeMap<String, PackageInput>,
     }
     check_keys::<Input>(&argument)?;
-    if let Some(dependencies) = js_sys::Reflect::get(&argument, &"dependencies".into())
-        .ok()
-        .and_then(|value| value.dyn_into::<js_sys::Object>().ok())
-    {
-        js_sys::Object::values(&dependencies)
-            .iter()
-            .try_for_each(|package| check_keys::<PackageInput>(&package))?;
-    }
+    map_values(
+        &js_sys::Reflect::get(&argument, &"dependencies".into()).unwrap_or(JsValue::UNDEFINED),
+    )
+    .into_iter()
+    .flatten()
+    .try_for_each(|package| check_package_keys(&package))?;
     let input: Input = parse_input(argument)?;
     let tree = file_tree(input.files)?;
     let context = input

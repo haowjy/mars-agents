@@ -554,7 +554,7 @@ mars check --root PATH
 | `path` | Directory to validate (default: current directory) |
 | `--root PATH` | The same directory, named as every other command names its root; `path` wins when both are given, so `meridian mars check <path>` (which appends `--root`) checks `<path>` |
 
-Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
+Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. What only the binary checks (the `requires-mars` floor, hooks, plugin output, model aliases, dependency resolution) prints after the groups, without a file. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
 
 What its files say is the same function `@meridian-flow/mars-schema` exports as `check` (`mars_schema::check`). A level says what the author loses: an error, the file or package won't load or install; a warning, something written won't take effect; info, nothing written is lost.
 
@@ -571,7 +571,7 @@ What its files say is the same function `@meridian-flow/mars-schema` exports as 
 | `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
 | `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
 
-Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch is `[dependency-incomplete]`; both are errors. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
+Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch, or one that could not be read (`unreadable_dependencies` of the function's result), is `[dependency-incomplete]`; all are errors. While the function's `missing_dependencies` or `unreadable_dependencies` is not empty its result is not a verdict: no skill ref was judged. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
 
 `mars check` also reports what depends on a machine, a target or a Mars version, which the function does not:
 - Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback; "no agents or skills found" is an error
@@ -593,7 +593,7 @@ preview** (`collect_prepared_source_lossiness_diagnostics`) against the configur
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 
-`--json` prints `agents`, `skills`, `errors` and `warnings` (strings), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
+`--json` prints `agents`, `skills`, `errors` and `warnings` (strings, with each warning-level finding of a file among them), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
 
 ```bash
 mars check                   # Check current directory

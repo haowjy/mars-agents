@@ -1,0 +1,11 @@
+{
+  "diagnostics": {},
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": [
+    {
+      "name": "legacy",
+      "declared_in": null
+    }
+  ]
+}

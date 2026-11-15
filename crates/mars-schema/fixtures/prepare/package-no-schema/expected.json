@@ -42,7 +42,8 @@
   "selection": {
     "definitions": [],
     "edges": [],
-    "uses_providers": []
+    "uses_providers": [],
+    "unreadable": true
   },
   "diagnostics": {}
 }

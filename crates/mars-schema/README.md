@@ -64,7 +64,7 @@ Unknown keys are kept and reported as `field.unknown` `Info`. A key Mars moved o
 
 ## Checking a package
 
-`check::check(&source, &prepared, &dependencies)` says what is wrong with a package, per file: `prepare`'s findings for each file plus the check's own, as `Check { diagnostics, dependency_diagnostics, missing_dependencies }`. `mars check` and the WASM `check` call it, so the rules live here and nowhere else. `dependencies` maps each package of the closure to the `SelectionFacts` of its `Prepared`; a dependency left out is in `missing_dependencies`, and while any is, no skill ref is judged.
+`check::check(&source, &prepared, &dependencies)` says what is wrong with a package, per file: `prepare`'s findings for each file plus the check's own, as `Check { diagnostics, dependency_diagnostics, missing_dependencies, unreadable_dependencies }`. `mars check` and the WASM `check` call it, so the rules live here and nowhere else. `dependencies` maps each package of the closure to the `SelectionFacts` of its `Prepared`; a dependency left out is in `missing_dependencies` and one that could not be read (`selection.unreadable`) is in `unreadable_dependencies`; while either is not empty, no skill ref is judged.
 
 A finding is here when it is true of the package wherever it runs. What one harness target can't express or an older Mars can't read stays in the binary, where a target or a version exists. A level says what the author loses: `Error`, it won't load or install; `Warning`, something written won't take effect; `Info`, nothing written is lost. A rule about a package's files goes in `check.rs`, not in `src/cli/check.rs`.
 

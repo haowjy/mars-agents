@@ -143,6 +143,19 @@ fn describe(
     dispatched: Dispatched,
 ) -> Inspection {
     let mut diagnostics = dispatched.discovery.diagnostics.clone();
+    // An invalid root is invalid because of its manifest; say how.
+    if dispatched.kind() == Kind::Invalid
+        && let Some(bytes) = &dispatched.manifest
+    {
+        let found = crate::prepare::prepare_manifest(bytes)
+            .reading
+            .package
+            .diagnostics;
+        diagnostics
+            .entry("mars.toml".to_string())
+            .or_default()
+            .extend(found);
+    }
     let items = list_items(source, &dispatched, &mut diagnostics);
     let (name, version, description) = match &dispatched.layout {
         Layout::Claude(spec) => (

@@ -13,5 +13,6 @@
     ]
   },
   "dependency_diagnostics": {},
-  "missing_dependencies": []
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
 }

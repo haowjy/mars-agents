@@ -132,6 +132,7 @@ pub struct Prepared {
 /// What item selection reads of a prepared package: its Agents' and skills' skill refs, and the
 /// `[dependencies]` entries and `uses-providers` its manifest reads.
 pub(crate) fn selection_facts(
+    classification: &Classification,
     manifest: Option<&PreparedManifest>,
     definitions: &[PreparedDefinition],
 ) -> SelectionFacts {
@@ -170,6 +171,10 @@ pub(crate) fn selection_facts(
             .and_then(|reading| reading.package.fields.as_ref())
             .map(|package| package.uses_providers.clone())
             .unwrap_or_default(),
+        unreadable: matches!(
+            classification,
+            Classification::Invalid | Classification::SchemaNewer { .. }
+        ),
     }
 }
 
@@ -373,8 +378,8 @@ pub(crate) fn prepare_root(
     changes.retain(|_, diagnostics| !diagnostics.is_empty());
     let manifest = manifest.take();
     let prepared = Prepared {
+        selection: selection_facts(&classification, manifest.as_ref(), &definitions),
         classification,
-        selection: selection_facts(manifest.as_ref(), &definitions),
         manifest,
         definitions,
         mcp_servers,
@@ -494,7 +499,7 @@ fn report_unconverted(
     }
 }
 
-fn prepare_manifest(bytes: &[u8]) -> PreparedManifest {
+pub(crate) fn prepare_manifest(bytes: &[u8]) -> PreparedManifest {
     let reading = match std::str::from_utf8(bytes) {
         Ok(text) => crate::manifest::read(text),
         Err(error) => crate::manifest::ManifestRead::unread(vec![SchemaDiagnostic::new(

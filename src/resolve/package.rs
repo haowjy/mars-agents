@@ -61,7 +61,14 @@ fn prepare_package(
     if let Some(prepared) = options.prepared_sources.get(source_name) {
         crate::package_prepare::prepared_rooted(rooted, std::sync::Arc::clone(prepared), diag)
     } else {
-        crate::package_prepare::prepare_rooted(source_name, rooted, effective_config, version, diag)
+        crate::package_prepare::prepare_rooted(
+            source_name,
+            rooted,
+            effective_config,
+            version,
+            options.is_upgrade_target(source_name),
+            diag,
+        )
     }
 }
 

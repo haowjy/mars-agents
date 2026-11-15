@@ -76,6 +76,11 @@ pub struct SelectionFacts {
     /// `[local-dependencies]`.
     pub edges: Vec<Request>,
     pub uses_providers: Vec<String>,
+    /// The package could not be read (`Invalid` or `SchemaNewer`), so `definitions` is empty
+    /// because nothing was read, not because it ships nothing. A check does not judge skill
+    /// refs against it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unreadable: bool,
 }
 
 #[derive(Debug, Clone)]

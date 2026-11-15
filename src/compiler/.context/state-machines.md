@@ -132,11 +132,11 @@ stateDiagram-v2
   planned --> removing: records differ, or an entry was edited or moved
   unchanged --> [*]: left alone, file not rewritten
   removing --> removal_failed: hook removal errors
-  removing --> removed: recorded hook entries gone from the merge file
+  removing --> removed: nothing yet for a target that gets a write; the removal runs inside the write
   removal_failed --> blocked: write permit withheld
   removed --> writing
   blocked --> [*]: info diagnostic, next sync retries
-  writing --> recorded: merge file written, records updated
+  writing --> recorded: merge file loaded, stripped, appended and saved once, records updated
   recorded --> [*]: lock written in finalize
 ```
 
@@ -151,7 +151,12 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 - **Do not rewrite an unchanged merge file.** It moves every entry, and Codex skips hooks it has
   not re-trusted (`hook_file::trust_positions` snapshots positions before and after).
 - **Removal is one entry at a time and tolerates a missing entry**, warning `config-divergence`.
-  A crash between removal and the lock write looks exactly like a user edit on the next sync.
+  A crash after the file's save and before the lock write looks exactly like a user edit on the
+  next sync, and the new entry is appended again: a duplicate, a known gap that the config-entry
+  journal closes. Equal content in the file is never taken as Mars's own. Removal and append
+  share one load and one save (`hook_file::replace`), so no crash leaves the file between them
+  and no other writer of the same physical file, such as an MCP entry through a symlink alias,
+  runs between the load and the save. MCP reconcile runs before the hook write for that reason.
 - **Every write goes through `atomic_write_preserving_permissions`** (`config_doc::write_through`),
   so a killed process leaves the old file.
 - Persisted: `ConfigEntryRecord::emitted_json` per key in the lock, the exact entries, so removal

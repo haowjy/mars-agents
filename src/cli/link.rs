@@ -76,7 +76,7 @@ fn link_target(
 
     let settings_changed = config.settings.targets.as_ref() != Some(&persisted_targets);
 
-    let lock = crate::lock::load(&ctx.project_root)?;
+    let lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
@@ -135,20 +135,7 @@ fn link_target(
         diagnostics.push(diagnostic);
     }
 
-    if !force
-        && diagnostics
-            .iter()
-            .any(|d| d.code == "target-unmanaged-collision")
-    {
-        return Err(MarsError::Link {
-            target: target_name.to_string(),
-            message: format!(
-                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
-                 run `{}` to adopt",
-                managed_cmd(&format!("mars link {target_name} --force")),
-            ),
-        });
-    }
+    reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
     let Some(outcome) = target_outcomes.first() else {
         return Err(MarsError::Link {
@@ -179,28 +166,13 @@ fn link_target(
         );
     diagnostics.extend(diag.drain());
 
-    if !force
-        && diagnostics
-            .iter()
-            .any(|d| d.code == "target-unmanaged-collision")
-    {
-        return Err(MarsError::Link {
-            target: target_name.to_string(),
-            message: format!(
-                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
-                 run `{}` to adopt",
-                managed_cmd(&format!("mars link {target_name} --force")),
-            ),
-        });
-    }
+    reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
     let mut new_lock = lock;
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
     crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
     crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs)?;
-    if let Some(warning) =
-        crate::compiler::persist_lock_then_native_agent_manifest(&ctx.project_root, &new_lock)?
-    {
+    if let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &new_lock)? {
         diag.warn("native-agent-manifest-write", warning);
         diagnostics.extend(diag.drain());
     }
@@ -231,6 +203,30 @@ fn link_target(
     }
 
     Ok(0)
+}
+
+/// Checked after the file copy and again after native agents are written: each step
+/// reports its own collisions.
+fn reject_unmanaged_collision(
+    diagnostics: &[Diagnostic],
+    target_name: &str,
+    force: bool,
+) -> Result<(), MarsError> {
+    if !force
+        && diagnostics
+            .iter()
+            .any(|d| d.code == "target-unmanaged-collision")
+    {
+        return Err(MarsError::Link {
+            target: target_name.to_string(),
+            message: format!(
+                "unmanaged collision in `{target_name}` — hand-written files would be skipped; \
+                 run `{}` to adopt",
+                managed_cmd(&format!("mars link {target_name} --force")),
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {

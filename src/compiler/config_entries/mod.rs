@@ -356,7 +356,14 @@ pub(crate) fn compile_config_entries(
     let retention =
         crate::surface_ownership::retention::RemovalPlan::build(&to_remove, &desired_records)
             .execute(
-                |operation, diag| remove_hooks(operation, &ctx.project_root, diag),
+                |operation, diag| {
+                    // A target that gets a write is edited there, removal and append in one
+                    // load-and-save; removing it here too would save the file twice.
+                    if pending_hooks.contains_key(operation.target_root()) {
+                        return RemovalReport::confirmed();
+                    }
+                    remove_hooks(operation, &ctx.project_root, diag)
+                },
                 diag,
             );
 
@@ -396,14 +403,14 @@ pub(crate) fn compile_config_entries(
         false,
         diag,
     );
-    report_removed(retention.removed_keys(), &mcp_removed, diag);
-
     let mut compiled = apply_replacement_writes(
         ctx,
         old_lock,
         ownership_lock,
         retention,
         pending_hooks,
+        &to_remove,
+        &mcp_removed,
         pending_file_writes,
         &desired_records,
         unchanged_records,
@@ -622,6 +629,8 @@ fn apply_replacement_writes(
     ownership_lock: &mut crate::lock::LockFile,
     retention: crate::surface_ownership::retention::RetentionPlan,
     pending_hooks: BTreeMap<String, Vec<HookEntry>>,
+    prior_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    mcp_removed: &BTreeMap<String, Vec<String>>,
     pending_file_writes: BTreeMap<String, Vec<(String, String, String)>>,
     desired_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     unchanged_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
@@ -630,9 +639,11 @@ fn apply_replacement_writes(
     mut emitted_outputs: Vec<crate::lock::CompiledNativeOutput>,
     removed_outputs: Vec<(String, String)>,
 ) -> ConfigEntryCompilation {
-    // Write desired hooks only after every removal has completed. Removal
-    // cleared the target's recorded hooks, so a failed write leaves no record.
+    // A target's recorded hooks are removed and the desired ones appended in `hook_file::replace`,
+    // after MCP reconcile, so the file is loaded after every other writer of it is done. A failed
+    // write leaves the file as it was, so the target keeps its prior records.
     let mut written_records = unchanged_records;
+    let mut failed_targets = BTreeSet::new();
     let mut rewritten_outputs = Vec::new();
     for (target_root, hooks) in pending_hooks {
         let Some(permit) = retention.write_permit(&target_root) else {
@@ -648,16 +659,33 @@ fn apply_replacement_writes(
             continue;
         };
         let (target_dir, hooks) = write.into_parts(&ctx.project_root);
-        rewritten_outputs.push((target_root.clone(), merge.file.to_string()));
-        if let Err(error) =
-            crate::target::hook_file::write(&target_dir.join(merge.file), &hooks, merge.top_level)
-        {
+        let prior = prior_records.get(&target_root);
+        if let Err(error) = crate::target::hook_file::replace(
+            &target_dir.join(merge.file),
+            prior.unwrap_or(&BTreeMap::new()),
+            &target_root,
+            &hooks,
+            merge.top_level,
+            diag,
+        ) {
             diag.warn(
                 "config-entry-write",
                 format!("failed to write config entries to `{target_root}`: {error}"),
             );
+            written_records
+                .entry(target_root.clone())
+                .or_default()
+                .extend(
+                    prior
+                        .into_iter()
+                        .flatten()
+                        .filter(|(key, _)| key.starts_with(HOOK_KEY_PREFIX))
+                        .map(|(key, record)| (key.clone(), record.clone())),
+                );
+            failed_targets.insert(target_root);
             continue;
         }
+        rewritten_outputs.push((target_root.clone(), merge.file.to_string()));
         written_records
             .entry(target_root.clone())
             .or_default()
@@ -691,6 +719,10 @@ fn apply_replacement_writes(
             &mut rewritten_outputs,
         );
     }
+
+    let mut removed_hooks = retention.removed_keys().clone();
+    removed_hooks.retain(|target_root, _| !failed_targets.contains(target_root));
+    report_removed(&removed_hooks, mcp_removed, diag);
 
     let mut records = retention.into_retained_records();
     for (target_root, target_records) in written_records {

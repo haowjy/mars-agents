@@ -78,12 +78,9 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
-        if let Some(warning) =
-            crate::compiler::persist_lock_then_native_agent_manifest(project_root, &new_lock)?
-        {
+        if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
-        recovery::complete(project_root)?;
 
         let mars_path = ctx.project_root.join(".mars");
         let settings = &state

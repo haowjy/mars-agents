@@ -64,7 +64,13 @@ A canonical write that may have happened but is not in `mars.lock` yet:
 holds `version`, `lock_checksum`, and `outputs` mapping each destination to one or two
 `PendingWrite`s (decoded from `LockedItemV2`, accepting only a single canonical `Installed`
 output). `prepare` writes or extends it, `recover` reads it and folds matches into `old_lock`
-in memory (in `load_config`), `complete` deletes it (in `finalize`). All are in `recovery.rs`.
+in memory (in `load_config`, or `load_lock` for the commands below). `publish` writes the lock
+and then deletes the journal. All are in `recovery.rs`.
+
+Every writer of `mars.lock` opens with `recovery::load_lock` (or `load_config` for sync) and
+closes with `recovery::publish`: `sync` (in `finalize`), `link`, `unlink` and `resolve`. A
+writer that skips either step leaves a journal bound to a lock it has since replaced, and
+every later sync is refused.
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +93,9 @@ An instance of [a marker a crash leaves](../../../.context/state-machines/crash-
   unowned installed file or a lost claim. `finalize` removes the journal after the lock write.
 - **Recovery fails closed.** A mismatched checksum, a changed `mars.lock` (`lock_checksum`), a
   symlink anywhere on the path (`output_exists`) or a non-regular entry are errors, not "no
-  output". The error text tells the user to relocate the conflicting file.
+  output". The error text tells the user to relocate the conflicting file. It is
+  `LockError::PendingWrite`, not `Corrupt`, so the CLI doesn't suggest `mars repair`, which
+  would hit the same refusal.
 - **Published ownership wins over stale intent**: `index.contains_installed_output` skips the
   entry. Without that, the run that already wrote the lock is read as unfinished.
 - **`--force` adoption is not journaled.** A path that already existed and is not in the journal

@@ -106,7 +106,7 @@ impl From<PendingWrite> for LockedItemV2 {
 }
 
 fn invalid(message: impl std::fmt::Display) -> MarsError {
-    LockError::Corrupt {
+    LockError::PendingWrite {
         message: format!("{INTENT_FILE}: {message}; preserve recovery evidence and relocate any conflicting output before retrying"),
     }.into()
 }
@@ -269,6 +269,22 @@ fn output_exists(root: &Path, path: &Path) -> Result<bool, MarsError> {
     Ok(true)
 }
 
+/// The open step for commands that write `mars.lock` without a sync: the lock with
+/// any interrupted write's ownership folded in. Publish the result with [`publish`].
+pub(crate) fn load_lock(root: &Path) -> Result<LockFile, MarsError> {
+    let mut lock = lock::load(root)?;
+    recover(root, &mut lock)?;
+    Ok(lock)
+}
+
+/// The publish step for every writer of `mars.lock`: ownership first, then the journal
+/// goes. Returns the native-agent manifest warning, if any.
+pub(crate) fn publish(root: &Path, lock: &LockFile) -> Result<Option<String>, MarsError> {
+    let warning = crate::compiler::persist_lock_then_native_agent_manifest(root, lock)?;
+    complete(root)?;
+    Ok(warning)
+}
+
 /// Recover only outputs whose pre-write intent still belongs to this lock and
 /// whose bytes match. The caller keeps all changes in memory until preflight.
 pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, MarsError> {
@@ -418,7 +434,7 @@ pub(super) fn prepare(
 
 /// Discard after lock publication, or when no uncommitted outputs remain.
 /// A crash after publication is harmless: the installed lock claims take precedence.
-pub(super) fn complete(root: &Path) -> Result<(), MarsError> {
+fn complete(root: &Path) -> Result<(), MarsError> {
     match fs::remove_file(intent_path(root)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),

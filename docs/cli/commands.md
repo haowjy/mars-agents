@@ -367,7 +367,9 @@ mars unlink <target>
 ```
 
 **Behavior:**
-- Removes `<target>` from `mars.toml [settings] targets` (and `managed_root` if it matches)
+- Removes `<target>` from `targets` (and `managed_root` if it matches) in `mars.toml` and `mars.local.toml`
+- Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
+- Rejects `.mars`, the canonical store, which is not a target
 - Removes only outputs and config entries owned by the target's lock records
 - Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
 - Reports if the target was not managed (no-op)

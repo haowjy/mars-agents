@@ -47,7 +47,7 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 One entry in a hook config file (the `hooks` object of `.claude/settings.local.json`,
 `.codex/hooks.json`, `.cursor/hooks.json` or the plugin tree). Hooks are unkeyed array elements,
 so ownership is content equality against the recorded array, and writing is remove-then-append
-instead of keyed replace. Defined by `load`, `write`, `holds_recorded` and `remove_recorded` in
+instead of keyed replace. Defined by `load`, `write`, `replace`, `holds_recorded` and `remove_recorded` in
 `hook_file.rs`; the single-use removal that reports what it could not confirm is in
 [hook-entry removal](../../surface_ownership/.context/state-machines.md).
 
@@ -67,9 +67,14 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 - **Divergence is per entry, but reported per hook.** `remove_entries` removes each expected entry
   still present and returns `(removed, missing)`; `missing > 0` gives one `config-divergence`
   warning for the whole hook, and nothing marks which entry was lost.
-- **Remove-then-append is two writes with a window.** Killed between, the hook entries are gone
-  while the lock still records them, and the next sync appends them again: recoverable, not
-  atomic. The file is saved only when something was removed, so otherwise its mtime is untouched.
+- **Remove-then-append is one load and one save.** `replace` strips the recorded entries and
+  appends on one document. A kill leaves the old file or the new one; nothing else writes the
+  file between the load and the save. A removal alone (`remove_recorded`, for `mars unlink`)
+  saves only when something went, so otherwise the file's mtime is untouched.
+- **No entry is adopted by content.** `write` and `replace` append every entry, even one the file
+  already holds: equal bytes do not prove Mars wrote them, and a later removal would delete a
+  user's entry. A sync killed after the save and before `mars.lock` therefore appends a
+  duplicate on retry. Known gap; the config-entry journal closes it.
 - **A malformed file is never overwritten.** `load` validates the shape and refuses anything but
   `hooks: {event: [...]}`.
 - Persisted: `ConfigEntryRecord.emitted_json` per `hook:<event>:<name>`.

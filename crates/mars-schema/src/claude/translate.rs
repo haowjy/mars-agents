@@ -424,6 +424,7 @@ pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
             continue;
         };
         // Continuation lines of a plain scalar are indented and fold into one line.
+        let start = index - 1;
         let mut folded = value.to_owned();
         while index < close
             && lines[index].starts_with([' ', '\t'])
@@ -432,6 +433,13 @@ pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
             folded.push(' ');
             folded.push_str(lines[index].trim());
             index += 1;
+        }
+        // `[Read,` plus an indented `Grep]` is a flow list across lines.
+        if is_flow_list(&folded) {
+            lines[start..index]
+                .iter()
+                .for_each(|line| repaired.push_str(line));
+            continue;
         }
         repaired.push_str(&format!(
             "{key}: {}\n",

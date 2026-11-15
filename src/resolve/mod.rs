@@ -80,7 +80,6 @@ pub trait SourceFetcher {
         url: &SourceUrl,
         version: &AvailableVersion,
         source_name: &str,
-        preferred_commit: Option<&str>,
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 
@@ -89,7 +88,6 @@ pub trait SourceFetcher {
         url: &SourceUrl,
         ref_name: &str,
         source_name: &str,
-        preferred_commit: Option<&str>,
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError>;
 

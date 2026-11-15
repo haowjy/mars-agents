@@ -140,25 +140,13 @@ impl VersionLister for MockProvider {
 impl SourceFetcher for MockProvider {
     fn fetch_git_version(
         &self,
-        url: &SourceUrl,
+        _url: &SourceUrl,
         version: &AvailableVersion,
         source_name: &str,
-        preferred_commit: Option<&str>,
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         self.bump_fetch_count(source_name);
-        self.seen_preferred_commits
-            .borrow_mut()
-            .push(preferred_commit.map(str::to_string));
-
-        if let Some(commit) = preferred_commit
-            && self.unreachable_preferred_commits.contains(commit)
-        {
-            return Err(MarsError::LockedCommitUnreachable {
-                commit: commit.to_string(),
-                url: url.to_string(),
-            });
-        }
+        self.seen_preferred_commits.borrow_mut().push(None);
 
         let tree_path = self
             .versioned_trees
@@ -166,9 +154,7 @@ impl SourceFetcher for MockProvider {
             .cloned()
             .or_else(|| self.trees.get(source_name).cloned())
             .unwrap_or_default();
-        let commit = if let Some(preferred) = preferred_commit {
-            preferred.to_string()
-        } else if let Some(sequence) = self
+        let commit = if let Some(sequence) = self
             .commit_sequences
             .get(source_name)
             .filter(|sequence| !sequence.is_empty())
@@ -187,21 +173,19 @@ impl SourceFetcher for MockProvider {
             version_tag: Some(version.tag.clone()),
             commit: Some(commit.into()),
             tree_path,
+            tree: None,
         })
     }
 
     fn fetch_git_ref(
         &self,
-        url: &SourceUrl,
+        _url: &SourceUrl,
         ref_name: &str,
         source_name: &str,
-        preferred_commit: Option<&str>,
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         self.bump_fetch_count(source_name);
-        self.seen_preferred_commits
-            .borrow_mut()
-            .push(preferred_commit.map(str::to_string));
+        self.seen_preferred_commits.borrow_mut().push(None);
 
         if self.fail_fetch_git_ref {
             return Err(MarsError::Source {
@@ -210,26 +194,14 @@ impl SourceFetcher for MockProvider {
             });
         }
 
-        if let Some(commit) = preferred_commit
-            && self.unreachable_preferred_commits.contains(commit)
-        {
-            return Err(MarsError::LockedCommitUnreachable {
-                commit: commit.to_string(),
-                url: url.to_string(),
-            });
-        }
-
         let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
         Ok(ResolvedRef {
             source_name: source_name.into(),
             version: None,
             version_tag: None,
-            commit: Some(
-                preferred_commit
-                    .map(|c| c.into())
-                    .unwrap_or_else(|| format!("ref:{ref_name}").into()),
-            ),
+            commit: Some(format!("ref:{ref_name}").into()),
             tree_path,
+            tree: None,
         })
     }
 
@@ -259,6 +231,7 @@ impl SourceFetcher for MockProvider {
             version_tag: None,
             commit: Some(commit.into()),
             tree_path,
+            tree: None,
         })
     }
 
@@ -275,6 +248,7 @@ impl SourceFetcher for MockProvider {
             version_tag: None,
             commit: None,
             tree_path: path.to_path_buf(),
+            tree: None,
         })
     }
 }

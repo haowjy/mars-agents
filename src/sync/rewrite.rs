@@ -465,6 +465,7 @@ mod tests {
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: root.to_path_buf(),
+                    tree: None,
                     authored_root: root.to_path_buf(),
                     package_root: root.to_path_buf(),
                     plugin: None,
@@ -476,6 +477,7 @@ mod tests {
                     version_tag: None,
                     commit: None,
                     tree_path: root.to_path_buf(),
+                    tree: None,
                 },
                 manifest: None,
             },

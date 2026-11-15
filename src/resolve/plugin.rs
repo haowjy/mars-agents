@@ -19,11 +19,12 @@ use super::version::locked_source_matches_pending;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::{LockFile, LockedContent, LockedSource};
-use crate::package_prepare::DiskTreeSource;
+use crate::package_prepare::PackageFiles;
 use crate::source::ResolvedRef;
-use crate::types::{CommitHash, SourceId, SourceUrl};
+use crate::types::{CommitHash, SourceId, SourceName, SourceUrl};
 use mars_schema::git_url::canonicalize_git_url;
 use mars_schema::names::SourceSubpath;
+use mars_schema::tree::TreeSource;
 use mars_schema::version::SelectionPolicy;
 
 /// Root `pending`'s package in the resolved source `marketplace`: at the plugin it names in the
@@ -46,15 +47,19 @@ pub(crate) fn root_package(
     let name = &pending.name;
     let invalid = |message: String| MarsError::InvalidRequest { message };
     let named = pending.source_id.plugin();
-    let plain = || apply_subpath(name, &marketplace.tree_path, pending.subpath.as_ref());
-    if named.is_none()
-        && (pending.subpath.is_some()
-            || !marketplace.tree_path.join(MARKETPLACE_MANIFEST).is_file())
-    {
+    let plain = || rooted_in(name, marketplace, pending.subpath.as_ref());
+    if named.is_none() && pending.subpath.is_some() {
         return plain();
     }
 
-    let tree = DiskTreeSource::new(&marketplace.tree_path)?;
+    let tree = PackageFiles::open(
+        marketplace.tree.as_ref(),
+        &marketplace.tree_path,
+        &marketplace.tree_path,
+    )?;
+    if named.is_none() && !tree.is_file(MARKETPLACE_MANIFEST) {
+        return plain();
+    }
     let inspection = inspect(&tree, &Hint::default());
     if let Some(error) = tree.take_error() {
         return Err(error);
@@ -108,7 +113,7 @@ pub(crate) fn root_package(
     let (rooted, content, at_marketplace_root) = match &plugin.entry.source {
         PluginSource::Local { path } => {
             let subpath = optional_subpath(name.as_ref(), path)?;
-            let rooted = apply_subpath(name, &marketplace.tree_path, subpath.as_ref())?;
+            let rooted = rooted_in(name, marketplace, subpath.as_ref())?;
             let content = LockedContent {
                 url: marketplace_url,
                 subpath,
@@ -137,7 +142,7 @@ pub(crate) fn root_package(
             let fetched = fetch_content(
                 pending, repository, checkout, replay, provider, options, diag,
             )?;
-            let rooted = apply_subpath(name, &fetched.tree_path, subpath.as_ref())?;
+            let rooted = rooted_in(name, &fetched, subpath.as_ref())?;
             let content = LockedContent {
                 url: Some(url),
                 subpath,
@@ -162,6 +167,18 @@ pub(crate) fn root_package(
             content,
             named: named.is_some(),
         }),
+        ..rooted
+    })
+}
+
+/// The package at `subpath` of a fetched checkout, with the checkout's files.
+fn rooted_in(
+    name: &SourceName,
+    checkout: &ResolvedRef,
+    subpath: Option<&SourceSubpath>,
+) -> Result<RootedSourceRef, MarsError> {
+    apply_subpath(name, &checkout.tree_path, subpath).map(|rooted| RootedSourceRef {
+        tree: checkout.tree.clone(),
         ..rooted
     })
 }
@@ -271,7 +288,7 @@ fn fetch_content(
         Checkout::Ref { name } => name.as_str(),
         _ => "HEAD",
     };
-    provider.fetch_git_ref(&url, reference, name, None, diag)
+    provider.fetch_git_ref(&url, reference, name, diag)
 }
 
 /// A plugin whose source changed since the lock names its old and new place.

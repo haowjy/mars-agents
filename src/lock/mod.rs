@@ -2126,6 +2126,7 @@ installed_checksum = "sha256:bbb"
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
+                    tree: None,
                     authored_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     package_root: PathBuf::from("/tmp/cache/base/plugins/base"),
                     plugin: None,
@@ -2137,6 +2138,7 @@ installed_checksum = "sha256:bbb"
                     version_tag: Some("v1.2.3".into()),
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from("/tmp/cache/base"),
+                    tree: None,
                 },
                 manifest: None,
             },
@@ -2153,6 +2155,7 @@ installed_checksum = "sha256:bbb"
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/local"),
+                    tree: None,
                     authored_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     package_root: PathBuf::from("/tmp/cache/local/plugins/local"),
                     plugin: None,
@@ -2164,6 +2167,7 @@ installed_checksum = "sha256:bbb"
                     version_tag: None,
                     commit: None,
                     tree_path: PathBuf::from("/tmp/cache/local"),
+                    tree: None,
                 },
                 manifest: None,
             },
@@ -2245,6 +2249,7 @@ installed_checksum = "sha256:bbb"
                 source_id: SourceId::git_with_subpath("https://example.com/base.git".into(), None),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from("/tmp/cache/base"),
+                    tree: None,
                     authored_root: PathBuf::from("/tmp/cache/base"),
                     package_root: PathBuf::from("/tmp/cache/base"),
                     plugin: None,
@@ -2256,6 +2261,7 @@ installed_checksum = "sha256:bbb"
                     version_tag: Some("main".into()),
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from("/tmp/cache/base"),
+                    tree: None,
                 },
                 manifest: None,
             },

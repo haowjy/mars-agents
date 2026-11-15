@@ -752,7 +752,7 @@ mars cache <info|clean>
 
 ### `mars cache info`
 
-Show cache location and disk usage (total, archives, git clone cache).
+Show cache location and disk usage (total, archives, git clone cache; `archives` holds one directory per fetched commit).
 
 - Prints cache path plus total size breakdown.
 - Supports `--json` with `path`, `total_bytes`, `archives_bytes`, and `git_bytes`.

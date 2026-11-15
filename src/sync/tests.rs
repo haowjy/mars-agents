@@ -89,6 +89,7 @@ fn make_graph_config(
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: tree_path.clone(),
+                    tree: None,
                     authored_root: tree_path.clone(),
                     package_root: tree_path.clone(),
                     plugin: None,
@@ -100,6 +101,7 @@ fn make_graph_config(
                     version_tag: None,
                     commit: None,
                     tree_path: tree_path.clone(),
+                    tree: None,
                 },
                 manifest: None,
             },
@@ -318,6 +320,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                 ),
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: PathBuf::from(format!("/tmp/{name}")),
+                    tree: None,
                     authored_root: PathBuf::from(format!("/tmp/{name}")),
                     package_root: PathBuf::from(format!("/tmp/{name}")),
                     plugin: None,
@@ -329,6 +332,7 @@ fn graph_with_versions(entries: &[(&str, &str, &str)]) -> ResolvedGraph {
                     version_tag: Some((*tag).to_string()),
                     commit: Some("abc123".into()),
                     tree_path: PathBuf::from(format!("/tmp/{name}")),
+                    tree: None,
                 },
                 manifest: None,
             },

@@ -42,6 +42,7 @@ pub fn fetch_path(
         version_tag: None,
         commit: None,
         tree_path: resolved,
+        tree: None,
     })
 }
 

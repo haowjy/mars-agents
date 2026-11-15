@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.2] - 2026-11-15
+
+### Added
+- `mars version --no-tag` bumps, rebuilds the plugin and commits without creating the tag, so CI can tag the pushed commit after its checks pass. With `--push` it pushes only the branch. See [mars version](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-version).
+
 ## [0.34.1] - 2026-11-15
 
 ### Changed

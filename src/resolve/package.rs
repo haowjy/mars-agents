@@ -138,9 +138,8 @@ pub(crate) fn resolve_package_bottom_up(
                             &pending_src.name,
                             exclusions,
                             ctx.version_constraints(),
-                        )
-                        .map(MarsError::Resolution)
-                        .unwrap_or(error));
+                            error,
+                        ));
                     }
                     Err(error) => return Err(error),
                 };
@@ -247,16 +246,15 @@ pub(crate) fn resolve_package_bottom_up(
                         staged.manifest,
                     )
                 }
-                Err(MarsError::Resolution(ResolutionError::VersionConflict { .. }))
+                Err(error @ MarsError::Resolution(ResolutionError::VersionConflict { .. }))
                     if !rejected.is_empty() =>
                 {
                     return Err(engine_unsatisfiable_error(
                         &pending_src.name,
                         exclusions,
                         ctx.version_constraints(),
-                    )
-                    .expect("the just-rejected candidate is persisted")
-                    .into());
+                        error,
+                    ));
                 }
                 Err(error) => return Err(error),
             }
@@ -444,11 +442,14 @@ fn describe_engine_failures(failures: &[EngineRequirementFailure]) -> String {
         .join("; ")
 }
 
+/// A selection that found nothing, reported as the engine exclusions that emptied it when some
+/// excluded version meets every constraint, and as the `conflict` itself otherwise.
 fn engine_unsatisfiable_error(
     name: &SourceName,
     exclusions: &EngineExclusions,
     constraints: &HashMap<SourceName, Vec<(String, Constraint)>>,
-) -> Option<ResolutionError> {
+    conflict: MarsError,
+) -> MarsError {
     let mut rejected = exclusions
         .iter()
         .filter(|((source, version), _)| {
@@ -463,17 +464,18 @@ fn engine_unsatisfiable_error(
         .collect::<Vec<_>>();
     rejected.sort_by(|(left, _), (right, _)| right.cmp(left));
     if rejected.is_empty() {
-        return None;
+        return conflict;
     }
     let candidates = rejected
         .into_iter()
         .map(|(version, failures)| format!("  {version}: {}", describe_engine_failures(failures)))
         .collect::<Vec<_>>()
         .join("\n");
-    Some(ResolutionError::RequiresMarsUnsatisfiable {
+    ResolutionError::RequiresMarsUnsatisfiable {
         name: name.to_string(),
         message: format!("no compatible candidate remains:\n{candidates}"),
-    })
+    }
+    .into()
 }
 
 pub(crate) fn collect_manifest_requests(

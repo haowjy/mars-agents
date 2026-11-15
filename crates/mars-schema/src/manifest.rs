@@ -142,7 +142,7 @@ fn read_package(
             Severity::Error,
             child_path("package", "schema"),
             format!(
-                "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from a Mars before 0.34.0 ({}/retired-keys.md#package-without-schema)",
+                "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from Mars 0.33.x ({}/retired-keys.md#package-without-schema)",
                 crate::diagnostic::DOCS
             ),
         ));

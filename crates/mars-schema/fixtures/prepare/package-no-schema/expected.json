@@ -29,7 +29,7 @@
             "package",
             "schema"
           ],
-          "message": "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from a Mars before 0.34.0 (https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema)"
+          "message": "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from Mars 0.33.x (https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema)"
         }
       ]
     },

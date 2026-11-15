@@ -392,10 +392,14 @@ fn lift_agent(
     changed
 }
 
-/// Quote every unquoted top-level `key: value` whose value YAML cannot read as a plain scalar:
-/// a `: ` or trailing `:` inside it, or a leading `@`, backtick or `%`. Claude Code reads a
-/// frontmatter that fails to parse the same way, so a definition it loads must load here.
-/// Returns the repaired document and the keys it quoted, or `None` when nothing needed quoting.
+/// Quote the unquoted top-level `key: value` lines that YAML cannot read as plain scalars,
+/// using the rule Claude Code applies when its own frontmatter parse fails: a key of letters,
+/// `_` or `-`, and a value containing any of `{}[]*&#!|>%@`, a backtick, or `: `. A value
+/// already wholly quoted, or a `[...]` that parses as a list, is left alone. Mars is more
+/// lenient in three ways: it also quotes a value ending in `:`, folds the indented
+/// continuation lines of a value it quotes, and leaves a block scalar header (`|`, `>-`) and
+/// CRLF line ends alone. Returns the repaired document and the keys it quoted, or `None` when
+/// nothing needed quoting.
 pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
     let lines = text.split_inclusive('\n').collect::<Vec<_>>();
     if lines.first().map(|line| line.trim_end()) != Some("---") {
@@ -438,22 +442,34 @@ pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
     (!quoted_keys.is_empty()).then_some((repaired, quoted_keys))
 }
 
-/// A top-level `key: value` line whose plain value YAML would refuse.
+/// A top-level `key: value` line Claude Code would quote.
 fn plain_entry(line: &str) -> Option<(&str, &str)> {
     let (key, value) = line.split_once(':')?;
     if key.is_empty()
         || !key
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            .all(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'-'))
         || !value.starts_with([' ', '\t'])
     {
         return None;
     }
     let value = value.trim();
-    let plain = !value.is_empty()
-        && !value.starts_with(['"', '\'', '|', '>', '[', '{', '&', '*', '!', '#']);
-    (plain && (value.contains(": ") || value.ends_with(':') || value.starts_with(['@', '`', '%'])))
+    let wholly_quoted = value.len() >= 2
+        && ['"', '\'']
+            .iter()
+            .any(|quote| value.starts_with(*quote) && value.ends_with(*quote));
+    let block_header = value
+        .strip_prefix(['|', '>'])
+        .is_some_and(|rest| rest.chars().all(|c| matches!(c, '+' | '-' | '0'..='9')));
+    let needs_quotes = value.contains(|c| "{}[]*&#!|>%@`".contains(c))
+        || value.contains(": ")
+        || value.ends_with(':');
+    (!value.is_empty() && needs_quotes && !wholly_quoted && !block_header && !is_flow_list(value))
         .then_some((key, value))
+}
+
+fn is_flow_list(value: &str) -> bool {
+    value.starts_with('[') && matches!(serde_yaml::from_str::<Value>(value), Ok(Value::Sequence(_)))
 }
 
 pub(crate) const REPAIRED: &str = "frontmatter.repaired";
@@ -464,7 +480,7 @@ pub(crate) fn repaired_diagnostic(keys: &[String]) -> SchemaDiagnostic {
         Severity::Warning,
         key_path(&keys[0]),
         format!(
-            "the unquoted value of {} is not valid plain YAML; it was quoted, as Claude Code does",
+            "the unquoted value of {} is not valid plain YAML; it was quoted",
             keys.iter()
                 .map(|key| format!("`{key}`"))
                 .collect::<Vec<_>>()

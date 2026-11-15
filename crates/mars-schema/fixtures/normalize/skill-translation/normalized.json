@@ -91,20 +91,30 @@
             "source_path": "skills/broken/SKILL.md",
             "output_path": "skills/broken/SKILL.md",
             "reading": {
-              "frontmatter": [],
-              "fields": null,
-              "body": null,
-              "diagnostics": [
-                {
-                  "code": "yaml.invalid",
-                  "severity": "error",
-                  "path": [],
-                  "message": "malformed YAML frontmatter: did not find expected ',' or ']' at line 3 column 1, while parsing a flow sequence at line 2 column 14"
-                }
-              ]
+              "frontmatter": [
+                [
+                  "name",
+                  "broken"
+                ],
+                [
+                  "description",
+                  "[unclosed"
+                ]
+              ],
+              "fields": {
+                "name": "broken",
+                "description": "[unclosed",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "# Broken\n",
+              "diagnostics": []
             },
             "change": {
-              "kind": "none"
+              "kind": "fully-rewritten"
             }
           },
           {
@@ -378,6 +388,16 @@
           ]
         },
         "changes": {
+          "skills/broken/SKILL.md": [
+            {
+              "code": "frontmatter.repaired",
+              "severity": "warning",
+              "path": [
+                "description"
+              ],
+              "message": "the unquoted value of `description` is not valid plain YAML; it was quoted"
+            }
+          ],
           "skills/colon/SKILL.md": [
             {
               "code": "frontmatter.repaired",
@@ -385,7 +405,7 @@
               "path": [
                 "description"
               ],
-              "message": "the unquoted value of `description` is not valid plain YAML; it was quoted, as Claude Code does"
+              "message": "the unquoted value of `description` is not valid plain YAML; it was quoted"
             }
           ],
           "skills/everything/SKILL.md": [

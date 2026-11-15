@@ -1,5 +1,5 @@
 ---
 name: broken
-description: [unclosed
+description: '[unclosed'
 ---
 # Broken

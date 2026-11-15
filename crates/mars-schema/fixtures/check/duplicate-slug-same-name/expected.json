@@ -2,6 +2,12 @@
   "diagnostics": {
     "one/agents/x.md": [
       {
+        "code": "import.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "agent slug `x` is also selected by `two/agents/x.md`"
+      },
+      {
         "code": "definition.duplicate-name",
         "severity": "error",
         "path": [
@@ -15,7 +21,7 @@
         "code": "import.duplicate-slug",
         "severity": "error",
         "path": [],
-        "message": "agent slug `x` is selected by both `one/agents/x.md` and `two/agents/x.md`"
+        "message": "agent slug `x` is also selected by `one/agents/x.md`"
       },
       {
         "code": "definition.duplicate-name",

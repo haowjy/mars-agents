@@ -18,17 +18,15 @@ struct Request {
 
 /// The codes `check` adds to what `prepare` returns for a path: the table in
 /// `crates/mars-schema/src/check.rs`. The WASM runner holds the same list.
-const CHECK_CODES: [&str; 14] = [
+const CHECK_CODES: [&str; 12] = [
     "package.requirement",
     "agent.description-missing",
     "agent.name-missing",
     "definition.name-mismatch",
     "definition.duplicate-name",
-    "definition.duplicate-slug",
     "selection.duplicate-slug",
     "skill-ref.missing",
     "skill-ref.provider",
-    "skill-ref.external",
     "skill.no-definition",
     "field.restriction-lost",
     "field.execution-ignored",

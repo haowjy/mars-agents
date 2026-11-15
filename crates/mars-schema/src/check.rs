@@ -177,8 +177,8 @@ impl Found {
         }
     }
 
-    /// `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`,
-    /// `definition.duplicate-name` and `definition.duplicate-slug`.
+    /// `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`
+    /// and `definition.duplicate-name`.
     fn definition_names(&mut self, prepared: &Prepared) {
         let items = prepared
             .definitions
@@ -275,37 +275,6 @@ impl Found {
                 ),
             );
         }
-
-        // `prepare` reports a slug that two files share on the second only. The first is marked
-        // here unless its `name` is shared too: `definition.duplicate-name` reports that.
-        let mut by_slug: BTreeMap<(DefinitionKind, &str), Vec<&Named>> = BTreeMap::new();
-        for item in &items {
-            by_slug
-                .entry((item.definition.kind, item.definition.slug.as_str()))
-                .or_default()
-                .push(item);
-        }
-        for items in by_slug.values() {
-            let [first, second, ..] = items.as_slice() else {
-                continue;
-            };
-            if !shared(first) {
-                self.rule(
-                    &first.definition.source_path,
-                    SchemaDiagnostic::new(
-                        "definition.duplicate-slug",
-                        Severity::Error,
-                        Vec::new(),
-                        format!(
-                            "{} slug `{}` is also selected by `{}`",
-                            first.definition.kind,
-                            first.definition.slug,
-                            second.definition.source_path
-                        ),
-                    ),
-                );
-            }
-        }
     }
 
     /// `selection.duplicate-slug`: a root item over a dependency's is only information, a slug
@@ -361,7 +330,7 @@ impl Found {
         }
     }
 
-    /// `skill-ref.missing`, `skill-ref.provider` and `skill-ref.external`, for the root's Agents.
+    /// `skill-ref.missing` and `skill-ref.provider`, for the root's Agents.
     fn skill_refs(&mut self, prepared: &Prepared, graph: &Graph) {
         for missing in graph
             .selection
@@ -374,22 +343,14 @@ impl Found {
             }) else {
                 continue;
             };
-            let (code, severity) = match &missing.hint {
-                Some(_) if graph.has_package => ("skill-ref.provider", Severity::Error),
-                _ if graph.has_dependencies => ("skill-ref.missing", Severity::Error),
-                _ => ("skill-ref.external", Severity::Warning),
+            let code = match &missing.hint {
+                Some(_) if graph.has_package => "skill-ref.provider",
+                _ => "skill-ref.missing",
             };
-            let message = if code == "skill-ref.external" {
-                format!(
-                    "agent `{}` references skill `{}`, which this package does not ship; a consumer must hold a package that does",
-                    missing.agent, missing.skill
-                )
-            } else {
-                missing_message(missing)
-            };
+            let message = missing_message(missing);
             self.rule(
                 &agent.source_path,
-                SchemaDiagnostic::new(code, severity, key_path("skills"), message),
+                SchemaDiagnostic::new(code, Severity::Error, key_path("skills"), message),
             );
         }
     }
@@ -484,9 +445,6 @@ struct Graph {
     selection: SelectionResult,
     /// The root has `[package]`.
     has_package: bool,
-    /// The root has `[package]` and `[dependencies]`; without them it cannot know what its
-    /// consumer adds, and a ref to a skill it doesn't ship is only a warning.
-    has_dependencies: bool,
     /// Dependencies a ref could resolve through that the caller left out.
     missing: Vec<MissingDependency>,
     /// Dependencies a ref could resolve through that could not be read; their own errors say
@@ -551,7 +509,6 @@ impl Graph {
         Self {
             selection,
             has_package,
-            has_dependencies,
             missing,
             unreadable,
         }

@@ -562,10 +562,8 @@ What its files say is the same function `@meridian-flow/mars-schema` exports as 
 |---|---|---|
 | `package.requirement` | error | `requires-mars` or `requires-meridian` is not a version requirement (both are reported) |
 | `definition.duplicate-name` | error | two Agents, or two skills, with one `name`; reported on each file |
-| `definition.duplicate-slug` | error | two files with one slug and different `name`s; `import.duplicate-slug` is on the second file |
 | `skill-ref.missing` | error | an Agent names a skill no package of the resolved graph ships. A dependency's own Agent is `skill-ref.dependency` |
 | `skill-ref.provider` | error | a ref `<skill>__<provider>` whose provider `[package] uses-providers` doesn't list |
-| `skill-ref.external` | warning | an Agent names a skill the package doesn't ship, and it has no `[dependencies]` (a consumer may add the package that does) |
 | `skill.no-definition` | warning | `skills/<dir>/` holds files and no `SKILL.md`, so none of it is installed |
 | `selection.duplicate-slug` | warning, info | two dependencies install one slug (warning); a root item and a dependency's (info: the root's is installed) |
 | `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |

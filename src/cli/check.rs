@@ -605,19 +605,14 @@ mod tests {
     }
 
     #[test]
-    fn check_no_dependencies_warns_for_external_skill() {
+    fn check_no_dependencies_errors_for_missing_skill() {
         let dir = TempDir::new().unwrap();
         write_agent(dir.path(), "coder", &["missing-skill"]);
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            report.errors().is_empty(),
-            "expected no errors in local-only mode: {:?}",
-            report.errors
-        );
-        assert!(
-            has_finding(&report, "skill-ref.external", Severity::Warning),
-            "expected warning for missing-skill: {:?}",
+            has_finding(&report, "skill-ref.missing", Severity::Error),
+            "expected error for missing-skill: {:?}",
             report.findings
         );
     }
@@ -707,11 +702,6 @@ mod tests {
             joined.contains("hint:"),
             "error must include remediation guidance: {joined}"
         );
-        assert!(
-            !has_finding(&report, "skill-ref.external", Severity::Warning),
-            "missing skill must be error, not warning: {:?}",
-            report.findings
-        );
     }
 
     #[test]
@@ -756,8 +746,8 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            has_finding(&report, "skill-ref.external", Severity::Warning),
-            "local-skill from [local-dependencies] must not satisfy ref in publish gate — expected warning: {:?}",
+            has_finding(&report, "skill-ref.missing", Severity::Error),
+            "local-skill from [local-dependencies] must not satisfy ref in publish gate: {:?}",
             report.findings
         );
     }

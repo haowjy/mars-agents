@@ -106,8 +106,8 @@ assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }), (e)
 const severity = { error: 0, warning: 1, info: 2 };
 const checkCodes = new Set([
   "package.requirement", "agent.description-missing", "agent.name-missing", "definition.name-mismatch",
-  "definition.duplicate-name", "definition.duplicate-slug", "selection.duplicate-slug", "skill-ref.missing",
-  "skill-ref.provider", "skill-ref.external", "skill.no-definition", "field.restriction-lost",
+  "definition.duplicate-name", "selection.duplicate-slug", "skill-ref.missing",
+  "skill-ref.provider", "skill.no-definition", "field.restriction-lost",
   "field.execution-ignored", "frontmatter.repaired",
 ]);
 // What `prepare` reports per path: package-level findings, then the manifest's, then each definition's.

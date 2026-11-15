@@ -45,12 +45,20 @@
           "uses_providers": []
         },
         "diagnostics": {
+          "one/review/SKILL.md": [
+            {
+              "code": "import.duplicate-slug",
+              "severity": "error",
+              "path": [],
+              "message": "skill slug `review` is also selected by `two/review/SKILL.md`"
+            }
+          ],
           "two/review/SKILL.md": [
             {
               "code": "import.duplicate-slug",
               "severity": "error",
               "path": [],
-              "message": "skill slug `review` is selected by both `one/review/SKILL.md` and `two/review/SKILL.md`"
+              "message": "skill slug `review` is also selected by `one/review/SKILL.md`"
             }
           ]
         }

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-15
+
+### Changed
+- An Agent file whose first line is not exactly `---` is now an error, `frontmatter.missing`, in a package that says `schema = 1`. Before, it read clean with every field at its default, the widest permissions, so a stray line above `---` turned `sandbox: read-only` into an unrestricted Agent. The error stops `mars check`, `mars sync`, `mars add`, `mars validate`, `mars build plugin` and `mars migrate`, and the `read` and `prepare` WASM calls. To fix your own package, put `---` as the file's first line, followed by the frontmatter and a closing `---`; an Agent with no frontmatter takes two `---` lines. If a dependency has such an Agent, your whole `mars sync` stops with the error, and `exclude` on that dependency does not help: ask its author to add the `---`, or pin the previous version. Pre-v1 and foreign packages, a project's `.mars-src/` and skills are unchanged. See [file rules](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#file-rules).
+
 ## [0.32.1] - 2026-11-14
 
 ### Fixed

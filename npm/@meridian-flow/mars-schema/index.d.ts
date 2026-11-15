@@ -265,7 +265,13 @@ export interface ProjectedRule {
    * `known`: Mars names the tool; `absent`: the host has no such tool; `unknown`: Mars cannot
    * name it (the host has no switch for it, Mars has no row, or it is not a tool Mars knows),
    * with the reason in `note`; `unscopable`: the rule has a pattern and the host's tool takes
-   * none. `null` for `*`, which names no tool.
+   * none, or (on `meridian-flow`) an `mcp(...)` allow or ask under an allow-list, which Flow's
+   * connection tools cannot scope to one server, so it grants none; `note` says which. `null`
+   * for `*`, which names no tool.
+   *
+   * On `meridian-flow`, `mcp(...)` rules and MCP wire tokens lower onto the connection tools
+   * `mcp_describe`, `mcp_call` and `mcp_run`: a deny or ask of any server or tool covers all of
+   * them (broader than written), and an allow with no allow-list loses nothing.
    */
   status: "known" | "absent" | "unknown" | "unscopable" | null;
   /** The permission names the rule keeps. Empty for a gap, and when a stricter rule won every name. */

@@ -450,6 +450,11 @@ const CURSOR: Table = &[
 /// ships no `glob` tool yet, so `glob` is absent. Flow's tool set is closed: every canonical
 /// capability has a row, `Absent` where Flow lacks the tool, so `unknown` on Flow only ever
 /// means a name Mars does not recognize.
+/// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
+/// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
+/// adds joins by being listed here.
+pub const FLOW_CONNECTION_TOOLS: &[&str] = &["mcp_describe", "mcp_call", "mcp_run"];
+
 const FLOW: Table = &[
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),

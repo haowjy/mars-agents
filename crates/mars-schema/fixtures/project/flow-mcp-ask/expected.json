@@ -1,0 +1,39 @@
+{
+  "host": "meridian-flow",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "pubmed/*",
+        "action": "ask",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "native_tools": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "note": "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool (broader than written, the safe direction)",
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ],
+  "available": [
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "host": "meridian-flow",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "read",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "read"
+      ],
+      "native_tools": [
+        "read"
+      ],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "pubmed/search",
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "native_tools": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [
+    "read",
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ],
+  "deny": [],
+  "ask": [],
+  "available": [
+    "read",
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "host": "meridian-flow",
+  "default": null,
+  "rules": [
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "*/*",
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "native_tools": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "note": "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them (broader than written, the safe direction)",
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "pubmed/*",
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [],
+      "native_tools": [],
+      "note": "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out",
+      "covered_by": {
+        "action": "deny",
+        "key": "mcp(*/*)"
+      }
+    },
+    {
+      "rule": {
+        "capability": "read",
+        "pattern": null,
+        "action": "allow",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [
+        "read"
+      ],
+      "native_tools": [
+        "read"
+      ],
+      "note": null,
+      "covered_by": null
+    }
+  ],
+  "allow": [
+    "read"
+  ],
+  "deny": [
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ],
+  "ask": [],
+  "available": [
+    "read",
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ]
+}

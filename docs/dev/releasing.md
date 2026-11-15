@@ -25,6 +25,11 @@ PR to `main` carries the label. Patch-level changes merge to `main` on their own
 meridian-cli's [release-branch procedure](https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch)
 for the steps: part PRs, the combined changelog, and who merges what.
 
+One step differs here: the agent leading the release merges the release PR to `main`
+itself, without asking, once its whole-change review is resolved and CI is green. Jimmy
+already approved each change that crosses a boundary before it started, so the release
+needs no second approval.
+
 ## Releasing
 
 CI-owned. Never manually `git tag` or edit version numbers. PR with `release:*` label lands on `main` → CI bumps version, renders changelog, commits, tags, and publishes to PyPI/npm/crates.io.

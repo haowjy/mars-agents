@@ -7,6 +7,57 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-15
+
+### Upgrade notes
+- Mars 0.34.0 no longer reads a package whose `[package]` has no `schema` (the pre-v1 format), and `mars migrate` is gone. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+- If a dependency of yours was published before schema 1 (for example `writing-sync` 0.1.1 locked in `mars.lock`), `mars sync` fails with `manifest.schema-missing`, names the version it resolved to and the dependency. Run `mars upgrade <name>` to take a newer version (widen its `version` constraint if `mars upgrade` keeps this one), or stay on a Mars before 0.34.0. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+- If you author a package with no `schema`, run `mars migrate` from Mars 0.33.x in its repository first, then upgrade; Mars 0.34.0 cannot do it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+- `mars check` prints each finding in a package's files with its code and file, one group per file, and `--json` gains `diagnostics` next to `agents`, `skills`, `errors` and `warnings`. A script that parses the text must read the new layout. `--json` keeps its old fields, but the `errors` and `warnings` strings from a package's files now start with `[code]` instead of `error:` / `warning:`, so a script should read `diagnostics`. See [`mars check`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-check).
+
+### Breaking
+- A package whose `[package]` has no `schema` is now an error (`manifest.schema-missing`): add `schema = 1`, or run `mars migrate` from Mars 0.33.x first. Mars no longer upgrades such a package in memory. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema).
+- A consumer's `.mars-src/` and a manifest-less tree declared `mars-native` are read as schema 1, so a `.mars-src` Agent with no frontmatter is now `frontmatter.missing`. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#an-agent-with-no-frontmatter).
+- `approval: yolo`, `effort: adaptive` and `effort: disabled` are ordinary invalid values. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#values-that-changed).
+- `@meridian-flow/mars-schema`: `prepare` no longer takes `migrate`, and the `mars-legacy` classification and the `edited` change record are gone.
+- Foreign-dialect trees no longer get pre-v1 keys rewritten. In a Claude dependency, `model_invocable` and `network_deny` now warn as retired and have no effect (the agent becomes invocable and the hosts are no longer denied), and a `permission` map warns instead of being set aside under `harness-overrides` with a hint. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-underscore-spellings).
+- In `.mars-src/`, `tools: [Read, Grep]` is now the error `tools.list-form` (it was converted to allow rules), Claude-only keys such as `color` and `background` stay top-level as `field.unknown` Info instead of moving to `harness-overrides.claude`, and `disallowedTools` warns as retired instead of folding into a deny rule.
+- An installed `.mars` tree that Mars wrote before 0.20 needs one `mars sync` before it reads again.
+- A git dependency published without `schema` fails the sync with a message for the consumer: it names the resolved version and says to run `mars upgrade <name>` (or widen its `version` constraint if that keeps the version; under `mars upgrade` it leads with widening), or stay on a Mars before 0.34.0. A path dependency or an override gets the author message, which names its `mars.toml`.
+
+### Added
+- `field.retired`: a warning for a key Mars moved off (`disallowed-tools`, `permission`, `network_deny`, ...), naming the key and linking to how to fix it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md).
+
+- `@meridian-flow/mars-schema` exports `check({files, context?, declaredDialect?, dependencies?})`, which returns `{ diagnostics, dependency_diagnostics, missing_dependencies, unreadable_dependencies }`: what is wrong with a package, per file, from its bytes. While either dependency list is not empty the result is not a verdict. See [the package README](https://github.com/haowjy/mars-agents/blob/main/npm/@meridian-flow/mars-schema/README.md#check).
+- `mars check` warns `skill.no-definition` for a `skills/<dir>/` that holds files and no `SKILL.md`; nothing reported it before.
+- `definition.duplicate-slug`: two files with one slug and different names mark the first file too (`import.duplicate-slug` is on the second).
+
+### Changed
+- `mars build plugin` picks each agent's model per tree. When the agent's own `model:` doesn't run on that tree's harness, the build takes the first `model-policies` rule, in written order, whose model does, and applies that rule's `override` (effort, sandbox, approval, network). An agent with `model: terra` (a GPT alias) and a `sonnet` rule now gets `model: sonnet` in the Claude tree instead of Claude's default. Only `match: {alias}` rules are tried. The build reports which agents took a fallback model in one `plugin-model-fallback` info line per tree. See [Agent models](https://github.com/haowjy/mars-agents/blob/main/docs/plugin-authoring.md#fallback-models).
+
+- `mars check` prints each finding in a package's files with its code and file, one group per file (`mars.toml` first, then by path), errors first within a file. Info prints in its own colour. What only the binary checks (the `requires-mars` floor, hooks, plugin output, model aliases, dependency resolution) prints after the groups, with no file. The rules behind it are one function, `mars_schema::check`, which `@meridian-flow/mars-schema` now exports as `check`.
+- Findings graded by what the author loses (error: won't load or install; warning: something written won't take effect; info: nothing written is lost). Now Info: an Agent with no `description` (the message says Claude does not load it), an Agent with no `name`, a `name` that differs from the file or folder name (now for every dialect), a root item that a dependency also ships (the root's is installed), a translated value quoted so YAML could read it (`frontmatter.repaired`), a `[package]` with no `version` (`manifest.version-missing`), a Claude skill `name` outside `a-z0-9-` (`skill.name-invalid`) and a Claude skill `description` over 1024 characters (`skill.description-too-long`). `mars sync` and `mars init` no longer print the last four by default.
+- A key a pre-v1 Mars read, in a file that says `schema = 1` (`disable-model-invocation`, `network_deny`, a `tools` entry of a skill, ...), is now a `field.retired` warning; it was a `field.removed` error, so a package that failed `mars check` with one now checks and installs, and the key has no effect. See [Retired keys](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md).
+- A duplicate `name` is reported once per file, on each file, with the other file's path.
+- A bad `requires-mars` and a bad `requires-meridian` are both reported; before only the first was.
+- The "skill not found" error lists the packages searched without their versions, and the duplicate-across-packages note names a file or `mars.toml` instead of the label `selection`.
+- `mars check` counts each Agent and skill file; two files with one `name` are two, where they were one.
+- `--json` keeps `agents`, `skills`, `errors` and `warnings` (the strings change as the text does), and gains `diagnostics`: `{ source_path, code, severity, path, message }` for each finding in a file, info included, with `dependency` on a dependency's own Agent. A warning-level finding of a file (`field.restriction-lost`, `field.execution-ignored`, `field.retired`) is in both `warnings` and `diagnostics`; a finding now at info is in `diagnostics` and no longer in `warnings`, except a `field.unknown` note, which stays in `warnings` as before.
+- `@meridian-flow/mars-schema`: `prepare` returns `manifest.version-missing`, `skill.name-invalid` and `skill.description-too-long` as `info` (they were warnings) and `frontmatter.repaired` in `changes` as `info`; `skill.name-mismatch` is gone, replaced by `definition.name-mismatch` in `check`.
+
+- A duplicate-`name` error says `mars sync` installs both and one native file replaces the other, and `mars check` adds that the file is a symlink when it is. A skill's `definition.name-mismatch` says refs and install use the folder name. A slug two dependencies ship reads "shipped by both `a` and `b`; one is installed". `skill-ref.dependency` lists the Agent's own package first in `searched`.
+- `@meridian-flow/mars-schema`: `inspect` of a root whose `kind` is `invalid` returns the manifest's findings under `diagnostics["mars.toml"]` (`manifest.schema-missing` for a package with no `schema`); `prepare` marks a package it could not read with `selection.unreadable: true`, and `check` judges no skill ref against it and lists it in `unreadable_dependencies`; `mars check` reports it as `[dependency-incomplete]`. A `prepare` result stored before 0.34.0 has no flag, so re-prepare stored dependencies.
+- `mars check` and `check` no longer report `skill-ref.missing` on the root when the skill could come from a dependency that could not be read; that dependency's own error is the one shown.
+- `@meridian-flow/mars-schema`: a `Map` of packages in `check` or `selectItems` gets the same unknown-key check as an object, and `index.d.ts` types both forms.
+- The two dependency errors of `mars check` carry `[dependency-resolution]` and `[dependency-incomplete]`.
+
+### Removed
+- `mars migrate`, and the in-memory upgrade of a package with no `schema`.
+
+### Fixed
+- A `mars check` message about a file no longer names the wrong one: each carries the path of its own file.
+- A symlinked Agent or skill is read as its target, as `mars sync` reads it, and no longer skipped with a warning. A link and its target that both sit in the folders Mars reads are now a `definition.duplicate-name` error, because `mars sync` installs both.
+
 ## [0.33.7] - 2026-11-15
 
 ### Fixed

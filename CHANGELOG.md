@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.4] - 2026-11-15
+
+### Fixed
+- A failed background refresh of the OpenCode or Cursor model listing, landing in the same second as the last good one, no longer reads as a healthy listing. Pi already did this correctly.
+
 ## [0.33.3] - 2026-11-15
 
 ### Fixed

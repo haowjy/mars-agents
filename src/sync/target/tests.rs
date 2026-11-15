@@ -59,7 +59,6 @@ fn make_graph_and_config(
                 },
                 rooted_ref: crate::resolve::RootedSourceRef {
                     checkout_root: tree.path().to_path_buf(),
-                    tree: None,
                     authored_root: tree.path().to_path_buf(),
                     package_root: tree.path().to_path_buf(),
                     plugin: None,
@@ -71,7 +70,6 @@ fn make_graph_and_config(
                     version_tag: None,
                     commit: None,
                     tree_path: tree.path().to_path_buf(),
-                    tree: None,
                 },
                 manifest: None,
             },

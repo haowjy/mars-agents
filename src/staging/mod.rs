@@ -58,7 +58,6 @@ pub(crate) fn materialize_prepared_rooted(
     Ok((
         RootedSourceRef {
             checkout_root: rooted.checkout_root,
-            tree: rooted.tree,
             authored_root: rooted.authored_root,
             package_root: destination,
             plugin: rooted.plugin,

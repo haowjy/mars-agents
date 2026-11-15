@@ -151,7 +151,6 @@ pub fn fetch(
         version_tag: resolved.tag,
         commit: Some(CommitHash::from(resolved.sha)),
         tree_path,
-        tree: None,
     })
 }
 
@@ -193,6 +192,5 @@ pub fn fetch_commit(
         version_tag: None,
         commit: Some(CommitHash::from(commit)),
         tree_path,
-        tree: None,
     })
 }

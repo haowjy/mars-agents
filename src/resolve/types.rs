@@ -150,8 +150,6 @@ pub struct RootedSourceRef {
     /// The checkout the package's files came from: the marketplace's for a local plugin, the
     /// plugin's own repository for a remote one.
     pub checkout_root: PathBuf,
-    /// The checkout's files when the provider read them; `None` for a live path source.
-    pub tree: Option<std::sync::Arc<mars_schema::tree::FileTree>>,
     /// Immutable package origin after applying `subpath` (or the plugin's root).
     pub authored_root: PathBuf,
     /// Current materialized content view. Relative dependencies must never use this.

@@ -32,14 +32,15 @@ pub(crate) struct MockProvider {
     /// Optional source tree overrides keyed by (source name, version tag).
     versioned_trees: HashMap<(String, String), PathBuf>,
     /// Optional commit sequences keyed by source name.
-    /// When set, each `fetch_git_version` call without preferred_commit rotates
+    /// When set, each `fetch_git_version` call rotates
     /// through the sequence to simulate ref drift for restart-cap tests.
     commit_sequences: HashMap<String, Vec<String>>,
     commit_sequence_indices: RefCell<HashMap<String, usize>>,
-    /// Preferred commits that should simulate an unreachable lock replay.
-    unreachable_preferred_commits: HashSet<String>,
-    /// Captures preferred-commit hints passed by the resolver.
-    seen_preferred_commits: RefCell<Vec<Option<String>>>,
+    /// Commits for which `fetch_git_commit` fails, simulating an unreachable lock replay.
+    unreachable_commits: HashSet<String>,
+    /// One entry per fetch, in order: `Some(commit)` for an exact-commit replay, `None` for a
+    /// version or ref fetch. Tests assert the replay order with it.
+    commit_fetches: RefCell<Vec<Option<String>>>,
     /// When true, fetch_git_ref fails to prove commit-replay paths do not depend on refs.
     fail_fetch_git_ref: bool,
     /// Number of fetches keyed by source name.
@@ -56,8 +57,8 @@ impl MockProvider {
             versioned_trees: HashMap::new(),
             commit_sequences: HashMap::new(),
             commit_sequence_indices: RefCell::new(HashMap::new()),
-            unreachable_preferred_commits: HashSet::new(),
-            seen_preferred_commits: RefCell::new(Vec::new()),
+            unreachable_commits: HashSet::new(),
+            commit_fetches: RefCell::new(Vec::new()),
             fail_fetch_git_ref: false,
             fetch_counts: RefCell::new(HashMap::new()),
         }
@@ -98,13 +99,12 @@ impl MockProvider {
             .insert((name.to_string(), version_tag.to_string()), tree_path);
     }
 
-    fn mark_unreachable_preferred_commit(&mut self, commit: &str) {
-        self.unreachable_preferred_commits
-            .insert(commit.to_string());
+    fn mark_unreachable_commit(&mut self, commit: &str) {
+        self.unreachable_commits.insert(commit.to_string());
     }
 
-    fn seen_preferred_commits(&self) -> Vec<Option<String>> {
-        self.seen_preferred_commits.borrow().clone()
+    fn commit_fetches(&self) -> Vec<Option<String>> {
+        self.commit_fetches.borrow().clone()
     }
 
     fn list_versions_count(&self, url: &str) -> usize {
@@ -146,7 +146,7 @@ impl SourceFetcher for MockProvider {
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         self.bump_fetch_count(source_name);
-        self.seen_preferred_commits.borrow_mut().push(None);
+        self.commit_fetches.borrow_mut().push(None);
 
         let tree_path = self
             .versioned_trees
@@ -173,7 +173,6 @@ impl SourceFetcher for MockProvider {
             version_tag: Some(version.tag.clone()),
             commit: Some(commit.into()),
             tree_path,
-            tree: None,
         })
     }
 
@@ -185,7 +184,7 @@ impl SourceFetcher for MockProvider {
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         self.bump_fetch_count(source_name);
-        self.seen_preferred_commits.borrow_mut().push(None);
+        self.commit_fetches.borrow_mut().push(None);
 
         if self.fail_fetch_git_ref {
             return Err(MarsError::Source {
@@ -201,7 +200,6 @@ impl SourceFetcher for MockProvider {
             version_tag: None,
             commit: Some(format!("ref:{ref_name}").into()),
             tree_path,
-            tree: None,
         })
     }
 
@@ -213,11 +211,11 @@ impl SourceFetcher for MockProvider {
         _diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
         self.bump_fetch_count(source_name);
-        self.seen_preferred_commits
+        self.commit_fetches
             .borrow_mut()
             .push(Some(commit.to_string()));
 
-        if self.unreachable_preferred_commits.contains(commit) {
+        if self.unreachable_commits.contains(commit) {
             return Err(MarsError::LockedCommitUnreachable {
                 commit: commit.to_string(),
                 url: url.to_string(),
@@ -231,7 +229,6 @@ impl SourceFetcher for MockProvider {
             version_tag: None,
             commit: Some(commit.into()),
             tree_path,
-            tree: None,
         })
     }
 
@@ -248,7 +245,6 @@ impl SourceFetcher for MockProvider {
             version_tag: None,
             commit: None,
             tree_path: path.to_path_buf(),
-            tree: None,
         })
     }
 }

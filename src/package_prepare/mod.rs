@@ -13,7 +13,7 @@ use mars_schema::dialect::Dialect;
 use mars_schema::inspect::{Hint, Kind};
 use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
 use mars_schema::prepare::{Classification, PrepareContext, Prepared};
-use mars_schema::tree::{FileTree, SubTree, TreeSource};
+use mars_schema::tree::TreeSource;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
@@ -199,83 +199,6 @@ impl TreeSource for DiskTreeSource {
     }
 }
 
-/// The files of one package, read by whoever prepares or inspects it. A git source brings the tree
-/// its provider read from the content directory, and the package is the part of it below `prefix`;
-/// a path source has none and is read from disk, lazily and confined to the package root.
-pub(crate) enum PackageFiles {
-    Fetched { tree: Arc<FileTree>, prefix: String },
-    Live(DiskTreeSource),
-}
-
-impl PackageFiles {
-    /// The package rooted at `root`, a directory at or below `checkout_root`, which `tree` holds.
-    pub(crate) fn open(
-        tree: Option<&Arc<FileTree>>,
-        checkout_root: &Path,
-        root: &Path,
-    ) -> Result<Self, MarsError> {
-        let Some(tree) = tree else {
-            return Ok(Self::Live(DiskTreeSource::new(root)?));
-        };
-        let below = root
-            .strip_prefix(checkout_root)
-            .map_err(|_| MarsError::InvalidRequest {
-                message: format!(
-                    "package root {} is not inside its checkout {}",
-                    root.display(),
-                    checkout_root.display()
-                ),
-            })?;
-        let prefix = below
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        Ok(Self::Fetched {
-            tree: Arc::clone(tree),
-            prefix,
-        })
-    }
-
-    /// The error a disk read latched; a fetched tree reads without one.
-    pub(crate) fn take_error(&self) -> Option<MarsError> {
-        match self {
-            Self::Fetched { .. } => None,
-            Self::Live(disk) => disk.take_error(),
-        }
-    }
-}
-
-impl TreeSource for PackageFiles {
-    fn read(&self, path: &str) -> Option<Vec<u8>> {
-        match self {
-            Self::Fetched { tree, prefix } => SubTree::new(&**tree, prefix.as_str()).read(path),
-            Self::Live(disk) => disk.read(path),
-        }
-    }
-
-    fn is_file(&self, path: &str) -> bool {
-        match self {
-            Self::Fetched { tree, prefix } => SubTree::new(&**tree, prefix.as_str()).is_file(path),
-            Self::Live(disk) => disk.is_file(path),
-        }
-    }
-
-    fn is_dir(&self, path: &str) -> bool {
-        match self {
-            Self::Fetched { tree, prefix } => SubTree::new(&**tree, prefix.as_str()).is_dir(path),
-            Self::Live(disk) => disk.is_dir(path),
-        }
-    }
-
-    fn children(&self, dir: &str) -> Vec<String> {
-        match self {
-            Self::Fetched { tree, prefix } => SubTree::new(&**tree, prefix.as_str()).children(dir),
-            Self::Live(disk) => disk.children(dir),
-        }
-    }
-}
-
 fn valid_relative(path: &str) -> bool {
     !path.starts_with('/')
         && !path.contains('\\')
@@ -301,11 +224,7 @@ pub(crate) fn prepare_rooted(
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
-    let source = PackageFiles::open(
-        rooted.tree.as_ref(),
-        &rooted.checkout_root,
-        &rooted.authored_root,
-    )?;
+    let source = DiskTreeSource::new(&rooted.authored_root)?;
     let request = NormalizeRequest {
         tree: &source,
         source: SourceInfo {
@@ -392,7 +311,7 @@ pub(crate) fn dependency_name<'a>(
 /// must say which it wants.
 fn marketplace_choice_error(
     source_name: &crate::types::SourceName,
-    source: &PackageFiles,
+    source: &DiskTreeSource,
     hint: &Hint,
 ) -> MarsError {
     let inspection = mars_schema::inspect::inspect(source, hint);
@@ -635,7 +554,6 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<P
     };
     let rooted = crate::resolve::RootedSourceRef {
         checkout_root: root.to_path_buf(),
-        tree: None,
         authored_root: root.to_path_buf(),
         package_root: root.to_path_buf(),
         plugin: None,

@@ -3,12 +3,8 @@ pub mod git;
 pub(crate) mod git_cli;
 pub mod parse;
 pub mod path;
-pub(crate) mod tree;
 
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use mars_schema::tree::FileTree;
 
 use crate::error::MarsError;
 use crate::platform::cache::global_cache_root;
@@ -48,9 +44,6 @@ pub struct ResolvedRef {
     /// Where the files are: for a git source, its content directory in the cache, which holds
     /// exactly this commit (see `git_cli::fetch_git_content`).
     pub tree_path: PathBuf,
-    /// The files at `tree_path`, read once by the provider. `None` for a path source, which is
-    /// live: Mars never snapshots a directory the user is editing, and it may hold anything.
-    pub tree: Option<Arc<FileTree>>,
 }
 
 #[derive(Debug, Clone)]

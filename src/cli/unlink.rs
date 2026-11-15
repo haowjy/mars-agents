@@ -51,18 +51,6 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         target_was_managed = true;
     }
 
-    let user = crate::config::load_user_config()?;
-    let (effective, _) =
-        crate::config::merge_with_root(config.clone(), local.clone(), &user, &ctx.project_root)?;
-    let still_configured = effective.settings.managed_targets().contains(&target_name);
-    if still_configured {
-        return Err(MarsError::Link {
-            target: target_name,
-            message: "still listed in the user config, which `unlink` does not edit; remove it there first"
-                .to_string(),
-        });
-    }
-
     let target_dir = ctx.project_root.join(&target_name);
     let (removed_outputs, diagnostics) = if target_was_managed {
         remove_owned_target_content(ctx, &target_name, &target_dir, &mut lock)?

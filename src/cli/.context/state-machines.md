@@ -98,8 +98,8 @@ stateDiagram-v2
   target out of settings that still has lock records, the mirror of what `link`'s crash leaves;
   the next `unlink` finishes it through `lock_claims`.
 - **A target is managed if mars.toml, mars.local.toml or the lock names it** (`target_was_managed`).
-  `unlink` edits both settings files. A target still listed in the user config is refused, since
-  `unlink` does not edit that file. An unmanaged target is not touched at all, even if files exist
+  `unlink` edits both settings files; the user config can't list targets (its loader drops
+  `targets` and `managed_root`). An unmanaged target is not touched at all, even if files exist
   there: it prints and exits 0.
 - `settings_updated` and `target_was_managed` are two bools that can disagree (settings changed
   for a target that was not managed); both are set from the same retain and clear block.

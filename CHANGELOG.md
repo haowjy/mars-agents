@@ -7,6 +7,28 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.6] - 2026-11-15
+
+### Fixed
+- After a `mars sync` was killed while writing `mars.lock`, running `mars link`, `mars unlink` or `mars resolve` left every later `mars sync` and `mars repair` failing with "mars.lock changed since the pending write". These commands now recover the interrupted write first. The error no longer suggests `mars repair`, which could not clear it.
+
+## [0.33.5] - 2026-11-15
+
+### Fixed
+- `mars unlink` finishes an interrupted `link` or `unlink` instead of leaving the target's lock records behind.
+- `mars unlink` removes a target listed in `mars.local.toml`; before, it said the target wasn't managed, and the next `sync` installed it again.
+- `mars link .mars` and `mars unlink .mars` are refused. `unlink .mars` could delete the canonical store, edits included.
+
+## [0.33.4] - 2026-11-15
+
+### Fixed
+- A failed background refresh of the OpenCode or Cursor model listing, landing in the same second as the last good one, no longer reads as a healthy listing. Pi already did this correctly.
+
+## [0.33.3] - 2026-11-15
+
+### Fixed
+- `mars add` no longer refuses a Claude Agent or skill whose unquoted frontmatter value YAML refuses (a `: `, or any of `{}[]*&#!|>%@` or a backtick, for example `description: [DEPRECATED] ...` or `... <example>Context: ...`), which Claude Code loads. The value is read as quoted text; `mars check` warns. Schema 1 files stay strict. See [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
+
 ## [0.33.2] - 2026-11-15
 
 ### Fixed

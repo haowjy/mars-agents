@@ -17,9 +17,7 @@ use crate::models::probes::CursorProbeResult;
 use crate::models::probes::OpenCodeProbeResult;
 use crate::models::probes::PiProbeResult;
 use crate::models::probes::ProbeRefreshMode;
-use crate::models::probes::cursor_cache;
-use crate::models::probes::opencode_cache::{self, CachedProbeOutcome};
-use crate::models::probes::pi_cache;
+use crate::models::probes::cache::{self, CachedProbeOutcome};
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
@@ -293,7 +291,7 @@ struct OutputResolvedInput<'a> {
     route_trace: &'a crate::routing::RoutingTrace,
     routing_settings: &'a ResolvedRoutingSettings,
     outcome: &'a models::RefreshOutcome,
-    cache_outcome: &'a CachedProbeOutcome,
+    cache_outcome: &'a CachedProbeOutcome<OpenCodeProbeResult>,
     probe_refresh: ProbeRefreshMode,
     routing_diagnostics: &'a [String],
     json: bool,
@@ -619,9 +617,9 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 
 fn run_refresh_probe(args: &RefreshProbeArgs) -> Result<i32, MarsError> {
     match args.target.as_str() {
-        "opencode" => opencode_cache::run_refresh_probe_command(),
-        "pi" => pi_cache::run_refresh_probe_command(),
-        "cursor" => cursor_cache::run_refresh_probe_command(),
+        "opencode" => cache::run_refresh_probe_command::<OpenCodeProbeResult>(),
+        "pi" => cache::run_refresh_probe_command::<PiProbeResult>(),
+        "cursor" => cache::run_refresh_probe_command::<CursorProbeResult>(),
         _ => Ok(1),
     }
 }

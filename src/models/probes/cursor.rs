@@ -25,6 +25,25 @@ pub fn probe() -> CursorProbeResult {
     probe_with_timeout(probe_timeout())
 }
 
+impl super::cache::CachedProbe for CursorProbeResult {
+    const HARNESS: &'static str = "cursor";
+    const CACHE_FILE: &'static str = "cursor-probe.json";
+    const LOCK_FILE: &'static str = ".cursor-probe.lock";
+    const SCHEMA_VERSION: u32 = 1;
+
+    fn probe() -> Self {
+        probe()
+    }
+
+    fn is_usable(&self) -> bool {
+        self.model_probe_success
+    }
+
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
 /// Probe cursor with a specific timeout.
 pub fn probe_with_timeout(timeout: Duration) -> CursorProbeResult {
     let mut result = CursorProbeResult::default();

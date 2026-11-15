@@ -459,17 +459,13 @@ fn lower_agent(
     qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_model(
         effective.model.as_deref(),
+        &profile.model_policies,
         tree_profile.harness,
         tree_profile.native_model_aliases,
         input.aliases,
     );
     // Policies apply only to a model the file names, as in native lowering.
-    let token = effective.model.as_deref().filter(|_| {
-        matches!(
-            model.native,
-            crate::compiler::agents::lower::NativeModel::Set(_)
-        )
-    });
+    let token = model.token.as_deref();
     let alias = token.and_then(|token| input.aliases.get(token));
     let model_ref = token.map(|token| crate::build::policy::ModelRef {
         token,

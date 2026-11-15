@@ -1,8 +1,10 @@
 use indexmap::IndexMap;
 
+use crate::build::policy::fallback_model_policy_entries;
 use crate::compiler::agents::lower::NativeModel;
 use crate::models::{ModelAlias, ModelSpec};
 use mars_schema::HarnessId;
+use mars_schema::model_policy::ModelPolicyRule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModelFallbackReason {
@@ -13,9 +15,37 @@ pub(super) enum ModelFallbackReason {
 pub(super) struct ResolvedModel {
     pub native: NativeModel,
     pub fallback: Option<ModelFallbackReason>,
+    /// The token `native` names: the agent's own `model:`, or the first `model-policies`
+    /// backup that runs on the harness. `None` when no model is set.
+    pub token: Option<String>,
 }
 
+/// The agent's `model:` on this harness; when that doesn't run here, the first
+/// `model-policies` rule, in written order, whose model does. A `no-fallback` rule, a
+/// glob and a repeated entry are skipped as launch fallback skips them. `when` is
+/// guidance for the caller, not a condition. With no rule that fits, the result is the
+/// harness default and the reason the agent's own model didn't resolve.
 pub(super) fn resolve_model(
+    token: Option<&str>,
+    policies: &[ModelPolicyRule],
+    harness: HarnessId,
+    native_aliases: &[&str],
+    aliases: &IndexMap<String, ModelAlias>,
+) -> ResolvedModel {
+    let own = resolve_token(token, harness, native_aliases, aliases);
+    if token.is_none() || own.token.is_some() {
+        return own;
+    }
+    fallback_model_policy_entries(policies)
+        .map(|(_, backup)| backup)
+        .find_map(|backup| {
+            let resolved = resolve_token(Some(backup), harness, native_aliases, aliases);
+            resolved.token.is_some().then_some(resolved)
+        })
+        .unwrap_or(own)
+}
+
+fn resolve_token(
     token: Option<&str>,
     harness: HarnessId,
     native_aliases: &[&str],
@@ -26,12 +56,14 @@ pub(super) fn resolve_model(
         return ResolvedModel {
             native: NativeModel::Clear,
             fallback: None,
+            token: None,
         };
     };
     let Some(alias) = aliases.get(token) else {
         return ResolvedModel {
             native: NativeModel::Clear,
             fallback: Some(ModelFallbackReason::NotPackageAlias),
+            token: None,
         };
     };
 
@@ -44,18 +76,21 @@ pub(super) fn resolve_model(
         return ResolvedModel {
             native: NativeModel::Set(model.to_string()),
             fallback: None,
+            token: Some(token.to_string()),
         };
     }
     if native_aliases.contains(&token) && target == Some(descriptor.id) {
         return ResolvedModel {
             native: NativeModel::Set(token.to_string()),
             fallback: None,
+            token: Some(token.to_string()),
         };
     }
 
     ResolvedModel {
         native: NativeModel::Clear,
         fallback: Some(ModelFallbackReason::NoDeterministicId),
+        token: None,
     }
 }
 

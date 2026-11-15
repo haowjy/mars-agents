@@ -413,6 +413,12 @@ fn examine(
                 missing.name
             )
         }));
+        errors.extend(result.unreadable_dependencies.iter().map(|unreadable| {
+            format!(
+                "[dependency-incomplete] dependency `{}` could not be read, so skill references were not checked",
+                unreadable.name
+            )
+        }));
     }
     let readable = !matches!(
         prepared.classification,

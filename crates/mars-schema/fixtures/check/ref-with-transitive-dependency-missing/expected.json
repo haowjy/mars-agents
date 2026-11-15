@@ -6,5 +6,6 @@
       "name": "two",
       "declared_in": "one"
     }
-  ]
+  ],
+  "unreadable_dependencies": []
 }

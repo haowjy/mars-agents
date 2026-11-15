@@ -46,6 +46,10 @@ pub struct Check {
     /// Every `[dependencies]` name reachable from the root that `dependencies` lacks. While it
     /// is not empty the result is not a verdict: no skill ref was judged.
     pub missing_dependencies: Vec<MissingDependency>,
+    /// Every dependency reachable from the root whose `selection.unreadable` is set: an invalid
+    /// or newer-schema manifest. It may be the one that ships a skill, so while this is not empty
+    /// the result is not a verdict either. Same shape as `missing_dependencies`.
+    pub unreadable_dependencies: Vec<MissingDependency>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,6 +71,7 @@ pub fn check(
     let mut found = Found::default();
     let mut dependency_diagnostics = BTreeMap::new();
     let mut missing_dependencies = Vec::new();
+    let mut unreadable_dependencies = Vec::new();
     if matches!(
         prepared.classification,
         Classification::Schema1 | Classification::Foreign(_)
@@ -76,7 +81,7 @@ pub fn check(
         found.definition_names(prepared);
         let graph = Graph::of(prepared, dependencies);
         found.selection_duplicates(prepared, &graph.selection);
-        if graph.missing.is_empty() && !graph.unreadable {
+        if graph.missing.is_empty() && graph.unreadable.is_empty() {
             found.skill_refs(prepared, &graph);
             dependency_diagnostics = graph.dependency_findings(dependencies);
         }
@@ -84,11 +89,13 @@ pub fn check(
             found.skill_folders(source, prepared);
         }
         missing_dependencies = graph.missing;
+        unreadable_dependencies = graph.unreadable;
     }
     Check {
         diagnostics: found.merge(prepared),
         dependency_diagnostics,
         missing_dependencies,
+        unreadable_dependencies,
     }
 }
 
@@ -482,9 +489,9 @@ struct Graph {
     has_dependencies: bool,
     /// Dependencies a ref could resolve through that the caller left out.
     missing: Vec<MissingDependency>,
-    /// A dependency a ref could resolve through could not be read; its own error says so, and
-    /// a ref that only it could satisfy is not the root's to report.
-    unreadable: bool,
+    /// Dependencies a ref could resolve through that could not be read; their own errors say
+    /// so, and a ref that only they could satisfy is not the root's to report.
+    unreadable: Vec<MissingDependency>,
 }
 
 impl Graph {
@@ -503,7 +510,7 @@ impl Graph {
         }
 
         let mut missing = Vec::new();
-        let mut unreadable = false;
+        let mut unreadable = Vec::new();
         let mut seen = BTreeSet::new();
         let mut queue: VecDeque<(Option<&str>, &SelectionFacts)> = VecDeque::from([(None, &root)]);
         while let Some((declared_in, facts)) = queue.pop_front() {
@@ -513,7 +520,12 @@ impl Graph {
                 }
                 match packages.get(&edge.name) {
                     Some(package) => {
-                        unreadable |= package.unreadable;
+                        if package.unreadable {
+                            unreadable.push(MissingDependency {
+                                name: edge.name.clone(),
+                                declared_in: declared_in.map(str::to_owned),
+                            });
+                        }
                         queue.push_back((Some(edge.name.as_str()), package));
                     }
                     None => missing.push(MissingDependency {

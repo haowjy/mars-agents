@@ -453,6 +453,14 @@ export interface Check {
    * Supply them and call again.
    */
   missing_dependencies: { name: string; declared_in: string | null }[];
+  /**
+   * Dependencies reachable from the root that `dependencies` has but could not be read (their
+   * `selection.unreadable` is true: an invalid or newer-schema manifest); `declared_in` is null
+   * for the root. While this is not empty the result is not a verdict: no skill ref was judged,
+   * because an unreadable dependency may be the one that ships the skill. Its own error is in
+   * `prepare`'s result for it.
+   */
+  unreadable_dependencies: { name: string; declared_in: string | null }[];
 }
 
 export type Tree = Map<string, Uint8Array>;

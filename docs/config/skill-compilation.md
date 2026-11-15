@@ -1,6 +1,6 @@
 # Skill Compilation
 
-Skills use a universal frontmatter schema that mars compiles to per-harness native field formats during `mars sync`. This separates skill authoring from harness-specific field names — a skill author writes `model-invocable: false` once, and mars emits the right field for Claude, Codex, or any other target. The schema is [schema v1](schema-v1.md#skill-keys); a package that predates it can be upgraded with [`mars migrate`](migrating-to-schema-v1.md).
+Skills use a universal frontmatter schema that mars compiles to per-harness native field formats during `mars sync`. This separates skill authoring from harness-specific field names — a skill author writes `model-invocable: false` once, and mars emits the right field for Claude, Codex, or any other target. The schema is [schema v1](schema-v1.md#skill-keys).
 
 ## Universal Skill Frontmatter
 
@@ -76,19 +76,9 @@ user-invocable: false   # user cannot trigger via /name
 
 ---
 
-### Removed fields
+### Retired fields
 
-A skill carries no tool policy, and schema 1 rejects these keys with an error that names the replacement:
-
-| Removed | Replace with |
-|---|---|
-| `type` | `metadata.type` |
-| `when_to_use` | fold it into `description` |
-| `tools`, `disallowed-tools`, `allowed-tools` and the snake_case spellings | nothing |
-| `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
-| `invocation`, `disable-model-invocation`, `allow_implicit_invocation` | `model-invocable` and `user-invocable` |
-
-`mars migrate` makes these changes. A pre-v1 dependency gets the same upgrade in memory, and dropping a skill's tool keys warns with the file's name. Foreign skills (a Claude plugin's `allowed-tools`, for example) are translated when Mars imports them: the tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
+A skill carries no tool policy. Keys Mars no longer reads (`type`, `when_to_use`, the tool-policy keys, the underscore invocability spellings, `invocation`, `disable-model-invocation`, `allow_implicit_invocation`) are `field.retired` warnings that link to [Retired keys](retired-keys.md). Foreign skills (a Claude plugin's `allowed-tools`, for example) are translated when Mars imports them: the tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
 
 ---
 
@@ -264,7 +254,7 @@ against the project's configured managed targets.
 
 | Code | Severity | Cause |
 |---|---|---|
-| `field.removed` | error | A pre-v1 key (see [Removed fields](#removed-fields)); one message for all of them |
+| `field.retired` | warning | A key Mars no longer reads (see [Retired fields](#retired-fields)); it links to what replaced it |
 | `field.required` | error | `name` or `description` is missing or empty in a skill with frontmatter |
 | `field.type` | error | A field has the wrong type, such as a non-string `metadata.type` or `model-invocable: yes` |
 | `field.unknown` | info | An unknown field; it stays in the file and reaches no native file |

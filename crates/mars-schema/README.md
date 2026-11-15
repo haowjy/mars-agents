@@ -36,7 +36,7 @@ The typed fields serialize with the spellings the file uses (kebab-case keys and
 
 Diagnostics are built directly with a structured `path` of keys and indexes. `range` is set only for fence and YAML-syntax errors, and no reader sets it yet; consumers locate a diagnostic by `path`.
 
-Unknown keys are kept and reported as `field.unknown` `Info`. A key or value of pre-v1 Mars's is a `field.removed` error with one text; the pre-v1 upgrade owns the list.
+Unknown keys are kept and reported as `field.unknown` `Info`. A key Mars moved off is a `field.retired` warning that links to the docs; `retired.rs` owns the list.
 
 ## Editing
 
@@ -51,14 +51,14 @@ Unknown keys are kept and reported as `field.unknown` `Info`. A key or value of 
 `prepare::prepare(&source, context, declared_dialect)` classifies one package root and returns a `Prepared`:
 
 - the classification (`Schema1`, `MarsLegacy`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
-- the manifest reading, normalized to schema 1 (a pre-v1 manifest gains `schema = 1`);
-- one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated`, `Edited` with the changed key paths, or `FullyRewritten`);
+- the manifest reading;
+- one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated` or `FullyRewritten`);
 - payload files as source-to-output paths, never bytes;
 - findings by source path (`diagnostics`) and what preparing changed in each file (`changes`: keys dropped, moved or repaired), with `Prepared::changed_files` for the count.
 
 `TreeSource` is the read interface (`read`, `is_file`, `is_dir`, `children`) that the caller implements for a directory, an archive or memory; `FileTree` is the in-memory implementation and `SubTree` roots a tree below a directory. Preparation reads manifests, definitions and directory listings only.
 
-`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`; `PrepareContext::Project` is a directory that is either (a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content). A pre-v1 package is upgraded with `upgrade::upgrade_definition` and `upgrade::upgrade_manifest`, which edit only the top-level keys that change and keep every other byte; `mars migrate` writes `Prepared`'s normalized bytes back to the authored files, so it prepares with `prepare_for_migration`, which also applies `upgrade::relocate_removed_fields` to a schema 1 definition. A caller that only reads the package gets a schema 1 file exactly as written. Only `mars migrate` adds `requires-mars = ">=0.20.0"`, through `upgrade::ensure_requires_mars_floor`, and only when the manifest has no requirement.
+`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`; `PrepareContext::Project` is a directory that is either (a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content)..
 
 `inspect::inspect(&source, &hint)` reports what a repository is (a marketplace's plugins, a plugin's or skill tree's items, the dialect and its evidence), and `normalize::normalize(&request)` runs `prepare` on each selected root of a Claude plugin, marketplace, skill tree or other foreign layout and adds a generated `mars.toml` and provenance. Neither fetches anything: the caller fetches a remote marketplace plugin and inspects or normalizes the fetched tree with `hint.plugin` set to the plugin's entry.
 
@@ -83,7 +83,7 @@ Projection onto a particular harness, overlay application, precedence and everyt
 
 ## Fixtures
 
-`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `upgrade`, `prepare`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
+`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `prepare`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
 
 ## License
 

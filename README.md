@@ -155,7 +155,7 @@ Use `mars adopt` to bring an existing unmanaged file into `.mars-src/` in one st
 
 ## Docs
 
-- [Schema v1](docs/config/schema-v1.md) — the agent, skill and manifest format; [migrating a package](docs/config/migrating-to-schema-v1.md)
+- [Schema v1](docs/config/schema-v1.md) — the agent, skill and manifest format; [retired keys](docs/config/retired-keys.md)
 - [Config](docs/config/) — `mars.toml`, agent profiles, compilation, MCP/hooks
 - [Plugin authoring](docs/plugin-authoring.md) — build and release multi-harness plugins
 - [CLI](docs/cli/commands.md) — every command with flags and examples

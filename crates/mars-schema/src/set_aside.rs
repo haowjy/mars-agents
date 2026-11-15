@@ -1,5 +1,5 @@
-//! The class guard for translated definitions. After a foreign or pre-v1 definition is
-//! translated, whatever the strict v1 reader would still reject is set aside, so a package its
+//! The class guard for translated definitions. After a foreign definition is translated, whatever the
+//! strict v1 reader would still reject is set aside, so a package its
 //! consumer cannot edit never fails for it. Only an authored schema-v1 file is refused for its
 //! fields.
 //!
@@ -14,7 +14,7 @@
 //! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`,
 //!   `network`, `network-deny`) is
 //!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
-//!   agent. `mars migrate` lists it with the rest, and a sync prints it on every run
+//!   agent. A sync prints it on every run
 //!   (`Prepared::lost_restrictions`).
 //! - A top-level `effort`, `mode` or `harness` that is not a string restricts nothing, so it is an
 //!   ordinary change ([`EXECUTION_IGNORED`]) that is listed once; `mars check` also prints it
@@ -73,16 +73,6 @@ const RESTRICTION_KEYS: &[&str] = &[
 /// Lists whose valid entries stay in place when one entry is rejected.
 const HOST_SET_KEYS: &[&str] = &["network-allow", "network-deny"];
 
-/// Which rejected keys the guard sets aside.
-#[derive(Clone, Copy)]
-pub(crate) enum Reach {
-    /// Every key the strict reader rejects.
-    Everything,
-    /// Only the keys of pre-v1 Mars ([`crate::upgrade::PRE_V1`]): `mars migrate` repairs what
-    /// the upgrade would, and leaves an error pre-v1 Mars never wrote for its author.
-    PreV1Keys,
-}
-
 /// Where a rejected key goes.
 #[derive(Clone, Copy)]
 pub(crate) enum Destination<'a> {
@@ -114,11 +104,7 @@ struct Rejection {
 
 /// The keys of `fm` the strict reader rejects with an error, in file order, each with its
 /// rejections.
-fn rejected_keys(
-    kind: DefinitionKind,
-    fm: &Frontmatter,
-    reach: Reach,
-) -> Vec<(String, Vec<Rejection>)> {
+fn rejected_keys(kind: DefinitionKind, fm: &Frontmatter) -> Vec<(String, Vec<Rejection>)> {
     let errors = crate::read::field_diagnostics(kind, fm)
         .into_iter()
         .filter(|diagnostic| {
@@ -131,23 +117,13 @@ fn rejected_keys(
     fm.keys()
         .into_iter()
         .filter(|key| !KEPT_KEYS.contains(&key.as_str()))
-        .filter(|key| match reach {
-            Reach::Everything => true,
-            Reach::PreV1Keys => crate::upgrade::PRE_V1.key(kind, key),
-        })
         .filter_map(|key| {
             let own = errors
                 .iter()
                 .filter(|diagnostic| matches!(diagnostic.path.first(), Some(PathSegment::Key(first)) if *first == key))
                 .map(|diagnostic| Rejection {
                     path: diagnostic.path.clone(),
-                    why: if diagnostic.code == "field.removed" {
-                        // The reader's text is `mars migrate`'s promise to convert it, and the
-                        // guard runs because the conversion had no form for this one.
-                        "a pre-v1 form with no schema v1 equivalent".to_owned()
-                    } else {
-                        diagnostic.message.clone()
-                    },
+                    why: diagnostic.message.clone(),
                 })
                 .collect::<Vec<_>>();
             (!own.is_empty()).then_some((key, own))
@@ -407,10 +383,9 @@ pub(crate) fn set_aside_rejected_keys(
     fm: &mut Frontmatter,
     kind: DefinitionKind,
     destination: Destination<'_>,
-    reach: Reach,
     changes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
-    let rejected = rejected_keys(kind, fm, reach);
+    let rejected = rejected_keys(kind, fm);
     if rejected.is_empty() {
         return false;
     }

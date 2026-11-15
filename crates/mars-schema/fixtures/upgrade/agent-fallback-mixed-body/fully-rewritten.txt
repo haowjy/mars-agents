@@ -1,2 +1,0 @@
-The top-level mapping is flow style, so the frontmatter is rewritten whole; the CRLF fence
-makes it CRLF, while the body keeps its authored LF and CRLF lines.

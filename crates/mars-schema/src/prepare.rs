@@ -1,11 +1,10 @@
 //! One-pass package classification, normalization, selection, and strict reading.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
+use crate::diagnostic::{SchemaDiagnostic, Severity};
 use crate::dialect::{Dialect, DialectChoice};
 use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
@@ -15,7 +14,6 @@ use crate::read::{DefinitionRead, Reading, read_authored, read_definition};
 use crate::selection::{Definition, Request, SelectionFacts};
 use crate::tool_policy::{RuleOrigin, ToolRule};
 use crate::tree::TreeSource;
-use crate::upgrade::{UpgradeError, UpgradeResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -34,27 +32,12 @@ pub enum PrepareContext {
 /// The directory below a consumer project that holds its own authored content.
 pub const LOCAL_SOURCE_DIR: &str = ".mars-src";
 
-/// Where a project directory's authored content lives and how it is read, from its `mars.toml`
-/// bytes: the project root as a `Package`, or, when the manifest is consumer configuration with
-/// no `[package]`, its `.mars-src` as `AuthoredLocal`. A caller that writes to the authored
-/// files, as `mars migrate` does, asks here instead of parsing `mars.toml` itself.
-pub fn project_authored_root(project: &Path, manifest: Option<&[u8]>) -> (PathBuf, PrepareContext) {
-    match crate::package::classify_manifest(manifest) {
-        crate::package::ManifestClassification::ConsumerConfig => (
-            project.join(LOCAL_SOURCE_DIR),
-            PrepareContext::AuthoredLocal,
-        ),
-        _ => (project.to_path_buf(), PrepareContext::Package),
-    }
-}
-
 /// What a package root is, once its manifest, declared dialect and contents have been weighed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Classification {
     #[serde(rename = "schema-1")]
     Schema1,
-    MarsLegacy,
     SchemaNewer {
         schema: u64,
     },
@@ -72,9 +55,6 @@ pub enum ChangeRecord {
     None,
     /// The file has no source: `normalize` wrote it (a package's generated `mars.toml`).
     Generated,
-    Edited {
-        paths: Vec<Vec<PathSegment>>,
-    },
     FullyRewritten,
 }
 
@@ -143,9 +123,8 @@ pub struct Prepared {
     /// convert. A definition's own reading diagnostics live on its `reading` only; see
     /// [`Prepared::all_diagnostics`].
     pub diagnostics: BTreeMap<String, Vec<SchemaDiagnostic>>,
-    /// What preparing changed in each file, by source path: the keys a pre-v1 upgrade or a
-    /// foreign translation dropped, moved or repaired. A caller that only reads the package
-    /// reports [`Prepared::changed_files`]; `mars migrate` lists these.
+    /// What translating a foreign package changed in each file, by source path: the keys it
+    /// dropped, moved or repaired. A caller reports [`Prepared::changed_files`].
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub changes: BTreeMap<String, Vec<SchemaDiagnostic>>,
 }
@@ -231,9 +210,8 @@ impl Prepared {
         })
     }
 
-    /// How many authored files preparation changed: the prepared bytes differ from the file, and
-    /// for a pre-v1 package `mars migrate` writes them back. A generated `mars.toml` has no file
-    /// to change and is not counted.
+    /// How many authored files translation changed: the prepared bytes differ from the file. A
+    /// generated `mars.toml` has no file to change and is not counted.
     pub fn changed_files(&self) -> usize {
         self.manifest
             .iter()
@@ -275,11 +253,6 @@ pub(crate) struct RootOptions<'a> {
     pub selection: Option<&'a BTreeSet<String>>,
     /// Names a root `SKILL.md` when its own `name` cannot.
     pub fallback_name: Option<&'a str>,
-    /// Convert what a schema 1 package still carries of pre-v1 Mars (`upgrade::PRE_V1`), in its
-    /// definitions and its `mars.toml`. Only `mars migrate` asks, because it
-    /// writes the result back; a reader leaves it off, because an authored schema 1 file is read
-    /// exactly as written.
-    pub migrate: bool,
 }
 
 /// `prepare` plus what was discovered, for `inspect` and `normalize`.
@@ -295,20 +268,6 @@ pub fn prepare(
     declared_dialect: Option<Dialect>,
 ) -> Prepared {
     prepare_root(source, context, declared_dialect, RootOptions::default()).prepared
-}
-
-/// `prepare` as `mars migrate` runs it: a definition it could repair is repaired in
-/// `normalized_bytes`, for the migration to write back to the authored file.
-pub fn prepare_for_migration(
-    source: &impl TreeSource,
-    context: PrepareContext,
-    declared_dialect: Option<Dialect>,
-) -> Prepared {
-    let options = RootOptions {
-        migrate: true,
-        ..RootOptions::default()
-    };
-    prepare_root(source, context, declared_dialect, options).prepared
 }
 
 pub(crate) fn prepare_root(
@@ -329,15 +288,7 @@ pub(crate) fn prepare_root(
     let mut diagnostics = std::mem::take(&mut dispatched.discovery.diagnostics);
     let mut changes = BTreeMap::new();
 
-    let mut manifest = manifest_bytes.as_deref().map(|bytes| {
-        prepare_manifest(
-            bytes,
-            classification == Classification::MarsLegacy
-                || (options.migrate && classification == Classification::Schema1),
-            &mut diagnostics,
-            &mut changes,
-        )
-    });
+    let mut manifest = manifest_bytes.as_deref().map(prepare_manifest);
 
     let can_read_definitions = !matches!(
         classification,
@@ -355,7 +306,6 @@ pub(crate) fn prepare_root(
                 .is_none_or(|selection| selection.contains(&definition.source_path))
         })
         .collect::<Vec<_>>();
-    let shaping = Shaping::of(&classification, options.migrate);
     let authored = matches!(classification, Classification::Schema1);
     let definitions = if can_read_definitions {
         selected
@@ -364,7 +314,7 @@ pub(crate) fn prepare_root(
                 let mut prepared = prepare_definition(
                     source,
                     definition,
-                    shaping,
+                    &classification,
                     authored,
                     &mut diagnostics,
                     &mut changes,
@@ -544,87 +494,29 @@ fn report_unconverted(
     }
 }
 
-fn prepare_manifest(
-    bytes: &[u8],
-    upgrade: bool,
-    diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
-    changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
-) -> PreparedManifest {
-    let invalid_utf8 = std::str::from_utf8(bytes).err().map(|error| {
-        SchemaDiagnostic::new(
+fn prepare_manifest(bytes: &[u8]) -> PreparedManifest {
+    let reading = match std::str::from_utf8(bytes) {
+        Ok(text) => crate::manifest::read(text),
+        Err(error) => crate::manifest::ManifestRead::unread(vec![SchemaDiagnostic::new(
             "text.invalid-utf8",
             Severity::Error,
             Vec::new(),
             format!("mars.toml is not UTF-8: {error}"),
-        )
-    });
-    let (normalized_bytes, change, upgraded) = match std::str::from_utf8(bytes) {
-        Ok(text) if upgrade => match crate::upgrade::upgrade_manifest(text) {
-            Ok(result) => upgrade_result(text, result),
-            Err(error) => {
-                push(
-                    diagnostics,
-                    "mars.toml",
-                    SchemaDiagnostic::new(
-                        "manifest.upgrade-failed",
-                        Severity::Error,
-                        Vec::new(),
-                        error.to_string(),
-                    ),
-                );
-                (bytes.to_vec(), ChangeRecord::None, Vec::new())
-            }
-        },
-        Ok(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
-        Err(_) => (bytes.to_vec(), ChangeRecord::None, Vec::new()),
+        )]),
     };
-    changes
-        .entry("mars.toml".to_string())
-        .or_default()
-        .extend(upgraded);
-    let reading = std::str::from_utf8(&normalized_bytes).map_or_else(
-        |_| crate::manifest::ManifestRead::unread(invalid_utf8.into_iter().collect()),
-        crate::manifest::read,
-    );
     PreparedManifest {
         source_path: Some("mars.toml".to_string()),
         output_path: "mars.toml".to_string(),
-        normalized_bytes,
+        normalized_bytes: bytes.to_vec(),
         reading,
-        change,
-    }
-}
-
-/// A definition's authored keys, made schema v1.
-type Rewrite = fn(DefinitionKind, &str) -> Result<UpgradeResult, UpgradeError>;
-
-/// How the root's definitions are made schema v1, decided once for the root.
-#[derive(Clone, Copy)]
-enum Shaping {
-    /// Nothing to convert: each file is read as written.
-    None,
-    /// The pre-v1 upgrade, or `mars migrate`'s repair of a schema 1 file.
-    Rewrite(Rewrite),
-    /// A foreign dialect, translated into schema v1.
-    Foreign(Dialect),
-}
-
-impl Shaping {
-    fn of(classification: &Classification, migrate: bool) -> Self {
-        match classification {
-            Classification::MarsLegacy => Self::Rewrite(crate::upgrade::upgrade_definition),
-            // Only `mars migrate` writes the result back, so only it repairs a schema 1 file.
-            Classification::Schema1 if migrate => Self::Rewrite(crate::upgrade::migrate_definition),
-            Classification::Foreign(choice) => Self::Foreign(choice.dialect),
-            _ => Self::None,
-        }
+        change: ChangeRecord::None,
     }
 }
 
 fn prepare_definition(
     source: &impl TreeSource,
     selected: &SelectedDefinition,
-    shaping: Shaping,
+    classification: &Classification,
     authored: bool,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
     changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
@@ -650,40 +542,14 @@ fn prepare_definition(
         };
     };
     let (mut notes, mut findings) = (Vec::new(), Vec::new());
-    let (normalized_bytes, change) = match std::str::from_utf8(&bytes) {
-        Ok(text) => match shaping {
-            Shaping::Rewrite(rewrite) => match rewrite(selected.kind, text) {
-                Ok(result) => {
-                    let (rewritten, change, upgrade_notes) = upgrade_result(text, result);
-                    notes = upgrade_notes;
-                    (rewritten, change)
-                }
-                // The reader reports a file that does not parse; the upgrade only met its
-                // error, so a second diagnostic would say the same thing twice.
-                Err(UpgradeError::Frontmatter(_)) => (bytes.clone(), ChangeRecord::None),
-                Err(error) => {
-                    push(
-                        diagnostics,
-                        &selected.source_path,
-                        SchemaDiagnostic::new(
-                            "definition.upgrade-failed",
-                            Severity::Error,
-                            Vec::new(),
-                            error.to_string(),
-                        ),
-                    );
-                    (bytes.clone(), ChangeRecord::None)
-                }
-            },
-            Shaping::Foreign(dialect) => {
-                let translated = translate_foreign(text, dialect, selected, &bytes);
-                notes = translated.changes;
-                findings = translated.findings;
-                (translated.bytes, translated.change)
-            }
-            Shaping::None => (bytes.clone(), ChangeRecord::None),
-        },
-        Err(_) => (bytes.clone(), ChangeRecord::None),
+    let (normalized_bytes, change) = match (std::str::from_utf8(&bytes), classification) {
+        (Ok(text), Classification::Foreign(choice)) => {
+            let translated = translate_foreign(text, choice.dialect, selected, &bytes);
+            notes = translated.changes;
+            findings = translated.findings;
+            (translated.bytes, translated.change)
+        }
+        _ => (bytes.clone(), ChangeRecord::None),
     };
     changes
         .entry(selected.source_path.clone())
@@ -694,7 +560,7 @@ fn prepare_definition(
         .or_default()
         .extend(findings);
 
-    // Only text is upgraded or translated, so these bytes are the file's when they are not text.
+    // Only text is translated, so these bytes are the file's when they are not text.
     let reading = match std::str::from_utf8(&normalized_bytes) {
         Ok(text) if authored => read_authored(selected.kind, text),
         Ok(text) => read_definition(selected.kind, text),
@@ -801,22 +667,6 @@ fn unreadable(kind: DefinitionKind, diagnostic: SchemaDiagnostic) -> Reading {
         DefinitionKind::Agent => Reading::Agent(DefinitionRead::unread(vec![diagnostic])),
         DefinitionKind::Skill => Reading::Skill(DefinitionRead::unread(vec![diagnostic])),
     }
-}
-
-fn upgrade_result(
-    original: &str,
-    result: UpgradeResult,
-) -> (Vec<u8>, ChangeRecord, Vec<SchemaDiagnostic>) {
-    let change = if !result.changed_from(original) {
-        ChangeRecord::None
-    } else if result.fully_rewritten {
-        ChangeRecord::FullyRewritten
-    } else {
-        ChangeRecord::Edited {
-            paths: result.edited_paths,
-        }
-    };
-    (result.text.into_bytes(), change, result.diagnostics)
 }
 
 fn push(

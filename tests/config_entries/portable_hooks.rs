@@ -318,7 +318,7 @@ fn check_warns_about_the_floor_and_a_condition_that_never_runs() {
     package.create_dir_all().unwrap();
     package
         .child("mars.toml")
-        .write_str("[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n")
+        .write_str("[package]\nschema = 1\nname = \"pkg\"\nversion = \"1.0.0\"\n")
         .unwrap();
     write_hook(
         &package,

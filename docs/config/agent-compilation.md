@@ -10,7 +10,7 @@ policy requests all or selective copies through
 
 ## The Two Surfaces
 
-Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `harness:` is set. This is the canonical compiled output: all frontmatter fields preserved, body unchanged. Meridian reads from here at spawn time. A package that predates [schema v1](schema-v1.md) arrives here upgraded to schema 1.
+Every agent produces a `.mars/agents/<name>.md` artifact regardless of whether `harness:` is set. This is the canonical compiled output: all frontmatter fields preserved, body unchanged. Meridian reads from here at spawn time.
 
 When native emission selects an agent for a harness, a second artifact is emitted in the harness-native directory:
 

@@ -2,7 +2,7 @@
 
 Schema v1 is the format of a Mars package's definition files: Agents (`agents/<name>.md`), skills (`skills/<name>/SKILL.md`) and the `[package]` table of `mars.toml`. One reader in the [`mars-schema`](../../crates/mars-schema/AGENTS.md) crate parses them for the Mars binary, for the [`@meridian-flow/mars-schema`](../../npm/@meridian-flow/mars-schema/README.md) npm package that editors use, and for Meridian Flow. A file the reader accepts means the same thing to every consumer.
 
-A package declares the format it uses; a package that predates it can be upgraded with [`mars migrate`](migrating-to-schema-v1.md).
+A package declares the format it uses. Mars 0.34.0 dropped the format before it; see [Retired keys](retired-keys.md).
 
 ## What schema 1 promises
 
@@ -13,8 +13,8 @@ version = "1.0.0"
 schema = 1
 ```
 
-- **Not frozen before Mars 1.0.** While Mars is 0.x, a minor release may still change or remove a schema 1 key; the CHANGELOG lists each change, and `mars migrate` rewrites what it can. From Mars 1.0, schema 1 is fixed: the same bytes mean the same thing, a minor release only adds optional keys, and a change in meaning needs `schema = 2` with an upgrade path from 1.
-- **Strict.** A package that declares `schema = 1` is read as written. A key schema 1 removed, a value it does not allow, and a malformed file are errors that name the file and the replacement; there is no silent fallback. Unknown keys are preserved and reported as warnings.
+- **Not frozen before Mars 1.0.** While Mars is 0.x, a minor release may still change or remove a schema 1 key; the CHANGELOG lists each change. From Mars 1.0, schema 1 is fixed: the same bytes mean the same thing, a minor release only adds optional keys, and a change in meaning needs `schema = 2` with an upgrade path from 1.
+- **Strict.** A package that declares `schema = 1` is read as written. A value it does not allow and a malformed file are errors that name the file; there is no silent fallback. A key it no longer reads is a [`field.retired`](retired-keys.md) warning, and any other unknown key is preserved and reported as `field.unknown`, an `Info`.
 - **Published as data.** The key tables below, the tool vocabulary, and a corpus of input files with their expected readings are fixtures that Mars's tests and Meridian Flow's tests run. See [The contract as data](#the-contract-as-data).
 
 ## How Mars reads a package
@@ -24,17 +24,17 @@ Mars classifies a package root before it reads any definition:
 | `mars.toml` | Mars does |
 |---|---|
 | `[package] schema = 1` | Reads every definition strictly. Errors fail `mars sync`. |
-| `[package]` without `schema` | Treats the package as pre-v1: upgrades its definitions **in memory**, installs the upgraded text, and warns once per package: ``package `name` uses the pre-v1 format (3 files to upgrade); run `mars migrate` in its repository``. The package's files are not touched. |
+| `[package]` without `schema` | Refuses the package with `manifest.schema-missing`, which says to add `schema = 1` ([Retired keys](retired-keys.md#package-without-schema)). Mars before 0.34.0 read such a package as the format before schema 1. |
 | `schema` higher than 1, or not an integer | Refuses the package. A Mars that does not know the schema cannot read it. |
-| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans), and the keys only pre-v1 Mars defined are rewritten per key whatever the dialect. A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
+| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans). A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
 
-The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate`, `mars migrate` and plugin builds. Reading finishes for the whole dependency graph before any content is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
+The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate` and plugin builds. A consumer's own items in `.mars-src/`, and a manifest-less tree declared `dialect = "mars-native"`, are read as schema 1. Reading finishes for the whole dependency graph before any content is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
 
-An installed `.mars/` tree is not an authored package. Those files are whatever Mars version wrote them, so when an installed Agent or skill reports a pre-v1 spelling (a removed key or value, or a `tools` list) it is upgraded in memory and read again: a tree an older Mars installed keeps loading until the next `mars sync` rewrites it, instead of losing the definitions the strict reader refuses. Schema v1 text reads exactly as before, and so does a file that is invalid rather than pre-v1. A package that declares `schema = 1` is still read strictly, because that rule is about what an author wrote.
+An installed `.mars/` tree is read by the same readers, with one exception: an Agent with no frontmatter is `frontmatter.missing` only in an authored file.
 
 ### File rules
 
-- **Frontmatter** is the block between a first line that is exactly `---` (after an optional byte-order mark) and the next line that is exactly `---`. Lines end in LF or CRLF. A file whose first line is not `---` has no frontmatter and is all body: that is an error for an Agent (`frontmatter.missing`), because every field would take its default, which is the widest permission, and a stray line above `---` would turn a narrow Agent into an unrestricted one. A skill with no frontmatter is a body-only skill (below). The rule is for schema 1 files; a pre-v1 or foreign package's body-only Agent still installs, and `mars migrate` leaves it as written, so a package that migrates to schema 1 with one must add its frontmatter. A project's own `.mars-src/` content is never checked: it is not read as schema 1. A fence that opens and never closes is an error (`frontmatter.unclosed`).
+- **Frontmatter** is the block between a first line that is exactly `---` (after an optional byte-order mark) and the next line that is exactly `---`. Lines end in LF or CRLF. A file whose first line is not `---` has no frontmatter and is all body: that is an error for an Agent (`frontmatter.missing`), because every field would take its default, which is the widest permission, and a stray line above `---` would turn a narrow Agent into an unrestricted one. A skill with no frontmatter is a body-only skill (below). The rule is for schema 1 files, a project's own `.mars-src/` included; a foreign package's body-only Agent still installs. A fence that opens and never closes is an error (`frontmatter.unclosed`).
 - **The body** is every byte after the closing fence's line.
 - **YAML** must be a mapping, or empty. Schema 1 refuses duplicate keys, anchors and aliases (`yaml.anchor`), and a `...` document-end marker (`yaml.document-end`). A top level that is a list or a scalar is `frontmatter.not-mapping`.
 - **Booleans** are `true` and `false`. `yes`, `no`, `on` and `off` are strings, so they are errors in a boolean field.
@@ -66,26 +66,11 @@ An installed `.mars/` tree is not an authored package. Those files are whatever 
 
 Field-by-field behaviour is in [Agent profiles](agent-profiles.md).
 
-### Removed Agent keys
+### Retired Agent keys
 
-A schema 1 file that carries one of these is in the pre-v1 format and is an error (`field.removed`): ``` `disallowed-tools` is a pre-v1 key; `mars migrate` upgrades this file ```, one text for every key. The pre-v1 upgrade (`crates/mars-schema/src/upgrade.rs`) owns the list; the table below says what each key became. [`mars migrate`](migrating-to-schema-v1.md) converts every key and value in the list, in a schema 1 file as in a package with no `schema`, because the reader and `mars migrate` read the same list. A `tools` list is the one pre-v1 shape the reader refuses for its own reason (`tools.list-form`) and `mars migrate` leaves alone, because a list could mean grants or an allowlist. A model policy's `override` is read the same way: `approval: yolo`, `effort: adaptive` and `effort: disabled`, and the keys `autocompact`, `autocompact_pct` and `harness`, get the pre-v1 text.
+A key Mars no longer reads is a `field.retired` warning with a link to [Retired keys](retired-keys.md), which says what each became. The list is one table, `retired::RETIRED` in the `mars-schema` crate; delete a row and its key is an ordinary `field.unknown`. `tools` as a list is an error (`tools.list-form`): write the action map. A model policy's `override` refuses what it does not define, so `autocompact`, `autocompact_pct` and `harness` there are errors that list the keys it takes.
 
-The consumer tables of `mars.toml`, `mars.local.toml` and the user `config.toml` are not part of the schema and have no pre-v1 keys of their own: a key they do not read is an `Info`. See [Keys Mars does not read](mars-toml.md#keys-mars-does-not-read).
-
-| Removed | Replace with |
-|---|---|
-| `disallowed-tools`, `disallowed_tools`, `disallowedTools` | `tools: {<capability>: deny}` |
-| `tools` as a list | a `tools` map (`tools.list-form`) |
-| `mcp-tools` | `mcp(server)` or `mcp(server/tool)` entries in `tools` |
-| `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
-| `approval: yolo` | `approval: never` |
-| `permission` | `harness-overrides.meridian-flow.permission` (`read` or `edit`), `harness-overrides.opencode.permission` (a map) |
-| `resident-rearm-budget` | `harness-overrides.meridian-cli.resident-rearm-budget` |
-| `meridian-capabilities` | `harness-overrides.meridian-cli.capabilities` |
-| `fanout` | the consumer's `[settings.meridian.fanout]` |
-| `models` | `model-policies` |
-| `network_allow`, `network_deny` | `network-allow`, `network-deny` |
-| `autocompact`, `autocompact_pct` | the same keys on the model alias, in `[models.<alias>]` |
+The consumer tables of `mars.toml`, `mars.local.toml` and the user `config.toml` are not part of the schema: a key they do not read is an `Info`. See [Keys Mars does not read](mars-toml.md#keys-mars-does-not-read).
 
 ## Skill keys
 
@@ -101,16 +86,9 @@ The consumer tables of `mars.toml`, `mars.local.toml` and the user `config.toml`
 
 A skill with no frontmatter is a body-only skill: it reads with a `skill.no-frontmatter` warning. Field behaviour is in [Skill compilation](skill-compilation.md).
 
-### Removed skill keys
+### Retired skill keys
 
-| Removed | Replace with |
-|---|---|
-| `type` | `metadata.type` |
-| `when_to_use` | fold it into `description` |
-| `tools`, `disallowed-tools`, `allowed-tools` (and their snake_case spellings) | nothing: a skill carries no tool policy |
-| `model_invocable`, `user_invocable` | `model-invocable`, `user-invocable` |
-| `invocation`, `disable-model-invocation`, `allow_implicit_invocation` | `model-invocable` and `user-invocable` |
-
+See [Retired keys](retired-keys.md): `type`, `when_to_use`, the tool-policy keys, the underscore invocability spellings, `disable-model-invocation`, `invocation` and `allow_implicit_invocation` are `field.retired` warnings.
 ## Manifest keys
 
 The reader covers the `[package]` table of `mars.toml`. The other tables (`[dependencies]`, `[settings]`, `[models]`, `[plugin]`, the `[agents.*]` and `[skills.*]` overlays) are Mars's consumer and publishing configuration; see [mars.toml](mars-toml.md).
@@ -143,7 +121,7 @@ Removed: `package.visibility`, with nothing to replace it.
 
 The launcher reads the bundle's `effort` and maps it for its harness. The bundle carries the Agent's effort for every harness but Cursor, which gets none because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
 
-`adaptive` and `disabled` are not values. `mars migrate` rewrites them to `medium` and `none`.
+`adaptive` and `disabled` are not values; the values they stood for are `medium` and `none`.
 
 ## Network
 
@@ -214,7 +192,7 @@ harness-overrides:
 ```
 
 - A name that is one of the five harnesses is a harness block.
-- **`meridian-flow` and `meridian-cli` are reserved** for the two Meridian hosts, Meridian Flow and the Meridian CLI. Neither is a harness: routing never sees them, Mars never interprets their keys, and neither block is written to any native file or launch bundle. They are the home of the consumer's own keys: `meridian-flow.permission` (formerly a top-level `permission`), and `meridian-cli.resident-rearm-budget` and `meridian-cli.capabilities` (formerly top-level `resident-rearm-budget` and `meridian-capabilities`). The short names `flow` and `meridian` are not read: the reader reports each as `field.removed` naming the new key, and `mars migrate` renames them in place, in schema 1 files too.
+- **`meridian-flow` and `meridian-cli` are reserved** for the two Meridian hosts, Meridian Flow and the Meridian CLI. Neither is a harness: routing never sees them, Mars never interprets their keys, and neither block is written to any native file or launch bundle. They are the home of the consumer's own keys: `meridian-flow.permission` (formerly a top-level `permission`), and `meridian-cli.resident-rearm-budget` and `meridian-cli.capabilities` (formerly top-level `resident-rearm-budget` and `meridian-capabilities`). The short names `flow` and `meridian` are not read: the reader reports each as a `field.retired` warning ([Retired keys](retired-keys.md#host-namespaces)).
 - Any other name is a warning (`harness.unknown`) and the block is kept.
 
 ### Unknown keys
@@ -272,7 +250,6 @@ The reader is exercised by fixtures in [`crates/mars-schema/fixtures/`](../../cr
 |---|---|
 | `read` | the reading of one Agent, skill or `mars.toml`: typed fields, ordered frontmatter pairs, body, diagnostics with codes and paths |
 | `emit` | how a value is written as YAML for a splice, including quoting and refusals |
-| `upgrade` | the pre-v1 to v1 rewrite of one definition or manifest |
 | `prepare` | classifying and reading one package root |
 | `normalize` | reading a foreign repository as schema v1 packages |
 | `vocabulary` | the capabilities, aliases and per-host native tools |

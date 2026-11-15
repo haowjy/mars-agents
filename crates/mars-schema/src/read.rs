@@ -43,49 +43,6 @@ impl UnrecognizedPath {
     }
 }
 
-/// Read an Agent from an installed `.mars` tree.
-///
-/// The bytes are what the Mars that installed them wrote, not an authored schema v1 file: a tree
-/// an older Mars wrote carries the pre-v1 spellings (`type`, `when_to_use`, a `tools` list,
-/// `permission`, ...) that the strict reader refuses. When the strict reading reports one, the
-/// file is upgraded in memory with the same conversion `prepare` applies to a pre-v1 package and
-/// read again. A file that reports any other error is simply invalid, and keeps that error: only
-/// a spelling the upgrade can cure says the bytes predate schema v1. The upgrade's notes are
-/// about the authored file, which `mars sync` and `mars migrate` report, so only the reading is
-/// returned. An authored package's own Agent is read strictly with [`crate::agent::read`].
-pub fn installed_agent(text: &str) -> DefinitionRead<crate::agent::AgentProfile> {
-    installed(text, DefinitionKind::Agent, crate::agent::read)
-}
-
-/// Read a skill from an installed `.mars` tree; the skill counterpart of [`installed_agent`].
-pub fn installed_skill(text: &str) -> DefinitionRead<crate::skill::SkillProfile> {
-    installed(text, DefinitionKind::Skill, crate::skill::read)
-}
-
-fn installed<T>(
-    text: &str,
-    kind: DefinitionKind,
-    strict: impl Fn(&str) -> DefinitionRead<T>,
-) -> DefinitionRead<T> {
-    let reading = strict(text);
-    // `field.removed` is a key or value the reader names, and `tools.list-form` is the one pre-v1
-    // shape Mars rewrote without removing a key. Both are what `upgrade_definition` converts.
-    let pre_v1 = reading.diagnostics.iter().any(|diagnostic| {
-        matches!(
-            diagnostic.code.as_str(),
-            "field.removed" | "tools.list-form"
-        )
-    });
-    if !pre_v1 {
-        return reading;
-    }
-    match crate::upgrade::upgrade_definition(kind, text) {
-        Ok(upgraded) => strict(&upgraded.text),
-        // A file the upgrade cannot parse is one the strict reader reports on as well.
-        Err(_) => reading,
-    }
-}
-
 /// Read one schema-owned file, choosing the reader from its package-relative path. A file read
 /// here is schema 1, so an Agent with no frontmatter is an error (see [`require_agent_frontmatter`]).
 pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
@@ -118,8 +75,8 @@ pub(crate) fn read_definition(kind: DefinitionKind, text: &str) -> Reading {
 }
 
 /// [`read_definition`] for a file written as schema 1: an Agent with no frontmatter is an error.
-/// Installed trees, pre-v1 packages and foreign layouts are read with [`read_definition`]
-/// alone, because their body-only Agents were valid in the format that wrote them.
+/// Installed trees and foreign layouts are read with [`read_definition`] alone, because their
+/// body-only Agents were valid in the format that wrote them.
 pub(crate) fn read_authored(kind: DefinitionKind, text: &str) -> Reading {
     let mut reading = read_definition(kind, text);
     if let Reading::Agent(agent) = &mut reading {

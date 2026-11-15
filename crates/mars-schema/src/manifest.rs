@@ -109,21 +109,14 @@ fn read_package(
     }
     let mut diagnostics = Vec::new();
     for key in package.keys() {
-        if crate::upgrade::PRE_V1
-            .package_dropped
-            .contains(&key.as_str())
-        {
-            diagnostics.push(crate::upgrade::pre_v1_key(
-                child_path("package", key),
-                &format!("package.{key}"),
-            ));
-        } else if !known.contains(&key.as_str()) {
-            diagnostics.push(crate::diagnostic::unknown_field(
-                child_path("package", key),
-                "package",
-                key,
-            ));
+        if known.contains(&key.as_str()) {
+            continue;
         }
+        let path = child_path("package", key);
+        diagnostics.push(
+            crate::retired::diagnostic(crate::retired::Scope::Package, key, path.clone())
+                .unwrap_or_else(|| crate::diagnostic::unknown_field(path, "package", key)),
+        );
     }
     if let Some(toml::Value::Array(entries)) = package.get("uses-providers") {
         for (index, entry) in entries.iter().enumerate() {
@@ -143,7 +136,17 @@ fn read_package(
             }
         }
     }
-    if !matches!(package.get("schema"), Some(toml::Value::Integer(1))) {
+    if package.get("schema").is_none() {
+        diagnostics.push(SchemaDiagnostic::new(
+            "manifest.schema-missing",
+            Severity::Error,
+            child_path("package", "schema"),
+            format!(
+                "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from a Mars before 0.34.0 ({}/retired-keys.md#package-without-schema)",
+                crate::diagnostic::DOCS
+            ),
+        ));
+    } else if !matches!(package.get("schema"), Some(toml::Value::Integer(1))) {
         diagnostics.push(SchemaDiagnostic::new(
             "field.type",
             Severity::Error,

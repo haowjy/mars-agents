@@ -1221,7 +1221,7 @@ mod tests {
             std::fs::write(
                 dir.path().join("mars.toml"),
                 format!(
-                    "[package]\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\ndir = {plugin_dir:?}\n"
+                    "[package]\nschema = 1\nname = \"example-plugin\"\nversion = \"1.0.0\"\n\n[plugin]\ndir = {plugin_dir:?}\n"
                 ),
             )
             .unwrap();
@@ -1251,7 +1251,7 @@ mod tests {
             std::fs::write(
                 dir.path().join("mars.toml"),
                 format!(
-                    "[package]\nname = \"fallback-name\"\nversion = \"1.0.0\"\n\n[plugin]\nname = {name:?}\nharnesses = [{harness:?}]\n"
+                    "[package]\nschema = 1\nname = \"fallback-name\"\nversion = \"1.0.0\"\n\n[plugin]\nname = {name:?}\nharnesses = [{harness:?}]\n"
                 ),
             )
             .unwrap();
@@ -1374,6 +1374,7 @@ path = "/local/path"
         let dir = TempDir::new().unwrap();
         let original = r#"
 [package]
+schema = 1
 name = "sample"
 version = "0.1.0"
 description = "sample package"
@@ -2000,6 +2001,7 @@ url = "https://github.com/org/base.git"
         let dir = TempDir::new().unwrap();
         let original = r#"
 [package]
+schema = 1
 name = "sample"
 version = "0.1.0"
 

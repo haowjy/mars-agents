@@ -173,7 +173,8 @@ pub enum ManifestClassification {
     SchemaNewer {
         schema: u64,
     },
-    MarsLegacy,
+    /// A `[package]` with no `schema`: a package written before schema 1.
+    NoSchema,
     /// A `mars.toml` with no `[package]`: a consumer project's configuration, which makes the
     /// directory a project and not a package.
     ConsumerConfig,
@@ -213,7 +214,7 @@ pub fn classify_manifest(bytes: Option<&[u8]>) -> ManifestClassification {
         };
     };
     let Some(schema) = package.get("schema") else {
-        return ManifestClassification::MarsLegacy;
+        return ManifestClassification::NoSchema;
     };
     let Some(schema) = schema
         .as_integer()

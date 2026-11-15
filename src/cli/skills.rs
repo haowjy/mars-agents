@@ -99,7 +99,7 @@ fn visible_skills(
                 continue;
             }
         };
-        let profile = match mars_schema::read::installed_skill(&content).into_fields() {
+        let profile = match mars_schema::skill::read(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", skill_md.display());

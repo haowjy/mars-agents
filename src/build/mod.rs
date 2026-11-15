@@ -70,7 +70,7 @@ pub fn build_launch_bundle(
                 source,
             })?;
 
-        let valid = mars_schema::read::installed_agent(&agent_content)
+        let valid = mars_schema::agent::read(&agent_content)
             .into_valid()
             .map_err(|error| {
                 MarsError::Config(ConfigError::Invalid {

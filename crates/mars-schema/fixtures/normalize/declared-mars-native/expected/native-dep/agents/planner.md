@@ -1,8 +1,7 @@
 ---
 name: planner
 description: Plans work
+disallowed-tools: [Bash]
 network: allow
-tools:
-  Bash: deny
 ---
 Plan the work.

@@ -28,7 +28,7 @@ it:
 
 | Machine | State of | Page |
 |---|---|---|
-| Root classification | One package root: `Schema1`, `MarsLegacy`, `Foreign`, `Marketplace`, `Invalid`, `Empty` | [mars-schema](../../crates/mars-schema/.context/state-machines.md) |
+| Root classification | One package root: `Schema1`, `Foreign`, `Marketplace`, `Invalid`, `Empty` | [mars-schema](../../crates/mars-schema/.context/state-machines.md) |
 | Prepared definition | One file, from selected through translation to a strict reading | [mars-schema](../../crates/mars-schema/.context/state-machines.md) |
 | Where a rejected key goes | One frontmatter key the strict reader refuses | [mars-schema](../../crates/mars-schema/.context/state-machines.md) |
 | Item selection | One Agent, skill, document or hook across the dependency graph | [mars-schema](../../crates/mars-schema/.context/state-machines.md) |

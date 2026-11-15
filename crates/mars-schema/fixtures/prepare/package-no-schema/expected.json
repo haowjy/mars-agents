@@ -1,0 +1,48 @@
+{
+  "classification": {
+    "kind": "invalid"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0"
+      },
+      "body": null,
+      "diagnostics": [
+        {
+          "code": "manifest.schema-missing",
+          "severity": "error",
+          "path": [
+            "package",
+            "schema"
+          ],
+          "message": "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from a Mars before 0.34.0 (https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema)"
+        }
+      ]
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [],
+  "payload": [],
+  "selection": {
+    "definitions": [],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {}
+}

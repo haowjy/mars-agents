@@ -226,7 +226,7 @@ fn file_tree(files: BTreeMap<String, ByteBuf>) -> Result<mars_schema::tree::File
 }
 
 /// Prepare one root from
-/// `{files: Map<path, Uint8Array>, context?, declaredDialect?, migrate?}`. A supported export in
+/// `{files: Map<path, Uint8Array>, context?, declaredDialect?}`. A supported export in
 /// its own right: `normalize` is this plus a selection, a generated manifest and provenance. An
 /// unrecognized `context` or `declaredDialect` throws.
 #[wasm_bindgen]
@@ -237,19 +237,13 @@ pub fn prepare(argument: JsValue) -> Result<JsValue, JsValue> {
         files: BTreeMap<String, ByteBuf>,
         context: Option<mars_schema::prepare::PrepareContext>,
         declared_dialect: Option<mars_schema::dialect::Dialect>,
-        #[serde(default)]
-        migrate: bool,
     }
     let input: Input = parse_fields(argument)?;
     let tree = file_tree(input.files)?;
     let context = input
         .context
         .unwrap_or(mars_schema::prepare::PrepareContext::Package);
-    let mut prepared = if input.migrate {
-        mars_schema::prepare::prepare_for_migration(&tree, context, input.declared_dialect)
-    } else {
-        mars_schema::prepare::prepare(&tree, context, input.declared_dialect)
-    };
+    let mut prepared = mars_schema::prepare::prepare(&tree, context, input.declared_dialect);
     // The verdict on the package's own layout; the binary leaves it to the consumer's install.
     mars_schema::links::package(&mut prepared);
     to_js(&prepared)

@@ -1,5 +1,5 @@
 {
-  "kind": "mars-legacy",
+  "kind": "schema-1",
   "packages": [
     {
       "id": "native-dep",
@@ -15,7 +15,7 @@
       },
       "prepared": {
         "classification": {
-          "kind": "mars-legacy"
+          "kind": "schema-1"
         },
         "manifest": {
           "output_path": "mars.toml",
@@ -59,14 +59,14 @@
                   "Plans work"
                 ],
                 [
-                  "network",
-                  "allow"
+                  "disallowed-tools",
+                  [
+                    "Bash"
+                  ]
                 ],
                 [
-                  "tools",
-                  {
-                    "Bash": "deny"
-                  }
+                  "network",
+                  "allow"
                 ]
               ],
               "fields": {
@@ -88,30 +88,24 @@
                   "available": []
                 },
                 "subagents": [],
-                "tools": [
-                  {
-                    "capability": "bash",
-                    "pattern": null,
-                    "action": "deny",
-                    "origin": "profile"
-                  }
-                ],
+                "tools": [],
                 "harness-overrides": {},
                 "model-policies": []
               },
               "body": "Plan the work.\n",
-              "diagnostics": []
+              "diagnostics": [
+                {
+                  "code": "field.retired",
+                  "severity": "warning",
+                  "path": [
+                    "disallowed-tools"
+                  ],
+                  "message": "`disallowed-tools` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-deny-lists"
+                }
+              ]
             },
             "change": {
-              "kind": "edited",
-              "paths": [
-                [
-                  "disallowed-tools"
-                ],
-                [
-                  "tools"
-                ]
-              ]
+              "kind": "none"
             }
           },
           {

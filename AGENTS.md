@@ -44,10 +44,13 @@ they ignore it, and the code that finds the problem states it.
 no reader decides whether its problem is shown. Reducing what users see means changing a site
 from `Warning` to `Info`, or deleting it.
 
-Mars has no code about a key it does not read: no list of removed keys, no per-key advice, no
-deprecation note for a key that is gone. What happens to one is what its table does with any
-key it has no use for (`crates/mars-schema/AGENTS.md`). The one place that names an old key is
-a translator from another format, such as the pre-v1 upgrade in `upgrade.rs`.
+Mars has no code about a key it does not read: no per-key advice, no deprecation note for a key
+that is gone. What happens to one is what its table does with any key it has no use for
+(`crates/mars-schema/AGENTS.md`). The one exception is `mars_schema::retired`, a single table of
+keys Mars moved off, each with a link to the docs that say how to fix it; a reader that meets one
+emits `field.retired` as a Warning, because the user loses what it set. Nothing else names an old
+key. The one other place that names a key from outside is a translator from another format
+(`claude/`, `harness_overrides`, `set_aside`).
 
 ## Design Constraints
 

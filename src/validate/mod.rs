@@ -74,13 +74,12 @@ impl ValidationWarning {
     }
 }
 
-/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/` — so the
-/// read tolerates a pre-v1 spelling. Returns the `skills` list, or an empty vec if there is no
+/// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`. Returns the `skills` list, or an empty vec if there is no
 /// frontmatter, no `skills` field, or malformed YAML, and reads only the frontmatter block
 /// between `---` delimiters, not the full markdown body.
 pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
     let content = std::fs::read_to_string(agent_path)?;
-    Ok(mars_schema::read::installed_agent(&content)
+    Ok(mars_schema::agent::read(&content)
         .fields
         .map(|profile| profile.skills.all())
         .unwrap_or_default())

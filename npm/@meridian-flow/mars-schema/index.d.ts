@@ -45,7 +45,7 @@ export function version(): string;
 // ---------------------------------------------------------------------------------------
 
 export interface Diagnostic {
-  /** Stable code, e.g. `field.unknown`, `yaml.invalid`, `field.removed`. */
+  /** Stable code, e.g. `field.unknown`, `yaml.invalid`, `field.retired`. */
   code: string;
   severity: "error" | "warning" | "info";
   /** Key path into the authored file, e.g. `["model-policies", 0, "when"]`. */
@@ -318,7 +318,6 @@ export interface DialectChoice {
 
 export type Classification =
   | { kind: "schema-1" }
-  | { kind: "mars-legacy" }
   | { kind: "schema-newer"; schema: number }
   | { kind: "invalid" }
   | ({ kind: "foreign" } & DialectChoice)
@@ -329,7 +328,6 @@ export type ChangeRecord =
   | { kind: "none" }
   /** The file has no source: `normalize` wrote it (a package's generated `mars.toml`). */
   | { kind: "generated" }
-  | { kind: "edited"; paths: (string | number)[][] }
   | { kind: "fully-rewritten" };
 
 export interface PreparedManifest {
@@ -382,10 +380,9 @@ export interface Prepared {
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
   /**
-   * What preparing changed in each file, by source path: the keys a pre-v1 upgrade
-   * (`classification.kind === "mars-legacy"`) or a foreign translation dropped, moved or
-   * repaired (legacy keys, skill tool rules, Claude-only keys, a repaired `description`, a key
-   * set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
+   * What translating a foreign package changed in each file, by source path: the keys it
+   * dropped, moved or repaired (skill tool rules, Claude-only keys, a repaired `description`, a
+   * key set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
    * means a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) was
    * dropped or moved, so the agent is less restricted than its file says; a caller reports
    * these every time. A file changed when its `change.kind` is not `none` or `generated`.
@@ -395,8 +392,8 @@ export interface Prepared {
 }
 
 /**
- * Reads one root held in memory: classify it, select its definitions, upgrade a pre-v1 package
- * or translate a foreign one, and read each result. This is the supported way to read a single
+ * Reads one root held in memory: classify it, select its definitions, translate a foreign
+ * package, and read each result. This is the supported way to read a single
  * package, a consumer's `.mars-src` (`"authored-local"`) or a project directory (`"project"`,
  * where a `mars.toml` with no `[package]` is consumer configuration) without choosing items;
  * `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance. Throws for
@@ -406,19 +403,12 @@ export function prepare(input: {
   files: Map<string, Uint8Array>;
   context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
-  /**
-   * `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a
-   * `harness-overrides` key moves there. A reader leaves it off, because an authored schema 1
-   * file is read exactly as written.
-   */
-  migrate?: boolean;
 }): Prepared;
 
 export type Tree = Map<string, Uint8Array>;
 
 export type Kind =
   | "schema-1"
-  | "mars-legacy"
   | "schema-newer"
   | "marketplace"
   | "plugin"

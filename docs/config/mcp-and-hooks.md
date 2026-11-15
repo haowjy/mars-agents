@@ -129,7 +129,7 @@ Per-tool `mcp(server/tool)` grants in frontmatter still record lossiness on Code
 MCP gating there is server-config based, not a tool-list form.
 
 Claude agents emit projected `mcp__…` tokens in the native `tools:` allowlist and
-`disallowed-tools:` list; skills carry no tool policy in schema v1. Non-Claude native agent
+`disallowedTools:` list; skills carry no tool policy in schema v1. Non-Claude native agent
 files do not emit tool lists today. Launchers gate MCP tools from launch-bundle `tools.rules`;
 its flat `tools.mcp` list contains permission names only, never the server definitions
 installed by this sync lane.

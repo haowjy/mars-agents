@@ -520,11 +520,31 @@
               "severity": "warning",
               "path": [],
               "message": "inline `mcpServers` definitions are not converted; only the server names carry over"
+            },
+            {
+              "code": "agent.tools-widened",
+              "severity": "warning",
+              "path": [],
+              "message": "Mars reads each tool as a capability, so Claude also gets SendMessage, ListAgents, which the list did not name"
+            }
+          ],
+          "agents/list.md": [
+            {
+              "code": "agent.tools-widened",
+              "severity": "warning",
+              "path": [],
+              "message": "Mars reads each tool as a capability, so Claude also gets Write, NotebookEdit, which the list did not name"
             }
           ]
         },
         "changes": {
           "agents/everything.md": [
+            {
+              "code": "agent.model-inherit",
+              "severity": "info",
+              "path": [],
+              "message": "removed `model: inherit`: a Claude agent with no `model` runs on the model of the session that starts it"
+            },
             {
               "code": "agent.claude-keys-moved",
               "severity": "info",

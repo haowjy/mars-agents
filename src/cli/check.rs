@@ -328,10 +328,15 @@ fn check_prepared(
                     .to_owned();
                 if let Some(profile) = &reading.fields {
                     let name = profile.name.clone().unwrap_or_else(|| filename.clone());
-                    if profile.name.is_none() {
+                    // `frontmatter.missing` already says the file has no fields.
+                    let unfenced = reading
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.code == "frontmatter.missing");
+                    if profile.name.is_none() && !unfenced {
                         warnings.push(format!("agent `{filename}` has no `name` in frontmatter"));
                     }
-                    if profile.description.is_none() {
+                    if profile.description.is_none() && !unfenced {
                         warnings.push(format!("agent `{name}` has no `description`"));
                     }
                     if profile.name.is_some() && name != filename {

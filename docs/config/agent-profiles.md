@@ -73,7 +73,7 @@ tools:
 You turn approved plans into working code. Focus on correctness, then clarity.
 ```
 
-The frontmatter is the block between a first line that is exactly `---` and the next line that is exactly `---`. A file whose first line is something else has no frontmatter: it is all body, and no profile field is set. A fence that opens and never closes is an error. The other file rules are in [Schema v1](schema-v1.md#file-rules).
+The frontmatter is the block between a first line that is exactly `---` and the next line that is exactly `---`. A file whose first line is something else has no frontmatter: it is all body, no profile field is set, and under schema 1 that is an error (`frontmatter.missing`). A fence that opens and never closes is an error. The other file rules are in [Schema v1](schema-v1.md#file-rules).
 
 ---
 

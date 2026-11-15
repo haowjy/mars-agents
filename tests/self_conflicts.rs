@@ -190,10 +190,10 @@ fn force_frozen_only_succeeds_after_adoption_is_current() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("---\n---\n# Selected\n")
+        .write_str("# Selected\n")
         .unwrap();
     dir.child(".mars/agents/muse.md")
-        .write_str("---\n---\n# Authored\n")
+        .write_str("# Authored\n")
         .unwrap();
     let source_before = fs::read(dir.child(".mars-src/agents/muse.md").path()).unwrap();
     let canonical_before = fs::read(dir.child(".mars/agents/muse.md").path()).unwrap();
@@ -336,13 +336,13 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("---\n---\n# Selected agent\n")
+        .write_str("# Selected agent\n")
         .unwrap();
     dir.child(".mars-src/skills/craft/SKILL.md")
         .write_str("# Selected skill\n")
         .unwrap();
     dir.child(".mars/agents/muse.md")
-        .write_str("---\n---\n# Authored agent\n")
+        .write_str("# Authored agent\n")
         .unwrap();
     dir.child(".mars/skills")
         .write_str("unowned obstruction\n")
@@ -351,7 +351,7 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
     sync(dir.path()).arg("--force").assert().failure();
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "---\n---\n# Selected agent\n",
+        "# Selected agent\n",
         "the earlier adoption demonstrates failure happened during apply"
     );
     assert!(
@@ -485,7 +485,7 @@ fn canonical_collision_aborts_before_other_outputs_or_lock_change() {
         .write_str("---\n---\n# Selected")
         .unwrap();
     dir.child(".mars/agents/blocked.md")
-        .write_str("---\n---\n# User")
+        .write_str("# User")
         .unwrap();
     sync(dir.path()).arg("--json").assert().failure();
     assert_eq!(fs::read(dir.child("mars.lock").path()).unwrap(), lock);
@@ -495,7 +495,7 @@ fn canonical_collision_aborts_before_other_outputs_or_lock_change() {
     );
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/blocked.md").path()).unwrap(),
-        "---\n---\n# User"
+        "# User"
     );
     fs::rename(
         dir.child(".mars/agents/blocked.md").path(),
@@ -582,7 +582,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
     sync(dir.path()).arg("--frozen").assert().failure();
     sync(dir.path()).assert().success();
     dir.child(".mars/agents/muse.md")
-        .write_str("---\n---\n# Modified output")
+        .write_str("# Modified output")
         .unwrap();
     sync(dir.path())
         .assert()
@@ -590,7 +590,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
         .stderr(predicate::str::contains("preserving local content"));
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "---\n---\n# Modified output"
+        "# Modified output"
     );
     sync(dir.path()).arg("--force").assert().success();
     assert_eq!(
@@ -598,7 +598,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
         "---\n---\n# Original"
     );
     dir.child(".mars/agents/muse.md")
-        .write_str("---\n---\n# Modified again")
+        .write_str("# Modified again")
         .unwrap();
     dir.child("agents/muse.md")
         .write_str("---\n---\n# Source update")

@@ -133,15 +133,7 @@ pub(crate) fn read_authored(kind: DefinitionKind, text: &str) -> Reading {
 /// Agent into an unrestricted one that reads clean.
 fn require_agent_frontmatter(text: &str, diagnostics: &mut Vec<SchemaDiagnostic>) {
     if matches!(crate::frontmatter::yaml_text(text), Ok(None)) {
-        diagnostics.insert(
-            0,
-            SchemaDiagnostic::new(
-                "frontmatter.missing",
-                crate::diagnostic::Severity::Error,
-                Vec::new(),
-                "an Agent's frontmatter must open with `---` on the file's first line; without it every field takes its default",
-            ),
-        );
+        diagnostics.insert(0, crate::diagnostic::frontmatter_missing());
     }
 }
 

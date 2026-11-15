@@ -83,7 +83,7 @@ fn declared_package_preserves_native_metadata_resources_and_catalog_across_syncs
         }
         // Generated foreign-container signals must not reinterpret package inputs.
         dir.child(".claude/agents/unrelated.md")
-            .write_str("---\n---\n# Unrelated")
+            .write_str("# Unrelated")
             .unwrap();
         assert_noop(dir.path());
     }
@@ -97,14 +97,11 @@ fn undeclared_project_ignores_root_sources_but_keeps_local_overrides() {
         .write_str("---\n---\n# Root")
         .unwrap();
     dir.child(".mars-src/agents/local.md")
-        .write_str("---\n---\n# Local")
+        .write_str("# Local")
         .unwrap();
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/agents/muse.md").exists());
-    assert_eq!(
-        read(dir.path(), ".mars/agents/local.md"),
-        "---\n---\n# Local"
-    );
+    assert_eq!(read(dir.path(), ".mars/agents/local.md"), "# Local");
 }
 
 #[test]

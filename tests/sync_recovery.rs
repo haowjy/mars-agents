@@ -109,7 +109,7 @@ fn interrupted_package() -> TempDir {
 fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     let dir = interrupted_package();
     dir.child(".mars/agents/muse.md")
-        .write_str("---\n---\n# User edits\n")
+        .write_str("# User edits\n")
         .unwrap();
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     for force in [false, true] {
@@ -120,7 +120,7 @@ fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
         command.assert().failure();
         assert_eq!(
             fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-            "---\n---\n# User edits\n"
+            "# User edits\n"
         );
         assert!(!dir.path().join("mars.lock").exists());
     }
@@ -132,7 +132,7 @@ fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     sync(dir.path()).assert().success();
     assert_eq!(
         fs::read_to_string(dir.path().join("preserved-muse.md")).unwrap(),
-        "---\n---\n# User edits\n"
+        "# User edits\n"
     );
 }
 

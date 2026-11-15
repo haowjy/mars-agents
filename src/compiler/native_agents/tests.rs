@@ -292,7 +292,7 @@ fn emit_all_consumes_overlay_description_and_tools_disallowed() {
         "overlay.description must replace profile description: {native}"
     );
     assert!(
-        native.contains("disallowed-tools:") && native.contains("Write"),
+        native.contains("disallowedTools:") && native.contains("Write"),
         "overlay tool rules must appear in lowered output: {native}"
     );
     assert!(

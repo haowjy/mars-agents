@@ -69,6 +69,8 @@ a translator from another format, such as the pre-v1 upgrade in `upgrade.rs`.
   it keeps working but isn't tested or extended. `.pi` is still being designed.
 - Comments only for what the code can't show and a wrong edit would break silently; no
   decision IDs.
+- A state machine's code and its diagram change in the same commit. Every machine, with the
+  patterns they share, is indexed at [.context/state-machines/index.md](.context/state-machines/index.md).
 
 How the code keeps the first four today, what checks them and where it falls short:
 [.context/invariants.md](.context/invariants.md).

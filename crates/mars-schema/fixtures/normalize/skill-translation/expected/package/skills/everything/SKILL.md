@@ -12,6 +12,8 @@ x-custom: kept
 model-invocable: false
 harness-overrides:
   claude:
+    allowed-tools: Bash(git status *) Bash(git add *) Read
+    disallowed-tools: WebFetch
     argument-hint: '[file]'
     model: sonnet
     hooks:

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.3] - 2026-11-15
+
+### Added
+- `[plugin].marketplace-repository` pins the generated Claude marketplace entry to the release tag, so installs from the marketplace get the tagged commit instead of `main`. See [the `[plugin]` table](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#plugin-optional).
+
 ## [0.34.2] - 2026-11-15
 
 ### Added

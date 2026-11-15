@@ -21,15 +21,14 @@ stateDiagram-v2
   [*] --> Sentinel: does .mars-plugin.json parse and validate?
   Sentinel --> Empty: yes, so the root is Mars's own output
   Sentinel --> Manifest: no
-  Manifest --> ConsumerTree: a consumer's context with no package table
+  Manifest --> Schema1: a consumer's context with no package table
   Manifest --> Schema1: the package table says schema 1
-  Manifest --> MarsLegacy: the package table has no schema
   Manifest --> SchemaNewer: the package table says a schema above 1
-  Manifest --> Invalid: mars.toml unparsable, or no package table outside a consumer's context
+  Manifest --> Invalid: mars.toml unparsable, or the package table has no schema, or no package table outside a consumer's context
   Manifest --> NoManifest: no mars.toml
   NoManifest --> Declared: a dialect was declared
   NoManifest --> Evidence: no declaration
-  Declared --> MarsLegacy: mars-native
+  Declared --> Schema1: mars-native
   Declared --> Foreign: cursor, codex or open-code, read by the convention walk
   Declared --> Empty: that dialect, and the walk finds no item
   Evidence --> Foreign: a Cursor, Codex or OpenCode container or manifest decides
@@ -40,8 +39,6 @@ stateDiagram-v2
   ClaudeTrial --> Items: plugin.json, or a bare walk
   Items --> Foreign: an Agent with a Claude-only key, an OpenCode-shaped Agent, a skill with a Claude-only key, or Mars's default
   Items --> Empty: a bare tree, no items, no evidence
-  ConsumerTree --> MarsLegacy
-  MarsLegacy --> [*]
   Schema1 --> [*]
   SchemaNewer --> [*]
   Invalid --> [*]
@@ -49,10 +46,6 @@ stateDiagram-v2
   Foreign --> [*]
   Empty --> [*]
 ```
-
-`MarsLegacy` is the pre-v1 format and is drawn as `main` has it. 0.34.0 removes it: a consumer
-tree and a declared `mars-native` root become `Schema1`, and a package table with no schema
-becomes `Invalid` (`ManifestClassification::NoSchema`).
 
 - **Order is the contract.** Sentinel, then manifest, then declaration, then evidence, with a
   Claude layout tried before item prediction. Checking the sentinel after the manifest makes
@@ -81,12 +74,8 @@ stateDiagram-v2
   Selected --> Missing: source.read returns None
   Selected --> Bytes: bytes
   Bytes --> Untouched: not UTF-8
-  Bytes --> Untouched: schema 1
-  Bytes --> Upgrading: MarsLegacy
+  Bytes --> Untouched: not a foreign dialect
   Bytes --> Translating: a foreign dialect and text
-  Upgrading --> Untouched: the frontmatter does not parse, so the reader reports it
-  Upgrading --> Rewritten: the upgrade changed a key
-  Upgrading --> Untouched: the upgrade changed nothing
   Translating --> Untouched: frontmatter does not parse, and the colon repair does not fix it
   Translating --> Rewritten: lift changed a key, or the description was repaired
   Translating --> Untouched: lift changed nothing
@@ -97,9 +86,6 @@ stateDiagram-v2
   Reading --> [*]
   UnreadableReading --> [*]
 ```
-
-`Upgrading` is the `Shaping::Rewrite` step of `main`'s pre-v1 upgrade (and `mars migrate`'s repair
-of a schema 1 file). 0.34.0 removes it.
 
 - **The re-read is not redundant.** `set_aside_rejected_keys` runs inside `lift_frontmatter`, so
   the bytes handed to the reader are already the moved ones. What the reader still rejects after

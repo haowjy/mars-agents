@@ -11,7 +11,9 @@ fn blocked_self_destination_fails_without_adopting_identical_bytes() {
         .write_str("[dependencies]\n")
         .unwrap();
     for path in [".mars-src/agents/local.md", ".mars/agents/local.md"] {
-        dir.child(path).write_str("# Same bytes\n").unwrap();
+        dir.child(path)
+            .write_str("---\n---\n# Same bytes\n")
+            .unwrap();
     }
     let source_before = fs::read(dir.child(".mars-src/agents/local.md").path()).unwrap();
     let canonical_before = fs::read(dir.child(".mars/agents/local.md").path()).unwrap();
@@ -190,7 +192,7 @@ fn force_frozen_only_succeeds_after_adoption_is_current() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("# Selected\n")
+        .write_str("---\n---\n# Selected\n")
         .unwrap();
     dir.child(".mars/agents/muse.md")
         .write_str("# Authored\n")
@@ -252,7 +254,12 @@ fn force_rejects_symlinked_canonical_root_ancestors_and_destination() {
         } else {
             (".mars-src/skills/craft/SKILL.md", "skills/craft")
         };
-        project.child(source).write_str("# Selected\n").unwrap();
+        let selected = if kind == "agent" {
+            "---\n---\n# Selected\n"
+        } else {
+            "# Selected\n"
+        };
+        project.child(source).write_str(selected).unwrap();
         let authored = if link_level == "root-in-project" {
             project.child("authored")
         } else {
@@ -336,7 +343,7 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("# Selected agent\n")
+        .write_str("---\n---\n# Selected agent\n")
         .unwrap();
     dir.child(".mars-src/skills/craft/SKILL.md")
         .write_str("# Selected skill\n")
@@ -351,7 +358,7 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
     sync(dir.path()).arg("--force").assert().failure();
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "# Selected agent\n",
+        "---\n---\n# Selected agent\n",
         "the earlier adoption demonstrates failure happened during apply"
     );
     assert!(

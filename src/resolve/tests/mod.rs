@@ -426,7 +426,8 @@ fn write_manifest(tree: &Path, manifest: &Manifest) {
         package: &manifest.package,
         dependencies: &manifest.dependencies,
     })
-    .expect("serialize manifest");
+    .expect("serialize manifest")
+    .replacen("[package]\n", "[package]\nschema = 1\n", 1);
     std::fs::write(tree.join("mars.toml"), text).expect("write mars.toml");
 }
 

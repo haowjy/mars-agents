@@ -805,12 +805,13 @@ fn sync_rejects_dependency_model_alias_with_invalid_harness() {
     fs::create_dir_all(source_root.join("agents")).expect("failed to create source agents dir");
     fs::write(
         source_root.join("agents").join("fixture.md"),
-        "# Fixture agent for invalid harness package test\n",
+        "---\n---\n# Fixture agent for invalid harness package test\n",
     )
     .expect("failed to write source agent");
     fs::write(
         source_root.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "invalid-harness-source"
 version = "0.1.0"
 

@@ -129,12 +129,12 @@
       "message": "agent field `network-deny` has invalid value `{\"replace\":[\"blocked.example\"]}`; allowed: plain list; package profiles cannot replace a deny set"
     },
     {
-      "code": "field.removed",
-      "severity": "error",
+      "code": "field.retired",
+      "severity": "warning",
       "path": [
         "network_allow"
       ],
-      "message": "`network_allow` is a pre-v1 key; `mars migrate` upgrades this file"
+      "message": "`network_allow` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-underscore-spellings"
     }
   ]
 }

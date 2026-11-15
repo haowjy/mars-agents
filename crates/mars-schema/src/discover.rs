@@ -355,6 +355,51 @@ pub(crate) fn discover(source: &impl TreeSource, fallback_name: Option<&str>) ->
     )
 }
 
+/// The `skills/` directories at the layer `discover` kept: the shallowest layer holding a
+/// definition, given by the source paths of the definitions it found. A flat root `SKILL.md` has
+/// no container, and a tree with no other definition has no kept layer.
+pub(crate) fn kept_skill_containers<'a>(
+    source: &impl TreeSource,
+    definition_paths: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let Some(layer) = definition_paths
+        .into_iter()
+        .find(|path| *path != "SKILL.md")
+        .map(|path| {
+            // `<container>/<slug>/SKILL.md`, or `<container>/<slug>.md`.
+            component_count(path) - if path.ends_with("/SKILL.md") { 2 } else { 1 }
+        })
+    else {
+        return Vec::new();
+    };
+    let mut containers = Vec::new();
+    walk(source, &Boundary::of(source), |dir, _| {
+        if basename(dir) == "skills" && component_count(dir) == layer {
+            containers.push(dir.to_owned());
+        }
+        true
+    });
+    containers
+}
+
+/// Whether `dir` holds a file at any depth the boundary lets a walk reach.
+pub(crate) fn holds_file(source: &impl TreeSource, boundary: &Boundary, dir: &str) -> bool {
+    let mut generated = Vec::new();
+    let mut queue = VecDeque::from([dir.to_owned()]);
+    while let Some(dir) = queue.pop_front() {
+        for child in source.children(&dir) {
+            if source.is_dir(&child) {
+                if boundary.admits(source, &child, &mut generated) {
+                    queue.push_back(child);
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Sort, drop duplicate files, and refuse two definitions of one kind sharing a slug.
 pub(crate) fn finish(
     mut definitions: Vec<SelectedDefinition>,

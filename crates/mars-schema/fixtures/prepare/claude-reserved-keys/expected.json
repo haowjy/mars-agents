@@ -31,13 +31,9 @@
             }
           ],
           [
-            "harness-overrides",
+            "permission",
             {
-              "claude": {
-                "permission": {
-                  "edit": "deny"
-                }
-              }
+              "edit": "deny"
             }
           ]
         ],
@@ -74,17 +70,20 @@
               "origin": "profile"
             }
           ],
-          "harness-overrides": {
-            "claude": {
-              "permission": {
-                "edit": "deny"
-              }
-            }
-          },
+          "harness-overrides": {},
           "model-policies": []
         },
         "body": "Body.\n",
-        "diagnostics": []
+        "diagnostics": [
+          {
+            "code": "field.retired",
+            "severity": "warning",
+            "path": [
+              "permission"
+            ],
+            "message": "`permission` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys"
+          }
+        ]
       },
       "change": {
         "kind": "fully-rewritten"
@@ -170,14 +169,6 @@
           "Bash"
         ],
         "message": "`tools.Bash` is not valid in schema v1 (agent field `tools.Bash` has invalid value `sometimes`; allowed: allow, deny, or ask); that entry was dropped and the rest of `tools` is kept"
-      },
-      {
-        "code": "field.restriction-lost",
-        "severity": "warning",
-        "path": [
-          "permission"
-        ],
-        "message": "agent `g` lost the restriction `permission`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (`permission` as a map is OpenCode's format; declare `dialect = \"open-code\"` on this dependency so Mars reads it)"
       }
     ],
     "skills/lint/SKILL.md": [

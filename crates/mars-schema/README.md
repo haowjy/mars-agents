@@ -1,6 +1,6 @@
 # mars-schema
 
-The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) the `[package]` table of `mars.toml`, and the `hook.toml` of a package's hooks. It holds the key tables, the validation, the tool vocabulary, the pre-v1 upgrade, the foreign-layout translation, the YAML emitter and the per-harness hook renderers. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
+The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) the `[package]` table of `mars.toml`, and the `hook.toml` of a package's hooks. It holds the key tables, the validation, the tool vocabulary, the foreign-layout translation, the YAML emitter and the per-harness hook renderers. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
 
 The format is documented in [Schema v1](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md). This page covers the crate.
 
@@ -32,11 +32,11 @@ if let Reading::Agent(reading) = read("agents/coder.md", &text).unwrap() {
 | `diagnostics` | `SchemaDiagnostic { code, severity, path, message, range }` |
 | `dependencies`, `local-dependencies` | `mars.toml` only (`manifest::ManifestRead` flattens them beside the four fields above): the entries by name in declaration order, in the file's spellings, each read by `Entry::read`. A table is omitted when empty |
 
-The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with `read::installed_agent` and `read::installed_skill`, which upgrade a file whose strict reading reports a pre-v1 spelling, because those bytes are whatever Mars version installed them.
+The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with the same readers.
 
 Diagnostics are built directly with a structured `path` of keys and indexes. `range` is set only for fence and YAML-syntax errors, and no reader sets it yet; consumers locate a diagnostic by `path`.
 
-Unknown keys are kept and reported as `field.unknown` `Info`. A key or value of pre-v1 Mars's is a `field.removed` error with one text; the pre-v1 upgrade owns the list.
+Unknown keys are kept and reported as `field.unknown` `Info`. A key Mars moved off is a `field.retired` warning that links to the docs; `retired.rs` owns the list.
 
 ## Editing
 
@@ -50,17 +50,23 @@ Unknown keys are kept and reported as `field.unknown` `Info`. A key or value of 
 
 `prepare::prepare(&source, context, declared_dialect)` classifies one package root and returns a `Prepared`:
 
-- the classification (`Schema1`, `MarsLegacy`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
-- the manifest reading, normalized to schema 1 (a pre-v1 manifest gains `schema = 1`);
-- one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated`, `Edited` with the changed key paths, or `FullyRewritten`);
+- the classification (`Schema1`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
+- the manifest reading;
+- one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated` or `FullyRewritten`);
 - payload files as source-to-output paths, never bytes;
 - findings by source path (`diagnostics`) and what preparing changed in each file (`changes`: keys dropped, moved or repaired), with `Prepared::changed_files` for the count.
 
 `TreeSource` is the read interface (`read`, `is_file`, `is_dir`, `children`) that the caller implements for a directory, an archive or memory; `FileTree` is the in-memory implementation and `SubTree` roots a tree below a directory. Preparation reads manifests, definitions and directory listings only.
 
-`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`; `PrepareContext::Project` is a directory that is either (a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content). A pre-v1 package is upgraded with `upgrade::upgrade_definition` and `upgrade::upgrade_manifest`, which edit only the top-level keys that change and keep every other byte; `mars migrate` writes `Prepared`'s normalized bytes back to the authored files, so it prepares with `prepare_for_migration`, which also applies `upgrade::relocate_removed_fields` to a schema 1 definition. A caller that only reads the package gets a schema 1 file exactly as written. Only `mars migrate` adds `requires-mars = ">=0.20.0"`, through `upgrade::ensure_requires_mars_floor`, and only when the manifest has no requirement.
+`PrepareContext::Package` is a package root; `PrepareContext::AuthoredLocal` is a consumer project's `.mars-src`; `PrepareContext::Project` is a directory that is either (a `mars.toml` with no `[package]` is consumer configuration, and the tree is read as authored content)..
 
 `inspect::inspect(&source, &hint)` reports what a repository is (a marketplace's plugins, a plugin's or skill tree's items, the dialect and its evidence), and `normalize::normalize(&request)` runs `prepare` on each selected root of a Claude plugin, marketplace, skill tree or other foreign layout and adds a generated `mars.toml` and provenance. Neither fetches anything: the caller fetches a remote marketplace plugin and inspects or normalizes the fetched tree with `hint.plugin` set to the plugin's entry.
+
+## Checking a package
+
+`check::check(&source, &prepared, &dependencies)` says what is wrong with a package, per file: `prepare`'s findings for each file plus the check's own, as `Check { diagnostics, dependency_diagnostics, missing_dependencies, unreadable_dependencies }`. `mars check` and the WASM `check` call it, so the rules live here and nowhere else. `dependencies` maps each package of the closure to the `SelectionFacts` of its `Prepared`; a dependency left out is in `missing_dependencies` and one that could not be read (`selection.unreadable`) is in `unreadable_dependencies`; while either is not empty, no skill ref is judged.
+
+A finding is here when it is true of the package wherever it runs. What one harness target can't express or an older Mars can't read stays in the binary, where a target or a version exists. A level says what the author loses: `Error`, it won't load or install; `Warning`, something written won't take effect; `Info`, nothing written is lost. A rule about a package's files goes in `check.rs`, not in `src/cli/check.rs`.
 
 ## Rendering hooks
 
@@ -83,7 +89,7 @@ Projection onto a particular harness, overlay application, precedence and everyt
 
 ## Fixtures
 
-`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `upgrade`, `prepare`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
+`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `prepare`, `check`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
 
 ## License
 

@@ -92,7 +92,7 @@ const checkBytes = (item, input, expectedFiles, label) => {
 for (const name of cases("prepare")) {
   const request = json("prepare", name, "request.json");
   const input = tree(join(fixtures, "prepare", name, "input"));
-  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined, migrate: request.migrate ?? false });
+  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined });
   const expectedDir = join(fixtures, "prepare", name, "expected");
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   for (const item of [result.manifest, ...result.definitions].filter(Boolean)) checkBytes(item, input, expectedFiles, `prepare/${name}`);
@@ -100,6 +100,58 @@ for (const name of cases("prepare")) {
   check(result, json("prepare", name, "expected.json"), `prepare/${name}`);
 }
 assert.throws(() => wasm.prepare({ files: new Map(), context: "nonsense" }), (e) => e.code === "input.invalid");
+
+// check: the result equals expected.json, with the order of the paths too (`check` above compares
+// key order at every depth). Each dependency is prepared first and passed as `prepare` returned it.
+const severity = { error: 0, warning: 1, info: 2 };
+const checkCodes = new Set([
+  "package.requirement", "agent.description-missing", "agent.name-missing", "definition.name-mismatch",
+  "definition.duplicate-name", "definition.duplicate-slug", "selection.duplicate-slug", "skill-ref.missing",
+  "skill-ref.provider", "skill-ref.external", "skill.no-definition", "field.restriction-lost",
+  "field.execution-ignored", "frontmatter.repaired",
+]);
+// What `prepare` reports per path: package-level findings, then the manifest's, then each definition's.
+const preparedDiagnostics = prepared => {
+  const found = {};
+  const add = (path, list) => list.length && (found[path] ??= []).push(...list);
+  for (const [path, list] of Object.entries(prepared.diagnostics)) add(path, list);
+  if (prepared.manifest?.source_path) add(prepared.manifest.source_path, prepared.manifest.reading.diagnostics);
+  for (const definition of prepared.definitions) add(definition.source_path, definition.reading.diagnostics);
+  return found;
+};
+// Dropping the check's own codes from a path's list leaves what `prepare` returns for it.
+const checkKeepsPrepare = (input, request, label) => {
+  const args = { files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined };
+  const prepared = wasm.prepare(args);
+  const expected = preparedDiagnostics(prepared);
+  const result = wasm.check(args);
+  for (const [path, list] of Object.entries(result.diagnostics)) {
+    const want = [...(expected[path] ?? [])].sort((a, b) => severity[a.severity] - severity[b.severity]);
+    assert.deepStrictEqual(list.filter(d => !checkCodes.has(d.code)), want, `${label} ${path}`);
+  }
+  for (const path of Object.keys(expected)) assert.ok(path in result.diagnostics, `${label} ${path} is in check`);
+  checked++;
+};
+for (const suite of ["prepare", "check"]) {
+  for (const name of cases(suite)) {
+    checkKeepsPrepare(tree(join(fixtures, suite, name, "input")), json(suite, name, "request.json"), `${suite}/${name} promise`);
+  }
+}
+for (const name of cases("check")) {
+  const dir = join(fixtures, "check", name);
+  const request = json("check", name, "request.json");
+  const dependencies = {};
+  if (existsSync(join(dir, "deps"))) {
+    for (const dependency of cases(join("check", name, "deps"))) {
+      dependencies[dependency] = { prepared: wasm.prepare({ files: tree(join(dir, "deps", dependency)), context: "package" }) };
+    }
+  }
+  const result = wasm.check({ files: tree(join(dir, "input")), context: request.context, declaredDialect: request.declared_dialect ?? undefined, dependencies });
+  check(result, json("check", name, "expected.json"), `check/${name}`);
+}
+assert.throws(() => wasm.check({ files: new Map(), context: "nonsense" }), (e) => e.code === "input.invalid");
+assert.throws(() => wasm.check({ files: new Map(), dependencis: {} }), (e) => e.code === "input.invalid");
+assert.throws(() => wasm.check({ files: new Map(), dependencies: { a: { prepared: {}, extraItems: [] } } }), (e) => e.code === "input.invalid");
 
 // normalize: inspection, the staged inspection and normalization of each fetched remote plugin
 // (its own tree, with `hint.plugin` set to the marketplace entry), and the packages equal the
@@ -145,27 +197,6 @@ for (const name of cases("normalize")) {
   }
 }
 assert.throws(() => wasm.normalize({ tree: new Map(), hint: { dialect: "nonsense" } }));
-
-// upgrade: the legacy file in a legacy package comes back as expected.*, with the expected diagnostics
-const legacyManifest = '[package]\nname = "legacy"\nversion = "1.0.0"\n';
-const enc = new TextEncoder();
-for (const name of cases("upgrade")) {
-  const kind = text("upgrade", name, "kind.txt").trim();
-  if (kind === "payload") continue;
-  const ext = kind === "manifest" ? "toml" : "md";
-  const path = { manifest: "mars.toml", agent: "agents/probe.md", skill: "skills/probe/SKILL.md" }[kind];
-  const files = new Map([["mars.toml", enc.encode(kind === "manifest" ? text("upgrade", name, `input.${ext}`) : legacyManifest)]]);
-  if (kind !== "manifest") files.set(path, enc.encode(text("upgrade", name, `input.${ext}`)));
-  const result = wasm.prepare({ files, context: "package" });
-  const item = kind === "manifest" ? result.manifest : result.definitions.find(d => d.source_path === path);
-  assert.equal(Buffer.from(item.normalized_bytes).toString("utf8"), text("upgrade", name, `expected.${ext}`), `upgrade/${name} text`);
-  assert.equal(item.change.kind === "fully-rewritten", existsSync(join(fixtures, "upgrade", name, "fully-rewritten.txt")), `upgrade/${name} rewrite mode`);
-  const messages = (result.changes?.[path] ?? []).map(d => d.message);
-  const keys = json("upgrade", name, "expected-diagnostics.json");
-  assert.equal(messages.length, keys.length, `upgrade/${name} diagnostics ${JSON.stringify(messages)}`);
-  for (const key of keys) assert.ok(messages.some(m => m.includes(`\`${key}\``)), `upgrade/${name} names ${key}`);
-  checked++;
-}
 
 // version: the ops the package exports (`parse-constraint` and `parse-tag` are Rust-only). A
 // refusal is a thrown Error whose `code` the fixture names.

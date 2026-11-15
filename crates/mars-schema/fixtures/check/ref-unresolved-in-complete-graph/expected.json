@@ -1,0 +1,17 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "skill-ref.missing",
+        "severity": "error",
+        "path": [
+          "skills"
+        ],
+        "message": "agent `coder` references skill `ghost` not found in local package or dependencies\n  searched: (this package), one, two\n  hint: add the skill's source package as a dependency, or remove the skill reference"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

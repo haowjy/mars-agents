@@ -289,7 +289,7 @@ fn parse_skill_file(
         )
     })?;
 
-    let valid = mars_schema::read::installed_skill(&raw)
+    let valid = mars_schema::skill::read(&raw)
         .into_valid()
         .map_err(|error| {
             format!(

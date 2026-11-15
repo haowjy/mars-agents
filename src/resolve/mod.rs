@@ -29,9 +29,8 @@ pub(crate) use plugin::plugin_list;
 pub(crate) use provider::RealSourceProvider;
 pub use publish::PublishLens;
 pub(crate) use publish::resolve_publish_graph_from_config;
-pub(crate) use requires::{
-    check_consumer_package_requirements, validate_package_requirement_syntax,
-};
+pub(crate) use requires::check_consumer_package_requirements;
+pub(crate) use select::portable_facts;
 #[cfg(test)]
 pub(crate) use select::select_for_test;
 pub use types::*;
@@ -205,10 +204,13 @@ pub fn resolve(
     };
 
     let selection = select::select_registry(config, ctx.registry(), options.root.as_deref());
-    for diagnostic in &selection.diagnostics {
-        diag.schema(diagnostic, "selection", false);
+    // With a root, the caller judges what the selection found: refs it could not resolve and
+    // slugs two packages install (`mars check`, through `mars_schema::check`).
+    if options.root.is_none() {
+        for diagnostic in &selection.diagnostics {
+            diag.schema(diagnostic, "selection", false);
+        }
     }
-    // With a root, the caller judges the refs the selection could not resolve.
     if options.root.is_none()
         && let Some(missing) = selection.missing_skills.first()
     {

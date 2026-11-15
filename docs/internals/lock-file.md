@@ -141,7 +141,7 @@ not claim that the current bytes were installed by Mars.
 
 Each item tracks two checksums:
 
-- **`source_checksum`**: Hash of the content as the package provides it once Mars has prepared it as [schema v1](../config/schema-v1.md): a package with no `schema` is hashed after its in-memory upgrade, and a foreign layout after translation, so the bytes are not always the authored file's. It is taken before renames rewrite references. Used to detect when the source has changed (new version, upstream edit).
+- **`source_checksum`**: Hash of the content as the package provides it once Mars has prepared it as [schema v1](../config/schema-v1.md): a foreign layout is hashed after translation, so the bytes are not always the authored file's. It is taken before renames rewrite references. Used to detect when the source has changed (new version, upstream edit).
 
 - **`installed_checksum`**: Hash of what Mars actually wrote to one output. May differ from `source_checksum` when frontmatter rewriting or native-target lowering occurred. Used to detect whether that exact output changed locally.
 

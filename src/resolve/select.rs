@@ -8,7 +8,9 @@ use indexmap::IndexMap;
 use mars_schema::filter::FilterMode;
 use mars_schema::item::ItemKind;
 use mars_schema::prepare::Prepared;
-use mars_schema::selection::{GraphView, Item, PackageView, Request, SelectionResult, select};
+use mars_schema::selection::{
+    GraphView, Item, PackageView, Request, SelectionFacts, SelectionResult, select,
+};
 
 use crate::discover::DiscoveredItem;
 use crate::types::SourceName;
@@ -75,6 +77,11 @@ fn consumer_requests(config: &crate::config::EffectiveConfig) -> Vec<Request> {
             filter: portable_filter(&dependency.filter),
         })
         .collect()
+}
+
+/// What selection reads of `prepared`, with its filters spelled as selection compares them.
+pub(crate) fn portable_facts(prepared: &Prepared) -> SelectionFacts {
+    package_view(prepared, Vec::new()).facts
 }
 
 fn package_view(prepared: &Prepared, extra_items: Vec<Item>) -> PackageView {

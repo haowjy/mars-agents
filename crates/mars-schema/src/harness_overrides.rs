@@ -197,11 +197,12 @@ pub(crate) fn parse_harness_overrides(
         if push_unholdable_key(diags, &harness_path, harness_name) {
             continue;
         }
-        if crate::upgrade::PRE_V1.namespace(harness_name) {
-            diags.push(crate::upgrade::pre_v1_key(
-                harness_path,
-                &format!("harness-overrides.{harness_name}"),
-            ));
+        if let Some(retired) = crate::retired::diagnostic(
+            crate::retired::Scope::Namespace,
+            harness_name,
+            harness_path.clone(),
+        ) {
+            diags.push(retired);
             continue;
         }
         let Some(sub_mapping) = v.as_mapping() else {

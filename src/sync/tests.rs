@@ -179,7 +179,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
     let source_b = fixture.add_source(&[], &[("planning", "# Planning B")]);
     fs::write(
         fixture.tree_path(source_a).join("mars.toml"),
-        "[package]\nname = \"source-a\"\nversion = \"1.0.0\"\n\n[dependencies.source-b]\npath = \"../source-b\"\n",
+        "[package]\nschema = 1\nname = \"source-a\"\nversion = \"1.0.0\"\n\n[dependencies.source-b]\npath = \"../source-b\"\n",
     )
     .unwrap();
     let (graph, mut effective) = make_graph_config(

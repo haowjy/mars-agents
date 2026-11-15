@@ -219,6 +219,8 @@ pub(crate) fn prepare_rooted(
     source_name: &crate::types::SourceName,
     rooted: crate::resolve::RootedSourceRef,
     effective_config: &crate::config::EffectiveConfig,
+    version: Option<&semver::Version>,
+    upgrading: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
@@ -271,10 +273,18 @@ pub(crate) fn prepare_rooted(
     };
     let prepared = package.prepared.clone();
     let package_name = dependency_name(&prepared, source_name);
+    // Only a git source is a tree the consumer cannot edit; a path source or an override is
+    // theirs, and `mars upgrade` would leave it unchanged.
+    let subject = match dependency.map(|entry| &entry.spec) {
+        Some(crate::config::SourceSpec::Git(_)) => {
+            Subject::Dependency(package_name, version, upgrading)
+        }
+        _ => Subject::Package(package_name),
+    };
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &Subject::Package(package_name),
+        &subject,
         false,
         diag,
     );
@@ -352,21 +362,7 @@ pub(crate) fn prepare_authored(
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
     let prepared = mars_schema::prepare::prepare(&source, context, dialect);
-    reported(root, source, prepared, false, diag)
-}
-
-/// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
-/// can still need, because the migration writes the result back to the authored file. The
-/// package's own link verdict is added, since the migration is run in the package.
-pub(crate) fn prepare_authored_for_migration(
-    root: &Path,
-    context: PrepareContext,
-    diag: &mut DiagnosticCollector,
-) -> Result<Prepared, MarsError> {
-    let source = DiskTreeSource::new(root)?;
-    let mut prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
-    mars_schema::links::package(&mut prepared);
-    reported(root, source, prepared, false, diag)
+    reported(root, source, prepared, false, FileFindings::Print, diag)
 }
 
 fn reported(
@@ -374,6 +370,7 @@ fn reported(
     source: DiskTreeSource,
     prepared: Prepared,
     own_files: bool,
+    findings: FileFindings,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
@@ -388,8 +385,21 @@ fn reported(
         Some(name) => Subject::Package(name),
         None => Subject::AuthoredSource,
     };
-    report_diagnostics(&prepared, &source_label(root), &subject, own_files, diag);
+    match findings {
+        FileFindings::Print => {
+            report_diagnostics(&prepared, &source_label(root), &subject, own_files, diag);
+        }
+        FileFindings::Leave => report_translation(&prepared, &subject, diag),
+    }
     Ok(prepared)
+}
+
+/// Whether preparing a package prints what `prepare` found in each file.
+#[derive(Clone, Copy)]
+pub(crate) enum FileFindings {
+    Print,
+    /// The caller prints them itself, from `mars_schema::check::check`.
+    Leave,
 }
 
 /// Prepare a directory that is a package root or a consumer project, with the `mars.toml`
@@ -397,13 +407,14 @@ fn reported(
 /// configuration, which preparation does not touch.
 pub(crate) fn prepare_project(
     root: &Path,
+    findings: FileFindings,
     diag: &mut DiagnosticCollector,
 ) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
     let source = DiskTreeSource::new(root)?;
     let mut prepared = mars_schema::prepare::prepare(&source, PrepareContext::Project, None);
     // `mars check` judges the package's own layout; a sync judges installed trees.
     mars_schema::links::package(&mut prepared);
-    let prepared = reported(root, source, prepared, true, diag)?;
+    let prepared = reported(root, source, prepared, true, findings, diag)?;
     let manifest = match &prepared.manifest {
         Some(manifest) => Some(manifest.normalized_bytes.clone()),
         None => match fs::read(root.join("mars.toml")) {
@@ -423,6 +434,9 @@ pub(crate) fn prepare_project(
 
 pub(crate) enum Subject<'a> {
     Package(&'a str),
+    /// A git package a consumer depends on, at the version the sync resolved. The flag is set
+    /// when the command is `mars upgrade` for this package, which has already tried to move it.
+    Dependency(&'a str, Option<&'a semver::Version>, bool),
     AuthoredSource,
 }
 
@@ -430,10 +444,9 @@ pub(crate) enum Subject<'a> {
 /// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
 /// archive; a project's own sources keep their real path.
 ///
-/// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
-/// pre-v1 package gets one warning and a translated one a summary line, each with the count of
-/// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
-/// are printed every time with the file they are in. `own_files` is a package's own checkout
+/// What translating changed in each file (`Prepared::changes`) is not repeated on every sync: a
+/// translated package gets a summary line with the count of files. Except the ones that lost a
+/// restriction, which are printed every time with the file they are in. `own_files` is a package's own checkout
 /// (`mars check`), where the author can fix the file: it also prints each ignored execution
 /// field and each quoted frontmatter value.
 pub(crate) fn report_diagnostics(
@@ -443,10 +456,43 @@ pub(crate) fn report_diagnostics(
     own_files: bool,
     diag: &mut DiagnosticCollector,
 ) {
+    report_files(prepared, label, subject, own_files, diag);
+    report_translation(prepared, subject, diag);
+}
+
+/// What `prepare` found in each file, and the changes the author can act on.
+fn report_files(
+    prepared: &Prepared,
+    label: &dyn Fn(&str) -> String,
+    subject: &Subject<'_>,
+    own_files: bool,
+    diag: &mut DiagnosticCollector,
+) {
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
-            diag.schema(diagnostic, &context, false);
+            match subject {
+                // The consumer cannot edit the package, so the schema's wording for its author
+                // is no use to them.
+                Subject::Dependency(name, version, upgrading)
+                    if diagnostic.code == "manifest.schema-missing" =>
+                {
+                    let mut for_consumer = diagnostic.clone();
+                    let resolved = version
+                        .map_or_else(String::new, |version| format!(", resolved to {version},"));
+                    let way_out = if *upgrading {
+                        "`mars upgrade` cannot move it past its `version` constraint: widen that constraint in mars.toml"
+                    } else {
+                        "run `mars upgrade {name}` for a newer version (widen its `version` constraint if `mars upgrade` keeps this version)"
+                    };
+                    for_consumer.message = format!(
+                        "this dependency{resolved} was published before schema 1. Mars 0.34.0 and later do not read it: {}, or stay on a Mars before 0.34.0",
+                        way_out.replace("{name}", name)
+                    );
+                    diag.schema(&for_consumer, &context, false);
+                }
+                _ => diag.schema(diagnostic, &context, false),
+            }
         }
     }
     for (relative, lost) in prepared.lost_restrictions() {
@@ -460,47 +506,24 @@ pub(crate) fn report_diagnostics(
             diag.schema(ignored, &label(relative), false);
         }
     }
+}
+
+/// One line for a translated package: how many files were changed.
+fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut DiagnosticCollector) {
     let files = prepared.changed_files();
     if files == 0 {
         return;
     }
-    let (name, migrate) = match subject {
-        Subject::Package(name) => (
-            format!("package `{name}`"),
-            "run `mars migrate` in its repository",
-        ),
-        Subject::AuthoredSource => (
-            "authored `.mars-src` content".to_string(),
-            "run `mars migrate`",
-        ),
-    };
-    let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
-    match &prepared.classification {
-        Classification::MarsLegacy => {
-            let no_manifest = prepared
-                .manifest
-                .as_ref()
-                .is_some_and(|manifest| manifest.source_path.is_none());
-            let format = if no_manifest {
-                "has no `mars.toml` and is declared `mars-native`"
-            } else {
-                "uses the pre-v1 format"
-            };
-            let advice = if no_manifest {
-                "add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository"
-            } else {
-                migrate
-            };
-            diag.warn_advisory_once(
-                "legacy-package",
-                format!("{name} {format} ({count} to upgrade); {advice}"),
-            );
-        }
-        Classification::Foreign(choice) => diag.info(
+    if let Classification::Foreign(choice) = &prepared.classification {
+        let name = match subject {
+            Subject::Package(name) | Subject::Dependency(name, ..) => format!("package `{name}`"),
+            Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
+        };
+        let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
+        diag.info(
             "package-translated",
             format!("{name} is read as {}: {count} translated", choice.dialect),
-        ),
-        _ => {}
+        );
     }
 }
 
@@ -539,6 +562,8 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<P
         &name.into(),
         rooted,
         &config,
+        None,
+        false,
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

@@ -13,10 +13,10 @@ use common::*;
 #[test]
 fn sync_ignores_dependency_manifest_consumer_visibility_settings() {
     let dir = TempDir::new().unwrap();
-    let source = create_source(&dir, "source", &[("fixture", "# Fixture")], &[]);
+    let source = create_source(&dir, "source", &[("fixture", "---\n---\n# Fixture")], &[]);
     fs::write(
         source.join("mars.toml"),
-        "[package]\nname=\"source\"\nversion=\"0.1.0\"\n[settings]\ntargets=42\n[settings.model_visibility]\ninclude=[\"gpt-5*\"]\n",
+        "[package]\nschema=1\nname=\"source\"\nversion=\"0.1.0\"\n[settings]\ntargets=42\n[settings.model_visibility]\ninclude=[\"gpt-5*\"]\n",
     )
     .unwrap();
     let project = dir.child("project");
@@ -994,6 +994,7 @@ Use Cursor-native markdown.
     fs::write(
         source.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "base"
 version = "0.1.0"
 
@@ -1062,6 +1063,7 @@ Use Cursor-native markdown.
     fs::write(
         source.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "base"
 version = "0.1.0"
 
@@ -1142,10 +1144,11 @@ default_effort = "high"
 fn sync_suppresses_dependency_model_alias_conflict_when_local_overlay_defines_alias() {
     let dir = TempDir::new().unwrap();
 
-    let dep_a = create_source(&dir, "dep-a", &[("a", "# A\n")], &[]);
+    let dep_a = create_source(&dir, "dep-a", &[("a", "---\n---\n# A\n")], &[]);
     fs::write(
         dep_a.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "dep-a"
 version = "0.1.0"
 
@@ -1156,10 +1159,11 @@ model = "gpt-5"
     )
     .unwrap();
 
-    let dep_b = create_source(&dir, "dep-b", &[("b", "# B\n")], &[]);
+    let dep_b = create_source(&dir, "dep-b", &[("b", "---\n---\n# B\n")], &[]);
     fs::write(
         dep_b.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "dep-b"
 version = "0.1.0"
 
@@ -1219,10 +1223,11 @@ model = "gpt-5-local"
 #[test]
 fn sync_persists_dependency_model_aliases_in_consumer_declaration_order() {
     let dir = TempDir::new().unwrap();
-    let dep_a = create_source(&dir, "dep-a", &[("a", "# A\n")], &[]);
+    let dep_a = create_source(&dir, "dep-a", &[("a", "---\n---\n# A\n")], &[]);
     fs::write(
         dep_a.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "dep-a"
 version = "0.1.0"
 
@@ -1232,10 +1237,11 @@ model = "gpt-a"
 "#,
     )
     .unwrap();
-    let dep_b = create_source(&dir, "dep-b", &[("b", "# B\n")], &[]);
+    let dep_b = create_source(&dir, "dep-b", &[("b", "---\n---\n# B\n")], &[]);
     fs::write(
         dep_b.join("mars.toml"),
         r#"[package]
+schema = 1
 name = "dep-b"
 version = "0.1.0"
 
@@ -1412,6 +1418,7 @@ fn upgrade_then_sync_keeps_upgraded_transitive_lock_and_content() {
 
     let base_manifest = format!(
         r#"[package]
+schema = 1
 name = "base"
 version = "1.0.0"
 
@@ -1426,7 +1433,7 @@ version = "^1.0"
         "base",
         &[
             ("mars.toml", base_manifest.as_str()),
-            ("agents/base.md", "# Base\n"),
+            ("agents/base.md", "---\n---\n# Base\n"),
         ],
         "v1.0.0",
     );
@@ -1514,6 +1521,7 @@ fn upgrade_bump_mutates_only_direct_mars_toml_dependencies() {
 
     let base_manifest_v1 = format!(
         r#"[package]
+schema = 1
 name = "base"
 version = "1.0.0"
 
@@ -1528,7 +1536,7 @@ version = "^1.0"
         "base",
         &[
             ("mars.toml", base_manifest_v1.as_str()),
-            ("agents/base.md", "# Base v1.0.0\n"),
+            ("agents/base.md", "---\n---\n# Base v1.0.0\n"),
         ],
         "v1.0.0",
     );
@@ -1541,6 +1549,7 @@ version = "^1.0"
 
     let base_manifest_v1_1 = format!(
         r#"[package]
+schema = 1
 name = "base"
 version = "1.1.0"
 
@@ -1555,7 +1564,7 @@ version = "^1.0"
         "v1.1.0",
         &[
             ("mars.toml", base_manifest_v1_1.as_str()),
-            ("agents/base.md", "# Base v1.1.0\n"),
+            ("agents/base.md", "---\n---\n# Base v1.1.0\n"),
         ],
     );
 
@@ -1967,7 +1976,7 @@ fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
     source.create_dir_all().unwrap();
     source
         .child("mars.toml")
-        .write_str("[package]\nname = \"source\"\nversion = \"1.0.0\"\n")
+        .write_str("[package]\nschema = 1\nname = \"source\"\nversion = \"1.0.0\"\n")
         .unwrap();
     source.child("mcp/echo").create_dir_all().unwrap();
     source

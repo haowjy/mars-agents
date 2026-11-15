@@ -45,7 +45,7 @@ export function version(): string;
 // ---------------------------------------------------------------------------------------
 
 export interface Diagnostic {
-  /** Stable code, e.g. `field.unknown`, `yaml.invalid`, `field.removed`. */
+  /** Stable code, e.g. `field.unknown`, `yaml.invalid`, `field.retired`. */
   code: string;
   severity: "error" | "warning" | "info";
   /** Key path into the authored file, e.g. `["model-policies", 0, "when"]`. */
@@ -318,7 +318,6 @@ export interface DialectChoice {
 
 export type Classification =
   | { kind: "schema-1" }
-  | { kind: "mars-legacy" }
   | { kind: "schema-newer"; schema: number }
   | { kind: "invalid" }
   | ({ kind: "foreign" } & DialectChoice)
@@ -329,7 +328,6 @@ export type ChangeRecord =
   | { kind: "none" }
   /** The file has no source: `normalize` wrote it (a package's generated `mars.toml`). */
   | { kind: "generated" }
-  | { kind: "edited"; paths: (string | number)[][] }
   | { kind: "fully-rewritten" };
 
 export interface PreparedManifest {
@@ -378,14 +376,15 @@ export interface Prepared {
   /**
    * Package-level findings by source path: what discovery and translation met and could not
    * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
-   * `reading`.
+   * `reading`. `manifest.version-missing`, `skill.name-invalid` and `skill.description-too-long`
+   * are `info`: nothing the author wrote is lost. `skill.name-mismatch` no longer exists;
+   * `check` reports `definition.name-mismatch` (`info`) for every dialect.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
   /**
-   * What preparing changed in each file, by source path: the keys a pre-v1 upgrade
-   * (`classification.kind === "mars-legacy"`) or a foreign translation dropped, moved or
-   * repaired (legacy keys, skill tool rules, Claude-only keys, a repaired `description`, a key
-   * set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
+   * What translating a foreign package changed in each file, by source path: the keys it
+   * dropped, moved or repaired (skill tool rules, Claude-only keys, a repaired `description`, a
+   * key set aside under `harness-overrides` or dropped). A change coded `field.restriction-lost`
    * means a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`) was
    * dropped or moved, so the agent is less restricted than its file says; a caller reports
    * these every time. A file changed when its `change.kind` is not `none` or `generated`.
@@ -395,8 +394,8 @@ export interface Prepared {
 }
 
 /**
- * Reads one root held in memory: classify it, select its definitions, upgrade a pre-v1 package
- * or translate a foreign one, and read each result. This is the supported way to read a single
+ * Reads one root held in memory: classify it, select its definitions, translate a foreign
+ * package, and read each result. This is the supported way to read a single
  * package, a consumer's `.mars-src` (`"authored-local"`) or a project directory (`"project"`,
  * where a `mars.toml` with no `[package]` is consumer configuration) without choosing items;
  * `normalize` is `prepare` plus a selection, a generated `mars.toml` and provenance. Throws for
@@ -406,19 +405,68 @@ export function prepare(input: {
   files: Map<string, Uint8Array>;
   context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
-  /**
-   * `migrate` adds `mars migrate`'s repair: a removed Agent key whose replacement is a
-   * `harness-overrides` key moves there. A reader leaves it off, because an authored schema 1
-   * file is read exactly as written.
-   */
-  migrate?: boolean;
 }): Prepared;
+
+/**
+ * What a package's files say is wrong with it, wherever it runs: every finding `mars check`
+ * reports about an Agent, a skill or `mars.toml`, except those about a harness target or an
+ * older Mars. (`mars check` also reports the `requires-mars` floor, hooks, plugin output, model
+ * aliases, harness field loss and an empty package, so it can fail a package this accepts.)
+ * A level says what the author loses: an `error`, that it won't load or install; a `warning`,
+ * that something written won't take effect; an `info`, that nothing written is lost. Show errors
+ * and warnings by default, and info on request.
+ *
+ * Takes `prepare`'s input plus the dependencies, and prepares the root as `prepare` does. Throws
+ * `input.invalid` for an unknown key or an unrecognized `context`.
+ */
+export function check(input: {
+  files: Map<string, Uint8Array>;
+  context?: "package" | "authored-local" | "project";
+  declaredDialect?: Dialect;
+  /**
+   * The package's whole dependency closure, flat: every package reachable through any
+   * `[dependencies]` entry, filtered or not, one entry per source. The key is the name the
+   * source has in the `[dependencies]` table that declares it. Each value holds `prepare`'s
+   * result for the dependency, as `selectItems` takes a package; only its `selection` is read
+   * (`extra_items` is accepted and ignored). A plain object or a `Map`; an unknown key in an
+   * entry throws `input.invalid` either way.
+   */
+  dependencies?: { [name: string]: SelectionPackage } | Map<string, SelectionPackage>;
+}): Check;
+
+export interface Check {
+  /**
+   * Findings in the root's own files, `mars.toml` first and then the paths in lexical order: for
+   * each path, what `prepare` returns for the same input plus the check's own, errors first.
+   * Dropping the check's own codes leaves what `prepare` returns for the path. A file with an
+   * `error` is unusable; an `error` on `mars.toml` makes the whole package unusable.
+   */
+  diagnostics: { [sourcePath: string]: Diagnostic[] };
+  /**
+   * `skill-ref.dependency` only: a dependency's own Agent names a skill no package ships. By the
+   * dependency's name, then the Agent's output path in it. Not the root's to fix.
+   */
+  dependency_diagnostics: { [dependency: string]: { [outputPath: string]: Diagnostic[] } };
+  /**
+   * Dependencies reachable from the root that `dependencies` lacks; `declared_in` is null for
+   * the root. While this is not empty the result is not a verdict: no skill ref was judged.
+   * Supply them and call again.
+   */
+  missing_dependencies: { name: string; declared_in: string | null }[];
+  /**
+   * Dependencies reachable from the root that `dependencies` has but could not be read (their
+   * `selection.unreadable` is true: an invalid or newer-schema manifest); `declared_in` is null
+   * for the root. While this is not empty the result is not a verdict: no skill ref was judged,
+   * because an unreadable dependency may be the one that ships the skill. Its own error is in
+   * `prepare`'s result for it.
+   */
+  unreadable_dependencies: { name: string; declared_in: string | null }[];
+}
 
 export type Tree = Map<string, Uint8Array>;
 
 export type Kind =
   | "schema-1"
-  | "mars-legacy"
   | "schema-newer"
   | "marketplace"
   | "plugin"
@@ -500,6 +548,7 @@ export interface Inspection {
   }[];
   /** The items of a plugin or skill tree. */
   items: InspectedItem[];
+  /** For `kind: "invalid"`, the manifest's findings under `mars.toml` (`manifest.schema-missing` for a package with no `schema`). */
   diagnostics: { [path: string]: Diagnostic[] };
 }
 
@@ -615,6 +664,12 @@ export interface SelectionFacts {
   /** The manifest's `[dependencies]` entries in declaration order, never `[local-dependencies]`. */
   edges: { name: string; filter: SelectionFilter }[];
   uses_providers: string[];
+  /**
+   * The package could not be read (`prepared.classification` is `invalid` or `schema-newer`), so
+   * `definitions` is empty because nothing was read. `check` judges no skill ref against it.
+   * Absent when false.
+   */
+  unreadable?: boolean;
 }
 
 export type SelectionFilter =
@@ -689,7 +744,7 @@ export interface SelectionResult {
  */
 export function selectItems(input: {
   requests?: ({ name: string } & FilterConfig)[];
-  packages: { [name: string]: SelectionPackage };
+  packages: { [name: string]: SelectionPackage } | Map<string, SelectionPackage>;
   root?: SelectionPackage;
 }): SelectionResult;
 

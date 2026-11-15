@@ -1,0 +1,33 @@
+{
+  "diagnostics": {
+    "one/agents/x.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `x` is also the name of `two/agents/x.md`; `mars sync` installs both, and one native file replaces the other"
+      }
+    ],
+    "two/agents/x.md": [
+      {
+        "code": "import.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "agent slug `x` is selected by both `one/agents/x.md` and `two/agents/x.md`"
+      },
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `x` is also the name of `one/agents/x.md`; `mars sync` installs both, and one native file replaces the other"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

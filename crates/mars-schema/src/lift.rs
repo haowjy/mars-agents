@@ -7,7 +7,6 @@ use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::harness::HarnessId;
 use crate::harness_overrides::move_harness_only_keys;
-use crate::invocability::find_invocability_field;
 use crate::item::DefinitionKind;
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_names::split_tool_name;
@@ -214,11 +213,7 @@ pub fn lift_frontmatter(
 ) -> Lifted {
     let mut lifted = frontmatter.clone();
     let (mut changes, mut findings) = (Vec::new(), Vec::new());
-    // What only pre-v1 Mars wrote is read as such in every dialect, so one such key never
-    // changes how its neighbours are read.
-    let mut changed = dialect != Dialect::MarsNative
-        && crate::upgrade::lift_mars_only_keys(&mut lifted, kind, &mut changes);
-    changed |= match dialect {
+    let mut changed = match dialect {
         Dialect::MarsNative => false,
         Dialect::Claude | Dialect::AgentSkills => {
             crate::claude::translate::lift(kind, &mut lifted, &mut changes, &mut findings)
@@ -234,7 +229,6 @@ pub fn lift_frontmatter(
             &mut lifted,
             kind,
             crate::set_aside::Destination::for_dialect(dialect),
-            crate::set_aside::Reach::Everything,
             &mut changes,
         );
     }
@@ -303,7 +297,7 @@ fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
 
 fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    if find_invocability_field(fm, "model-invocable").is_none() {
+    if fm.get("model-invocable").is_none() {
         match fm.get("alwaysApply").and_then(Value::as_bool) {
             Some(true) => {
                 fm.insert("model-invocable", Value::Bool(true));

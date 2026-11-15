@@ -1,0 +1,19 @@
+{
+  "diagnostics": {},
+  "dependency_diagnostics": {
+    "two": {
+      "agents/helper.md": [
+        {
+          "code": "skill-ref.dependency",
+          "severity": "error",
+          "path": [
+            "skills"
+          ],
+          "message": "agent `helper` of dependency `two` references skill `nowhere` not found in local package or dependencies\n  searched: two, one\n  hint: use a version of `two` that ships it, or add a dependency that does"
+        }
+      ]
+    }
+  },
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

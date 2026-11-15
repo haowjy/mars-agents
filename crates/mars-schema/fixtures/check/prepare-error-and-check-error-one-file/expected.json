@@ -1,0 +1,51 @@
+{
+  "diagnostics": {
+    "agents/a.md": [
+      {
+        "code": "field.value",
+        "severity": "error",
+        "path": [
+          "approval"
+        ],
+        "message": "agent field `approval` has invalid value `nonsense`; allowed: default, auto, confirm, never"
+      },
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `dup` is also the name of `agents/b.md`; `mars sync` installs both, and one native file replaces the other"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `a.md` doesn't match its `name` `dup`; the item loads under both"
+      }
+    ],
+    "agents/b.md": [
+      {
+        "code": "definition.duplicate-name",
+        "severity": "error",
+        "path": [
+          "name"
+        ],
+        "message": "agent name `dup` is also the name of `agents/a.md`; `mars sync` installs both, and one native file replaces the other"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `b.md` doesn't match its `name` `dup`; the item loads under both"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

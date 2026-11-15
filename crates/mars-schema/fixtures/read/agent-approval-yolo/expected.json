@@ -31,12 +31,12 @@
   "body": "",
   "diagnostics": [
     {
-      "code": "field.removed",
+      "code": "field.value",
       "severity": "error",
       "path": [
         "approval"
       ],
-      "message": "`approval: yolo` is a pre-v1 value; `mars migrate` upgrades this file"
+      "message": "agent field `approval` has invalid value `yolo`; allowed: default, auto, confirm, never"
     }
   ]
 }

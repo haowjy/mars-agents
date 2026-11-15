@@ -1,0 +1,46 @@
+{
+  "frontmatter": [
+    [
+      "tools",
+      [
+        "read"
+      ]
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.retired",
+      "severity": "warning",
+      "path": [
+        "tools"
+      ],
+      "message": "`tools` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-tool-policy"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

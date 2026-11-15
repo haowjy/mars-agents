@@ -27,6 +27,33 @@ pub fn parse_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
     VersionReq::parse(&normalized)
 }
 
+/// Each of `requires-mars` and `requires-meridian` that is set and is not a version requirement:
+/// the key and why.
+pub fn requirement_errors(package: &PackageMetadata) -> Vec<(&'static str, String)> {
+    [
+        ("requires-mars", "mars", package.requires_mars.as_deref()),
+        (
+            "requires-meridian",
+            "meridian",
+            package.requires_meridian.as_deref(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, engine, raw)| {
+        let raw = raw?;
+        let error = parse_requirement(raw).err()?;
+        Some((
+            key,
+            format!(
+                "invalid {engine} version requirement `{}` in package `{}`: {error}",
+                raw.trim(),
+                package.name
+            ),
+        ))
+    })
+    .collect()
+}
+
 /// Whether `running` meets `requirement`. A prerelease or build of a Mars meets what its release
 /// does: `0.31.0-rc.1` runs a project that asks for `0.31.0`.
 pub fn requirement_matches(requirement: &VersionReq, running: &Version) -> bool {
@@ -173,7 +200,8 @@ pub enum ManifestClassification {
     SchemaNewer {
         schema: u64,
     },
-    MarsLegacy,
+    /// A `[package]` with no `schema`: a package written before schema 1.
+    NoSchema,
     /// A `mars.toml` with no `[package]`: a consumer project's configuration, which makes the
     /// directory a project and not a package.
     ConsumerConfig,
@@ -213,7 +241,7 @@ pub fn classify_manifest(bytes: Option<&[u8]>) -> ManifestClassification {
         };
     };
     let Some(schema) = package.get("schema") else {
-        return ManifestClassification::MarsLegacy;
+        return ManifestClassification::NoSchema;
     };
     let Some(schema) = schema
         .as_integer()

@@ -23,7 +23,7 @@
   "diagnostics": [
     {
       "code": "manifest.version-missing",
-      "severity": "warning",
+      "severity": "info",
       "path": [
         "package",
         "version"

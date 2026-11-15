@@ -1,18 +1,22 @@
 //! `mars check [PATH]` — validate a source package before publishing.
 //!
 //! Scans a directory as a mars source package
-//! (`agents/*.md`, `skills/*/SKILL.md`, or a flat root `SKILL.md`)
-//! and validates structure, frontmatter, and internal skill dependencies.
-//! No config or lock file needed — works on raw source directories. A `mars.lock`, when
-//! present, supplies dependency model aliases for the model-policy check.
+//! (`agents/*.md`, `skills/*/SKILL.md`, or a flat root `SKILL.md`) and reports what is wrong with
+//! it. What its files say is `mars_schema::check::check`'s, which `@meridian-flow/mars-schema`
+//! exports too: a rule about a package's files goes there, not here. This command adds what needs
+//! a machine: fetching `[dependencies]`, the `requires-mars` floor, hooks, plugin output, model
+//! aliases against `mars.lock` and the harness field-loss preview. No config or lock file needed.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::error::MarsError;
+use crate::package_prepare::{DiskTreeSource, FileFindings, source_label};
 
+use mars_schema::check::Check;
+use mars_schema::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
+use mars_schema::item::DefinitionKind;
 use mars_schema::keys;
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
@@ -30,12 +34,63 @@ pub struct CheckArgs {
     pub verbose: bool,
 }
 
+/// A finding in a file of the package, as `--json` lists it under `diagnostics`.
 #[derive(Debug, Serialize)]
+struct FileFinding {
+    source_path: String,
+    /// The dependency whose Agent it is, for `skill-ref.dependency`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dependency: Option<String>,
+    code: String,
+    severity: Severity,
+    path: Vec<PathSegment>,
+    message: String,
+    /// What `mars check` prints, with the code and the file. `None` for a finding the
+    /// diagnostic collector prints (it merges one unknown key across files).
+    #[serde(skip)]
+    line: Option<String>,
+}
+
+#[derive(Debug)]
 pub(crate) struct CheckReport {
     agents: usize,
     skills: usize,
-    pub(crate) errors: Vec<String>,
+    /// What `mars_schema::check::check` found, in its order.
+    findings: Vec<FileFinding>,
+    /// What only the binary can check.
+    errors: Vec<String>,
     warnings: Vec<String>,
+}
+
+impl CheckReport {
+    /// Every error: the files' first, then the binary's.
+    pub(crate) fn errors(&self) -> Vec<&str> {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Error)
+            .filter_map(|finding| finding.line.as_deref())
+            .chain(self.errors.iter().map(String::as_str))
+            .collect()
+    }
+
+    /// Every warning: the files' first, then the binary's. Info findings are not warnings.
+    fn warnings(&self) -> Vec<String> {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Warning)
+            .filter_map(|finding| finding.line.clone())
+            .chain(self.warnings.iter().cloned())
+            .collect()
+    }
+}
+
+#[derive(Serialize)]
+struct JsonReport<'a> {
+    agents: usize,
+    skills: usize,
+    errors: Vec<&'a str>,
+    warnings: Vec<String>,
+    diagnostics: &'a [FileFinding],
 }
 
 /// Run `mars check`. `PATH` names the directory to check; without it, `--root` does.
@@ -56,8 +111,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     }
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
-    let (lens, prepared) = crate::resolve::PublishLens::load(&authored_base, &mut publish_diag)?;
-    let mut report = check_prepared(&prepared, &authored_base, &lens, &mut publish_diag)?;
+    let (lens, prepared, mut report) = examine(&authored_base, &mut publish_diag)?;
     let lock = crate::lock::load_for_runtime_aliases(&authored_base)?;
     let known_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,
@@ -120,14 +174,19 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
     }
     let diagnostics = surfaced;
-    let clean = report.errors.is_empty();
+    let errors = report.errors();
+    let clean = errors.is_empty();
 
     if json {
-        let mut json_report = report;
-        json_report
-            .warnings
-            .extend(diagnostics.iter().map(ToString::to_string));
-        output::print_json(&json_report);
+        let mut warnings = report.warnings();
+        warnings.extend(diagnostics.iter().map(ToString::to_string));
+        output::print_json(&JsonReport {
+            agents: report.agents,
+            skills: report.skills,
+            errors,
+            warnings,
+            diagnostics: &report.findings,
+        });
     } else {
         println!("  {} agents, {} skills", report.agents, report.skills);
         if clean {
@@ -137,22 +196,32 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         }
         println!();
 
-        let has_warnings = diagnostics.iter().any(|diag| diag.shown(false));
-        if clean && report.warnings.is_empty() && !has_warnings {
-            output::print_diagnostics(&diagnostics, true);
+        for finding in &report.findings {
+            let Some(line) = &finding.line else { continue };
+            match finding.severity {
+                Severity::Error => output::print_error(line),
+                Severity::Warning => output::print_warn(line),
+                Severity::Info => output::print_note(line),
+            }
+        }
+        for e in &report.errors {
+            output::print_error(e);
+        }
+        for w in &report.warnings {
+            output::print_warn(w);
+        }
+        output::print_diagnostics(&diagnostics, true);
+        if !clean {
+            println!();
+            println!("  {} error(s) found", errors.len());
+        } else if report.warnings.is_empty()
+            && !report
+                .findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Warning)
+            && !diagnostics.iter().any(|diag| diag.shown(false))
+        {
             output::print_success("all checks passed");
-        } else {
-            for e in &report.errors {
-                output::print_error(e);
-            }
-            for w in &report.warnings {
-                output::print_warn(w);
-            }
-            output::print_diagnostics(&diagnostics, true);
-            if !clean {
-                println!();
-                println!("  {} error(s) found", report.errors.len());
-            }
         }
     }
 
@@ -161,7 +230,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 
 /// The Mars the package needs, from the keys it uses. `None` for a tree with no `[package]`:
 /// `requires-mars` is a `[package]` key. `manifest` is the `mars.toml` text, as written for
-/// `mars check` and as it will be written for `mars migrate`.
+/// `mars check`.
 pub(crate) fn package_floor(
     manifest: &str,
     prepared: &mars_schema::prepare::Prepared,
@@ -192,7 +261,7 @@ pub(crate) fn package_floor(
 /// What `mars version` writes into `requires-mars`: the floor, when the package states less.
 pub(crate) fn requires_mars_to_write(base: &Path) -> Result<Option<keys::Floor>, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, FileFindings::Leave, &mut diag)?;
     let hooks = crate::compiler::hooks::check_hooks(base, &mut diag)?;
     let Some(manifest) = authored_manifest(&lens)? else {
         return Ok(None);
@@ -282,127 +351,176 @@ fn lossiness_diagnostics_for_check(
     )
 }
 
-fn check_prepared(
-    prepared: &mars_schema::prepare::Prepared,
-    authored_root: &Path,
-    lens: &crate::resolve::PublishLens,
+/// Prepare the package, fetch its dependencies when it has any, and ask
+/// `mars_schema::check::check` what is wrong with it.
+fn examine(
+    base: &Path,
     diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<CheckReport, MarsError> {
+) -> Result<
+    (
+        crate::resolve::PublishLens,
+        mars_schema::prepare::Prepared,
+        CheckReport,
+    ),
+    MarsError,
+> {
+    let (lens, prepared) = crate::resolve::PublishLens::load(base, FileFindings::Leave, diag)?;
     let mut errors = Vec::new();
-    let mut warnings = Vec::new();
-    if let Some(package) = lens
+
+    // Both are required to fetch: `[package]` makes this a publishable package, and
+    // `[dependencies]` are the packages a skill could come from. Uses only `[dependencies]`: the
+    // lens drops `[local-dependencies]` and `mars.local.toml`.
+    let has_dependencies = lens
         .manifest
         .as_ref()
-        .and_then(|config| config.package.as_ref())
-        && let Err(error) = crate::resolve::validate_package_requirement_syntax(package)
-    {
-        errors.push(error.to_string());
-    }
-
-    let mut agent_names = HashMap::<String, PathBuf>::new();
-    let mut skill_names = HashMap::<String, PathBuf>::new();
-    for definition in &prepared.definitions {
-        let path = authored_root.join(&definition.source_path);
-        let linked_item = match definition.kind {
-            mars_schema::item::DefinitionKind::Agent => path
-                .symlink_metadata()
-                .is_ok_and(|m| m.file_type().is_symlink()),
-            mars_schema::item::DefinitionKind::Skill => path.parent().is_some_and(|root| {
-                root.symlink_metadata()
-                    .is_ok_and(|m| m.file_type().is_symlink())
-            }),
-        };
-        if linked_item {
-            warnings.push(format!(
-                "skipping symlinked {} `{}` — source packages should not contain symlinks",
-                definition.kind, definition.slug
-            ));
-            continue;
-        }
-        match &definition.reading {
-            Reading::Agent(reading) => {
-                let filename = path
-                    .file_stem()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                if let Some(profile) = &reading.fields {
-                    let name = profile.name.clone().unwrap_or_else(|| filename.clone());
-                    // `frontmatter.missing` already says the file has no fields.
-                    let unfenced = reading
-                        .diagnostics
-                        .iter()
-                        .any(|diagnostic| diagnostic.code == "frontmatter.missing");
-                    if profile.name.is_none() && !unfenced {
-                        warnings.push(format!("agent `{filename}` has no `name` in frontmatter"));
-                    }
-                    if profile.description.is_none() && !unfenced {
-                        warnings.push(format!("agent `{name}` has no `description`"));
-                    }
-                    if profile.name.is_some() && name != filename {
-                        warnings.push(format!(
-                            "agent filename `{filename}.md` doesn't match name `{name}` in frontmatter"
-                        ));
-                    }
-                    if let Some(existing) = agent_names.insert(name.clone(), path.clone()) {
-                        errors.push(format!(
-                            "duplicate agent name `{name}` in {} and {}",
-                            existing.display(),
-                            path.display()
-                        ));
-                    }
-                }
+        .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty());
+    let mut dependencies = std::collections::BTreeMap::new();
+    let mut fetched = false;
+    if has_dependencies {
+        let options = crate::resolve::ResolveOptions::default()
+            .with_root(std::sync::Arc::new(prepared.clone()));
+        match crate::resolve::resolve_publish_graph_from_config(&lens, &lens.effective, &options, diag)
+        {
+            Ok(graph) => {
+                fetched = true;
+                dependencies = graph
+                    .nodes
+                    .iter()
+                    .map(|(name, node)| {
+                        (name.to_string(), crate::resolve::portable_facts(&node.prepared))
+                    })
+                    .collect();
             }
-            Reading::Skill(reading) => {
-                let dirname = if definition.source_path == "SKILL.md" {
-                    definition.slug.clone()
-                } else {
-                    path.parent()
-                        .and_then(Path::file_name)
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(&definition.slug)
-                        .to_owned()
-                };
-                if let Some(profile) = &reading.fields {
-                    let name = profile.name.clone().unwrap_or_else(|| dirname.clone());
-                    if profile.name.is_some() && name != dirname {
-                        warnings.push(format!(
-                            "skill dirname `{dirname}` doesn't match name `{name}` in frontmatter"
-                        ));
-                    }
-                    if let Some(existing) = skill_names.insert(name.clone(), path.clone()) {
-                        errors.push(format!(
-                            "duplicate skill name `{name}` in {} and {}",
-                            existing.display(),
-                            path.display()
-                        ));
-                    }
-                }
-            }
-            Reading::Manifest(_) => {}
+            Err(error) => errors.push(format!(
+                "[dependency-resolution] dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+            )),
         }
     }
 
+    let source = DiskTreeSource::new(base)?;
+    let mut root = prepared.clone();
+    root.selection = crate::resolve::portable_facts(&prepared);
+    let result = mars_schema::check::check(&source, &root, &dependencies);
+    if let Some(error) = source.take_error() {
+        return Err(error);
+    }
+    // The resolver fetched the whole graph, so a package the check lacks means the two disagree
+    // about it, and `mars check` never passes with a ref unjudged.
+    if fetched {
+        errors.extend(result.missing_dependencies.iter().map(|missing| {
+            format!(
+                "[dependency-incomplete] dependency `{}` was not in the resolved graph, so skill references were not checked",
+                missing.name
+            )
+        }));
+        errors.extend(result.unreadable_dependencies.iter().map(|unreadable| {
+            format!(
+                "[dependency-incomplete] dependency `{}` could not be read, so skill references were not checked",
+                unreadable.name
+            )
+        }));
+    }
     let readable = !matches!(
         prepared.classification,
         Classification::Invalid | Classification::SchemaNewer { .. }
     );
-    if readable && agent_names.is_empty() && skill_names.is_empty() {
+    if readable && prepared.definitions.is_empty() {
         errors.push("no agents or skills found — is this a mars source package?".to_string());
     }
-    check_skill_refs(prepared, lens, &mut errors, &mut warnings, diag);
-    Ok(CheckReport {
-        agents: agent_names.len(),
-        skills: skill_names.len(),
+
+    let count = |kind| {
+        prepared
+            .definitions
+            .iter()
+            .filter(|definition| definition.kind == kind)
+            .count()
+    };
+    let report = CheckReport {
+        agents: count(DefinitionKind::Agent),
+        skills: count(DefinitionKind::Skill),
+        findings: file_findings(&result, base, diag),
         errors,
-        warnings,
-    })
+        warnings: Vec::new(),
+    };
+    Ok((lens, prepared, report))
+}
+
+/// The first component of `path` under `base` that is a symlink, as a path under `base`.
+fn symlink_within(base: &Path, path: &str) -> Option<String> {
+    let mut walked = base.to_path_buf();
+    let mut relative = std::path::PathBuf::new();
+    for component in Path::new(path).components() {
+        walked.push(component);
+        relative.push(component);
+        if std::fs::symlink_metadata(&walked).is_ok_and(|meta| meta.is_symlink()) {
+            return Some(relative.display().to_string());
+        }
+    }
+    None
+}
+
+/// The findings of `check`, each named by its file. A dependency's own Agent is named by the
+/// dependency.
+fn file_findings(
+    result: &Check,
+    base: &Path,
+    diag: &mut crate::diagnostic::DiagnosticCollector,
+) -> Vec<FileFinding> {
+    let label = source_label(base);
+    let mut findings = Vec::new();
+    let mut add = |source_path: &str,
+                   dependency: Option<&str>,
+                   label: String,
+                   diagnostic: &SchemaDiagnostic| {
+        let mut message = diagnostic.message.clone();
+        if diagnostic.code == "definition.duplicate-name"
+            && dependency.is_none()
+            && let Some(link) = symlink_within(base, source_path)
+        {
+            message.push_str(&format!(
+                "; `{link}` is a symlink, so the same file has two names"
+            ));
+        }
+        // One note per unknown key, across the files that carry it.
+        let line = if diagnostic.code == "field.unknown" {
+            diag.schema(diagnostic, &label, false);
+            None
+        } else {
+            Some(format!("[{}] {label}: {message}", diagnostic.code))
+        };
+        findings.push(FileFinding {
+            source_path: source_path.to_owned(),
+            dependency: dependency.map(str::to_owned),
+            code: diagnostic.code.clone(),
+            severity: diagnostic.severity,
+            path: diagnostic.path.clone(),
+            message,
+            line,
+        });
+    };
+    for (path, diagnostics) in &result.diagnostics {
+        for diagnostic in diagnostics {
+            add(path, None, label(path), diagnostic);
+        }
+    }
+    for (dependency, files) in &result.dependency_diagnostics {
+        for (path, diagnostics) in files {
+            for diagnostic in diagnostics {
+                add(
+                    path,
+                    Some(dependency),
+                    format!("dependency `{dependency}` {path}"),
+                    diagnostic,
+                );
+            }
+        }
+    }
+    findings
 }
 
 pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
-    let (lens, prepared) = crate::resolve::PublishLens::load(base, &mut diag)?;
-    let mut report = check_prepared(&prepared, base, &lens, &mut diag)?;
+    let (_, _, mut report) = examine(base, &mut diag)?;
     for diagnostic in diag.drain() {
         let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
         if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
@@ -414,104 +532,19 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     Ok(report)
 }
 
-///
-/// Both are required to trigger graph-backed validation: `[package]` indicates
-/// this is a publishable source package, and `[dependencies]` means there are
-/// skills that could come from external packages.
-fn has_package_dependencies(lens: &crate::resolve::PublishLens) -> bool {
-    lens.manifest
-        .as_ref()
-        .is_some_and(|manifest| manifest.package.is_some() && !manifest.dependencies.is_empty())
-}
-
-/// Check answers with install's rule: the package is the root of one selection over its resolved
-/// `[dependencies]`, selected whole, and its Agents' refs resolve through the package, its
-/// dependencies and the rest of the graph. It judges a ref by the package alone and ignores
-/// `.mars/provided.lock`, so a package passes or fails the same on every machine. A package with
-/// `[dependencies]` fails closed; a package without them cannot know what the consumer adds, so an
-/// unknown skill is a warning.
-fn check_skill_refs(
-    prepared: &mars_schema::prepare::Prepared,
-    lens: &crate::resolve::PublishLens,
-    errors: &mut Vec<String>,
-    warnings: &mut Vec<String>,
-    diag: &mut crate::diagnostic::DiagnosticCollector,
-) {
-    let has_dependencies = has_package_dependencies(lens);
-    // Uses only `[dependencies]`: the lens drops `[local-dependencies]` and `mars.local.toml`.
-    // Without a `[package]` they are not a publishable package's, and nothing is fetched.
-    let mut effective = lens.effective.clone();
-    if !has_dependencies {
-        effective.dependencies.clear();
-    }
-    let options =
-        crate::resolve::ResolveOptions::default().with_root(std::sync::Arc::new(prepared.clone()));
-    let graph = match crate::resolve::resolve_publish_graph_from_config(
-        lens, &effective, &options, diag,
-    ) {
-        Ok(graph) => graph,
-        Err(error) => {
-            errors.push(format!(
-                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
-            ));
-            return;
-        }
-    };
-    let has_package = lens
-        .manifest
-        .as_ref()
-        .is_some_and(|config| config.package.is_some());
-    for missing in &graph.selection.missing_skills {
-        let skill = &missing.skill;
-        // An Agent of a dependency is that package's to fix, and the author's to work around.
-        let agent = match &missing.package {
-            Some(package) => format!("agent `{}` of dependency `{package}`", missing.agent),
-            None => format!("agent `{}`", missing.agent),
-        };
-        let remedy = match &missing.package {
-            Some(package) => {
-                format!("use a version of `{package}` that ships it, or add a dependency that does")
-            }
-            None => "add the skill's source package as a dependency, or remove the skill reference"
-                .to_string(),
-        };
-        match &missing.hint {
-            Some(hint) if has_package => errors.push(format!(
-                "{agent} references skill `{skill}`, which is not in this package or its dependencies; {hint}"
-            )),
-            _ if has_dependencies => errors.push(format!(
-                "{agent} references skill `{skill}` not found in local package or dependencies\n  searched: {}\n  hint: {remedy}",
-                format_searched_packages(&missing.searched, &graph)
-            )),
-            _ => warnings.push(format!(
-                "external dependency: `{skill}` (referenced by: {})",
-                missing.agent
-            )),
-        }
-    }
-}
-
-fn format_searched_packages(searched: &[String], graph: &crate::resolve::ResolvedGraph) -> String {
-    std::iter::once("(this package)".to_string())
-        .chain(searched.iter().map(|name| {
-            let version = graph
-                .nodes
-                .get(name.as_str())
-                .and_then(|node| node.resolved_ref.version.as_ref());
-            match version {
-                Some(version) => format!("{name}@{version}"),
-                None => name.clone(),
-            }
-        }))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
+    use mars_schema::diagnostic::Severity;
     use tempfile::TempDir;
+
+    fn has_finding(report: &super::CheckReport, code: &str, severity: Severity) -> bool {
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == code && finding.severity == severity)
+    }
 
     fn write_agent(path: &Path, filename: &str, skills: &[&str]) {
         let agents = path.join("agents");
@@ -554,58 +587,6 @@ mod tests {
         path.to_string_lossy().replace('\\', "/")
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn check_skips_symlinked_agent() {
-        let dir = TempDir::new().unwrap();
-        let agents = dir.path().join("agents");
-        std::fs::create_dir_all(&agents).unwrap();
-
-        std::fs::write(
-            agents.join("real.md"),
-            "---\nname: real\ndescription: real agent\n---\n# Real",
-        )
-        .unwrap();
-        std::os::unix::fs::symlink(agents.join("real.md"), agents.join("linked.md")).unwrap();
-
-        let args = super::CheckArgs {
-            path: Some(dir.path().to_path_buf()),
-            verbose: false,
-        };
-        let code = super::run(&args, None, true).unwrap();
-        assert_eq!(code, 0);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn check_skips_symlinked_skill() {
-        let dir = TempDir::new().unwrap();
-        let skills = dir.path().join("skills");
-        let real_skill = skills.join("real-skill");
-        std::fs::create_dir_all(&real_skill).unwrap();
-        std::fs::write(
-            real_skill.join("SKILL.md"),
-            "---\nname: real-skill\ndescription: a skill\n---\n# Skill",
-        )
-        .unwrap();
-        std::os::unix::fs::symlink(&real_skill, skills.join("linked-skill")).unwrap();
-
-        let agents = dir.path().join("agents");
-        std::fs::create_dir_all(&agents).unwrap();
-        std::fs::write(
-            agents.join("coder.md"),
-            "---\nname: coder\ndescription: agent\n---\n# Coder",
-        )
-        .unwrap();
-
-        let args = super::CheckArgs {
-            path: Some(dir.path().to_path_buf()),
-            verbose: false,
-        };
-        let code = super::run(&args, None, true).unwrap();
-        assert_eq!(code, 0);
-    }
-
     #[test]
     fn check_accepts_flat_skill_repo() {
         let dir = TempDir::new().unwrap();
@@ -630,18 +611,14 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            report.errors.is_empty(),
+            report.errors().is_empty(),
             "expected no errors in local-only mode: {:?}",
             report.errors
         );
-        let has_warning = report
-            .warnings
-            .iter()
-            .any(|w| w.contains("external dependency: `missing-skill`"));
         assert!(
-            has_warning,
+            has_finding(&report, "skill-ref.external", Severity::Warning),
             "expected warning for missing-skill: {:?}",
-            report.warnings
+            report.findings
         );
     }
 
@@ -661,7 +638,7 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
 
-        let joined = report.errors.join("\n");
+        let joined = report.errors().join("\n");
         assert!(
             joined.contains("model-policies[0].match"),
             "expected model-policies match error: {joined}"
@@ -674,16 +651,16 @@ mod tests {
         write_agent(dir.path(), "coder", &["some-skill"]);
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
+            "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
         )
         .unwrap();
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            !report.errors.is_empty(),
+            !report.errors().is_empty(),
             "expected errors when dep cannot be resolved"
         );
-        let joined = report.errors.join("\n");
+        let joined = report.errors().join("\n");
         assert!(
             joined.contains("mars version --force"),
             "error must include remediation hint: {joined}"
@@ -701,7 +678,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
                 toml_path(dep_dir.path())
             ),
         )
@@ -709,11 +686,11 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            !report.errors.is_empty(),
+            !report.errors().is_empty(),
             "expected error for missing skill, got: {:?}",
             report.errors
         );
-        let joined = report.errors.join("\n");
+        let joined = report.errors().join("\n");
         assert!(
             joined.contains("coder"),
             "error must name the agent: {joined}"
@@ -730,11 +707,10 @@ mod tests {
             joined.contains("hint:"),
             "error must include remediation guidance: {joined}"
         );
-        let has_warning = report.warnings.iter().any(|w| w.contains("missing-skill"));
         assert!(
-            !has_warning,
+            !has_finding(&report, "skill-ref.external", Severity::Warning),
             "missing skill must be error, not warning: {:?}",
-            report.warnings
+            report.findings
         );
     }
 
@@ -748,7 +724,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
                 toml_path(dep_dir.path())
             ),
         )
@@ -756,7 +732,7 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            report.errors.is_empty(),
+            report.errors().is_empty(),
             "expected no errors when skill is in dep: {:?}",
             report.errors
         );
@@ -772,18 +748,17 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
                 toml_path(local_dep_dir.path())
             ),
         )
         .unwrap();
 
         let report = super::check_dir(dir.path()).unwrap();
-        let has_warning = report.warnings.iter().any(|w| w.contains("local-skill"));
         assert!(
-            has_warning,
+            has_finding(&report, "skill-ref.external", Severity::Warning),
             "local-skill from [local-dependencies] must not satisfy ref in publish gate — expected warning: {:?}",
-            report.warnings
+            report.findings
         );
     }
 
@@ -809,7 +784,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
                 toml_path(regular_dep_dir.path()),
                 toml_path(local_dep_dir.path())
             ),
@@ -818,11 +793,11 @@ mod tests {
 
         let report = super::check_dir(dir.path()).unwrap();
         assert!(
-            !report.errors.is_empty(),
+            !report.errors().is_empty(),
             "skill from [local-dependencies] must not satisfy ref in publish gate — expected error: {:?}",
             report.errors
         );
-        let joined = report.errors.join("\n");
+        let joined = report.errors().join("\n");
         assert!(
             joined.contains("local-only-skill"),
             "error must name the missing skill: {joined}"
@@ -836,7 +811,7 @@ mod tests {
         // Intentionally invalid TOML (Windows-style path escapes in basic string).
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"C:\\Users\\dev\\dep\" }\n",
+            "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"C:\\Users\\dev\\dep\" }\n",
         )
         .unwrap();
 
@@ -844,6 +819,46 @@ mod tests {
         assert!(
             error.contains("TOML parse error"),
             "an invalid mars.toml must fail the check, not fall back to local-only warnings: {error}"
+        );
+    }
+
+    #[test]
+    fn check_reports_each_file_finding_once() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("mars.toml"),
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nschema = 1\n",
+        )
+        .unwrap();
+        write_agent_content(
+            dir.path(),
+            "a",
+            "---\nname: dup\ndescription: first\napproval: nonsense\n---\n# A",
+        );
+        write_agent_content(
+            dir.path(),
+            "b",
+            "---\nname: dup\ndescription: second\n---\n# B",
+        );
+
+        let report = super::check_dir(dir.path()).unwrap();
+
+        let errors = report.errors();
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.starts_with("[field.value]"))
+                .count(),
+            1,
+            "a `prepare` error prints once: {errors:?}"
+        );
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|error| error.starts_with("[definition.duplicate-name]"))
+                .count(),
+            2,
+            "a duplicate name prints once per file: {errors:?}"
         );
     }
 }

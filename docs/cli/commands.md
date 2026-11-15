@@ -14,7 +14,7 @@ The project root is the directory holding `mars.toml` and `mars.lock`.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `check`: validation errors found; `migrate --check`: files need migration; `resolve`: unresolved conflict markers remain |
+| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
 | `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors, including a definition that breaks [schema v1](../config/schema-v1.md) |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 
@@ -133,7 +133,7 @@ mars sync [--force] [--diff] [--frozen]
 | `--frozen` | Error if lock file would change (CI mode) |
 | `--verbose` | Also print `info` notes, such as a key in `mars.toml` that Mars does not read, and every lossy field per item and target |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key Mars does not read (`field.unknown`) is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is upgraded in memory and installed, with one warning per package that names it; ask its maintainer to run [`mars migrate`](#mars-migrate). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key Mars does not read (`field.unknown`) is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
@@ -153,7 +153,7 @@ mars upgrade [names...]
 |---|---|
 | `names` | Specific dependency names to upgrade (default: all) |
 
-Takes the newest compatible version instead of keeping the locked one. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions: for that, see [`mars migrate`](#mars-migrate).
+Takes the newest compatible version instead of keeping the locked one. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions.
 
 A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 
@@ -161,27 +161,6 @@ A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at i
 mars upgrade                 # Upgrade all
 mars upgrade base dev        # Upgrade specific deps
 ```
-
----
-
-## `mars migrate`
-
-Rewrite the package's own definitions to [schema v1](../config/schema-v1.md), in place.
-
-```bash
-mars migrate [--check] [--root PATH] [--json]
-```
-
-| Flag | Description |
-|---|---|
-| `--check` | List the files that would change and write nothing. Exits 1 if any file needs migration |
-| `--json` | `{check, changed, files, fully_rewritten_files, dropped, warnings}`; `dropped` lists `{file, code, message}` for each key the migration removed, and `warnings` lists the same shape for what it left alone and why |
-
-It reads `mars.toml` for the package it is in, upgrades `[package]` (adds `schema = 1`, drops `visibility`, and adds `requires-mars = ">=0.20.0"` when the manifest has no requirement; an existing requirement is reported, never rewritten) and every agent and skill definition, and writes only the files that change. A package that already says `schema = 1` is converted for the same keys: `mars migrate` and the schema 1 reader share one list of pre-v1 keys and values, so the file the reader refuses with `field.removed` (`disallowed-tools`, `permission`, `models`, `approval: yolo`, a skill's `allowed-tools`, `[package] visibility`, ...) is the file `mars migrate` converts, with the same rules as a package with no `schema`. A `permission` map moves to `harness-overrides.opencode.permission`. A `tools` list is not converted, in a schema 1 file: it could be grants (pre-v1 Mars) or an allowlist (Claude), and the two differ in what the agent may do, so the run exits 2 on `tools.list-form` and writes nothing; write the map form. Nothing else in a schema 1 file is touched, so a file with no pre-v1 key, or with a list-form `tools` or a current override, stays byte for byte. If a definition still has an error after the upgrade (a value it cannot map, malformed YAML), it exits 2 and writes nothing. Quoting, key order and the body of a definition stay as they were, and a comment survives unless it belongs to a changed key's block (a comment written directly after a changed key's value is part of that block and is rewritten with it); only the top-level keys that change are written again. A second run prints `definition format is already schema v1`.
-
-In a consumer project (a `mars.toml` with no `[package]`), only `.mars-src/` is migrated; with none, the command says `nothing to migrate: ... is consumer configuration, not a package; dependencies migrate in their own repositories` and exits 0.
-
-It never touches `.mars/`, `mars.lock` or dependencies, so it is a different job from [`mars upgrade`](#mars-upgrade), which moves dependency versions. It deletes some keys without a replacement and prints each one after the files it edited, grouped by code with one line per file and key; read `git diff` as well. The rewrite table, an example diff and the handling of unmigrated dependencies are in [Migrating a package to schema v1](../config/migrating-to-schema-v1.md).
 
 ---
 
@@ -575,16 +554,27 @@ mars check --root PATH
 | `path` | Directory to validate (default: current directory) |
 | `--root PATH` | The same directory, named as every other command names its root; `path` wins when both are given, so `meridian mars check <path>` (which appends `--root`) checks `<path>` |
 
-Does not require a mars project (no `mars.toml` needed). Validates:
-- `requires-mars` and `requires-meridian` syntax when `[package]` is present
-- Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
-- Prints the `source package validates` line only when there are no errors
-- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so pre-v1 keys, invalid values and malformed YAML are errors (exit 1), unknown keys print as `info` and leave the exit code alone, and a package with no `schema` is read as pre-v1 with a warning that names `mars migrate`
-- Frontmatter: name, description presence and consistency
-- Duplicate `(kind, name)` discoveries within the package
-- Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
-- Symlinks in source packages (warned as unsupported)
-- Missing `SKILL.md` in skill directories
+Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. What only the binary checks (the `requires-mars` floor, hooks, plugin output, model aliases, dependency resolution) prints after the groups, without a file. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
+
+What its files say is the same function `@meridian-flow/mars-schema` exports as `check` (`mars_schema::check`). A level says what the author loses: an error, the file or package won't load or install; a warning, something written won't take effect; info, nothing written is lost.
+
+| Code | Level | When |
+|---|---|---|
+| `package.requirement` | error | `requires-mars` or `requires-meridian` is not a version requirement (both are reported) |
+| `definition.duplicate-name` | error | two Agents, or two skills, with one `name`; reported on each file |
+| `definition.duplicate-slug` | error | two files with one slug and different `name`s; `import.duplicate-slug` is on the second file |
+| `skill-ref.missing` | error | an Agent names a skill no package of the resolved graph ships. A dependency's own Agent is `skill-ref.dependency` |
+| `skill-ref.provider` | error | a ref `<skill>__<provider>` whose provider `[package] uses-providers` doesn't list |
+| `skill-ref.external` | warning | an Agent names a skill the package doesn't ship, and it has no `[dependencies]` (a consumer may add the package that does) |
+| `skill.no-definition` | warning | `skills/<dir>/` holds files and no `SKILL.md`, so none of it is installed |
+| `selection.duplicate-slug` | warning, info | two dependencies install one slug (warning); a root item and a dependency's (info: the root's is installed) |
+| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
+| `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
+
+Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch, or one that could not be read (`unreadable_dependencies` of the function's result), is `[dependency-incomplete]`; all are errors. While the function's `missing_dependencies` or `unreadable_dependencies` is not empty its result is not a verdict: no skill ref was judged. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
+
+`mars check` also reports what depends on a machine, a target or a Mars version, which the function does not:
+- Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback; "no agents or skills found" is an error
 - Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
   version, hand-edited or missing generated files, root files left holding an earlier build's
   output, and conflicts at generated package-root paths
@@ -592,14 +582,18 @@ Does not require a mars project (no `mars.toml` needed). Validates:
   the keys it uses: `schema = 1` and `uses-providers` (0.20.0), `[plugin]` (0.19.0), `[hooks]` in a
   `hook.toml` (0.25.0), and a `deny` or `ask` in `[package.tools]` (0.30.0). A missing or lower
   requirement is an error that names the key and the line to write. See
-  [mars.toml](../config/mars-toml.md#package-optional)
+  [mars.toml](../config/mars-toml.md#package-optional). This is about an older Mars, so `mars check` can fail a package `check` accepts
 - Plugin compatibility: unknown `[plugin].harnesses` values
 - Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
+- A model policy whose `alias` is not in the catalog, read from `mars.lock`
+- The `source package validates` line, printed only when there are no errors
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
+
+`--json` prints `agents`, `skills`, `errors` and `warnings` (strings, with each warning-level finding of a file among them), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
 
 ```bash
 mars check                   # Check current directory

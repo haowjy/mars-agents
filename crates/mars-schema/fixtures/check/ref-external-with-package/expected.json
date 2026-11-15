@@ -1,0 +1,17 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "skill-ref.external",
+        "severity": "warning",
+        "path": [
+          "skills"
+        ],
+        "message": "agent `coder` references skill `elsewhere`, which this package does not ship; a consumer must hold a package that does"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

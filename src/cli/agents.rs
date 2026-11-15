@@ -136,7 +136,7 @@ fn visible_agents(
                 continue;
             }
         };
-        let profile = match mars_schema::read::installed_agent(&content).into_fields() {
+        let profile = match mars_schema::agent::read(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
                 eprintln!("warning: skipping {}: {why}", disk_path.display());

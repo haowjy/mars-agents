@@ -197,12 +197,13 @@ pub fn write_local_source_with_model_alias(
     fs::create_dir_all(&agents_dir).expect("failed to create local source agents dir");
     fs::write(
         agents_dir.join("fixture.md"),
-        "# Fixture agent for models-cache tests\n",
+        "---\n---\n# Fixture agent for models-cache tests\n",
     )
     .expect("failed to write local source fixture agent");
 
     let source_manifest = format!(
         r#"[package]
+schema = 1
 name = "{source_dir_name}"
 version = "0.1.0"
 

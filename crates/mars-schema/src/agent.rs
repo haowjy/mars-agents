@@ -352,16 +352,6 @@ fn push_model_policy_parse_error(
         crate::model_policy::ModelPolicyRuleParseError::OverrideMustBeMapping { found } => {
             push_agent_invalid(diags, child("override"), found, "mapping");
         }
-        crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key }
-            if crate::upgrade::PRE_V1
-                .policy_override_dropped
-                .contains(&key.as_str()) =>
-        {
-            diags.push(crate::upgrade::pre_v1_key(
-                grandchild("override", &key),
-                &key,
-            ));
-        }
         crate::model_policy::ModelPolicyRuleParseError::UnknownOverrideKey { key } => {
             push_agent_invalid(
                 diags,
@@ -377,15 +367,6 @@ fn push_model_policy_parse_error(
                 key,
                 "network host sets on settings, profile, overlay, or CLI",
             );
-        }
-        crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
-            key, found, ..
-        } if crate::upgrade::PRE_V1.value(&key, &found) => {
-            diags.push(crate::upgrade::pre_v1_value(
-                grandchild("override", &key),
-                &key,
-                &found,
-            ));
         }
         crate::model_policy::ModelPolicyRuleParseError::OverrideValueInvalid {
             key,
@@ -689,14 +670,6 @@ pub(crate) fn read_fields(
             "approval" => {
                 profile.approval =
                     read_string(value, "approval", false, diags).and_then(|approval| {
-                        if crate::upgrade::PRE_V1.value("approval", &approval) {
-                            diags.push(crate::upgrade::pre_v1_value(
-                                key_path("approval"),
-                                "approval",
-                                &approval,
-                            ));
-                            return None;
-                        }
                         ApprovalMode::parse(&approval).or_else(|| {
                             push_agent_invalid(
                                 diags,
@@ -742,14 +715,6 @@ pub(crate) fn read_fields(
             }
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
-                    if crate::upgrade::PRE_V1.value("effort", &effort) {
-                        diags.push(crate::upgrade::pre_v1_value(
-                            key_path("effort"),
-                            "effort",
-                            &effort,
-                        ));
-                        return None;
-                    }
                     EffortLevel::parse(&effort).or_else(|| {
                         push_agent_invalid(diags, key_path("effort"), effort, EffortLevel::ALLOWED);
                         None

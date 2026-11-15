@@ -1,0 +1,17 @@
+{
+  "diagnostics": {
+    "agents/g.md": [
+      {
+        "code": "frontmatter.repaired",
+        "severity": "info",
+        "path": [
+          "description"
+        ],
+        "message": "the unquoted value of `description` is not valid plain YAML; it was quoted"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

@@ -159,7 +159,7 @@ What preparation decides for a package root:
 | Root | Result |
 |---|---|
 | `mars.toml` with `[package] schema = 1` | Read strictly |
-| `mars.toml` with no `schema` | Upgraded in memory with the `mars migrate` rules; one warning per package names it |
+| `mars.toml` with no `schema` | Refused: `manifest.schema-missing` names the file |
 | `mars.toml` with another `schema` | Refused (`field.type`) |
 | No `mars.toml` | Translated to schema v1 by the dialect's rules (Claude by default), then read strictly |
 | A marketplace | An error that lists its plugins, unless the dependency names one with `plugin` |
@@ -172,9 +172,9 @@ The order inside one `mars sync`:
 4. **Binary and compiler checks.** Building the target, planning, and the hook and MCP preflight report their own errors, and the gate runs after the target is built and again after the preflight, so those errors also fail before apply.
 5. **Apply and publish.** `apply_plan` saves the config mutation and applies the plan to the `.mars/` canonical store; it does not publish. Back in `compile` (`src/compiler/mod.rs`), the generation at `.mars/.staging.pending` is then renamed over `.mars/staging` (nothing is copied) and the packages' source roots are rebased onto the published path, which the target, config-entry and native-agent stages read. The next sync that takes the lock removes a leftover pending path.
 
-Warnings never stop a sync: the lossiness a target cannot express, and the pre-v1 notice are printed and the run continues. Unknown keys (`field.unknown`) are `Info`: `mars sync --verbose`, `mars validate` and `mars check` print them. `--diff` runs the same steps and writes nothing.
+Warnings never stop a sync: the lossiness a target cannot express, and a `field.retired` key are printed and the run continues. Unknown keys (`field.unknown`) are `Info`: `mars sync --verbose`, `mars validate` and `mars check` print them. `--diff` runs the same steps and writes nothing.
 
-Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), `mars migrate` writes its normalized bytes back to the authored files, and `mars outdated` reads tags only, so it never classifies a package. `mars migrate` is the one caller that prepares for writing: it also repairs the keys schema 1 removed in favour of a `harness-overrides` namespace, in a schema 1 definition too. An unusable version is refused by sync with its error.
+Other commands read the same `Prepared`. `mars check` and `mars validate` report its diagnostics (validate returns schema errors as report data, never mutating), and `mars outdated` reads tags only, so it never classifies a package. An unusable version is refused by sync with its error.
 
 ### Recovery halt (reader/compiler boundary)
 
@@ -232,7 +232,7 @@ The diff matrix:
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 
 Also injects project-local items under the `_self` source name (`_self` is the reserved local-project source identifier):
-- Items from `.mars-src/` are always prepared like a dependency package, regardless of whether `[package]` is present; with no `mars.toml` there, they are read as a pre-v1 Mars tree and upgraded in memory. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` folders are included when they are in the shallowest discovered package layer.
+- Items from `.mars-src/` are always prepared like a dependency package, regardless of whether `[package]` is present; with no `mars.toml` there, they are read as schema 1. Nested `.mars-src/**/agents/`, `.mars-src/**/skills/`, and `.mars-src/**/bootstrap/` folders are included when they are in the shallowest discovered package layer.
 - Repo-root `agents/`/`skills/` directories are not local discovery roots; published source packages expose `agents/`, `skills/`, and `bootstrap/` convention folders at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5` when consumed as dependencies.
 - Dot-prefixed directories are skipped during default discovery. Import a foreign hidden layout explicitly with dependency `subpath` (for example `.claude`) and `dialect`.
 - If one source exposes duplicate `(kind, name)` items through convention scanning, manifest declarations, or both, discovery fails with `DiscoveryCollision`; sync does not choose a winner inside that source.

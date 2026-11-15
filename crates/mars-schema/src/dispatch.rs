@@ -3,10 +3,8 @@
 //!
 //! 1. A directory holding a valid `.mars-plugin.json` is generated output, never input.
 //! 2. A Mars manifest decides; no declaration overrides it.
-//! 3. A declared dialect (`mars-native` on a root with no manifest is a pre-v1 Mars package,
-//!    which the upgrade reads), else
-//! 4. the dialect predicted from evidence in the root, strongest first. A key only pre-v1 Mars
-//!    defined is not evidence: translation rewrites it per key, whatever dialect the root is.
+//! 3. A declared dialect (`mars-native` on a root with no manifest is schema 1), else
+//! 4. the dialect predicted from evidence in the root, strongest first.
 //! 5. No items at all is `empty`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,7 +31,6 @@ use crate::tree::TreeSource;
 pub enum Kind {
     #[serde(rename = "schema-1")]
     Schema1,
-    MarsLegacy,
     SchemaNewer,
     Marketplace,
     Plugin,
@@ -80,7 +77,6 @@ impl Dispatched {
     pub(crate) fn kind(&self) -> Kind {
         match (&self.classification, &self.layout) {
             (Classification::Schema1, _) => Kind::Schema1,
-            (Classification::MarsLegacy, _) => Kind::MarsLegacy,
             (Classification::SchemaNewer { .. }, _) => Kind::SchemaNewer,
             (Classification::Invalid, _) => Kind::Invalid,
             (Classification::Marketplace, _) => Kind::Marketplace,
@@ -188,7 +184,7 @@ fn classify(
     match manifest {
         _ if consumer_tree => {
             return done(
-                Classification::MarsLegacy,
+                Classification::Schema1,
                 Layout::Convention,
                 discover(source, fallback_name),
                 Vec::new(),
@@ -202,14 +198,6 @@ fn classify(
                 Vec::new(),
             );
         }
-        ManifestClassification::MarsLegacy => {
-            return done(
-                Classification::MarsLegacy,
-                Layout::Convention,
-                discover(source, fallback_name),
-                Vec::new(),
-            );
-        }
         ManifestClassification::SchemaNewer { schema } => {
             return done(
                 Classification::SchemaNewer { schema: *schema },
@@ -218,7 +206,9 @@ fn classify(
                 Vec::new(),
             );
         }
-        ManifestClassification::Invalid { .. } | ManifestClassification::ConsumerConfig => {
+        ManifestClassification::Invalid { .. }
+        | ManifestClassification::NoSchema
+        | ManifestClassification::ConsumerConfig => {
             return done(
                 Classification::Invalid,
                 Layout::None,
@@ -229,11 +219,9 @@ fn classify(
         ManifestClassification::NoManifest => {}
     }
 
-    // Mars content with no manifest has no `schema`, so it is pre-v1 by definition: it takes the
-    // upgrade, which leaves a file already in v1 as it is.
     if declared == Some(Dialect::MarsNative) {
         return done(
-            Classification::MarsLegacy,
+            Classification::Schema1,
             Layout::Convention,
             discover(source, fallback_name),
             Vec::new(),

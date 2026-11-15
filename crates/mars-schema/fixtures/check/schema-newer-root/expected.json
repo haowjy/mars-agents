@@ -1,0 +1,18 @@
+{
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "schema.newer",
+        "severity": "error",
+        "path": [
+          "package",
+          "schema"
+        ],
+        "message": "package declares schema 2; this Mars (v{version}) reads schema 1 — upgrade Mars"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

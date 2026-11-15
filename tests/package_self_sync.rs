@@ -97,11 +97,14 @@ fn undeclared_project_ignores_root_sources_but_keeps_local_overrides() {
         .write_str("---\n---\n# Root")
         .unwrap();
     dir.child(".mars-src/agents/local.md")
-        .write_str("# Local")
+        .write_str("---\n---\n# Local")
         .unwrap();
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/agents/muse.md").exists());
-    assert_eq!(read(dir.path(), ".mars/agents/local.md"), "# Local");
+    assert_eq!(
+        read(dir.path(), ".mars/agents/local.md"),
+        "---\n---\n# Local"
+    );
 }
 
 #[test]

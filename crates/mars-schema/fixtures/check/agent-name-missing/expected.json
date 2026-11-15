@@ -1,0 +1,17 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "agent.name-missing",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent `coder` has no `name`; the file name is used"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

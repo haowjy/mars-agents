@@ -76,6 +76,11 @@ pub struct SelectionFacts {
     /// `[local-dependencies]`.
     pub edges: Vec<Request>,
     pub uses_providers: Vec<String>,
+    /// The package could not be read (`Invalid` or `SchemaNewer`), so `definitions` is empty
+    /// because nothing was read, not because it ships nothing. A check does not judge skill
+    /// refs against it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unreadable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -378,7 +383,7 @@ pub fn select(view: &GraphView) -> SelectionResult {
             }
         }
     }
-    let diagnostics = duplicate_slugs(&items);
+    let diagnostics = duplicate_slug_diagnostics(&items);
     SelectionResult {
         items,
         missing_skills,
@@ -386,8 +391,18 @@ pub fn select(view: &GraphView) -> SelectionResult {
     }
 }
 
-fn duplicate_slugs(items: &[SelectedItem]) -> Vec<SchemaDiagnostic> {
-    let mut packages: IndexMap<(ItemKind, &str), Vec<&str>> = IndexMap::new();
+/// An Agent or skill slug that more than one package installs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateSlug {
+    pub kind: ItemKind,
+    pub slug: String,
+    /// The packages that ship it, in package order; `None` is the root.
+    pub packages: Vec<Option<String>>,
+}
+
+/// The slugs two or more of `items` share, in item order.
+pub fn duplicate_slugs(items: &[SelectedItem]) -> Vec<DuplicateSlug> {
+    let mut packages: IndexMap<(ItemKind, &str), Vec<Option<String>>> = IndexMap::new();
     for item in items
         .iter()
         .filter(|item| matches!(item.kind, ItemKind::Agent | ItemKind::Skill))
@@ -395,17 +410,38 @@ fn duplicate_slugs(items: &[SelectedItem]) -> Vec<SchemaDiagnostic> {
         packages
             .entry((item.kind, item.slug.as_str()))
             .or_default()
-            .push(item.package.as_deref().unwrap_or("the root package"));
+            .push(item.package.clone());
     }
     packages
         .into_iter()
         .filter(|(_, packages)| packages.len() > 1)
-        .map(|((kind, slug), packages)| {
+        .map(|((kind, slug), packages)| DuplicateSlug {
+            kind,
+            slug: slug.to_string(),
+            packages,
+        })
+        .collect()
+}
+
+fn duplicate_slug_diagnostics(items: &[SelectedItem]) -> Vec<SchemaDiagnostic> {
+    duplicate_slugs(items)
+        .into_iter()
+        .map(|duplicate| {
+            let packages = duplicate
+                .packages
+                .iter()
+                .map(|package| package.as_deref().unwrap_or("the root package"))
+                .collect::<Vec<_>>();
             SchemaDiagnostic::new(
                 "selection.duplicate-slug",
                 Severity::Warning,
                 Vec::new(),
-                format!("{kind} `{slug}` is installed from {}", packages.join(", ")),
+                format!(
+                    "{} `{}` is installed from {}",
+                    duplicate.kind,
+                    duplicate.slug,
+                    packages.join(", ")
+                ),
             )
         })
         .collect()

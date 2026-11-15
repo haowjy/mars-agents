@@ -1,0 +1,23 @@
+{
+  "diagnostics": {
+    "skills/deep": [
+      {
+        "code": "skill.no-definition",
+        "severity": "warning",
+        "path": [],
+        "message": "`skills/deep` has files and no `SKILL.md`, so none of it is installed"
+      }
+    ],
+    "skills/notes": [
+      {
+        "code": "skill.no-definition",
+        "severity": "warning",
+        "path": [],
+        "message": "`skills/notes` has files and no `SKILL.md`, so none of it is installed"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": [],
+  "unreadable_dependencies": []
+}

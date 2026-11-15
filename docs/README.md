@@ -23,7 +23,7 @@ same path under `.mars/`. Dependency model-alias winners are also persisted in
 committed lock state (`dependency_model_aliases`). See
 [internals/lock-file.md](internals/lock-file.md) for format details.
 
-**Schema v1** is the file format of agent definitions, skills and the `[package]` table. Mars reads every package against it before it writes anything, the `mars-schema` crate and the `@meridian-flow/mars-schema` npm package read it the same way, and `mars migrate` upgrades a package written before it. See [config/schema-v1.md](config/schema-v1.md).
+**Schema v1** is the file format of agent definitions, skills and the `[package]` table. Mars reads every package against it before it writes anything, the `mars-schema` crate and the `@meridian-flow/mars-schema` npm package read it the same way. See [config/schema-v1.md](config/schema-v1.md).
 
 **Filters** control which items from a source get installed: include specific agents/skills, exclude items, or restrict to agents-only or skills-only. See [config/mars-toml.md](config/mars-toml.md).
 
@@ -84,14 +84,14 @@ Mars accepts several source forms:
 
 | Document | Contents |
 |---|---|
-| [config/migrating-to-schema-v1.md](config/migrating-to-schema-v1.md) | What `mars migrate` changes in a package, with a real diff, and how unmigrated dependencies behave |
 | [plugin-authoring.md](plugin-authoring.md) | Configure, build, check, release, and install multi-harness plugins |
 
 ### Config
 
 | Document | Contents |
 |---|---|
-| [config/schema-v1.md](config/schema-v1.md) | The schema v1 contract: agent, skill and manifest keys, pre-v1 keys, effort, model-policy precedence, tool capabilities, fixtures |
+| [config/schema-v1.md](config/schema-v1.md) | The schema v1 contract: agent, skill and manifest keys, effort, model-policy precedence, tool capabilities, fixtures |
+| [config/retired-keys.md](config/retired-keys.md) | Keys Mars stopped reading, what each became, and a package with no `schema` |
 | [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: dependencies (marketplace plugins, dialect), settings, overlays, model aliases |
 | [config/mars-curated.md](config/mars-curated.md) | `mars.curated.toml`: the display-only model rules `mars models list` layers and merges |
 | [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, tools, harness-overrides, model-policies, examples |

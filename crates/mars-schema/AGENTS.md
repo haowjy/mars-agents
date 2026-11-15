@@ -8,21 +8,19 @@ and rules, so never add a binary-side copy.
 ## Reading and preparation
 
 - Route authored definitions through the shared reader. Schema-v1 authored fields are
-  strict; foreign and pre-v1 definitions go through translation and `set_aside_rejected_keys`
+  strict; foreign definitions go through translation and `set_aside_rejected_keys`
   so an uneditable dependency can still install. Preserve valid entries in `LoweredField`,
   `skill::LOWERED_KEYS`, and network host lists; losing a deny entry can widen permissions.
   Record lost deny/ask tools, disallowed tools, deny hosts and restriction fields as
   `field.restriction-lost` changes, exposed by `Prepared::lost_restrictions`.
-- An Agent with no frontmatter is `frontmatter.missing` only where the file is schema 1: `read` and `prepare` of a `schema = 1` package go through `read_authored`. Installed trees, pre-v1 packages and foreign layouts use `read_definition`, because their body-only Agents were valid when written; `mars migrate` does not add a fence. A consumer's `.mars-src/` is always read with `read_definition` and is not checked.
-- Ordinary reading leaves schema-v1 files as written; migration may repair removed
-  fields because it writes the result back. Upgrade definitions without changing
-  unrelated bytes when possible. Do not change a dependency's `requires-mars` during
-  preparation: it gates whether the dependency can be read. Migration adds a missing
-  floor when it can edit the manifest minimally; it leaves an existing requirement
-  or an inline package table unchanged and provides advice when needed.
+- An Agent with no frontmatter is `frontmatter.missing` only where the file is schema 1: `read` and `prepare` of a `schema = 1` package go through `read_authored`. Installed trees and foreign layouts use `read_definition`, because their body-only Agents were valid when written. A consumer's `.mars-src/` and a manifest-less `mars-native` tree are classified `Schema1`, so they are checked like a package.
+- Reading leaves a schema-v1 file as written; preparation rewrites only foreign
+  definitions. Do not change a dependency's `requires-mars` during preparation: it gates
+  whether the dependency can be read.
 - A `mars.toml` without `[package]` is consumer configuration, not a package manifest.
-  `project_authored_root` selects `.mars-src` with `AuthoredLocal` for consumer
-  configuration, otherwise the project root with `Package`.
+  `PrepareContext::Project` reads the project root as a `Package`, or, for consumer
+  configuration, `.mars-src` as `AuthoredLocal`. A `[package]` with no `schema` is an error
+  (`manifest.schema-missing`), not a package to upgrade.
 - Prepare before applying consumer filters and renames. Check skill body links against
   the actual installed layout after those choices: preparation cannot know whether a
   target from another package will be installed. Use `selection::select` and its
@@ -33,6 +31,10 @@ and rules, so never add a binary-side copy.
   skill imports exclude them: installed Mars packages depend on that behavior.
 - Report wrong-transport MCP server fields as ignored rather than failing the parse,
   so a usable server can still install.
+
+## Checking
+
+`check.rs` is what `mars check` and the WASM `check` report about a package's own files. A rule about an Agent, a skill or `mars.toml` goes there, never in `src/cli/check.rs`. It reports what is true of the package wherever it runs: what a harness target can't express, or an older Mars can't read (the `requires-mars` floor, hooks, lost-in-lowering fields), stays in the binary. Grade a finding by what the author loses: `Error` it won't load or install, `Warning` something written won't take effect, `Info` nothing written is lost. For each path the result is `prepare`'s findings plus the check's own, so dropping the check's codes must leave what `prepare` returns for the path; both runners hold that. A new code is a fixture under `fixtures/check/` and a row in the code lists of both runners.
 
 ## Compatibility
 
@@ -63,7 +65,7 @@ comment what the older Mars does with the key.
 A file's version floor is `keys::floor` over the keys it uses, and every caller gets those from
 `keys::used(document, Document)`, which walks a parsed `mars.toml`. The uses that live in other
 files are the caller's to add as `Used::hook` and `Used::profile_rule` (`check::package_floor`
-does, and `mars check`, `mars version` and `mars migrate` all call it); the consumer reader
+does, and `mars check` and `mars version` both call it); the consumer reader
 (`config/read.rs`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
 key's presence) or `Gate::Rules` (each rule whose action restricts: `deny` and `ask`, not
 `allow`). A consumer floor is reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older
@@ -76,19 +78,22 @@ What a reader does with a key it has no field for depends on the table, nothing 
 - A table of fields (`[settings]`, `[agents.<name>]`, `[package]`, frontmatter): the key is not
   read and stays in the file. It is one `Info`, `field.unknown`, built by
   `diagnostic::unknown_field`, with the text `unknown_key_message` builds. Don't add a code, a
-  level or a text for a particular key.
+  level or a text for a particular key; the one exception is `retired.rs`, below.
 - A table that refuses what it does not define (a model-policy `override`, a project's
   `hook.toml`): an error that lists the keys it takes.
 
 A value of a key Mars reads stays closed: an unknown value is an error listing what is allowed.
 
-The only code that names an old key is a translator from another format. `upgrade::PRE_V1` is
-the pre-v1 Mars grammar: every key and value the pre-v1 upgrade drops, renames, moves or
-rewrites. The upgrade functions iterate it, `mars migrate` runs the same conversion on a schema 1 file
-(`migrate_definition`, limited to `PRE_V1`'s keys), and the strict readers ask it
-(`PreV1::key`, `PreV1::value`), so the file the reader refuses with `field.removed` and one
-text is the file `mars migrate` converts. The spellings of the Agent deny list come from
-`tool_policy::DISALLOWED_SPELLINGS`, which the translators read too. A row is a conversion, and the reader reports each row with the one pre-v1 text; the model-policy `override` reader asks the same rows. The one pre-v1 shape that is not a row is a `tools` list: `mars migrate` does not pick between its two readings (grants or allowlist), so the reader keeps its own `tools.list-form` error and only the no-schema upgrade converts it. A key the upgrade only sets aside (`permission` with a value that is neither `read`, `edit` nor a map) is dropped with `field.restriction-lost`.
-`upgrade::tests` checks this against the list. It is an error and not an unread key because a schema 1 file in
-this format would lose a restriction silently (`disallowed-tools`, `network_deny`, `permission`); `read::installed` and `set_aside` key on that error, so a translated definition still
-records `field.restriction-lost`. A new key goes in `PRE_V1` only as a conversion the upgrade performs, and `upgrade::tests` fails when a row is refused but not converted, or converted but not refused.
+`retired.rs` is the one table of keys Mars moved off: (scope, key, anchor on
+`docs/config/retired-keys.md`). A reader that meets one emits `field.retired` as a Warning, because
+the user loses what it set, often a restriction (`disallowed-tools`, `permission`,
+`network_deny`). Delete the module and each key falls back to `field.unknown`, except a
+`harness-overrides.flow` block, which becomes a `harness.unknown` Warning and stays a passthrough. Add a key to it
+only with the page's entry that says how to fix it. It covers keys of tables of fields and the
+`harness-overrides` namespaces; a model-policy `override` refuses what it does not define, so
+its retired keys stay an error that lists the keys it takes. A retired key is not a value: a
+value of a key Mars reads (`approval: yolo`) is an ordinary invalid value. The spellings of the
+Agent deny list (`tool_policy::DISALLOWED_SPELLINGS`) are also read by the translators, so
+they live there and `retired.rs` takes the Agent and Skill tool-policy rows from them and from
+`skill::tool_keys()`. The other code that names a key from
+outside is a translator from another format (`claude/`, `harness_overrides`, `set_aside`).

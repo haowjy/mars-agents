@@ -1,0 +1,10 @@
+[package]
+name = "p"
+version = "1.0.0"
+schema = 1
+
+[dependencies.one]
+path = "../one"
+
+[dependencies.two]
+path = "../two"

@@ -236,11 +236,9 @@ fn rename_claude_tools(
     let mut retired = Vec::new();
     let mut changed = false;
     for (key, action) in tools {
-        let granted = action.as_str() != Some("deny");
         let name = match key.as_str().map(claude_tool) {
             Some(ClaudeTool::Renamed(name)) => name,
-            Some(ClaudeTool::Folded(name)) if granted => name,
-            Some(ClaudeTool::Folded(_) | ClaudeTool::Retired) => {
+            Some(ClaudeTool::Retired) => {
                 retired.extend(key.as_str().map(str::to_owned));
                 changed = true;
                 continue;

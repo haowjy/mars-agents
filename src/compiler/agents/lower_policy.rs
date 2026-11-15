@@ -201,7 +201,7 @@ const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::All,
+            deny: DenyCarry::Unscoped,
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
@@ -432,7 +432,11 @@ impl<'a> AgentLoweringCtx<'a> {
         let target = self.target_name();
         let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
-        let disallowed = projection.natives(ToolAction::Deny, RuleKind::All);
+        let disallowed: Vec<_> = projection
+            .natives(ToolAction::Deny, RuleKind::All)
+            .into_iter()
+            .filter(|tool| !tool.contains('('))
+            .collect();
         for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
             self.lossy.push(LossyField {
                 field: format!("tools (allow {rule})"),
@@ -451,16 +455,8 @@ impl<'a> AgentLoweringCtx<'a> {
                 serde_yaml::Value::Sequence(allowed.iter().map(|tool| yv(tool)).collect()),
             );
         }
-        // Claude's own scoped deny removes the whole tool, so the entry is stricter than the rule.
-        for tool in disallowed.iter().filter(|tool| tool.contains('(')) {
-            self.lossy.push(LossyField {
-                field: format!("tools (deny {tool})"),
-                target: target.into(),
-                classification: Lossiness::Approximate {
-                    note: "Claude's disallowedTools removes the whole tool, not only the scoped calls",
-                },
-            });
-        }
+        // A scoped entry in `disallowedTools` removes the whole tool in Claude, so only whole-tool
+        // denies are written; `tool_loss` reports the scoped ones as lost.
         // The key Claude reads in an agent file is camelCase; `disallowed-tools` is a skill's.
         if !disallowed.is_empty() {
             self.yaml.insert(

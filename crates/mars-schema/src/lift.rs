@@ -98,17 +98,15 @@ pub(crate) fn lift_foreign_mcp_tokens_in_field(
     })
 }
 
-/// What Claude Code made of a tool name in an agent's tool list. Read from Claude 2.1.325's own
-/// alias table and its set of retired names, which a build ignores.
+/// What Claude Code made of a tool name in an agent's tool list. `CLAUDE_RENAMED` is Claude
+/// 2.1.325's own alias table, plus Mars's `Task` -> `agent`; `CLAUDE_RETIRED` is its set of
+/// retired names, which a build ignores.
 pub(crate) enum ClaudeTool {
     /// A name Claude still has, or one Mars reads with the vocabulary's own spelling.
     Current,
     /// Claude's name for this tool changed; the scope stays.
     Renamed(String),
-    /// A removed tool whose work another tool does. A grant becomes that tool; a deny has
-    /// nothing to carry, because denying the old name must not deny the tool that took over.
-    Folded(String),
-    /// A tool that no longer exists anywhere: nothing to grant or deny.
+    /// A tool that no longer exists: nothing to grant or deny. Claude ignores the name too.
     Retired,
 }
 
@@ -119,8 +117,13 @@ const CLAUDE_RENAMED: &[(&str, &str)] = &[
     ("Agent", "agent"),
     ("KillShell", "TaskStop"),
     ("KillBash", "TaskStop"),
+    ("ListPeers", "ListAgents"),
+    ("Brief", "SendUserMessage"),
+    ("ListMcpResources", "ListMcpResourcesTool"),
+    ("ReadMcpResource", "ReadMcpResourceTool"),
+    ("ReadMcpResourceDir", "ReadMcpResourceDirTool"),
+    ("Eval", "REPL"),
 ];
-const CLAUDE_FOLDED: &[(&str, &str)] = &[("NotebookRead", "Read")];
 const CLAUDE_RETIRED: &[&str] = &[
     "AgentOutput",
     "AgentOutputTool",
@@ -129,6 +132,8 @@ const CLAUDE_RETIRED: &[&str] = &[
     "BashOutputTool",
     "Frame",
     "FrameRead",
+    // Not a Claude tool any more; only a permission-rule name. Claude has no alias to `Read`.
+    "NotebookRead",
     "SuggestBackgroundPR",
     "TaskOutput",
     "TeamCreate",
@@ -146,8 +151,6 @@ pub(crate) fn claude_tool(raw: &str) -> ClaudeTool {
     };
     if let Some(new) = find(CLAUDE_RENAMED) {
         ClaudeTool::Renamed(new)
-    } else if let Some(new) = find(CLAUDE_FOLDED) {
-        ClaudeTool::Folded(new)
     } else if CLAUDE_RETIRED.contains(&head) {
         ClaudeTool::Retired
     } else {

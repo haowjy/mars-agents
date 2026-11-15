@@ -139,7 +139,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `skills.load` | `skills:` plus the end-of-body reminder used by `claude --agent` | exact for subagents; approximate for `--agent` |
 | `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
-| `tools` denials | `disallowedTools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names. Claude reads `disallowedTools` in an agent file and ignores `disallowed-tools` (a skill's key); a scoped entry such as `Bash(git push *)` removes the whole tool there, which is recorded as approximate |
+| `tools` denials | `disallowedTools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names. Claude reads `disallowedTools` in an agent file and ignores `disallowed-tools` (a skill's key); a scoped entry such as `Bash(git push *)` would remove the whole tool there, so only whole-tool denies are written and each scoped deny is a lost shell or tool restriction, shown by default (one line for the project, one per agent with `--verbose`) |
 | `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
 | `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
 | `approval` | dropped | dropped |

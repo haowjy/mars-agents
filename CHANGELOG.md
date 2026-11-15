@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.3] - 2026-11-15
+
+### Fixed
+- `mars add` no longer refuses a Claude Agent or skill whose unquoted frontmatter value YAML refuses (a `: `, or any of `{}[]*&#!|>%@` or a backtick, for example `description: [DEPRECATED] ...` or `... <example>Context: ...`), which Claude Code loads. The value is read as quoted text; `mars check` warns. Schema 1 files stay strict. See [Dialect](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#dialect).
+
 ## [0.33.2] - 2026-11-15
 
 ### Fixed

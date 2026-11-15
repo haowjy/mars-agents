@@ -380,12 +380,12 @@
         "changes": {
           "skills/colon/SKILL.md": [
             {
-              "code": "skill.description-repaired",
+              "code": "frontmatter.repaired",
               "severity": "warning",
               "path": [
                 "description"
               ],
-              "message": "the unquoted `description` held a colon, which YAML cannot read; it was quoted"
+              "message": "the unquoted value of `description` is not valid plain YAML; it was quoted, as Claude Code does"
             }
           ],
           "skills/everything/SKILL.md": [

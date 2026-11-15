@@ -392,9 +392,11 @@ fn lift_agent(
     changed
 }
 
-/// Quote an unquoted `description:` whose value holds a colon: the most common invalid YAML
-/// in real skills. Returns the repaired document, or `None` when there is nothing to quote.
-pub(crate) fn repair_description(text: &str) -> Option<String> {
+/// Quote every unquoted top-level `key: value` whose value YAML cannot read as a plain scalar:
+/// a `: ` or trailing `:` inside it, or a leading `@`, backtick or `%`. Claude Code reads a
+/// frontmatter that fails to parse the same way, so a definition it loads must load here.
+/// Returns the repaired document and the keys it quoted, or `None` when nothing needed quoting.
+pub(crate) fn repair_plain_values(text: &str) -> Option<(String, Vec<String>)> {
     let lines = text.split_inclusive('\n').collect::<Vec<_>>();
     if lines.first().map(|line| line.trim_end()) != Some("---") {
         return None;
@@ -404,38 +406,69 @@ pub(crate) fn repair_description(text: &str) -> Option<String> {
         .skip(1)
         .position(|line| line.trim_end() == "---")?
         + 1;
-    let index = (1..close).find(|&index| lines[index].starts_with("description:"))?;
-    let value = lines[index]["description:".len()..].trim();
-    let plain = !value.is_empty()
-        && !value.starts_with(['"', '\'', '|', '>', '[', '{', '&', '*', '!', '#']);
-    if !plain || !(value.contains(": ") || value.ends_with(':')) {
-        return None;
+    let mut repaired = String::with_capacity(text.len() + 16);
+    let mut quoted_keys = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        let entry = (index <= close && index > 1)
+            .then(|| plain_entry(line))
+            .flatten();
+        let Some((key, value)) = entry else {
+            repaired.push_str(line);
+            continue;
+        };
+        // Continuation lines of a plain scalar are indented and fold into one line.
+        let mut folded = value.to_owned();
+        while index < close
+            && lines[index].starts_with([' ', '\t'])
+            && !lines[index].trim().is_empty()
+        {
+            folded.push(' ');
+            folded.push_str(lines[index].trim());
+            index += 1;
+        }
+        repaired.push_str(&format!(
+            "{key}: {}\n",
+            serde_json::to_string(&folded).ok()?
+        ));
+        quoted_keys.push(key.to_owned());
     }
-    // Continuation lines of a plain scalar are indented and fold into one line.
-    let mut folded = value.to_owned();
-    let mut next = index + 1;
-    while next < close && lines[next].starts_with([' ', '\t']) && !lines[next].trim().is_empty() {
-        folded.push(' ');
-        folded.push_str(lines[next].trim());
-        next += 1;
-    }
-    let quoted = serde_json::to_string(&folded).ok()?;
-    let mut repaired = String::with_capacity(text.len() + 8);
-    lines[..index]
-        .iter()
-        .for_each(|line| repaired.push_str(line));
-    repaired.push_str(&format!("description: {quoted}\n"));
-    lines[next..]
-        .iter()
-        .for_each(|line| repaired.push_str(line));
-    Some(repaired)
+    (!quoted_keys.is_empty()).then_some((repaired, quoted_keys))
 }
 
-pub(crate) fn repaired_diagnostic() -> SchemaDiagnostic {
+/// A top-level `key: value` line whose plain value YAML would refuse.
+fn plain_entry(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(':')?;
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        || !value.starts_with([' ', '\t'])
+    {
+        return None;
+    }
+    let value = value.trim();
+    let plain = !value.is_empty()
+        && !value.starts_with(['"', '\'', '|', '>', '[', '{', '&', '*', '!', '#']);
+    (plain && (value.contains(": ") || value.ends_with(':') || value.starts_with(['@', '`', '%'])))
+        .then_some((key, value))
+}
+
+pub(crate) const REPAIRED: &str = "frontmatter.repaired";
+
+pub(crate) fn repaired_diagnostic(keys: &[String]) -> SchemaDiagnostic {
     SchemaDiagnostic::new(
-        "skill.description-repaired",
+        REPAIRED,
         Severity::Warning,
-        key_path("description"),
-        "the unquoted `description` held a colon, which YAML cannot read; it was quoted",
+        key_path(&keys[0]),
+        format!(
+            "the unquoted value of {} is not valid plain YAML; it was quoted, as Claude Code does",
+            keys.iter()
+                .map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     )
 }

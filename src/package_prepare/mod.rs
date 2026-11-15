@@ -435,7 +435,7 @@ pub(crate) enum Subject<'a> {
 /// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
 /// are printed every time with the file they are in. `own_files` is a package's own checkout
 /// (`mars check`), where the author can fix the file: it also prints each ignored execution
-/// field.
+/// field and each quoted frontmatter value.
 pub(crate) fn report_diagnostics(
     prepared: &Prepared,
     label: &dyn Fn(&str) -> String,
@@ -453,7 +453,10 @@ pub(crate) fn report_diagnostics(
         diag.schema(lost, &label(relative), false);
     }
     if own_files {
-        for (relative, ignored) in prepared.ignored_execution_fields() {
+        for (relative, ignored) in prepared
+            .ignored_execution_fields()
+            .chain(prepared.repaired_values())
+        {
             diag.schema(ignored, &label(relative), false);
         }
     }

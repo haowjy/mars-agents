@@ -569,7 +569,7 @@ What its files say is the same function `@meridian-flow/mars-schema` exports as 
 | `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
 | `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
 
-Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
+Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch is `[dependency-incomplete]`; both are errors. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
 
 `mars check` also reports what depends on a machine, a target or a Mars version, which the function does not:
 - Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback; "no agents or skills found" is an error
@@ -591,7 +591,7 @@ preview** (`collect_prepared_source_lossiness_diagnostics`) against the configur
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 
-`--json` prints `agents`, `skills`, `errors` and `warnings` (strings), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only.
+`--json` prints `agents`, `skills`, `errors` and `warnings` (strings), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
 
 ```bash
 mars check                   # Check current directory

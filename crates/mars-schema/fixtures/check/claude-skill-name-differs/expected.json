@@ -23,7 +23,7 @@
         "path": [
           "name"
         ],
-        "message": "skill folder `lint` doesn't match its `name` `Linter Tool`; the item loads under both"
+        "message": "skill folder `lint` doesn't match its `name` `Linter Tool`; Claude lists it as `Linter Tool`, but skill refs and install use the folder name `lint`"
       }
     ],
     "skills/ok/SKILL.md": [
@@ -33,7 +33,7 @@
         "path": [
           "name"
         ],
-        "message": "skill folder `ok` doesn't match its `name` `renamed`; the item loads under both"
+        "message": "skill folder `ok` doesn't match its `name` `renamed`; Claude lists it as `renamed`, but skill refs and install use the folder name `ok`"
       }
     ]
   },

@@ -217,6 +217,14 @@ impl Found {
             } else {
                 ("skill folder", item.definition.slug.clone())
             };
+            let consequence = if item.agent {
+                "the item loads under both".to_string()
+            } else {
+                format!(
+                    "Claude lists it as `{}`, but skill refs and install use the folder name `{file}`",
+                    item.name()
+                )
+            };
             self.rule(
                 &item.definition.source_path,
                 SchemaDiagnostic::new(
@@ -224,7 +232,7 @@ impl Found {
                     Severity::Info,
                     key_path("name"),
                     format!(
-                        "{noun} `{file}` doesn't match its `name` `{}`; the item loads under both",
+                        "{noun} `{file}` doesn't match its `name` `{}`; {consequence}",
                         item.name()
                     ),
                 ),
@@ -253,7 +261,7 @@ impl Found {
                     Severity::Error,
                     key_path("name"),
                     format!(
-                        "{} name `{}` is also the name of {others}",
+                        "{} name `{}` is also the name of {others}; `mars sync` installs both, and one native file replaces the other",
                         item.definition.kind,
                         item.name()
                     ),
@@ -301,13 +309,13 @@ impl Found {
             if duplicate.packages.iter().flatten().next().is_none() {
                 continue;
             }
-            let dependencies = duplicate
+            let names = duplicate
                 .packages
                 .iter()
                 .flatten()
                 .map(|name| format!("`{name}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
+                .collect::<Vec<_>>();
+            let dependencies = names.join(", ");
             if duplicate.packages.contains(&None) {
                 let Some(root) = prepared.definitions.iter().find(|definition| {
                     ItemKind::from(definition.kind) == duplicate.kind
@@ -335,8 +343,10 @@ impl Found {
                         Severity::Warning,
                         key_path("dependencies"),
                         format!(
-                            "{} `{}` is installed from {dependencies}, which ship it under one name",
-                            duplicate.kind, duplicate.slug
+                            "{} `{}` is shipped by {}; one is installed",
+                            duplicate.kind,
+                            duplicate.slug,
+                            both(&names)
                         ),
                     ),
                 );
@@ -580,11 +590,30 @@ fn missing_message(missing: &MissingSkill) -> String {
         None => "add the skill's source package as a dependency, or remove the skill reference"
             .to_string(),
     };
-    let searched = std::iter::once("(this package)")
-        .chain(missing.searched.iter().map(String::as_str))
+    let own = match &missing.package {
+        Some(package) => package.as_str(),
+        None => "(this package)",
+    };
+    let searched = std::iter::once(own)
+        .chain(
+            missing
+                .searched
+                .iter()
+                .map(String::as_str)
+                .filter(|name| *name != own),
+        )
         .collect::<Vec<_>>()
         .join(", ");
     format!(
         "{agent} references skill `{skill}` not found in local package or dependencies\n  searched: {searched}\n  hint: {remedy}"
     )
+}
+
+/// "both `a` and `b`", or "`a`, `b` and `c`" for more.
+fn both(names: &[String]) -> String {
+    match names {
+        [first, second] => format!("both {first} and {second}"),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        [] => String::new(),
+    }
 }

@@ -7,7 +7,7 @@
         "path": [
           "dependencies"
         ],
-        "message": "skill `x` is installed from `one`, `two`, which ship it under one name"
+        "message": "skill `x` is shipped by both `one` and `two`; one is installed"
       }
     ]
   },

@@ -15,7 +15,7 @@
         "path": [
           "name"
         ],
-        "message": "agent name `dup` is also the name of `agents/b.md`"
+        "message": "agent name `dup` is also the name of `agents/b.md`; `mars sync` installs both, and one native file replaces the other"
       },
       {
         "code": "definition.name-mismatch",
@@ -33,7 +33,7 @@
         "path": [
           "name"
         ],
-        "message": "agent name `dup` is also the name of `agents/a.md`"
+        "message": "agent name `dup` is also the name of `agents/a.md`; `mars sync` installs both, and one native file replaces the other"
       },
       {
         "code": "definition.name-mismatch",

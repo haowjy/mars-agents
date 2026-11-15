@@ -17,7 +17,7 @@
         "path": [
           "name"
         ],
-        "message": "skill folder `review` doesn't match its `name` `looks`; the item loads under both"
+        "message": "skill folder `review` doesn't match its `name` `looks`; Claude lists it as `looks`, but skill refs and install use the folder name `review`"
       }
     ]
   },

@@ -382,7 +382,7 @@ fn examine(
                     .collect();
             }
             Err(error) => errors.push(format!(
-                "dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
+                "[dependency-resolution] dependency graph resolution failed: {error}\n  hint: check network access, or use `mars version --force` to bypass the publish gate"
             )),
         }
     }
@@ -399,7 +399,7 @@ fn examine(
     if fetched {
         errors.extend(result.missing_dependencies.iter().map(|missing| {
             format!(
-                "dependency `{}` was not in the resolved graph, so skill references were not checked",
+                "[dependency-incomplete] dependency `{}` was not in the resolved graph, so skill references were not checked",
                 missing.name
             )
         }));
@@ -429,6 +429,20 @@ fn examine(
     Ok((lens, prepared, report))
 }
 
+/// The first component of `path` under `base` that is a symlink, as a path under `base`.
+fn symlink_within(base: &Path, path: &str) -> Option<String> {
+    let mut walked = base.to_path_buf();
+    let mut relative = std::path::PathBuf::new();
+    for component in Path::new(path).components() {
+        walked.push(component);
+        relative.push(component);
+        if std::fs::symlink_metadata(&walked).is_ok_and(|meta| meta.is_symlink()) {
+            return Some(relative.display().to_string());
+        }
+    }
+    None
+}
+
 /// The findings of `check`, each named by its file. A dependency's own Agent is named by the
 /// dependency.
 fn file_findings(
@@ -442,15 +456,21 @@ fn file_findings(
                    dependency: Option<&str>,
                    label: String,
                    diagnostic: &SchemaDiagnostic| {
+        let mut message = diagnostic.message.clone();
+        if diagnostic.code == "definition.duplicate-name"
+            && dependency.is_none()
+            && let Some(link) = symlink_within(base, source_path)
+        {
+            message.push_str(&format!(
+                "; `{link}` is a symlink, so the same file has two names"
+            ));
+        }
         // One note per unknown key, across the files that carry it.
         let line = if diagnostic.code == "field.unknown" {
             diag.schema(diagnostic, &label, false);
             None
         } else {
-            Some(format!(
-                "[{}] {label}: {}",
-                diagnostic.code, diagnostic.message
-            ))
+            Some(format!("[{}] {label}: {message}", diagnostic.code))
         };
         findings.push(FileFinding {
             source_path: source_path.to_owned(),
@@ -458,7 +478,7 @@ fn file_findings(
             code: diagnostic.code.clone(),
             severity: diagnostic.severity,
             path: diagnostic.path.clone(),
-            message: diagnostic.message.clone(),
+            message,
             line,
         });
     };

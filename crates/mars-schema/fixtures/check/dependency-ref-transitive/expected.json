@@ -9,7 +9,7 @@
           "path": [
             "skills"
           ],
-          "message": "agent `helper` of dependency `two` references skill `nowhere` not found in local package or dependencies\n  searched: (this package), one, two\n  hint: use a version of `two` that ships it, or add a dependency that does"
+          "message": "agent `helper` of dependency `two` references skill `nowhere` not found in local package or dependencies\n  searched: two, one\n  hint: use a version of `two` that ships it, or add a dependency that does"
         }
       ]
     }

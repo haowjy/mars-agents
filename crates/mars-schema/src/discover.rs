@@ -417,25 +417,34 @@ pub(crate) fn finish(
             .then_with(|| left.slug.cmp(&right.slug))
             .then_with(|| left.source_path.cmp(&right.source_path))
     });
-    let mut names = BTreeMap::new();
+    let mut by_slug: BTreeMap<_, Vec<&str>> = BTreeMap::new();
     for definition in &definitions {
-        let key = (definition.kind, definition.slug.clone());
-        if let Some(first) = names.insert(key, definition.source_path.clone()) {
+        by_slug
+            .entry((definition.kind, definition.slug.as_str()))
+            .or_default()
+            .push(definition.source_path.as_str());
+    }
+    for ((kind, slug), paths) in by_slug.iter().filter(|(_, paths)| paths.len() > 1) {
+        for path in paths {
+            let others = paths
+                .iter()
+                .filter(|other| *other != path)
+                .map(|other| format!("`{other}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
             diagnostics
-                .entry(definition.source_path.clone())
+                .entry((*path).to_string())
                 .or_default()
                 .push(SchemaDiagnostic::new(
                     "import.duplicate-slug",
                     Severity::Error,
                     Vec::new(),
                     format!(
-                        "{} slug `{}` is selected by both `{first}` and `{}`",
-                        match definition.kind {
+                        "{} slug `{slug}` is also selected by {others}",
+                        match kind {
                             DefinitionKind::Agent => "agent",
                             DefinitionKind::Skill => "skill",
                         },
-                        definition.slug,
-                        definition.source_path
                     ),
                 ));
         }

@@ -65,8 +65,10 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
   next `mars link` or `mars sync` warns `target-unmanaged-collision` and skips them, and the user
   has to `--force` to adopt files they never wrote.
 - **A kill after the lock write and before `config.save`** leaves the lock claiming outputs for a
-  target that settings do not list. `unlink` will not touch it, because `target_was_managed` is
-  false. Neither half-write is repaired automatically.
+  target that settings do not list. `unlink` treats a target the lock claims as managed
+  (`target::lock_claims`) and cleans it up; `link` finds the claim installed and finishes it.
+  The kill after the copies is not repaired: matching bytes are not evidence of ownership, so the
+  claim would have to be published before the copies.
 - `--force` also decides adoption diagnostics: `warn_no_installed_claim_adopted` fires only when a
   claim is missing, so re-linking an already linked target is silent.
 
@@ -79,8 +81,9 @@ MCP through the same `reconcile_mcp` and `RemovalPlan` path sync uses.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> NotManaged: target not in settings or managed_root
+  [*] --> NotManaged: target in no settings layer and no lock record
   NotManaged --> NotManaged: print not a managed target, no writes
+  [*] --> Refused: target is .mars, the canonical store
   [*] --> Managed
   Managed --> Managed: remove each recorded output, deepest path first
   Managed --> Managed: remove hooks and MCP entries recorded for the target
@@ -92,9 +95,12 @@ stateDiagram-v2
 - **Order is files, then config, then lock.** A kill between files and lock leaves records for
   paths that no longer exist; `cleanup_orphans` counts an absent recorded path as a confirmed
   deletion, so the next sync drops them. A kill between `config.save` and `lock::write` leaves a
-  target out of settings that still has lock records, the mirror of what `link`'s crash leaves.
-- **A target that is not managed is not touched at all**, even if files exist there
-  (`target_was_managed`): it prints and exits 0.
+  target out of settings that still has lock records, the mirror of what `link`'s crash leaves;
+  the next `unlink` finishes it through `lock_claims`.
+- **A target is managed if mars.toml, mars.local.toml or the lock names it** (`target_was_managed`).
+  `unlink` edits both settings files. A target still listed in the user config is refused, since
+  `unlink` does not edit that file. An unmanaged target is not touched at all, even if files exist
+  there: it prints and exits 0.
 - `settings_updated` and `target_was_managed` are two bools that can disagree (settings changed
   for a target that was not managed); both are set from the same retain and clear block.
 

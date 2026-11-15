@@ -8,9 +8,7 @@ use wait_timeout::ChildExt;
 
 use crate::harness::registry;
 use crate::models::probes::ProbeRefreshMode;
-use crate::models::probes::cursor_cache::CachedCursorProbeOutcome;
-use crate::models::probes::opencode_cache::CachedProbeOutcome;
-use crate::models::probes::pi_cache::CachedPiProbeOutcome;
+use crate::models::probes::cache::{self, CachedProbeOutcome};
 use crate::models::probes::{
     CursorProbeResult, ObservedOutcome, OpenCodeProbeResult, PiProbeResult, ProbeObservation,
 };
@@ -35,9 +33,9 @@ impl Default for CapabilityCollectionOptions {
 #[derive(Debug, Clone)]
 pub struct CapabilitySnapshot {
     pub executable: BTreeMap<HarnessId, ExecutableState>,
-    pub opencode: CachedProbeOutcome,
-    pub pi: CachedPiProbeOutcome,
-    pub cursor: CachedCursorProbeOutcome,
+    pub opencode: CachedProbeOutcome<OpenCodeProbeResult>,
+    pub pi: CachedProbeOutcome<PiProbeResult>,
+    pub cursor: CachedProbeOutcome<CursorProbeResult>,
     pub offline: bool,
 }
 
@@ -82,20 +80,20 @@ impl ListingEvidenceSet {
     }
 
     pub fn from_outcomes(
-        opencode: Option<&CachedProbeOutcome>,
-        pi: Option<&CachedPiProbeOutcome>,
-        cursor: Option<&CachedCursorProbeOutcome>,
+        opencode: Option<&CachedProbeOutcome<OpenCodeProbeResult>>,
+        pi: Option<&CachedProbeOutcome<PiProbeResult>>,
+        cursor: Option<&CachedProbeOutcome<CursorProbeResult>>,
     ) -> Self {
         let mut evidence = Self::from_results_assuming_latest_ok(
             opencode.and_then(CachedProbeOutcome::result),
-            pi.and_then(CachedPiProbeOutcome::result),
-            cursor.and_then(CachedCursorProbeOutcome::result),
+            pi.and_then(CachedProbeOutcome::result),
+            cursor.and_then(CachedProbeOutcome::result),
         );
         evidence.opencode.latest_attempt_ok =
             opencode.is_none_or(CachedProbeOutcome::latest_attempt_ok);
-        evidence.pi.latest_attempt_ok = pi.is_none_or(CachedPiProbeOutcome::latest_attempt_ok);
+        evidence.pi.latest_attempt_ok = pi.is_none_or(CachedProbeOutcome::latest_attempt_ok);
         evidence.cursor.latest_attempt_ok =
-            cursor.is_none_or(CachedCursorProbeOutcome::latest_attempt_ok);
+            cursor.is_none_or(CachedProbeOutcome::latest_attempt_ok);
         evidence
     }
 
@@ -134,14 +132,17 @@ pub struct CapabilitySession {
     installed: HashSet<String>,
     offline: bool,
     probe_refresh: ProbeRefreshMode,
-    opencode: Option<ObservedOutcome<CachedProbeOutcome>>,
-    pi: Option<ObservedOutcome<CachedPiProbeOutcome>>,
-    cursor: Option<ObservedOutcome<CachedCursorProbeOutcome>>,
+    opencode: Option<ObservedOutcome<CachedProbeOutcome<OpenCodeProbeResult>>>,
+    pi: Option<ObservedOutcome<CachedProbeOutcome<PiProbeResult>>>,
+    cursor: Option<ObservedOutcome<CachedProbeOutcome<CursorProbeResult>>>,
 }
 
 impl CapabilitySession {
     #[cfg(test)]
-    pub(crate) fn set_opencode_outcome_for_test(&mut self, outcome: CachedProbeOutcome) {
+    pub(crate) fn set_opencode_outcome_for_test(
+        &mut self,
+        outcome: CachedProbeOutcome<OpenCodeProbeResult>,
+    ) {
         self.opencode = Some(ObservedOutcome {
             outcome,
             observation: None,
@@ -149,7 +150,7 @@ impl CapabilitySession {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedPiProbeOutcome) {
+    pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedProbeOutcome<PiProbeResult>) {
         self.pi = Some(ObservedOutcome {
             outcome,
             observation: None,
@@ -157,7 +158,10 @@ impl CapabilitySession {
     }
 
     #[cfg(test)]
-    pub(crate) fn set_cursor_outcome_for_test(&mut self, outcome: CachedCursorProbeOutcome) {
+    pub(crate) fn set_cursor_outcome_for_test(
+        &mut self,
+        outcome: CachedProbeOutcome<CursorProbeResult>,
+    ) {
         self.cursor = Some(ObservedOutcome {
             outcome,
             observation: None,
@@ -207,13 +211,10 @@ impl CapabilitySession {
         self.installed.extend(harnesses);
     }
 
-    pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome {
+    pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome<OpenCodeProbeResult> {
         if self.opencode.is_none() {
-            let observed = crate::models::probes::opencode_cache::probe_cached_observed(
-                &self.installed,
-                self.offline,
-                self.probe_refresh,
-            );
+            let observed =
+                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
             self.opencode = Some(observed);
         }
         &self
@@ -223,15 +224,15 @@ impl CapabilitySession {
             .outcome
     }
 
-    pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome> {
+    pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome<OpenCodeProbeResult>> {
         self.opencode.as_ref().map(|observed| &observed.outcome)
     }
 
-    pub fn loaded_pi_outcome(&self) -> Option<&CachedPiProbeOutcome> {
+    pub fn loaded_pi_outcome(&self) -> Option<&CachedProbeOutcome<PiProbeResult>> {
         self.pi.as_ref().map(|observed| &observed.outcome)
     }
 
-    pub fn loaded_cursor_outcome(&self) -> Option<&CachedCursorProbeOutcome> {
+    pub fn loaded_cursor_outcome(&self) -> Option<&CachedProbeOutcome<CursorProbeResult>> {
         self.cursor.as_ref().map(|observed| &observed.outcome)
     }
 
@@ -242,33 +243,27 @@ impl CapabilitySession {
 
     pub fn loaded_pi_probe_result(&self) -> Option<&PiProbeResult> {
         self.loaded_pi_outcome()
-            .and_then(CachedPiProbeOutcome::result)
+            .and_then(CachedProbeOutcome::result)
     }
 
     pub fn loaded_cursor_probe_result(&self) -> Option<&CursorProbeResult> {
         self.loaded_cursor_outcome()
-            .and_then(CachedCursorProbeOutcome::result)
+            .and_then(CachedProbeOutcome::result)
     }
 
-    pub fn pi_outcome(&mut self) -> &CachedPiProbeOutcome {
+    pub fn pi_outcome(&mut self) -> &CachedProbeOutcome<PiProbeResult> {
         if self.pi.is_none() {
-            let observed = crate::models::probes::pi_cache::probe_cached_observed(
-                &self.installed,
-                self.offline,
-                self.probe_refresh,
-            );
+            let observed =
+                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
             self.pi = Some(observed);
         }
         &self.pi.as_ref().expect("loaded Pi outcome").outcome
     }
 
-    pub fn cursor_outcome(&mut self) -> &CachedCursorProbeOutcome {
+    pub fn cursor_outcome(&mut self) -> &CachedProbeOutcome<CursorProbeResult> {
         if self.cursor.is_none() {
-            let observed = crate::models::probes::cursor_cache::probe_cached_observed(
-                &self.installed,
-                self.offline,
-                self.probe_refresh,
-            );
+            let observed =
+                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
             self.cursor = Some(observed);
         }
         &self.cursor.as_ref().expect("loaded Cursor outcome").outcome
@@ -320,8 +315,8 @@ impl CapabilitySession {
         }
         if self.installed.contains(HarnessId::Pi.as_str()) {
             probes.push(match self.loaded_pi_outcome() {
-                None | Some(CachedPiProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
-                Some(CachedPiProbeOutcome::Failed(_)) => ProbeListing::Failed,
+                None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
+                Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
                 Some(outcome) => {
                     ProbeListing::Listed(outcome.result()?.model_slugs.iter().cloned().collect())
                 }
@@ -377,7 +372,7 @@ impl CapabilitySession {
                 .take()
                 .map(|observed| observed.outcome)
                 .unwrap_or_else(|| {
-                    cached_opencode_outcome(&self.installed, self.offline, self.probe_refresh)
+                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
                 })
         } else {
             CachedProbeOutcome::Unavailable
@@ -387,20 +382,20 @@ impl CapabilitySession {
                 .take()
                 .map(|observed| observed.outcome)
                 .unwrap_or_else(|| {
-                    cached_pi_outcome(&self.installed, self.offline, self.probe_refresh)
+                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
                 })
         } else {
-            CachedPiProbeOutcome::Unavailable
+            CachedProbeOutcome::Unavailable
         };
         let cursor = if scope.permits("cursor") {
             self.cursor
                 .take()
                 .map(|observed| observed.outcome)
                 .unwrap_or_else(|| {
-                    cached_cursor_outcome(&self.installed, self.offline, self.probe_refresh)
+                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
                 })
         } else {
-            CachedCursorProbeOutcome::Unavailable
+            CachedProbeOutcome::Unavailable
         };
 
         CapabilitySnapshot {
@@ -411,30 +406,6 @@ impl CapabilitySession {
             offline: self.offline,
         }
     }
-}
-
-fn cached_opencode_outcome(
-    installed: &HashSet<String>,
-    is_offline: bool,
-    probe_refresh: ProbeRefreshMode,
-) -> CachedProbeOutcome {
-    crate::models::probes::opencode_cache::probe_cached(installed, is_offline, probe_refresh)
-}
-
-fn cached_pi_outcome(
-    installed: &HashSet<String>,
-    is_offline: bool,
-    probe_refresh: ProbeRefreshMode,
-) -> CachedPiProbeOutcome {
-    crate::models::probes::pi_cache::probe_cached(installed, is_offline, probe_refresh)
-}
-
-fn cached_cursor_outcome(
-    installed: &HashSet<String>,
-    is_offline: bool,
-    probe_refresh: ProbeRefreshMode,
-) -> CachedCursorProbeOutcome {
-    crate::models::probes::cursor_cache::probe_cached(installed, is_offline, probe_refresh)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -652,19 +623,17 @@ mod tests {
                 error: None,
             },
         ));
-        session.set_pi_outcome_for_test(CachedPiProbeOutcome::Failed(PiProbeResult {
+        session.set_pi_outcome_for_test(CachedProbeOutcome::Failed(PiProbeResult {
             compatible: true,
             model_probe_success: false,
             error: Some("listing failed".into()),
             ..PiProbeResult::default()
         }));
-        session.set_cursor_outcome_for_test(CachedCursorProbeOutcome::StaleFailed(
-            CursorProbeResult {
-                model_probe_success: true,
-                slugs: vec!["gpt-5".into()],
-                error: None,
-            },
-        ));
+        session.set_cursor_outcome_for_test(CachedProbeOutcome::StaleFailed(CursorProbeResult {
+            model_probe_success: true,
+            slugs: vec!["gpt-5".into()],
+            error: None,
+        }));
         let expected = [
             (HarnessId::OpenCode, true, false),
             (HarnessId::Pi, false, false),

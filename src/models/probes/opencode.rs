@@ -25,6 +25,25 @@ pub fn probe() -> OpenCodeProbeResult {
     probe_with_timeout(probe_timeout())
 }
 
+impl super::cache::CachedProbe for OpenCodeProbeResult {
+    const HARNESS: &'static str = "opencode";
+    const CACHE_FILE: &'static str = "opencode-probe.json";
+    const LOCK_FILE: &'static str = ".opencode-probe.lock";
+    const SCHEMA_VERSION: u32 = 1;
+
+    fn probe() -> Self {
+        probe()
+    }
+
+    fn is_usable(&self) -> bool {
+        self.model_probe_success
+    }
+
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
 /// Probe OpenCode with a specific timeout.
 pub fn probe_with_timeout(timeout: Duration) -> OpenCodeProbeResult {
     let mut result = OpenCodeProbeResult::default();

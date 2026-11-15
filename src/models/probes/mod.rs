@@ -1,14 +1,11 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::error::MarsError;
 
+pub mod cache;
 pub mod cursor;
-pub mod cursor_cache;
 pub mod opencode;
-pub mod opencode_cache;
 pub mod pi;
-pub mod pi_cache;
 pub mod probe_refresh;
 
 pub use probe_refresh::ProbeRefreshMode;
@@ -51,12 +48,4 @@ pub struct ProbeObservation {
 pub struct ObservedOutcome<T> {
     pub outcome: T,
     pub observation: Option<ProbeObservation>,
-}
-
-pub fn should_probe_opencode(installed: &HashSet<String>, is_offline: bool) -> bool {
-    !is_offline && installed.contains("opencode")
-}
-
-pub fn should_probe_cursor(installed: &HashSet<String>, is_offline: bool) -> bool {
-    !is_offline && installed.contains("cursor")
 }

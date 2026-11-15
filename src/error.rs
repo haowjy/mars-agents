@@ -39,6 +39,11 @@ pub enum LockError {
     #[error("lock file corrupt: {message}")]
     Corrupt { message: String },
 
+    /// The write journal refuses to recover. `mars repair` leaves the journal in place,
+    /// so it is not a way out; the message says what is.
+    #[error("{message}")]
+    PendingWrite { message: String },
+
     #[error("parse error: {0}")]
     Parse(#[from] toml::de::Error),
 

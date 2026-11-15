@@ -239,8 +239,9 @@ fn remove_entries(
     };
     let mut removed = 0;
     for entry in expected {
-        // Mars appends, so the last equal entry is the one it wrote; an equal entry the user
-        // wrote is earlier and stays.
+        // Mars appends, so the last equal entry is usually the one it wrote. Equality ignores
+        // key order, so when a user's equal entry comes later, theirs is removed and Mars's
+        // stays: the count is right either way, only the surviving entry's layout differs.
         let entry = to_ordered(entry.clone());
         if let Some(index) = current.iter().rposition(|candidate| *candidate == entry) {
             current.remove(index);

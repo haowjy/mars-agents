@@ -7,6 +7,12 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-11-15
+
+### Fixed
+- An Agent whose frontmatter has no `name` now loads in Claude after `mars sync`: every native Agent file (`.claude`, `.codex`, `.opencode`, `.cursor`, `.pi`, and `mars build plugin` trees) carries the name Mars resolved, the file name when frontmatter has none.
+- `mars sync` and `mars build plugin` now warn about Agents written for Claude with no `description`, which Claude does not load (`native-agent-no-description`). `mars sync` lists them in one line per sync.
+
 ## [0.33.1] - 2026-11-15
 
 ### Fixed

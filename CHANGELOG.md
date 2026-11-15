@@ -7,6 +7,12 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.7] - 2026-11-15
+
+### Fixed
+- A sync killed while it updates a hook entry in `.claude/settings.local.json`, `.codex/hooks.json` or `.cursor/hooks.json` no longer leaves the file without the hook: removing the old entry and adding the new one are one atomic save.
+- A sync no longer reports a hook file as written, or its stale hook keys as removed, when the save failed.
+
 ## [0.33.6] - 2026-11-15
 
 ### Fixed

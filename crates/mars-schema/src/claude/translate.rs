@@ -8,14 +8,15 @@ use crate::diagnostic::{SchemaDiagnostic, Severity, key_path};
 use crate::frontmatter::Frontmatter;
 use crate::harness_overrides::move_harness_only_keys;
 use crate::item::DefinitionKind;
-use crate::lift::{claude_task_to_agent, lift_foreign_tools};
+use crate::lift::{ClaudeTool, claude_tool, lift_foreign_tools};
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
+use crate::tool_names::{Capability, parse_mars_tool_name};
+use crate::tool_natives;
 use crate::tool_policy;
 
 /// Skill keys Claude reads and schema v1 does not define. They move to
 /// `harness-overrides.claude`, which only `.claude/` output receives. (`model` and `effort`
-/// have v1 meaning on Agents only; a skill carries neither.) `tools` and the `allowed-tools`
-/// family have their own warning.
+/// have v1 meaning on Agents only; a skill carries neither.) `tools` has its own warning.
 const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "argument-hint",
     "arguments",
@@ -26,6 +27,9 @@ const CLAUDE_ONLY_SKILL_KEYS: &[&str] = &[
     "hooks",
     "paths",
     "shell",
+    "allowed-tools",
+    "disallowed-tools",
+    "disallowedTools",
 ];
 
 /// Spellings only Claude writes, which a manifest-free tree can be predicted Claude from.
@@ -50,6 +54,9 @@ const CLAUDE_ONLY_AGENT_KEYS: &[&str] = &[
     "background",
     "isolation",
     "hooks",
+    "autoCompactWindow",
+    "omitClaudeMd",
+    "experimental",
 ];
 
 /// `changes` gets what the lift dropped or moved; `findings` what it could not convert.
@@ -69,6 +76,15 @@ fn warn(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
     diagnostics.push(SchemaDiagnostic::new(
         code,
         Severity::Warning,
+        Vec::new(),
+        message,
+    ));
+}
+
+fn info(diagnostics: &mut Vec<SchemaDiagnostic>, code: &str, message: String) {
+    diagnostics.push(SchemaDiagnostic::new(
+        code,
+        Severity::Info,
         Vec::new(),
         message,
     ));
@@ -158,16 +174,20 @@ fn lift_skill(
         }
     }
 
-    // `allowed-tools` is a turn-scoped grant that restricts nothing, and schema v1 has no
-    // skill tool rules, so the keys go rather than becoming a restriction.
-    let dropped = remove_keys(fm, crate::skill::tool_keys());
+    // `allowed-tools` pre-approves tools while the skill runs and `disallowed-tools` removes them;
+    // schema v1 has no skill tool rules, so both stay Claude's (see `CLAUDE_ONLY_SKILL_KEYS`).
+    // The other tool keys mean nothing to Claude and go.
+    let dropped = remove_keys(
+        fm,
+        crate::skill::tool_keys().filter(|key| !CLAUDE_ONLY_SKILL_KEYS.contains(key)),
+    );
     if !dropped.is_empty() {
         changed = true;
         warn(
             changes,
             "skill.tools-dropped",
             format!(
-                "removed {}: schema v1 has no skill tool rules, and Claude's `allowed-tools` grants without restricting",
+                "removed {}: schema v1 has no skill tool rules",
                 dropped.join(", ")
             ),
         );
@@ -195,6 +215,121 @@ fn mcp_server_names(value: &Value) -> (Vec<String>, bool) {
         other => collect(other),
     }
     (names, has_definitions)
+}
+
+/// Bring the entries of `tools` to the names Claude uses today, and say what that does to what
+/// the agent can use.
+///
+/// A name Claude renamed becomes its new name; a retired one is removed (Claude ignores it too).
+/// Mars reads each remaining name as a capability, and Claude lowers a capability to all of its
+/// tools, so a grant can reach more than the author listed (`Edit` also enables `Write` and
+/// `NotebookEdit`). That widening is a finding: the list was a restriction.
+fn rename_claude_tools(
+    fm: &mut Frontmatter,
+    changes: &mut Vec<SchemaDiagnostic>,
+    findings: &mut Vec<SchemaDiagnostic>,
+) -> bool {
+    let Some(Value::Mapping(tools)) = fm.get("tools") else {
+        return false;
+    };
+    let mut renamed = Mapping::new();
+    let mut retired = Vec::new();
+    let mut changed = false;
+    for (key, action) in tools {
+        let granted = action.as_str() != Some("deny");
+        let name = match key.as_str().map(claude_tool) {
+            Some(ClaudeTool::Renamed(name)) => name,
+            Some(ClaudeTool::Folded(name)) if granted => name,
+            Some(ClaudeTool::Folded(_) | ClaudeTool::Retired) => {
+                retired.extend(key.as_str().map(str::to_owned));
+                changed = true;
+                continue;
+            }
+            Some(ClaudeTool::Current) | None => {
+                renamed.insert(key.clone(), action.clone());
+                continue;
+            }
+        };
+        changed = true;
+        // Two entries meeting under one name keep the stricter action.
+        let stricter = |kept: &Value, new: &Value| match (kept.as_str(), new.as_str()) {
+            (Some("deny"), _) => kept.clone(),
+            (_, Some("deny")) => new.clone(),
+            (Some("ask"), _) => kept.clone(),
+            (_, Some("ask")) => new.clone(),
+            _ => kept.clone(),
+        };
+        let key = Value::String(name);
+        let action = match renamed.get(&key) {
+            Some(kept) => stricter(kept, action),
+            None => action.clone(),
+        };
+        renamed.insert(key, action);
+    }
+    if !retired.is_empty() {
+        info(
+            changes,
+            "agent.tools-retired",
+            format!(
+                "removed {}: Claude no longer has the tool",
+                retired
+                    .iter()
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    widened(&renamed, findings);
+    if changed {
+        fm.insert("tools", Value::Mapping(renamed));
+    }
+    changed
+}
+
+/// Report what an allowlist grants on Claude beyond the tools it names.
+fn widened(tools: &Mapping, findings: &mut Vec<SchemaDiagnostic>) {
+    if tools.get("*").and_then(Value::as_str) != Some("deny") {
+        return;
+    }
+    let granted: Vec<&str> = tools
+        .iter()
+        .filter(|(_, action)| action.as_str() == Some("allow"))
+        .filter_map(|(key, _)| key.as_str())
+        .collect();
+    let mut extra = Vec::new();
+    for name in &granted {
+        let Ok(parsed) = parse_mars_tool_name(name) else {
+            continue;
+        };
+        if parsed.pattern.is_some() {
+            continue;
+        }
+        let Capability::Builtin(capability) = parsed.capability else {
+            continue;
+        };
+        let Some(row) = tool_natives::lookup(capability, HarnessId::Claude) else {
+            continue;
+        };
+        for tool in row.native_tools() {
+            if !granted.iter().any(|name| name.eq_ignore_ascii_case(tool))
+                && !matches!(claude_tool(tool), ClaudeTool::Retired)
+                && !extra.contains(tool)
+            {
+                extra.push(*tool);
+            }
+        }
+    }
+    if !extra.is_empty() {
+        warn(
+            findings,
+            "agent.tools-widened",
+            format!(
+                "Mars reads each tool as a capability, so Claude also gets {}, which the list did not name",
+                extra.join(", ")
+            ),
+        );
+    }
 }
 
 fn lift_agent(
@@ -234,12 +369,12 @@ fn lift_agent(
         for entry in denied {
             let name = parse_foreign_mcp_token(&entry, ForeignMcpDialect::Claude)
                 .map(|mcp_ref| mcp_ref.to_canonical())
-                .or_else(|| claude_task_to_agent(&entry))
                 .unwrap_or(entry);
             tools.insert(Value::String(name), Value::String("deny".into()));
         }
         fm.insert("tools", Value::Mapping(tools));
     }
+    changed |= rename_claude_tools(fm, changes, findings);
 
     if fm
         .get("model")
@@ -248,6 +383,11 @@ fn lift_agent(
     {
         fm.remove("model");
         changed = true;
+        info(
+            changes,
+            "agent.model-inherit",
+            "removed `model: inherit`: a Claude agent with no `model` runs on the model of the session that starts it".into(),
+        );
     }
 
     changed |= move_to_claude_overrides(fm, DefinitionKind::Agent, changes);

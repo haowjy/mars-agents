@@ -95,5 +95,14 @@
     "edges": [],
     "uses_providers": []
   },
-  "diagnostics": {}
+  "diagnostics": {
+    "agents/native.md": [
+      {
+        "code": "agent.tools-widened",
+        "severity": "warning",
+        "path": [],
+        "message": "Mars reads each tool as a capability, so Claude also gets SendMessage, ListAgents, which the list did not name"
+      }
+    ]
+  }
 }

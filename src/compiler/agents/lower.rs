@@ -48,7 +48,7 @@ mod tests {
             "mcp__ wire identifier should be preserved verbatim: {text}"
         );
         assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "tools"
+            field.field == "tools (allow my_custom_tool)"
                 && field.target == "Claude"
                 && matches!(
                     field.classification,

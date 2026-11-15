@@ -449,6 +449,16 @@
               "message": "hooks are not converted yet"
             }
           ]
+        },
+        "changes": {
+          "agents/helper.md": [
+            {
+              "code": "agent.model-inherit",
+              "severity": "info",
+              "path": [],
+              "message": "removed `model: inherit`: a Claude agent with no `model` runs on the model of the session that starts it"
+            }
+          ]
         }
       }
     }

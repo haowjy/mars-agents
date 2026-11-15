@@ -53,6 +53,8 @@
         "tasklist",
         "task_update",
         "taskupdate",
+        "task_stop",
+        "taskstop",
         "update_plan"
       ]
     },
@@ -186,12 +188,16 @@
   "natives": {
     "claude": {
       "agent": {
-        "kind": "tools",
-        "tools": [
+        "kind": "scoped-tools",
+        "unscoped": [
           "Agent",
           "SendMessage",
           "ListAgents"
-        ]
+        ],
+        "scoped": [
+          "Agent"
+        ],
+        "note": "Claude's `Agent(type, ...)` limits which sub-agent types can be started; SendMessage and ListAgents take no scope"
       },
       "ask_user": {
         "kind": "tools",

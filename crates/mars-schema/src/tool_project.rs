@@ -432,11 +432,12 @@ impl<'a> PolicyProjection<'a> {
         names
     }
 
-    /// Why Mars could not name each `kind` rule with `action`.
-    pub fn gaps(&self, action: ToolAction, kind: RuleKind) -> Vec<&'static str> {
-        self.select(action, kind)
-            .into_iter()
-            .filter_map(ProjectedRule::gap)
+    /// Each `kind` rule with `action` that Mars could not name, as the author wrote it, with why.
+    pub fn gaps(&self, action: ToolAction, kind: RuleKind) -> Vec<(String, &'static str)> {
+        self.rules
+            .iter()
+            .filter(|(rule, _)| rule.action == action && kind.covers(rule))
+            .filter_map(|(rule, projected)| Some((rule.render(), projected.gap()?)))
             .collect()
     }
 }

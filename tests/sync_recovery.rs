@@ -26,12 +26,14 @@ fn retry_recovers_canonical_writes_after_a_later_apply_error() {
         ).unwrap();
         if established {
             dir.child("agents/existing.md")
-                .write_str("# Existing\n")
+                .write_str("---\n---\n# Existing\n")
                 .unwrap();
             sync(dir.path()).assert().success();
         }
         let old_lock = fs::read(dir.path().join("mars.lock")).ok();
-        dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+        dir.child("agents/muse.md")
+            .write_str("---\n---\n# Muse\n")
+            .unwrap();
         dir.child("skills/craft/SKILL.md")
             .write_str("# Craft\n")
             .unwrap();
@@ -46,7 +48,7 @@ fn retry_recovers_canonical_writes_after_a_later_apply_error() {
         assert_eq!(fs::read(dir.path().join("mars.lock")).ok(), old_lock);
         assert_eq!(
             fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-            "# Muse\n"
+            "---\n---\n# Muse\n"
         );
         fs::rename(
             dir.path().join(".mars/skills"),
@@ -89,7 +91,9 @@ fn interrupted_package() -> TempDir {
     dir.child("mars.toml").write_str(
         "[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n",
     ).unwrap();
-    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Muse\n")
+        .unwrap();
     dir.child("skills/craft/SKILL.md")
         .write_str("# Craft\n")
         .unwrap();
@@ -105,7 +109,7 @@ fn interrupted_package() -> TempDir {
 fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     let dir = interrupted_package();
     dir.child(".mars/agents/muse.md")
-        .write_str("# User edits\n")
+        .write_str("---\n---\n# User edits\n")
         .unwrap();
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     for force in [false, true] {
@@ -116,7 +120,7 @@ fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
         command.assert().failure();
         assert_eq!(
             fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-            "# User edits\n"
+            "---\n---\n# User edits\n"
         );
         assert!(!dir.path().join("mars.lock").exists());
     }
@@ -128,7 +132,7 @@ fn interrupted_output_changed_by_user_is_not_adopted_even_with_force() {
     sync(dir.path()).assert().success();
     assert_eq!(
         fs::read_to_string(dir.path().join("preserved-muse.md")).unwrap(),
-        "# User edits\n"
+        "---\n---\n# User edits\n"
     );
 }
 
@@ -190,7 +194,7 @@ fn stale_or_corrupt_intent_does_not_claim_unowned_outputs() {
         assert_eq!(fs::read(dir.path().join(INTENT)).unwrap(), intent_before);
         assert_eq!(
             fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-            "# Muse\n"
+            "---\n---\n# Muse\n"
         );
     }
 }
@@ -247,14 +251,20 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
     dir.child("mars.lock")
         .write_str("preserve this corrupt lock\n")
         .unwrap();
-    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Muse\n")
+        .unwrap();
     dir.child("skills/craft/SKILL.md")
         .write_str("# Craft\n")
         .unwrap();
     dir.child(".mars/skills")
         .write_str("obstruction\n")
         .unwrap();
-    for text in ["# Muse\n", "# Revised\n", "# Revised again\n"] {
+    for text in [
+        "---\n---\n# Muse\n",
+        "---\n---\n# Revised\n",
+        "---\n---\n# Revised again\n",
+    ] {
         dir.child("agents/muse.md").write_str(text).unwrap();
         offline_mars(dir.path())
             .args(["repair", "--root", dir.path().to_str().unwrap()])
@@ -274,7 +284,7 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
         .success();
     assert_eq!(
         fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-        "# Revised again\n"
+        "---\n---\n# Revised again\n"
     );
     assert!(
         lock::load(dir.path())
@@ -300,11 +310,13 @@ fn malformed_intent_identity_cannot_replace_another_items_ownership() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
     dir.child("agents/existing.md")
-        .write_str("# Existing\n")
+        .write_str("---\n---\n# Existing\n")
         .unwrap();
     sync(dir.path()).assert().success();
     let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
-    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Muse\n")
+        .unwrap();
     dir.child("skills/craft/SKILL.md")
         .write_str("# Craft\n")
         .unwrap();
@@ -326,7 +338,7 @@ fn malformed_intent_identity_cannot_replace_another_items_ownership() {
     assert_eq!(fs::read(dir.path().join(INTENT)).unwrap(), journal);
     assert_eq!(
         fs::read_to_string(dir.path().join(".mars/agents/existing.md")).unwrap(),
-        "# Existing\n"
+        "---\n---\n# Existing\n"
     );
 }
 
@@ -334,7 +346,9 @@ fn malformed_intent_identity_cannot_replace_another_items_ownership() {
 fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str("[package]\nname='demo'\nversion='1.0.0'\nschema=1\n[settings]\ntargets=[]\nagent_emission='never'\n").unwrap();
-    dir.child("agents/muse.md").write_str("# Muse\n").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Muse\n")
+        .unwrap();
     sync(dir.path()).assert().success();
     let mut previous = lock::load(dir.path()).unwrap();
     previous.items.get_mut("agent/muse").unwrap().outputs[0].mark_pending_deletion();
@@ -373,7 +387,7 @@ fn recovery_journal_path_is_reserved_before_any_canonical_writes() {
             .unwrap();
         // Also ensure a preceding valid item cannot be partially installed.
         dir.child("source/agents/a-first.md")
-            .write_str("# First\n")
+            .write_str("---\n---\n# First\n")
             .unwrap();
         let path = match kind {
             "agent" => "source/agents/reserved.md",
@@ -441,17 +455,19 @@ fn invalid_write_record_shapes_preserve_recovery_evidence() {
 #[test]
 fn recovery_survives_multiple_failures_and_source_changes() {
     let dir = interrupted_package();
-    dir.child("agents/new.md").write_str("# New\n").unwrap();
+    dir.child("agents/new.md")
+        .write_str("---\n---\n# New\n")
+        .unwrap();
     sync(dir.path()).assert().failure();
     assert!(dir.path().join(".mars/agents/new.md").is_file());
     dir.child("agents/muse.md")
-        .write_str("# Revised\n")
+        .write_str("---\n---\n# Revised\n")
         .unwrap();
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     sync(dir.path()).assert().success();
     assert_eq!(
         fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
-        "# Revised\n"
+        "---\n---\n# Revised\n"
     );
     let lock = lock::load(dir.path()).unwrap();
     assert!(lock.contains_output(".mars", "agents/new.md"));
@@ -480,7 +496,7 @@ fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
         .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
         .unwrap();
     dir.child("source/agents/muse.md")
-        .write_str("# Muse\n")
+        .write_str("---\n---\n# Muse\n")
         .unwrap();
     dir.child(".mars-src/skills/craft/SKILL.md")
         .write_str("# Craft\n")
@@ -512,7 +528,7 @@ fn interrupted_destination_move_preserves_old_claim_until_removal() {
         .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
         .unwrap();
     dir.child("source/agents/muse.md")
-        .write_str("# Muse\n")
+        .write_str("---\n---\n# Muse\n")
         .unwrap();
     sync(dir.path()).assert().success();
     let old_lock = fs::read(dir.path().join("mars.lock")).unwrap();
@@ -551,7 +567,7 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
             .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
             .unwrap();
         dir.child("source/agents/muse.md")
-            .write_str("# Original\n")
+            .write_str("---\n---\n# Original\n")
             .unwrap();
         if established {
             dir.child("mars.toml")
@@ -569,7 +585,7 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
         for dest in ["z-first", "a-second", "m-third"] {
             dir.child("mars.toml").write_str(&config(dest)).unwrap();
             dir.child("source/agents/muse.md")
-                .write_str(&format!("# {dest}\n"))
+                .write_str(&format!("---\n---\n# {dest}\n"))
                 .unwrap();
             sync(dir.path()).assert().failure();
             assert!(dir.path().join(format!(".mars/{dest}/muse.md")).is_file());
@@ -585,7 +601,7 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
         assert!(recovered.contains_output(".mars", "m-third/muse.md"));
         assert_eq!(
             fs::read_to_string(dir.path().join(".mars/m-third/muse.md")).unwrap(),
-            "# m-third\n"
+            "---\n---\n# m-third\n"
         );
         let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
         sync(dir.path()).assert().success();
@@ -607,7 +623,7 @@ fn interrupted_move_keeps_native_agent_on_the_first_successful_retry() {
             .write_str("[package]\nname='dep'\nversion='1.0.0'\nschema=1\n")
             .unwrap();
         dir.child("source/agents/muse.md")
-            .write_str(&agent("# Original"))
+            .write_str(&agent("---\n---\n# Original"))
             .unwrap();
         dir.child("mars.toml").write_str(&config("agents")).unwrap();
         sync(dir.path()).assert().success();
@@ -617,7 +633,7 @@ fn interrupted_move_keeps_native_agent_on_the_first_successful_retry() {
         dir.child("mars.toml").write_str(&config("old")).unwrap();
         if updated {
             dir.child("source/agents/muse.md")
-                .write_str(&agent("# Intermediate"))
+                .write_str(&agent("---\n---\n# Intermediate"))
                 .unwrap();
         }
         dir.child(".mars-src/skills/craft/SKILL.md")

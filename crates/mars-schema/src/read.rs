@@ -86,7 +86,8 @@ fn installed<T>(
     }
 }
 
-/// Read one schema-owned file, choosing the reader from its package-relative path.
+/// Read one schema-owned file, choosing the reader from its package-relative path. A file read
+/// here is schema 1, so an Agent with no frontmatter is an error (see [`require_agent_frontmatter`]).
 pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
     let parts: Vec<&str> = path.split('/').collect();
     match parts.as_slice() {
@@ -96,7 +97,7 @@ pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
                 .strip_suffix(".md")
                 .is_some_and(|slug| !slug.is_empty()) =>
         {
-            Ok(read_definition(DefinitionKind::Agent, text))
+            Ok(read_authored(DefinitionKind::Agent, text))
         }
         ["skills", slug, "SKILL.md"] if !slug.is_empty() => {
             Ok(read_definition(DefinitionKind::Skill, text))
@@ -113,6 +114,34 @@ pub(crate) fn read_definition(kind: DefinitionKind, text: &str) -> Reading {
     match kind {
         DefinitionKind::Agent => Reading::Agent(crate::agent::read(text)),
         DefinitionKind::Skill => Reading::Skill(crate::skill::read(text)),
+    }
+}
+
+/// [`read_definition`] for a file written as schema 1: an Agent with no frontmatter is an error.
+/// Installed trees, pre-v1 packages and foreign layouts are read with [`read_definition`]
+/// alone, because their body-only Agents were valid in the format that wrote them.
+pub(crate) fn read_authored(kind: DefinitionKind, text: &str) -> Reading {
+    let mut reading = read_definition(kind, text);
+    if let Reading::Agent(agent) = &mut reading {
+        require_agent_frontmatter(text, &mut agent.diagnostics);
+    }
+    reading
+}
+
+/// A file whose first line is not `---` has no frontmatter, so every field takes its default,
+/// and the defaults are the widest permissions: one stray line above `---` would turn a narrow
+/// Agent into an unrestricted one that reads clean.
+fn require_agent_frontmatter(text: &str, diagnostics: &mut Vec<SchemaDiagnostic>) {
+    if matches!(crate::frontmatter::yaml_text(text), Ok(None)) {
+        diagnostics.insert(
+            0,
+            SchemaDiagnostic::new(
+                "frontmatter.missing",
+                crate::diagnostic::Severity::Error,
+                Vec::new(),
+                "an Agent's frontmatter must open with `---` on the file's first line; without it every field takes its default",
+            ),
+        );
     }
 }
 

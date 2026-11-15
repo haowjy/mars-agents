@@ -83,7 +83,7 @@ fn declared_package_preserves_native_metadata_resources_and_catalog_across_syncs
         }
         // Generated foreign-container signals must not reinterpret package inputs.
         dir.child(".claude/agents/unrelated.md")
-            .write_str("# Unrelated")
+            .write_str("---\n---\n# Unrelated")
             .unwrap();
         assert_noop(dir.path());
     }
@@ -93,13 +93,18 @@ fn declared_package_preserves_native_metadata_resources_and_catalog_across_syncs
 fn undeclared_project_ignores_root_sources_but_keeps_local_overrides() {
     let dir = TempDir::new().unwrap();
     dir.child("mars.toml").write_str(SETTINGS).unwrap();
-    dir.child("agents/muse.md").write_str("# Root").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Root")
+        .unwrap();
     dir.child(".mars-src/agents/local.md")
-        .write_str("# Local")
+        .write_str("---\n---\n# Local")
         .unwrap();
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/agents/muse.md").exists());
-    assert_eq!(read(dir.path(), ".mars/agents/local.md"), "# Local");
+    assert_eq!(
+        read(dir.path(), ".mars/agents/local.md"),
+        "---\n---\n# Local"
+    );
 }
 
 #[test]
@@ -213,19 +218,27 @@ fn nested_distribution_is_promoted_only_after_shallower_items_disappear() {
     dir.child("mars.toml")
         .write_str(&format!("{PACKAGE}{SETTINGS}"))
         .unwrap();
-    dir.child("agents/muse.md").write_str("# Root").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Root")
+        .unwrap();
     dir.child("cw/agents/muse.md")
-        .write_str("# Distribution")
+        .write_str("---\n---\n# Distribution")
         .unwrap();
     sync(dir.path()).assert().success();
-    assert_eq!(read(dir.path(), ".mars/agents/muse.md"), "# Root");
+    assert_eq!(read(dir.path(), ".mars/agents/muse.md"), "---\n---\n# Root");
     fs::remove_file(dir.child("agents/muse.md").path()).unwrap();
     sync(dir.path()).assert().success();
-    assert_eq!(read(dir.path(), ".mars/agents/muse.md"), "# Distribution");
+    assert_eq!(
+        read(dir.path(), ".mars/agents/muse.md"),
+        "---\n---\n# Distribution"
+    );
     dir.child("mars.toml").write_str(SETTINGS).unwrap();
     sync(dir.path()).assert().success();
     assert!(!dir.child(".mars/agents/muse.md").exists());
-    assert_eq!(read(dir.path(), "cw/agents/muse.md"), "# Distribution");
+    assert_eq!(
+        read(dir.path(), "cw/agents/muse.md"),
+        "---\n---\n# Distribution"
+    );
 }
 
 #[test]
@@ -304,7 +317,7 @@ fn self_overlays_installed_names_after_explicit_and_collision_renames() {
         // A self name matching the *installed* dependency name replaces it.
         project
             .child(format!("agents/{dependency_agent}.md"))
-            .write_str("# Self replacement")
+            .write_str("---\n---\n# Self replacement")
             .unwrap();
         sync(project.path()).assert().success();
         assert_eq!(
@@ -312,7 +325,7 @@ fn self_overlays_installed_names_after_explicit_and_collision_renames() {
                 project.path(),
                 &format!(".mars/agents/{dependency_agent}.md")
             ),
-            "# Self replacement"
+            "---\n---\n# Self replacement"
         );
         assert_noop(project.path());
     }

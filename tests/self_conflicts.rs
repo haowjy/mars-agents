@@ -64,18 +64,27 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                 };
                 dir.child("mars.toml").write_str(config).unwrap();
                 let source = dir.child(format!("{source_root}{source_rel}"));
-                let original = if same_bytes {
-                    "# Same\n"
+                let fence = if item_kind == mars_schema::item::ItemKind::Agent {
+                    "---\n---\n"
                 } else {
-                    "# Existing\n"
+                    ""
                 };
-                let desired = if same_bytes { original } else { "# Desired\n" };
-                source.write_str(desired).unwrap();
+                let original = if same_bytes {
+                    format!("{fence}# Same\n")
+                } else {
+                    format!("{fence}# Existing\n")
+                };
+                let desired = if same_bytes {
+                    original.clone()
+                } else {
+                    format!("{fence}# Desired\n")
+                };
+                source.write_str(&desired).unwrap();
                 let destination = dir.child(dest_rel);
                 if item_kind == mars_schema::item::ItemKind::Agent {
-                    destination.write_str(original).unwrap();
+                    destination.write_str(&original).unwrap();
                 } else {
-                    destination.child("SKILL.md").write_str(original).unwrap();
+                    destination.child("SKILL.md").write_str(&original).unwrap();
                 }
                 dir.child(".mars/unrelated.txt")
                     .write_str("sentinel\n")
@@ -181,10 +190,10 @@ fn force_frozen_only_succeeds_after_adoption_is_current() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("# Selected\n")
+        .write_str("---\n---\n# Selected\n")
         .unwrap();
     dir.child(".mars/agents/muse.md")
-        .write_str("# Authored\n")
+        .write_str("---\n---\n# Authored\n")
         .unwrap();
     let source_before = fs::read(dir.child(".mars-src/agents/muse.md").path()).unwrap();
     let canonical_before = fs::read(dir.child(".mars/agents/muse.md").path()).unwrap();
@@ -327,13 +336,13 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
         .write_str("[dependencies]\n")
         .unwrap();
     dir.child(".mars-src/agents/muse.md")
-        .write_str("# Selected agent\n")
+        .write_str("---\n---\n# Selected agent\n")
         .unwrap();
     dir.child(".mars-src/skills/craft/SKILL.md")
         .write_str("# Selected skill\n")
         .unwrap();
     dir.child(".mars/agents/muse.md")
-        .write_str("# Authored agent\n")
+        .write_str("---\n---\n# Authored agent\n")
         .unwrap();
     dir.child(".mars/skills")
         .write_str("unowned obstruction\n")
@@ -342,7 +351,7 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
     sync(dir.path()).arg("--force").assert().failure();
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "# Selected agent\n",
+        "---\n---\n# Selected agent\n",
         "the earlier adoption demonstrates failure happened during apply"
     );
     assert!(
@@ -465,26 +474,28 @@ fn canonical_collision_aborts_before_other_outputs_or_lock_change() {
         )
         .unwrap();
     dir.child("agents/owned.md")
-        .write_str("# Original")
+        .write_str("---\n---\n# Original")
         .unwrap();
     sync(dir.path()).assert().success();
     let lock = fs::read(dir.child("mars.lock").path()).unwrap();
-    dir.child("agents/owned.md").write_str("# Update").unwrap();
+    dir.child("agents/owned.md")
+        .write_str("---\n---\n# Update")
+        .unwrap();
     dir.child("agents/blocked.md")
-        .write_str("# Selected")
+        .write_str("---\n---\n# Selected")
         .unwrap();
     dir.child(".mars/agents/blocked.md")
-        .write_str("# User")
+        .write_str("---\n---\n# User")
         .unwrap();
     sync(dir.path()).arg("--json").assert().failure();
     assert_eq!(fs::read(dir.child("mars.lock").path()).unwrap(), lock);
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/owned.md").path()).unwrap(),
-        "# Original"
+        "---\n---\n# Original"
     );
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/blocked.md").path()).unwrap(),
-        "# User"
+        "---\n---\n# User"
     );
     fs::rename(
         dir.child(".mars/agents/blocked.md").path(),
@@ -512,7 +523,12 @@ fn unowned_self_links_are_refused_without_touching_referents_even_with_force() {
             } else {
                 ("skills/craft/SKILL.md", ".mars/skills/craft")
             };
-            project.child(source).write_str("# Authored").unwrap();
+            let authored = if kind == "agent" {
+                "---\n---\n# Authored"
+            } else {
+                "# Authored"
+            };
+            project.child(source).write_str(authored).unwrap();
             dir.child("outside/value").write_str("# Outside").unwrap();
             let target = match referent {
                 "source" if kind == "agent" => project.child(source).to_path_buf(),
@@ -536,7 +552,7 @@ fn unowned_self_links_are_refused_without_touching_referents_even_with_force() {
                 assert_eq!(fs::read_link(&destination).unwrap(), target);
                 assert_eq!(
                     fs::read_to_string(project.child(source).path()).unwrap(),
-                    "# Authored"
+                    authored
                 );
                 assert_eq!(
                     fs::read_to_string(dir.child("outside/value").path()).unwrap(),
@@ -557,14 +573,16 @@ fn self_updates_keep_existing_managed_modification_policy() {
             "[package]\nname = 'demo'\nversion = '1.0.0'\nschema = 1\n[settings]\nagent_emission = 'never'\n",
         )
         .unwrap();
-    dir.child("agents/muse.md").write_str("# Original").unwrap();
+    dir.child("agents/muse.md")
+        .write_str("---\n---\n# Original")
+        .unwrap();
     sync(dir.path()).arg("--diff").assert().success();
     assert!(!dir.child("mars.lock").exists());
     assert!(!dir.child(".mars/agents/muse.md").exists());
     sync(dir.path()).arg("--frozen").assert().failure();
     sync(dir.path()).assert().success();
     dir.child(".mars/agents/muse.md")
-        .write_str("# Modified output")
+        .write_str("---\n---\n# Modified output")
         .unwrap();
     sync(dir.path())
         .assert()
@@ -572,18 +590,18 @@ fn self_updates_keep_existing_managed_modification_policy() {
         .stderr(predicate::str::contains("preserving local content"));
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "# Modified output"
+        "---\n---\n# Modified output"
     );
     sync(dir.path()).arg("--force").assert().success();
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "# Original"
+        "---\n---\n# Original"
     );
     dir.child(".mars/agents/muse.md")
-        .write_str("# Modified again")
+        .write_str("---\n---\n# Modified again")
         .unwrap();
     dir.child("agents/muse.md")
-        .write_str("# Source update")
+        .write_str("---\n---\n# Source update")
         .unwrap();
     sync(dir.path())
         .assert()
@@ -591,7 +609,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
         .stderr(predicate::str::contains("overwriting with upstream"));
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
-        "# Source update"
+        "---\n---\n# Source update"
     );
 }
 

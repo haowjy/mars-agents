@@ -1,0 +1,95 @@
+{
+  "classification": {
+    "kind": "schema-1"
+  },
+  "manifest": {
+    "source_path": "mars.toml",
+    "output_path": "mars.toml",
+    "reading": {
+      "frontmatter": [
+        [
+          "name",
+          "demo"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "schema",
+          1
+        ]
+      ],
+      "fields": {
+        "name": "demo",
+        "version": "1.0.0",
+        "schema": 1
+      },
+      "body": null,
+      "diagnostics": []
+    },
+    "change": {
+      "kind": "none"
+    }
+  },
+  "definitions": [
+    {
+      "kind": "agent",
+      "slug": "coder",
+      "source_path": "agents/coder.md",
+      "output_path": "agents/coder.md",
+      "reading": {
+        "frontmatter": [],
+        "fields": {
+          "name": null,
+          "description": null,
+          "harness": null,
+          "model": null,
+          "mode": null,
+          "model-invocable": true,
+          "user-invocable": true,
+          "approval": null,
+          "sandbox": null,
+          "network": null,
+          "network-allow": [],
+          "network-deny": [],
+          "effort": null,
+          "skills": {
+            "load": [],
+            "available": []
+          },
+          "subagents": [],
+          "tools": [],
+          "harness-overrides": {},
+          "model-policies": []
+        },
+        "body": "stray\n---\nsandbox: read-only\n---\nBody\n",
+        "diagnostics": [
+          {
+            "code": "frontmatter.missing",
+            "severity": "error",
+            "path": [],
+            "message": "an Agent's frontmatter must open with `---` on the file's first line; without it every field takes its default"
+          }
+        ]
+      },
+      "change": {
+        "kind": "none"
+      }
+    }
+  ],
+  "payload": [],
+  "selection": {
+    "definitions": [
+      {
+        "kind": "agent",
+        "slug": "coder",
+        "output_path": "agents/coder.md",
+        "skills": []
+      }
+    ],
+    "edges": [],
+    "uses_providers": []
+  },
+  "diagnostics": {}
+}

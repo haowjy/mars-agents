@@ -1,4 +1,4 @@
-//! `mars version <bump|X.Y.Z> [--push] [--no-plugins]` — bump, commit, and tag.
+//! `mars version <bump|X.Y.Z> [--push] [--no-tag] [--no-plugins]` — bump, commit, and tag.
 
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
@@ -20,9 +20,13 @@ use super::{check, output};
 pub struct VersionArgs {
     /// Version bump: patch, minor, major, or explicit X.Y.Z
     pub bump: String,
-    /// Push branch and tag to origin after versioning
+    /// Push branch and tag to origin after versioning (with --no-tag, the branch only)
     #[arg(long)]
     pub push: bool,
+    /// Bump and commit but create no tag: leave tagging to CI, which tags the pushed commit
+    /// after its checks pass. The tag must still not exist yet.
+    #[arg(long)]
+    pub no_tag: bool,
     /// Force version even if package check fails (bypass publish gate)
     #[arg(long)]
     pub force: bool,
@@ -181,11 +185,13 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.project_root,
             &format!("git commit -m {tag}"),
         )?;
-        crate::platform::process::run_git(
-            &["tag", "-a", &tag, "-m", &tag],
-            &ctx.project_root,
-            &format!("git tag -a {tag} -m {tag}"),
-        )?;
+        if !args.no_tag {
+            crate::platform::process::run_git(
+                &["tag", "-a", &tag, "-m", &tag],
+                &ctx.project_root,
+                &format!("git tag -a {tag} -m {tag}"),
+            )?;
+        }
 
         Ok::<_, MarsError>(plugin_report)
     })();
@@ -210,18 +216,20 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.project_root,
             &format!("git push origin {branch}"),
         )?;
-        crate::platform::process::run_git(
-            &["push", "origin", &tag],
-            &ctx.project_root,
-            &format!("git push origin {tag}"),
-        )?;
+        if !args.no_tag {
+            crate::platform::process::run_git(
+                &["push", "origin", &tag],
+                &ctx.project_root,
+                &format!("git push origin {tag}"),
+            )?;
+        }
     }
 
     if json {
         let mut result = serde_json::json!({
             "ok": true,
             "version": next_version,
-            "tag": tag,
+            "tag": (!args.no_tag).then_some(&tag),
             "pushed": args.push,
         });
         if let Some(requirement) = &requires_mars {
@@ -247,7 +255,11 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 floor.at, floor.since
             ));
         }
-        println!("{tag}");
+        if args.no_tag {
+            println!("{tag} (not tagged)");
+        } else {
+            println!("{tag}");
+        }
     }
 
     Ok(0)
@@ -1174,6 +1186,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1208,6 +1221,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1245,6 +1259,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1287,6 +1302,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1310,6 +1326,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1329,6 +1346,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1347,6 +1365,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1371,6 +1390,7 @@ mod tests {
             push: true,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();
@@ -1395,6 +1415,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1429,6 +1450,7 @@ mod tests {
             push: false,
             force: false,
             no_plugins: false,
+            no_tag: false,
         };
 
         let err = run(&args, &ctx, true).unwrap_err();
@@ -1457,6 +1479,7 @@ mod tests {
             push: false,
             force: true,
             no_plugins: false,
+            no_tag: false,
         };
 
         let exit = run(&args, &ctx, true).unwrap();

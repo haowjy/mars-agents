@@ -136,7 +136,7 @@ pub enum Command {
     /// Show available updates without applying.
     Outdated(outdated::OutdatedArgs),
 
-    /// Bump package version in mars.toml, commit, and tag.
+    /// Bump package version in mars.toml, commit, and tag (--no-tag: leave the tag to CI).
     Version(version::VersionArgs),
 
     /// List managed items with status.

@@ -605,12 +605,16 @@ mars check ../my-agents      # Check another directory
 Version and release a package repository.
 
 ```bash
-mars version <patch|minor|major|X.Y.Z> [--push] [--force] [--no-plugins]
+mars version <patch|minor|major|X.Y.Z> [--push] [--no-tag] [--force] [--no-plugins]
 ```
 
 The command requires a clean Git worktree, runs the package publish checks, updates
 `[package].version` and `CHANGELOG.md`, commits the release, and creates the annotated version
 tag. `--push` pushes the current branch and tag after the local release succeeds.
+
+`--no-tag` leaves tagging to CI: the command does everything else (checks, plugin rebuild,
+commit, the refusal when the tag already exists) but creates no tag, and `--push` pushes only
+the branch. `--json` then reports `"tag": null`; the text output prints `vX.Y.Z (not tagged)`.
 
 When `[package].requires-mars` is missing or lower than the package's floor (what
 [`mars check`](#mars-check) derives from the keys the package uses), `mars version` writes

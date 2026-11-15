@@ -219,5 +219,9 @@ and commits them together. A failed build or release step rolls the touched path
 Use `--no-plugins` only as an escape hatch when intentionally releasing without rebuilding
 configured plugin output; `mars check` will continue to report stale or skipped output.
 
+To let CI own the tag, run `mars version patch --push --no-tag`. It bumps, rebuilds the
+plugin, commits and pushes the branch without a tag; CI runs its checks on that commit and
+creates the tag and release only if they pass, so a broken commit is never tagged.
+
 After pushing a plugin-carrying release, use the README's
 [install commands](../README.md#install-commands) to verify remote installation.

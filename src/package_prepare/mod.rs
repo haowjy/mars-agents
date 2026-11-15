@@ -272,10 +272,16 @@ pub(crate) fn prepare_rooted(
     };
     let prepared = package.prepared.clone();
     let package_name = dependency_name(&prepared, source_name);
+    // Only a git source is a tree the consumer cannot edit; a path source or an override is
+    // theirs, and `mars upgrade` would leave it unchanged.
+    let subject = match dependency.map(|entry| &entry.spec) {
+        Some(crate::config::SourceSpec::Git(_)) => Subject::Dependency(package_name, version),
+        _ => Subject::Package(package_name),
+    };
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &Subject::Dependency(package_name, version),
+        &subject,
         false,
         diag,
     );
@@ -410,7 +416,7 @@ pub(crate) fn prepare_project(
 
 pub(crate) enum Subject<'a> {
     Package(&'a str),
-    /// A package a consumer depends on, at the version the sync resolved.
+    /// A git package a consumer depends on, at the version the sync resolved.
     Dependency(&'a str, Option<&'a semver::Version>),
     AuthoredSource,
 }
@@ -442,7 +448,7 @@ pub(crate) fn report_diagnostics(
                 {
                     let mut for_consumer = diagnostic.clone();
                     for_consumer.message = format!(
-                        "this dependency{} was published before schema 1. Mars 0.34.0 and later do not read it: run `mars upgrade {name}` for a newer version, or stay on a Mars before 0.34.0",
+                        "this dependency{} was published before schema 1. Mars 0.34.0 and later do not read it: run `mars upgrade {name}` for a newer version (widen its `version` constraint if `mars upgrade` keeps this version), or stay on a Mars before 0.34.0",
                         version.map_or_else(String::new, |version| format!(
                             " is locked at {version}, a version that"
                         )),

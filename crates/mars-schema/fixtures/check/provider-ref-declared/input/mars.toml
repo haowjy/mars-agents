@@ -1,0 +1,8 @@
+[package]
+name = "p"
+version = "1.0.0"
+schema = 1
+uses-providers = ["acme"]
+
+[dependencies.one]
+path = "../one"

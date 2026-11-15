@@ -1,0 +1,30 @@
+{
+  "diagnostics": {
+    "agents/g.md": [
+      {
+        "code": "field.restriction-lost",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          0,
+          "override",
+          "sandbox"
+        ],
+        "message": "agent `g` lost the restriction `model-policies.0.override.sandbox`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[0].override.sandbox` has invalid value `nonsense`; allowed: default, read-only, workspace-write, danger-full-access); use default, read-only, workspace-write or danger-full-access"
+      },
+      {
+        "code": "field.execution-ignored",
+        "severity": "warning",
+        "path": [
+          "model-policies",
+          0,
+          "override",
+          "effort"
+        ],
+        "message": "agent `g`: `model-policies.0.override.effort: \"nonsense\"` ignored (not valid here); use none, low, medium, high, xhigh or max"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

@@ -1,0 +1,26 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `coder.md` doesn't match its `name` `other`; the item loads under both"
+      }
+    ],
+    "skills/review/SKILL.md": [
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "skill folder `review` doesn't match its `name` `looks`; Claude lists it as `looks`, but skill refs and install use the folder name `review`"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

@@ -62,6 +62,12 @@ Unknown keys are kept and reported as `field.unknown` `Info`. A key Mars moved o
 
 `inspect::inspect(&source, &hint)` reports what a repository is (a marketplace's plugins, a plugin's or skill tree's items, the dialect and its evidence), and `normalize::normalize(&request)` runs `prepare` on each selected root of a Claude plugin, marketplace, skill tree or other foreign layout and adds a generated `mars.toml` and provenance. Neither fetches anything: the caller fetches a remote marketplace plugin and inspects or normalizes the fetched tree with `hint.plugin` set to the plugin's entry.
 
+## Checking a package
+
+`check::check(&source, &prepared, &dependencies)` says what is wrong with a package, per file: `prepare`'s findings for each file plus the check's own, as `Check { diagnostics, dependency_diagnostics, missing_dependencies }`. `mars check` and the WASM `check` call it, so the rules live here and nowhere else. `dependencies` maps each package of the closure to the `SelectionFacts` of its `Prepared`; a dependency left out is in `missing_dependencies`, and while any is, no skill ref is judged.
+
+A finding is here when it is true of the package wherever it runs. What one harness target can't express or an older Mars can't read stays in the binary, where a target or a version exists. A level says what the author loses: `Error`, it won't load or install; `Warning`, something written won't take effect; `Info`, nothing written is lost. A rule about a package's files goes in `check.rs`, not in `src/cli/check.rs`.
+
 ## Rendering hooks
 
 `hooks::read(text, dir_name, origin)` reads one `hook.toml` into a `HookDef`. The `Origin` says whose hook it is: the project's own is read strictly, a dependency's unknown keys and events are skipped with a diagnostic. `HookDef::output(target, native_hook_text, origin, tokens)` returns what the hook installs on one target: merged events for Claude and Codex, or generated files for OpenCode and Pi (`typescript.rs` writes the TypeScript). Each target is one row in `hooks/targets.rs`: its events, the harness version it was checked against, and the rules that render for it. `Tokens` fills `${MARS_HOOK_DIR}` and `${MARS_HOOK_TARGET}`. The `@meridian-flow/mars-schema` package exposes this as `renderHooks`. The `hook.toml` format is in [Declaring Hooks in a Package](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#declaring-hooks-in-a-package).
@@ -83,7 +89,7 @@ Projection onto a particular harness, overlay application, precedence and everyt
 
 ## Fixtures
 
-`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `prepare`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
+`fixtures/<suite>/<case>/` holds the corpus that fixes the behaviour: `read`, `emit`, `prepare`, `check`, `normalize`, `selection`, `version`, `vocabulary` and `typescript-hooks`. `cargo test -p mars-schema` checks every case, and the npm package's `run-fixtures.mjs` checks the same cases through WebAssembly. Regenerate expected output with `MARS_UPDATE_FIXTURES=1 cargo test -p mars-schema` and review the diff: a changed reading is a change to the format.
 
 ## License
 

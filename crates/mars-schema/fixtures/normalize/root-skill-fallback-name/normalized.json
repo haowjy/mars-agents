@@ -98,7 +98,7 @@
           "SKILL.md": [
             {
               "code": "skill.name-invalid",
-              "severity": "warning",
+              "severity": "info",
               "path": [
                 "name"
               ],

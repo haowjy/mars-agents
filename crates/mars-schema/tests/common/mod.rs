@@ -8,9 +8,14 @@ use std::{
 };
 
 pub fn cases(suite: &str) -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures")
-        .join(suite);
+    cases_in(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join(suite),
+    )
+}
+
+pub fn cases_in(root: &Path) -> Vec<PathBuf> {
     let mut cases: Vec<_> = fs::read_dir(root)
         .unwrap()
         .map(|entry| entry.unwrap().path())

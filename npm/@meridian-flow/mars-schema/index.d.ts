@@ -376,7 +376,9 @@ export interface Prepared {
   /**
    * Package-level findings by source path: what discovery and translation met and could not
    * convert (`skill.*`, `agent.*`, `import.*`). A file's own reading diagnostics are on its
-   * `reading`.
+   * `reading`. `manifest.version-missing`, `skill.name-invalid` and `skill.description-too-long`
+   * are `info`: nothing the author wrote is lost. `skill.name-mismatch` no longer exists;
+   * `check` reports `definition.name-mismatch` (`info`) for every dialect.
    */
   diagnostics: { [sourcePath: string]: Diagnostic[] };
   /**
@@ -404,6 +406,52 @@ export function prepare(input: {
   context?: "package" | "authored-local" | "project";
   declaredDialect?: Dialect;
 }): Prepared;
+
+/**
+ * What a package's files say is wrong with it, wherever it runs: every finding `mars check`
+ * reports about an Agent, a skill or `mars.toml`, except those about a harness target or an
+ * older Mars. (`mars check` also reports the `requires-mars` floor, hooks, plugin output, model
+ * aliases, harness field loss and an empty package, so it can fail a package this accepts.)
+ * A level says what the author loses: an `error`, that it won't load or install; a `warning`,
+ * that something written won't take effect; an `info`, that nothing written is lost. Show errors
+ * and warnings by default, and info on request.
+ *
+ * Takes `prepare`'s input plus the dependencies, and prepares the root as `prepare` does. Throws
+ * `input.invalid` for an unknown key or an unrecognized `context`.
+ */
+export function check(input: {
+  files: Map<string, Uint8Array>;
+  context?: "package" | "authored-local" | "project";
+  declaredDialect?: Dialect;
+  /**
+   * The package's whole dependency closure, flat: every package reachable through any
+   * `[dependencies]` entry, filtered or not, one entry per source. The key is the name the
+   * source has in the `[dependencies]` table that declares it. Each value holds `prepare`'s
+   * result for the dependency, as `selectItems` takes a package; only its `selection` is read.
+   */
+  dependencies?: { [name: string]: { prepared: Prepared } };
+}): Check;
+
+export interface Check {
+  /**
+   * Findings in the root's own files, `mars.toml` first and then the paths in lexical order: for
+   * each path, what `prepare` returns for the same input plus the check's own, errors first.
+   * Dropping the check's own codes leaves what `prepare` returns for the path. A file with an
+   * `error` is unusable; an `error` on `mars.toml` makes the whole package unusable.
+   */
+  diagnostics: { [sourcePath: string]: Diagnostic[] };
+  /**
+   * `skill-ref.dependency` only: a dependency's own Agent names a skill no package ships. By the
+   * dependency's name, then the Agent's output path in it. Not the root's to fix.
+   */
+  dependency_diagnostics: { [dependency: string]: { [outputPath: string]: Diagnostic[] } };
+  /**
+   * Dependencies reachable from the root that `dependencies` lacks; `declared_in` is null for
+   * the root. While this is not empty the result is not a verdict: no skill ref was judged.
+   * Supply them and call again.
+   */
+  missing_dependencies: { name: string; declared_in: string | null }[];
+}
 
 export type Tree = Map<string, Uint8Array>;
 

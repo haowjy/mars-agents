@@ -1,0 +1,16 @@
+{
+  "diagnostics": {
+    "agents/coder.md": [
+      {
+        "code": "agent.description-missing",
+        "severity": "info",
+        "path": [
+          "description"
+        ],
+        "message": "agent `coder` has no `description`; Claude does not load an Agent without one"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

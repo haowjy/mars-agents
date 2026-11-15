@@ -32,6 +32,10 @@ and rules, so never add a binary-side copy.
 - Report wrong-transport MCP server fields as ignored rather than failing the parse,
   so a usable server can still install.
 
+## Checking
+
+`check.rs` is what `mars check` and the WASM `check` report about a package's own files. A rule about an Agent, a skill or `mars.toml` goes there, never in `src/cli/check.rs`. It reports what is true of the package wherever it runs: what a harness target can't express, or an older Mars can't read (the `requires-mars` floor, hooks, lost-in-lowering fields), stays in the binary. Grade a finding by what the author loses: `Error` it won't load or install, `Warning` something written won't take effect, `Info` nothing written is lost. For each path the result is `prepare`'s findings plus the check's own, so dropping the check's codes must leave what `prepare` returns for the path; both runners hold that. A new code is a fixture under `fixtures/check/` and a row in the code lists of both runners.
+
 ## Compatibility
 
 - Dependency `version` and `requires-mars` / `requires-meridian` use different

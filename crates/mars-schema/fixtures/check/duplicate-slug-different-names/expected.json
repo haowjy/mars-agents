@@ -1,0 +1,38 @@
+{
+  "diagnostics": {
+    "one/agents/x.md": [
+      {
+        "code": "definition.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "agent slug `x` is also selected by `two/agents/x.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `x.md` doesn't match its `name` `first`; the item loads under both"
+      }
+    ],
+    "two/agents/x.md": [
+      {
+        "code": "import.duplicate-slug",
+        "severity": "error",
+        "path": [],
+        "message": "agent slug `x` is selected by both `one/agents/x.md` and `two/agents/x.md`"
+      },
+      {
+        "code": "definition.name-mismatch",
+        "severity": "info",
+        "path": [
+          "name"
+        ],
+        "message": "agent file `x.md` doesn't match its `name` `second`; the item loads under both"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

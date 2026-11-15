@@ -552,16 +552,27 @@ mars check --root PATH
 | `path` | Directory to validate (default: current directory) |
 | `--root PATH` | The same directory, named as every other command names its root; `path` wins when both are given, so `meridian mars check <path>` (which appends `--root`) checks `<path>` |
 
-Does not require a mars project (no `mars.toml` needed). Validates:
-- `requires-mars` and `requires-meridian` syntax when `[package]` is present
-- Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback
-- Prints the `source package validates` line only when there are no errors
-- Definitions against [schema v1](../config/schema-v1.md): the same readings and diagnostics `mars sync` applies, so invalid values and malformed YAML are errors (exit 1), a retired key is a `field.retired` warning, unknown keys print as `info` and leave the exit code alone, and a package with no `schema` is an error
-- Frontmatter: name, description presence and consistency
-- Duplicate `(kind, name)` discoveries within the package
-- Skill dependency references (warns about external deps). A ref `<skill>__<provider>` passes when `[package] uses-providers` lists the provider; otherwise it is an error naming `uses-providers`, with or without `[dependencies]`. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine
-- Symlinks in source packages (warned as unsupported)
-- Missing `SKILL.md` in skill directories
+Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
+
+What its files say is the same function `@meridian-flow/mars-schema` exports as `check` (`mars_schema::check`). A level says what the author loses: an error, the file or package won't load or install; a warning, something written won't take effect; info, nothing written is lost.
+
+| Code | Level | When |
+|---|---|---|
+| `package.requirement` | error | `requires-mars` or `requires-meridian` is not a version requirement (both are reported) |
+| `definition.duplicate-name` | error | two Agents, or two skills, with one `name`; reported on each file |
+| `definition.duplicate-slug` | error | two files with one slug and different `name`s; `import.duplicate-slug` is on the second file |
+| `skill-ref.missing` | error | an Agent names a skill no package of the resolved graph ships. A dependency's own Agent is `skill-ref.dependency` |
+| `skill-ref.provider` | error | a ref `<skill>__<provider>` whose provider `[package] uses-providers` doesn't list |
+| `skill-ref.external` | warning | an Agent names a skill the package doesn't ship, and it has no `[dependencies]` (a consumer may add the package that does) |
+| `skill.no-definition` | warning | `skills/<dir>/` holds files and no `SKILL.md`, so none of it is installed |
+| `selection.duplicate-slug` | warning, info | two dependencies install one slug (warning); a root item and a dependency's (info: the root's is installed) |
+| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
+| `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
+
+Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch is `[dependency-incomplete]`; both are errors. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
+
+`mars check` also reports what depends on a machine, a target or a Mars version, which the function does not:
+- Package structure: convention folders named `agents/`, `skills/`, `hooks/`, or `bootstrap/` at non-hidden depth up to `MAX_DISCOVERY_WALK_DEPTH = 5`, plus package-root `SKILL.md` fallback; "no agents or skills found" is an error
 - Configured plugin output: missing/skipped builds, stale inputs, a different package or Mars
   version, hand-edited or missing generated files, root files left holding an earlier build's
   output, and conflicts at generated package-root paths
@@ -569,14 +580,18 @@ Does not require a mars project (no `mars.toml` needed). Validates:
   the keys it uses: `schema = 1` and `uses-providers` (0.20.0), `[plugin]` (0.19.0), `[hooks]` in a
   `hook.toml` (0.25.0), and a `deny` or `ask` in `[package.tools]` (0.30.0). A missing or lower
   requirement is an error that names the key and the line to write. See
-  [mars.toml](../config/mars-toml.md#package-optional)
+  [mars.toml](../config/mars-toml.md#package-optional). This is about an older Mars, so `mars check` can fail a package `check` accepts
 - Plugin compatibility: unknown `[plugin].harnesses` values
 - Hooks (`hooks/<name>/hook.toml`) that use `[hooks]`: warns when an `if` sits on an event that is not a tool event (it never matches), and for each event, handler type or matcher a managed target cannot render. See [Declaring Hooks in a Package](../config/mcp-and-hooks.md#declaring-hooks-in-a-package)
+- A model policy whose `alias` is not in the catalog, read from `mars.lock`
+- The `source package validates` line, printed only when there are no errors
 
 If a `mars.toml` is present in the target directory, also runs a **field-loss
 preview** (`collect_prepared_source_lossiness_diagnostics`) against the configured managed
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
+
+`--json` prints `agents`, `skills`, `errors` and `warnings` (strings), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
 
 ```bash
 mars check                   # Check current directory

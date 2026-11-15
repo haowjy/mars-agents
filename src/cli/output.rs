@@ -618,6 +618,10 @@ pub fn print_error(msg: &str) {
     narrate(Some((Color::Red, "✗")), msg);
 }
 
+pub fn print_note(msg: &str) {
+    narrate(Some((Color::Cyan, "ℹ")), msg);
+}
+
 pub fn print_info(msg: &str) {
     narrate(None, msg);
 }

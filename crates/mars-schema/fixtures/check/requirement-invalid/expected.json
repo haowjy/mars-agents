@@ -1,0 +1,26 @@
+{
+  "diagnostics": {
+    "mars.toml": [
+      {
+        "code": "package.requirement",
+        "severity": "error",
+        "path": [
+          "package",
+          "requires-mars"
+        ],
+        "message": "invalid mars version requirement `banana` in package `p`: unexpected character 'b' while parsing major version number"
+      },
+      {
+        "code": "package.requirement",
+        "severity": "error",
+        "path": [
+          "package",
+          "requires-meridian"
+        ],
+        "message": "invalid meridian version requirement `>=x` in package `p`: unexpected character 'x' while parsing major version number"
+      }
+    ]
+  },
+  "dependency_diagnostics": {},
+  "missing_dependencies": []
+}

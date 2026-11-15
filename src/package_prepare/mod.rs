@@ -359,7 +359,7 @@ pub(crate) fn prepare_authored(
 ) -> Result<Prepared, MarsError> {
     let source = DiskTreeSource::new(root)?;
     let prepared = mars_schema::prepare::prepare(&source, context, dialect);
-    reported(root, source, prepared, false, diag)
+    reported(root, source, prepared, false, FileFindings::Print, diag)
 }
 
 fn reported(
@@ -367,6 +367,7 @@ fn reported(
     source: DiskTreeSource,
     prepared: Prepared,
     own_files: bool,
+    findings: FileFindings,
     diag: &mut DiagnosticCollector,
 ) -> Result<Prepared, MarsError> {
     if let Some(error) = source.take_error() {
@@ -381,8 +382,21 @@ fn reported(
         Some(name) => Subject::Package(name),
         None => Subject::AuthoredSource,
     };
-    report_diagnostics(&prepared, &source_label(root), &subject, own_files, diag);
+    match findings {
+        FileFindings::Print => {
+            report_diagnostics(&prepared, &source_label(root), &subject, own_files, diag);
+        }
+        FileFindings::Leave => report_translation(&prepared, &subject, diag),
+    }
     Ok(prepared)
+}
+
+/// Whether preparing a package prints what `prepare` found in each file.
+#[derive(Clone, Copy)]
+pub(crate) enum FileFindings {
+    Print,
+    /// The caller prints them itself, from `mars_schema::check::check`.
+    Leave,
 }
 
 /// Prepare a directory that is a package root or a consumer project, with the `mars.toml`
@@ -390,13 +404,14 @@ fn reported(
 /// configuration, which preparation does not touch.
 pub(crate) fn prepare_project(
     root: &Path,
+    findings: FileFindings,
     diag: &mut DiagnosticCollector,
 ) -> Result<(Prepared, Option<Vec<u8>>), MarsError> {
     let source = DiskTreeSource::new(root)?;
     let mut prepared = mars_schema::prepare::prepare(&source, PrepareContext::Project, None);
     // `mars check` judges the package's own layout; a sync judges installed trees.
     mars_schema::links::package(&mut prepared);
-    let prepared = reported(root, source, prepared, true, diag)?;
+    let prepared = reported(root, source, prepared, true, findings, diag)?;
     let manifest = match &prepared.manifest {
         Some(manifest) => Some(manifest.normalized_bytes.clone()),
         None => match fs::read(root.join("mars.toml")) {
@@ -437,6 +452,18 @@ pub(crate) fn report_diagnostics(
     own_files: bool,
     diag: &mut DiagnosticCollector,
 ) {
+    report_files(prepared, label, subject, own_files, diag);
+    report_translation(prepared, subject, diag);
+}
+
+/// What `prepare` found in each file, and the changes the author can act on.
+fn report_files(
+    prepared: &Prepared,
+    label: &dyn Fn(&str) -> String,
+    subject: &Subject<'_>,
+    own_files: bool,
+    diag: &mut DiagnosticCollector,
+) {
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
@@ -470,6 +497,10 @@ pub(crate) fn report_diagnostics(
             diag.schema(ignored, &label(relative), false);
         }
     }
+}
+
+/// One line for a translated package: how many files were changed.
+fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut DiagnosticCollector) {
     let files = prepared.changed_files();
     if files == 0 {
         return;

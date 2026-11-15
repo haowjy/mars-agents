@@ -353,7 +353,7 @@
           "skills/badname/SKILL.md": [
             {
               "code": "skill.name-invalid",
-              "severity": "warning",
+              "severity": "info",
               "path": [
                 "name"
               ],
@@ -370,16 +370,8 @@
           ],
           "skills/mismatch/SKILL.md": [
             {
-              "code": "skill.name-mismatch",
-              "severity": "warning",
-              "path": [
-                "name"
-              ],
-              "message": "name `other-name` differs from the skill folder `mismatch`; the folder names it"
-            },
-            {
               "code": "skill.description-too-long",
-              "severity": "warning",
+              "severity": "info",
               "path": [
                 "description"
               ],
@@ -391,7 +383,7 @@
           "skills/broken/SKILL.md": [
             {
               "code": "frontmatter.repaired",
-              "severity": "warning",
+              "severity": "info",
               "path": [
                 "description"
               ],
@@ -401,7 +393,7 @@
           "skills/colon/SKILL.md": [
             {
               "code": "frontmatter.repaired",
-              "severity": "warning",
+              "severity": "info",
               "path": [
                 "description"
               ],

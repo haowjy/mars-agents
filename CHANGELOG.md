@@ -7,6 +7,12 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-11-15
+
+### Changed
+- a file that shares a slug with another is marked on both files with `import.duplicate-slug`, and `definition.duplicate-slug` is gone;
+- a ref to a skill that no package in reach ships is now the `skill-ref.missing` error, even in a package with no dependencies; it used to be the `skill-ref.external` warning.
+
 ## [0.34.0] - 2026-11-15
 
 ### Upgrade notes

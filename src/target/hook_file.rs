@@ -57,6 +57,33 @@ pub(crate) fn write(
     top_level: &[(&str, i64)],
 ) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
+    append(&mut doc, path, hooks, top_level)?;
+    doc.save(path)
+}
+
+/// Remove the entries `records` say mars wrote, then append `hooks`, on one loaded document and
+/// one save. A kill leaves the old file or the new one, never the file between the two, and
+/// nothing else writes it between the load and the save. If the save fails the file is as it was.
+pub(crate) fn replace(
+    path: &Path,
+    records: &BTreeMap<String, ConfigEntryRecord>,
+    target: &str,
+    hooks: &[HookEntry],
+    top_level: &[(&str, i64)],
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
+    let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
+    strip(&mut doc, path, records, target, diag);
+    append(&mut doc, path, hooks, top_level)?;
+    doc.save(path)
+}
+
+fn append(
+    doc: &mut JsonDoc,
+    path: &Path,
+    hooks: &[HookEntry],
+    top_level: &[(&str, i64)],
+) -> Result<(), MarsError> {
     for (key, value) in top_level {
         doc.set_top_level(key, Value::from(*value));
     }
@@ -74,7 +101,7 @@ pub(crate) fn write(
         };
         events.extend(hook.entries.iter().cloned().map(to_ordered));
     }
-    doc.save(path)
+    Ok(())
 }
 
 /// Entries are matched one by one in order, so two hooks with identical entries need two in
@@ -147,8 +174,7 @@ pub(crate) fn untrusted_positions(before: &TrustPositions, after: &TrustPosition
 }
 
 /// Remove the entries `records` say mars wrote, wherever they still equal what
-/// was recorded; an entry that has changed is left, with a warning, and the
-/// package entry is appended beside it. The file is saved only if something went.
+/// was recorded. The file is saved only if something went.
 pub(crate) fn remove_recorded(
     path: &Path,
     records: &BTreeMap<String, ConfigEntryRecord>,
@@ -158,8 +184,24 @@ pub(crate) fn remove_recorded(
     let Some(mut doc) = load(path)? else {
         return Ok(());
     };
-    if doc.section().is_none() {
+    if !strip(&mut doc, path, records, target, diag) {
         return Ok(());
+    }
+    doc.drop_section_if_empty();
+    doc.save(path)
+}
+
+/// Remove the recorded entries from `doc` in memory; whether any went. An entry that has
+/// changed is left, with a warning, and the package entry is appended beside it.
+fn strip(
+    doc: &mut JsonDoc,
+    path: &Path,
+    records: &BTreeMap<String, ConfigEntryRecord>,
+    target: &str,
+    diag: &mut DiagnosticCollector,
+) -> bool {
+    if doc.section().is_none() {
+        return false;
     }
     let mut changed = false;
     for (key, record) in records {
@@ -184,11 +226,7 @@ pub(crate) fn remove_recorded(
             );
         }
     }
-    if !changed {
-        return Ok(());
-    }
-    doc.drop_section_if_empty();
-    doc.save(path)
+    changed
 }
 
 fn remove_entries(
@@ -201,8 +239,10 @@ fn remove_entries(
     };
     let mut removed = 0;
     for entry in expected {
+        // Mars appends, so the last equal entry is the one it wrote; an equal entry the user
+        // wrote is earlier and stays.
         let entry = to_ordered(entry.clone());
-        if let Some(index) = current.iter().position(|candidate| *candidate == entry) {
+        if let Some(index) = current.iter().rposition(|candidate| *candidate == entry) {
             current.remove(index);
             removed += 1;
         }

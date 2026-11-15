@@ -554,7 +554,7 @@ mars check --root PATH
 | `path` | Directory to validate (default: current directory) |
 | `--root PATH` | The same directory, named as every other command names its root; `path` wins when both are given, so `meridian mars check <path>` (which appends `--root`) checks `<path>` |
 
-Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
+Does not require a mars project (no `mars.toml` needed). It prints the findings in the package's files, one group per file in the order `mars.toml` first and then by path, each with its code and file and each group sorted errors first. What only the binary checks (the `requires-mars` floor, hooks, plugin output, model aliases, dependency resolution) prints after the groups, without a file. Errors exit 1; warnings and info do not. Info prints here and not in a default `mars sync`.
 
 What its files say is the same function `@meridian-flow/mars-schema` exports as `check` (`mars_schema::check`). A level says what the author loses: an error, the file or package won't load or install; a warning, something written won't take effect; info, nothing written is lost.
 
@@ -593,7 +593,7 @@ preview** (`collect_prepared_source_lossiness_diagnostics`) against the configur
 targets — reports what each native target cannot express from the source tree's
 agents and skills.
 
-`--json` prints `agents`, `skills`, `errors` and `warnings` (strings), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
+`--json` prints `agents`, `skills`, `errors` and `warnings` (strings, with each warning-level finding of a file among them), and `diagnostics`: one `{ source_path, code, severity, path, message }` per finding in a file, info included, in the order above. A `skill-ref.dependency` entry also has `dependency`, with the Agent's output path as `source_path`. A finding of level info is in `diagnostics` only, except a `field.unknown` note, which is also in `warnings` as it was before `diagnostics` existed.
 
 ```bash
 mars check                   # Check current directory

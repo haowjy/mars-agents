@@ -220,6 +220,7 @@ pub(crate) fn prepare_rooted(
     rooted: crate::resolve::RootedSourceRef,
     effective_config: &crate::config::EffectiveConfig,
     version: Option<&semver::Version>,
+    upgrading: bool,
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
@@ -275,7 +276,9 @@ pub(crate) fn prepare_rooted(
     // Only a git source is a tree the consumer cannot edit; a path source or an override is
     // theirs, and `mars upgrade` would leave it unchanged.
     let subject = match dependency.map(|entry| &entry.spec) {
-        Some(crate::config::SourceSpec::Git(_)) => Subject::Dependency(package_name, version),
+        Some(crate::config::SourceSpec::Git(_)) => {
+            Subject::Dependency(package_name, version, upgrading)
+        }
         _ => Subject::Package(package_name),
     };
     report_diagnostics(
@@ -431,8 +434,9 @@ pub(crate) fn prepare_project(
 
 pub(crate) enum Subject<'a> {
     Package(&'a str),
-    /// A git package a consumer depends on, at the version the sync resolved.
-    Dependency(&'a str, Option<&'a semver::Version>),
+    /// A git package a consumer depends on, at the version the sync resolved. The flag is set
+    /// when the command is `mars upgrade` for this package, which has already tried to move it.
+    Dependency(&'a str, Option<&'a semver::Version>, bool),
     AuthoredSource,
 }
 
@@ -470,15 +474,20 @@ fn report_files(
             match subject {
                 // The consumer cannot edit the package, so the schema's wording for its author
                 // is no use to them.
-                Subject::Dependency(name, version)
+                Subject::Dependency(name, version, upgrading)
                     if diagnostic.code == "manifest.schema-missing" =>
                 {
                     let mut for_consumer = diagnostic.clone();
+                    let resolved = version
+                        .map_or_else(String::new, |version| format!(", resolved to {version},"));
+                    let way_out = if *upgrading {
+                        "`mars upgrade` cannot move it past its `version` constraint: widen that constraint in mars.toml"
+                    } else {
+                        "run `mars upgrade {name}` for a newer version (widen its `version` constraint if `mars upgrade` keeps this version)"
+                    };
                     for_consumer.message = format!(
-                        "this dependency{} was published before schema 1. Mars 0.34.0 and later do not read it: run `mars upgrade {name}` for a newer version (widen its `version` constraint if `mars upgrade` keeps this version), or stay on a Mars before 0.34.0",
-                        version.map_or_else(String::new, |version| format!(
-                            " is locked at {version}, a version that"
-                        )),
+                        "this dependency{resolved} was published before schema 1. Mars 0.34.0 and later do not read it: {}, or stay on a Mars before 0.34.0",
+                        way_out.replace("{name}", name)
                     );
                     diag.schema(&for_consumer, &context, false);
                 }
@@ -507,7 +516,7 @@ fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut Dia
     }
     if let Classification::Foreign(choice) = &prepared.classification {
         let name = match subject {
-            Subject::Package(name) | Subject::Dependency(name, _) => format!("package `{name}`"),
+            Subject::Package(name) | Subject::Dependency(name, ..) => format!("package `{name}`"),
             Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
         };
         let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
@@ -554,6 +563,7 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<P
         rooted,
         &config,
         None,
+        false,
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

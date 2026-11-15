@@ -76,7 +76,7 @@ pub fn check(
         found.definition_names(prepared);
         let graph = Graph::of(prepared, dependencies);
         found.selection_duplicates(prepared, &graph.selection);
-        if graph.missing.is_empty() {
+        if graph.missing.is_empty() && !graph.unreadable {
             found.skill_refs(prepared, &graph);
             dependency_diagnostics = graph.dependency_findings(dependencies);
         }
@@ -482,6 +482,9 @@ struct Graph {
     has_dependencies: bool,
     /// Dependencies a ref could resolve through that the caller left out.
     missing: Vec<MissingDependency>,
+    /// A dependency a ref could resolve through could not be read; its own error says so, and
+    /// a ref that only it could satisfy is not the root's to report.
+    unreadable: bool,
 }
 
 impl Graph {
@@ -500,6 +503,7 @@ impl Graph {
         }
 
         let mut missing = Vec::new();
+        let mut unreadable = false;
         let mut seen = BTreeSet::new();
         let mut queue: VecDeque<(Option<&str>, &SelectionFacts)> = VecDeque::from([(None, &root)]);
         while let Some((declared_in, facts)) = queue.pop_front() {
@@ -508,7 +512,10 @@ impl Graph {
                     continue;
                 }
                 match packages.get(&edge.name) {
-                    Some(package) => queue.push_back((Some(edge.name.as_str()), package)),
+                    Some(package) => {
+                        unreadable |= package.unreadable;
+                        queue.push_back((Some(edge.name.as_str()), package));
+                    }
                     None => missing.push(MissingDependency {
                         name: edge.name.clone(),
                         declared_in: declared_in.map(str::to_owned),
@@ -534,6 +541,7 @@ impl Graph {
             has_package,
             has_dependencies,
             missing,
+            unreadable,
         }
     }
 

@@ -427,9 +427,11 @@ export function check(input: {
    * The package's whole dependency closure, flat: every package reachable through any
    * `[dependencies]` entry, filtered or not, one entry per source. The key is the name the
    * source has in the `[dependencies]` table that declares it. Each value holds `prepare`'s
-   * result for the dependency, as `selectItems` takes a package; only its `selection` is read.
+   * result for the dependency, as `selectItems` takes a package; only its `selection` is read
+   * (`extra_items` is accepted and ignored). A plain object or a `Map`; an unknown key in an
+   * entry throws `input.invalid` either way.
    */
-  dependencies?: { [name: string]: { prepared: Prepared } };
+  dependencies?: { [name: string]: SelectionPackage } | Map<string, SelectionPackage>;
 }): Check;
 
 export interface Check {
@@ -538,6 +540,7 @@ export interface Inspection {
   }[];
   /** The items of a plugin or skill tree. */
   items: InspectedItem[];
+  /** For `kind: "invalid"`, the manifest's findings under `mars.toml` (`manifest.schema-missing` for a package with no `schema`). */
   diagnostics: { [path: string]: Diagnostic[] };
 }
 
@@ -653,6 +656,12 @@ export interface SelectionFacts {
   /** The manifest's `[dependencies]` entries in declaration order, never `[local-dependencies]`. */
   edges: { name: string; filter: SelectionFilter }[];
   uses_providers: string[];
+  /**
+   * The package could not be read (`prepared.classification` is `invalid` or `schema-newer`), so
+   * `definitions` is empty because nothing was read. `check` judges no skill ref against it.
+   * Absent when false.
+   */
+  unreadable?: boolean;
 }
 
 export type SelectionFilter =
@@ -727,7 +736,7 @@ export interface SelectionResult {
  */
 export function selectItems(input: {
   requests?: ({ name: string } & FilterConfig)[];
-  packages: { [name: string]: SelectionPackage };
+  packages: { [name: string]: SelectionPackage } | Map<string, SelectionPackage>;
   root?: SelectionPackage;
 }): SelectionResult;
 

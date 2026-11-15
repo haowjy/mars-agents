@@ -72,6 +72,16 @@ impl CheckReport {
             .chain(self.errors.iter().map(String::as_str))
             .collect()
     }
+
+    /// Every warning: the files' first, then the binary's. Info findings are not warnings.
+    fn warnings(&self) -> Vec<String> {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Warning)
+            .filter_map(|finding| finding.line.clone())
+            .chain(self.warnings.iter().cloned())
+            .collect()
+    }
 }
 
 #[derive(Serialize)]
@@ -168,7 +178,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     let clean = errors.is_empty();
 
     if json {
-        let mut warnings = report.warnings.clone();
+        let mut warnings = report.warnings();
         warnings.extend(diagnostics.iter().map(ToString::to_string));
         output::print_json(&JsonReport {
             agents: report.agents,

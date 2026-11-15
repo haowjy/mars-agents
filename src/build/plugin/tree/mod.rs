@@ -456,6 +456,9 @@ fn lower_agent(
     // author's own project-wide rules are not part of it.
     let mut effective =
         crate::compiler::effective_native_profile(&profile, overlay, &ToolRuleMap::default());
+    effective
+        .name
+        .get_or_insert_with(|| item.id.name.to_string());
     qualify_agent_skills(&mut effective.skills, installed_skills);
     let model = resolve_model(
         effective.model.as_deref(),

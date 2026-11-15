@@ -23,7 +23,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 
     let mut config = crate::config::load(&ctx.project_root)?;
     let mut local = crate::config::load_local(&ctx.project_root)?;
-    let mut lock = crate::lock::load(&ctx.project_root)?;
+    let mut lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
     let mut settings_updated = false;
     let mut local_updated = false;
     let mut target_was_managed = false;
@@ -65,8 +65,10 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if local_updated {
         crate::config::save_local(&ctx.project_root, &local)?;
     }
-    if target_was_managed {
-        crate::lock::write(&ctx.project_root, &lock)?;
+    if target_was_managed
+        && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
+    {
+        output::print_warn(&warning);
     }
 
     if json {

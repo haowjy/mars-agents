@@ -20,7 +20,7 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let mut lock = crate::lock::load(&ctx.project_root)?;
+    let mut lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
     let mut resolved_files = Vec::new();
     let mut still_conflicted = Vec::new();
 
@@ -77,8 +77,10 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    if !resolved_files.is_empty() {
-        crate::lock::write(&ctx.project_root, &lock)?;
+    if !resolved_files.is_empty()
+        && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
+    {
+        output::print_warn(&warning);
     }
 
     if json {

@@ -16,7 +16,7 @@ use mars_schema::tool_rule_map::ToolRuleMap;
 
 use super::PluginComponents;
 use super::metadata::PackageMetadata;
-use super::model::{ModelFallbackReason, resolve_model};
+use super::model::{ModelFallbackReason, ResolvedModel, resolve_model};
 use super::references::{qualify_body_references, qualify_document};
 use super::spec::{Finish, TreeProfile};
 
@@ -293,9 +293,9 @@ pub(super) fn write_tree(
     for item in input.target.items.values() {
         match item.id.kind {
             ItemKind::Agent => {
-                let (agent, fallback) = lower_agent(item, input, profile, &installed_skills, diag)?;
+                let (agent, model) = lower_agent(item, input, profile, &installed_skills, diag)?;
+                model_fallbacks.record(&agent.name, &model);
                 agents.push(agent);
-                model_fallbacks.record(fallback);
                 summary.agents += 1;
             }
             ItemKind::Skill => {
@@ -382,11 +382,16 @@ pub(super) fn write_tree(
 struct ModelFallbackCounts {
     not_package_alias: usize,
     no_deterministic_id: usize,
+    /// Agents whose model came from a `model-policies` rule, with the rule's alias.
+    via_policy: Vec<(String, String)>,
 }
 
 impl ModelFallbackCounts {
-    fn record(&mut self, reason: Option<ModelFallbackReason>) {
-        match reason {
+    fn record(&mut self, agent: &str, model: &ResolvedModel) {
+        if let (true, Some(token)) = (model.from_policy, &model.token) {
+            self.via_policy.push((agent.to_string(), token.clone()));
+        }
+        match model.fallback {
             Some(ModelFallbackReason::NotPackageAlias) => self.not_package_alias += 1,
             Some(ModelFallbackReason::NoDeterministicId) => self.no_deterministic_id += 1,
             None => {}
@@ -394,6 +399,28 @@ impl ModelFallbackCounts {
     }
 
     fn emit(&self, profile: &TreeProfile, diag: &mut DiagnosticCollector) {
+        if !self.via_policy.is_empty() {
+            let descriptor = profile.descriptor();
+            let agents = self
+                .via_policy
+                .iter()
+                .map(|(agent, alias)| format!("{agent} (alias `{alias}`)"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (noun, verb) = if self.via_policy.len() == 1 {
+                ("agent", "uses")
+            } else {
+                ("agents", "use")
+            };
+            diag.info(
+                "plugin-model-fallback",
+                format!(
+                    "{} {noun} {verb} a model-policies fallback model in the {} tree: {agents}",
+                    self.via_policy.len(),
+                    descriptor.display_name
+                ),
+            );
+        }
         let total = self.not_package_alias + self.no_deterministic_id;
         if total == 0 {
             return;
@@ -428,7 +455,7 @@ fn lower_agent(
     tree_profile: &TreeProfile,
     installed_skills: &IndexMap<String, String>,
     diag: &mut DiagnosticCollector,
-) -> Result<(LoweredAgent, Option<ModelFallbackReason>), MarsError> {
+) -> Result<(LoweredAgent, ResolvedModel), MarsError> {
     let authored_content = std::fs::read_to_string(&item.source_path)?;
     let content = item.rewritten_content.clone().unwrap_or(authored_content);
     // `check_agent_source` already reported the file's diagnostics, so only a file with no
@@ -507,7 +534,7 @@ fn lower_agent(
         name: item.id.name.to_string(),
         doc,
     };
-    Ok((agent, model.fallback))
+    Ok((agent, model))
 }
 
 fn qualify_agent_skills(

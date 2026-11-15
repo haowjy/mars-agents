@@ -93,9 +93,15 @@ can't know which one that user has.
 
 ## Agent models
 
-A Claude tree takes `model:` as written when it is `opus`, `sonnet` or `haiku` and the package's
-`[models]` entry for it (or the builtin) is for Claude. The Codex and Grok plugins load the
-Claude tree, so they get the same files.
+A Claude tree takes `model:` when it names a package alias that resolves in one of two ways:
+
+- The alias is `opus`, `sonnet` or `haiku` and targets Claude. The tree writes the name as is.
+  Mars's builtin `opus`/`sonnet`/`haiku` aliases count only when
+  no `[models]` table exists anywhere in the dependency graph: any package or dependency that
+  defines `[models]` replaces the builtins, so define the alias yourself in that case.
+- The alias targets Claude and is pinned to a fixed `model`. The tree then writes that id.
+
+Codex plugins don't load agents (the build says so), so nothing here reaches Codex.
 
 ### Fallback models
 
@@ -107,12 +113,14 @@ agent with `model: terra` (a GPT alias) and the rules `terra`, `luna`, `sonnet` 
 `override: {effort: medium}` therefore comes out as `model: sonnet` and `effort: medium` in
 the Claude tree, and with no model in the OpenCode tree.
 
-- A rule with `no-fallback: true` is skipped, and so is a `model-glob` rule, as in launch
-  fallback. `when` is guidance for the caller, so it neither selects nor excludes a rule.
+- Only `match: {alias}` rules are tried. A rule with `no-fallback: true` is skipped, and so
+  are `model-glob` and `match: {model}` rules. `when` is guidance for the caller, so it neither
+  selects nor excludes a rule.
 - An agent with no `model:` gets none: fallbacks replace a model that can't run, they don't
   add one.
 - When no rule fits, the agent gets the harness default and the `plugin-model-default`
-  info above.
+  info above. When a rule does, the build reports one `plugin-model-fallback` info per tree
+  naming each agent and the alias it took; `--verbose` or `--json` shows it.
 
 ## MCP server files
 

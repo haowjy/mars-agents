@@ -4,7 +4,7 @@ use crate::build::policy::fallback_model_policy_entries;
 use crate::compiler::agents::lower::NativeModel;
 use crate::models::{ModelAlias, ModelSpec};
 use mars_schema::HarnessId;
-use mars_schema::model_policy::ModelPolicyRule;
+use mars_schema::model_policy::{ModelPolicyMatchType, ModelPolicyRule};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModelFallbackReason {
@@ -18,11 +18,14 @@ pub(super) struct ResolvedModel {
     /// The token `native` names: the agent's own `model:`, or the first `model-policies`
     /// backup that runs on the harness. `None` when no model is set.
     pub token: Option<String>,
+    /// Whether `token` came from a `model-policies` rule instead of the agent's own `model:`.
+    pub from_policy: bool,
 }
 
 /// The agent's `model:` on this harness; when that doesn't run here, the first
-/// `model-policies` rule, in written order, whose model does. A `no-fallback` rule, a
-/// glob and a repeated entry are skipped as launch fallback skips them. `when` is
+/// `model-policies` alias rule, in written order, whose model does. A `no-fallback` rule, a
+/// glob, a `match: {model}` rule and a repeated entry are skipped: launch fallback skips the
+/// first three, and a rule's model value is never an alias name. `when` is
 /// guidance for the caller, not a condition. With no rule that fits, the result is the
 /// harness default and the reason the agent's own model didn't resolve.
 pub(super) fn resolve_model(
@@ -37,10 +40,13 @@ pub(super) fn resolve_model(
         return own;
     }
     fallback_model_policy_entries(policies)
-        .map(|(_, backup)| backup)
-        .find_map(|backup| {
+        .filter(|(match_type, _)| *match_type == ModelPolicyMatchType::Alias)
+        .find_map(|(_, backup)| {
             let resolved = resolve_token(Some(backup), harness, native_aliases, aliases);
-            resolved.token.is_some().then_some(resolved)
+            resolved.token.is_some().then_some(ResolvedModel {
+                from_policy: true,
+                ..resolved
+            })
         })
         .unwrap_or(own)
 }
@@ -57,6 +63,7 @@ fn resolve_token(
             native: NativeModel::Clear,
             fallback: None,
             token: None,
+            from_policy: false,
         };
     };
     let Some(alias) = aliases.get(token) else {
@@ -64,6 +71,7 @@ fn resolve_token(
             native: NativeModel::Clear,
             fallback: Some(ModelFallbackReason::NotPackageAlias),
             token: None,
+            from_policy: false,
         };
     };
 
@@ -77,6 +85,7 @@ fn resolve_token(
             native: NativeModel::Set(model.to_string()),
             fallback: None,
             token: Some(token.to_string()),
+            from_policy: false,
         };
     }
     if native_aliases.contains(&token) && target == Some(descriptor.id) {
@@ -84,6 +93,7 @@ fn resolve_token(
             native: NativeModel::Set(token.to_string()),
             fallback: None,
             token: Some(token.to_string()),
+            from_policy: false,
         };
     }
 
@@ -91,6 +101,7 @@ fn resolve_token(
         native: NativeModel::Clear,
         fallback: Some(ModelFallbackReason::NoDeterministicId),
         token: None,
+        from_policy: false,
     }
 }
 

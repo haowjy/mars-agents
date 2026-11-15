@@ -28,8 +28,12 @@ stateDiagram-v2
 - **A permit is a single-use token bound to one target.** `WritePermit::bind_hooks` and
   `bind_file_hooks` derive the mutation path from the permit, so a caller cannot point the write
   at another target.
-- **Unconfirmed removal must suppress the write, not just warn.** The old entries are already gone
-  from the file, and rewriting would create entries the lock does not own.
+- **Unconfirmed removal must suppress the write, not just warn.** The write would otherwise run
+  against a file whose recorded entries could not be read or removed.
+- **A target that gets a write is not removed here.** The closure reports it confirmed without
+  touching the file; `hook_file::replace` removes and appends in one load and one save. A failed
+  write leaves the file as it was, so the target's prior records stay in the lock, and its stale
+  keys are not reported removed.
 - **Only a confirmed target reports stale keys removed.** Otherwise a failed target loses its
   retry authority.
 - **The closure's failure must carry the whole `prior_records` map back.** `into_retained_records`

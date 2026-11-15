@@ -36,7 +36,11 @@ Machines with a crash window and no marker, so recovery is a later run that noti
 - `mars link` and `mars unlink` write files, config and lock in separate steps; a kill between
   leaves settings and lock disagreeing.
 - `mars adopt` renames the user's file into `.mars-src` with no record before the sync.
-- Hook config removal followed by an append is two writes; a kill between looks like a user edit.
+- A hook config file killed after its save and before `mars.lock`: the lock still records the
+  old entry, so the next sync warns `config-divergence`, finds nothing to remove, and appends
+  the new entry again, a duplicate. Known gap: the config-entry journal (step 3 of the decision)
+  closes it, because recovery would fold the saved entry into the old lock first. Matching
+  content in the file is not proof Mars wrote it, so the sync does not guess.
 - A git cache entry has no marker for a completed clone.
 
 ## Instances

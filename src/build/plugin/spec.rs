@@ -74,6 +74,8 @@ pub(super) enum RootFile {
         file: GeneratedRootFile,
         /// Prefix for the catalog's plugin `source` entry (`./` or empty).
         source_prefix: &'static str,
+        /// The catalog's plugin `source` can name a repository and tag (`git-subdir`).
+        tag_pin: bool,
         name_rule: NameRule,
     },
     NpmPackage {
@@ -100,6 +102,10 @@ impl RootFile {
             Self::Marketplace { name_rule, .. } => Some(name_rule),
             Self::NpmPackage { .. } => None,
         }
+    }
+
+    pub(super) fn pins_to_tag(self) -> bool {
+        matches!(self, Self::Marketplace { tag_pin: true, .. })
     }
 
     pub(super) fn is_marketplace(self) -> bool {

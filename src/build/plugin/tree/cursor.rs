@@ -15,6 +15,7 @@ pub(in crate::build::plugin) static PROFILE: TreeProfile = TreeProfile {
     root_file: RootFile::Marketplace {
         file: CURSOR_ROOT_FILE,
         source_prefix: "",
+        tag_pin: false,
         name_rule: NameRule {
             validate: valid_cursor_plugin_name,
             message: "Cursor marketplace names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit",

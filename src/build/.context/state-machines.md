@@ -78,6 +78,9 @@ One path `mars build plugin` writes beside the output directory, inside the pack
 (`mars_schema::plugin_metadata::GENERATED_ROOT_FILES`). The record is the marker's `root_files`
 (what this build wrote) and `root_files_previous` (what its bytes replaced). Defined by
 `PluginRootFileState` in `plugin/inspect.rs` and by `plugin/root_files.rs`.
+A catalog's bytes depend on `[package].version` only when `[plugin].marketplace-repository` is
+set (the Claude entry's `ref` is `v<version>`); the sentinel's `inputs_hash` leaves the version out, so
+a version change alone shows as a changed root file, not as stale inputs.
 `root_file_state` computes the state over the union of expected, recorded and previous paths.
 `changed` means "present but not the hash Mars recorded"; `previous_build` means "holds the bytes
 this publication is about to replace", which is not an edit.

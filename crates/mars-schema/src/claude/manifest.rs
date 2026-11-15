@@ -406,7 +406,7 @@ fn git_argument_refusal(what: &str, value: &str) -> Option<String> {
 /// Only a network repository may be named: `https://`, `ssh://` or `user@host:path`. A local
 /// repository (`file://`, an absolute path) would read the machine that runs the fetch, and
 /// another scheme (`ext::<cmd>`, `git://`, `http://`) is a transport helper or unencrypted.
-fn repository_refusal(repository: &str) -> Option<String> {
+pub fn repository_refusal(repository: &str) -> Option<String> {
     if let Some(reason) = git_argument_refusal("repository", repository) {
         return Some(reason);
     }
@@ -435,7 +435,7 @@ fn is_full_sha(value: &str) -> bool {
 }
 
 /// `owner/repo` shorthand means GitHub; anything else is a URL as written, minus `.git`.
-fn repository_url(value: &str) -> String {
+pub fn repository_url(value: &str) -> String {
     let value = value.strip_suffix(".git").unwrap_or(value);
     let shorthand = !value.contains("://")
         && !value.starts_with("git@")

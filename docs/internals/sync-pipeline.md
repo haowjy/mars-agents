@@ -62,11 +62,11 @@ user config.toml + mars.toml + mars.local.toml
 | Phase | Struct | Key contents |
 |---|---|---|
 | 1 | `LoadedConfig` | `Config`, `LocalConfig`, `EffectiveConfig`, `old_lock`, `sync_lock` (a dry run holds it only when `.mars/sync.lock` already exists) |
-| 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + `model_aliases` + the scratch generation |
-| 3 | `TargetedState` | `ResolvedState` + `TargetState` + renames + validation warnings |
+| 2 | `ResolvedState` | `LoadedConfig` + `ResolvedGraph` + the count of available upgrades + the scratch generation (`preparation`) |
+| 3 | `TargetedState` | `ResolvedState` + `TargetState` + validation warnings (the rename index is used inside `build_target` and dropped) |
 | 4 | `PlannedState` | `TargetedState` + `SyncPlan` |
 | 5 | `AppliedState` | `PlannedState` + `ApplyResult` |
-| 6 | `SyncedState` | `AppliedState` + `Vec<TargetSyncOutcome>` |
+| 6 | `SyncedState` | `AppliedState` + `Vec<TargetSyncOutcome>` + what the compiler's later stages recorded: config-entry records and outputs, rewritten hook files, changed MCP files, and compiled and removed native agent outputs |
 
 In a dry run, phase 1 takes the sync flock only when `.mars/sync.lock` already exists (it never
 creates it or reclaims a leftover pending generation), and phase 2 puts the scratch generation in a
@@ -170,7 +170,7 @@ The order inside one `mars sync`:
 2. **Gate.** Every error-level diagnostic collected so far (`field.removed`, `field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*`, `frontmatter.*`, config errors) fails the sync with exit 2. The only writes before this point are `.mars/sync.lock`, the removal of an interrupted pending generation and the removal of a skill directory a killed install left staged under `.mars/skills` (a dry run makes none of them). A `mars add` rejected here has not written the dependency, because the config mutation is saved only when the plan applies.
 3. **Project.** The prepared bytes, the payload files the crate listed, and the binary-owned hook, MCP, bootstrap and plugin-manifest surfaces are written into a scratch generation: `.mars/.staging.pending` in a real sync, a temporary directory outside the project in a dry run. `[skills.<name>]` overlays and dependency renames apply here, after preparation. Nothing outside the scratch generation changes.
 4. **Binary and compiler checks.** Building the target, planning, and the hook and MCP preflight report their own errors, and the gate runs after the target is built and again after the preflight, so those errors also fail before apply.
-5. **Apply and publish.** The config mutation is saved, the plan is applied to the `.mars/` canonical store, and the generation at `.mars/.staging.pending` is renamed over `.mars/staging` (nothing is copied). The next sync that takes the lock removes a leftover pending path.
+5. **Apply and publish.** `apply_plan` saves the config mutation and applies the plan to the `.mars/` canonical store; it does not publish. Back in `compile` (`src/compiler/mod.rs`), the generation at `.mars/.staging.pending` is then renamed over `.mars/staging` (nothing is copied) and the packages' source roots are rebased onto the published path, which the target, config-entry and native-agent stages read. The next sync that takes the lock removes a leftover pending path.
 
 Warnings never stop a sync: the lossiness a target cannot express, and a `field.retired` key are printed and the run continues. Unknown keys (`field.unknown`) are `Info`: `mars sync --verbose`, `mars validate` and `mars check` print them. `--diff` runs the same steps and writes nothing.
 

@@ -425,7 +425,7 @@ fn validate_json_reports_malformed_skill_frontmatter_error() {
     let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
     let valid_skill = "---\nname: planning\ndescription: planning skill\n---\n# Planning\n";
     let malformed_skill =
-        "---\nname: planning\ndescription: broken skill\nmetadata: [\n---\n# Broken\n";
+        "---\nname: planning\ndescription: broken skill\nmetadata:\n  key: [\n---\n# Broken\n";
     let project = setup_synced_project(
         &dir,
         "proj",

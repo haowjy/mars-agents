@@ -50,7 +50,7 @@ Unknown keys are kept and reported as `field.unknown` `Info`. A key Mars moved o
 
 `prepare::prepare(&source, context, declared_dialect)` classifies one package root and returns a `Prepared`:
 
-- the classification (`Schema1`, `MarsLegacy`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
+- the classification (`Schema1`, `SchemaNewer`, `Foreign`, `Marketplace`, `Invalid`, `Empty`) and the evidence for a dialect;
 - the manifest reading;
 - one entry per selected definition: kind, slug, source and output paths, normalized bytes, the typed reading and a `ChangeRecord` (`None`, `Generated` or `FullyRewritten`);
 - payload files as source-to-output paths, never bytes;

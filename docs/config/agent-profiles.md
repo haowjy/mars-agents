@@ -540,7 +540,7 @@ These rules describe automatic fallback, not equivalent explicit overrides:
 
 **Guide.** `mars models prompting @agent` lists each rule that has a `when`, in declaration order, ahead of the model alias's own `prompting` text.
 
-The rule list is preserved in `.mars/` but not emitted as a harness-native field.
+The rule list is preserved in `.mars/` but not emitted as a harness-native field. A plugin build (`mars build plugin`) walks the same backups to pick each tree's model when the agent's own `model:` doesn't run on that harness; see [Fallback models](../plugin-authoring.md#fallback-models).
 Native agent materialization applies `[settings.meridian.agent_copy] include_fanout`: with
 it, flagged rules and expanded globs can also qualify an agent for a harness. Launch fallback
 filtering does not change native emission or reconciliation.

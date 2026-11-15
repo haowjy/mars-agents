@@ -78,7 +78,7 @@ user-invocable: false   # user cannot trigger via /name
 
 ### Retired fields
 
-A skill carries no tool policy. Keys Mars no longer reads (`type`, `when_to_use`, the tool-policy keys, the underscore invocability spellings, `invocation`, `disable-model-invocation`, `allow_implicit_invocation`) are `field.retired` warnings that link to [Retired keys](retired-keys.md). Foreign skills (a Claude plugin's `allowed-tools`, for example) are translated when Mars imports them: the tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
+A skill carries no tool policy. Keys Mars no longer reads (`type`, `when_to_use`, the tool-policy keys, the underscore invocability spellings, `invocation`, `disable-model-invocation`, `allow_implicit_invocation`) are `field.retired` warnings that link to [Retired keys](retired-keys.md). Foreign skills are translated when Mars imports them: a skill's `allowed-tools`, `disallowed-tools` and `disallowedTools` are Claude's own keys and move to `harness-overrides.claude`, so `.claude/` output keeps them and no other harness sees them; the other tool keys are dropped with a warning, because the skill itself carries no tool policy. See [Dialect](mars-toml.md#dialect).
 
 ---
 

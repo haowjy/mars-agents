@@ -2,6 +2,5 @@
 
 - Reduce WASM size by using one TOML reader and replacing the `yaml_rust2` structural event scan. Changing TOML readers changes fixture error text; `wasm-opt` would add a Binaryen build dependency.
 - Preserve integer-like mapping key order across the JavaScript boundary with a pairs array; this changes the JS contract.
-- Preserve upgrade diagnostics as warnings on installed readings. A pre-v1 spelling can trigger an upgrade that sets aside an invalid value without reporting it.
 - Count bracket depth outside quoted scalars in `src/frontmatter.rs`; raw bracket counting can reject a valid quoted string.
 - Reject NUL path components in `FileTree::insert` if a caller stores paths where NUL matters.

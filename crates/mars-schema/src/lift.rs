@@ -97,15 +97,64 @@ pub(crate) fn lift_foreign_mcp_tokens_in_field(
     })
 }
 
-/// Claude's names for the sub-agent tool (`Task`, now `Agent`). In canonical Mars `task` means
-/// the task-list tools, so a Claude-dialect entry must be renamed on the way in.
-pub(crate) fn claude_task_to_agent(raw: &str) -> Option<String> {
-    let (head, payload) = split_tool_name(raw.trim());
-    matches!(head.trim(), "Task" | "Agent").then(|| format!("agent{payload}"))
+/// What Claude Code made of a tool name in an agent's tool list. `CLAUDE_RENAMED` is Claude
+/// 2.1.325's own alias table, plus Mars's `Task` -> `agent`; `CLAUDE_RETIRED` is its set of
+/// retired names, which a build ignores.
+pub(crate) enum ClaudeTool {
+    /// A name Claude still has, or one Mars reads with the vocabulary's own spelling.
+    Current,
+    /// Claude's name for this tool changed; the scope stays.
+    Renamed(String),
+    /// A tool that no longer exists: nothing to grant or deny. Claude ignores the name too.
+    Retired,
 }
 
-pub(crate) fn lift_claude_task_entries(fm: &mut Frontmatter, key: &str) -> bool {
-    rewrite_tool_entries(fm, key, claude_task_to_agent)
+const CLAUDE_RENAMED: &[(&str, &str)] = &[
+    // In canonical Mars `task` means the task-list tools, so Claude's sub-agent tool (`Task`,
+    // now `Agent`) is spelled `agent` on the way in.
+    ("Task", "agent"),
+    ("Agent", "agent"),
+    ("KillShell", "TaskStop"),
+    ("KillBash", "TaskStop"),
+    ("ListPeers", "ListAgents"),
+    ("Brief", "SendUserMessage"),
+    ("ListMcpResources", "ListMcpResourcesTool"),
+    ("ReadMcpResource", "ReadMcpResourceTool"),
+    ("ReadMcpResourceDir", "ReadMcpResourceDirTool"),
+    ("Eval", "REPL"),
+];
+const CLAUDE_RETIRED: &[&str] = &[
+    "AgentOutput",
+    "AgentOutputTool",
+    "AutofixPr",
+    "BashOutput",
+    "BashOutputTool",
+    "Frame",
+    "FrameRead",
+    // Not a Claude tool any more; only a permission-rule name. Claude has no alias to `Read`.
+    "NotebookRead",
+    "SuggestBackgroundPR",
+    "TaskOutput",
+    "TeamCreate",
+    "TeamDelete",
+];
+
+pub(crate) fn claude_tool(raw: &str) -> ClaudeTool {
+    let (head, payload) = split_tool_name(raw.trim());
+    let head = head.trim();
+    let find = |table: &[(&str, &str)]| {
+        table
+            .iter()
+            .find(|(old, _)| *old == head)
+            .map(|(_, new)| format!("{new}{payload}"))
+    };
+    if let Some(new) = find(CLAUDE_RENAMED) {
+        ClaudeTool::Renamed(new)
+    } else if CLAUDE_RETIRED.contains(&head) {
+        ClaudeTool::Retired
+    } else {
+        ClaudeTool::Current
+    }
 }
 
 pub(crate) fn lift_foreign_tools(
@@ -134,9 +183,6 @@ pub(crate) fn lift_foreign_tools(
     changed |= lift_tool_flags(fm);
     changed |= lift_tool_list_to_policy_map(fm, native_tools_restrict && came_from_native_tools);
     changed |= lift_foreign_mcp_tokens_in_field(fm, "tools", dialect);
-    if dialect == Dialect::Claude {
-        changed |= lift_claude_task_entries(fm, "tools");
-    }
     changed
 }
 

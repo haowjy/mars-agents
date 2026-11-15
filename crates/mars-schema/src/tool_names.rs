@@ -139,7 +139,7 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
         name: "agent",
         aliases: &["subagent", "spawn_agent"],
     },
-    // Task-list tools (Claude `TaskCreate`…`TaskUpdate`, OpenCode `todowrite`, Codex
+    // Task-list tools (Claude `TaskCreate`…`TaskStop`, OpenCode `todowrite`, Codex
     // `update_plan`). One capability: a profile gates the list, not each verb. `todoread` stays
     // as an input spelling only; OpenCode has no such tool.
     CanonicalTool {
@@ -157,6 +157,8 @@ const CANONICAL_TOOLS: &[CanonicalTool] = &[
             "tasklist",
             "task_update",
             "taskupdate",
+            "task_stop",
+            "taskstop",
             "update_plan",
         ],
     },

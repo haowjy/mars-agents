@@ -7,6 +7,21 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-11-15
+
+### Fixed
+- An Agent whose frontmatter has no `name` now loads in Claude after `mars sync`: every native Agent file (`.claude`, `.codex`, `.opencode`, `.cursor`, `.pi`, and `mars build plugin` trees) carries the name Mars resolved, the file name when frontmatter has none.
+- `mars sync` and `mars build plugin` now warn about Agents written for Claude with no `description`, which Claude does not load (`native-agent-no-description`). `mars sync` lists them in one line per sync.
+
+## [0.33.1] - 2026-11-15
+
+### Fixed
+- A denied tool in a `.claude/agents` file now takes effect. Mars wrote `disallowed-tools`, which Claude ignores in an agent file; it now writes `disallowedTools`.
+- A Claude plugin agent's tool list reads as Claude names it today: `KillShell` is `TaskStop` (and the rest of Claude's alias table), and retired tools (`BashOutput`, `TaskOutput`, `NotebookRead`) are removed. `Agent(types)` no longer becomes `SendMessage(types)` and `ListAgents(types)`.
+- When Mars's capabilities give a Claude agent more tools than its list named (`Edit` also enables `Write`), sync warns with `agent.tools-widened` and names the added tools. A tool Mars cannot name is reported by name.
+- A scoped deny such as `bash(git push *): deny` is no longer written to `disallowedTools`, in `.claude/agents` or the plugin tree. Claude removes the whole tool for a scoped entry there, so an agent like `coder` lost Bash and Skill. Only whole-tool denies are written; each scoped one is reported as a lost restriction (`mars sync` prints one line, `--verbose` one per agent). `mars build plugin` had the same bug and is fixed too.
+- A Claude skill's `allowed-tools` and `disallowed-tools`, and an agent's `autoCompactWindow`, `omitClaudeMd` and `experimental`, stay in `.claude/` output through `harness-overrides.claude` instead of being dropped.
+
 ## [0.33.0] - 2026-11-15
 
 ### Changed

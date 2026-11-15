@@ -1,6 +1,6 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -591,7 +591,7 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
         };
 
         let reading = mars_schema::agent::read(&content);
-        let (Some(profile), Some(body)) = (reading.fields, reading.body) else {
+        let (Some(mut profile), Some(body)) = (reading.fields, reading.body) else {
             diag.warn(
                 "native-agent-parse",
                 format!(
@@ -607,11 +607,11 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
             continue;
         };
 
+        // Every native file carries this name: Claude does not load an Agent whose file has none.
         let agent_name = profile
             .name
-            .as_deref()
-            .unwrap_or(&canonical_file_stem)
-            .to_string();
+            .get_or_insert_with(|| canonical_file_stem.clone())
+            .clone();
         agents.push(MarsCanonicalAgent {
             agent_name,
             canonical_dest_path,
@@ -775,6 +775,7 @@ pub(crate) fn compile_native_agents<'a>(
     };
     let mut records = Vec::new();
     let mut project_losses = ProjectLosses::default();
+    let mut undescribed = BTreeSet::new();
     let mut codex_emitted = false;
 
     // `mars_agents` carry already overlay-resolved profiles (resolved once in
@@ -807,10 +808,18 @@ pub(crate) fn compile_native_agents<'a>(
                 diag,
                 &mut records,
                 &mut project_losses,
+                &mut undescribed,
             );
         }
     }
     project_losses.record(ctx.project_root, diag);
+    if !undescribed.is_empty() {
+        let names = undescribed.into_iter().collect::<Vec<_>>().join(", ");
+        diag.warn(
+            "native-agent-no-description",
+            format!("Claude does not load an Agent without a `description`; add one to: {names}"),
+        );
+    }
 
     // Native Codex files carry no network setting, and a project default is not any one
     // Agent's, so it is recorded once for the target.
@@ -994,6 +1003,7 @@ fn emit_lowered_native_agent(
     diag: &mut DiagnosticCollector,
     records: &mut Vec<CompiledNativeOutput>,
     project_losses: &mut ProjectLosses,
+    undescribed: &mut BTreeSet<String>,
 ) {
     use crate::compiler::agents::lower::lower_for_harness_with_model;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
@@ -1051,6 +1061,9 @@ fn emit_lowered_native_agent(
     diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
     for loss in lowered.project_losses {
         project_losses.add(loss);
+    }
+    if *agent.harness == mars_schema::HarnessId::Claude && agent.profile.description.is_none() {
+        undescribed.insert(agent.agent_name.to_string());
     }
 
     let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));

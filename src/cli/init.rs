@@ -242,7 +242,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+            "[package]\nschema = 1\nname = \"pkg\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
 

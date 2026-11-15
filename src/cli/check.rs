@@ -161,7 +161,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 
 /// The Mars the package needs, from the keys it uses. `None` for a tree with no `[package]`:
 /// `requires-mars` is a `[package]` key. `manifest` is the `mars.toml` text, as written for
-/// `mars check` and as it will be written for `mars migrate`.
+/// `mars check`.
 pub(crate) fn package_floor(
     manifest: &str,
     prepared: &mars_schema::prepare::Prepared,
@@ -674,7 +674,7 @@ mod tests {
         write_agent(dir.path(), "coder", &["some-skill"]);
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
+            "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"/nonexistent-mars-dep-xyz-abc\" }\n",
         )
         .unwrap();
 
@@ -701,7 +701,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
                 toml_path(dep_dir.path())
             ),
         )
@@ -748,7 +748,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = {{ path = \"{}\" }}\n",
                 toml_path(dep_dir.path())
             ),
         )
@@ -772,7 +772,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\n\n[local-dependencies]\nlocal-dep = {{ path = \"{}\" }}\n",
                 toml_path(local_dep_dir.path())
             ),
         )
@@ -809,7 +809,7 @@ mod tests {
         std::fs::write(
             dir.path().join("mars.toml"),
             format!(
-                "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
+                "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\nregular = {{ path = \"{}\" }}\n\n[local-dependencies]\nlocal = {{ path = \"{}\" }}\n",
                 toml_path(regular_dep_dir.path()),
                 toml_path(local_dep_dir.path())
             ),
@@ -836,7 +836,7 @@ mod tests {
         // Intentionally invalid TOML (Windows-style path escapes in basic string).
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"C:\\Users\\dev\\dep\" }\n",
+            "[package]\nschema = 1\nname = \"test-pkg\"\nversion = \"0.1.0\"\n\n[dependencies]\ndep = { path = \"C:\\Users\\dev\\dep\" }\n",
         )
         .unwrap();
 

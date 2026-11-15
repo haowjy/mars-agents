@@ -19,7 +19,6 @@ pub mod export;
 pub mod init;
 pub mod link;
 pub mod list;
-pub mod migrate;
 pub mod models;
 mod models_common;
 mod models_inventory;
@@ -135,7 +134,6 @@ pub enum Command {
     Upgrade(upgrade::UpgradeArgs),
 
     /// Upgrade the package's authored definition format to schema v1.
-    Migrate(migrate::MigrateArgs),
 
     /// Show available updates without applying.
     Outdated(outdated::OutdatedArgs),
@@ -319,7 +317,6 @@ fn dispatch_with_root(
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
         Command::Upgrade(args) => upgrade::run(args, ctx, json),
-        Command::Migrate(args) => migrate::run(args, ctx, json),
         Command::Outdated(args) => outdated::run(args, ctx, json),
         Command::Version(args) => version::run(args, ctx, json),
         Command::List(args) => list::run(args, ctx, json),
@@ -452,7 +449,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("mars.toml"),
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+            "[package]\nschema = 1\nname = \"pkg\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
 
@@ -571,7 +568,7 @@ mod tests {
         std::fs::create_dir_all(&child).unwrap();
         std::fs::write(
             child.join("mars.toml"),
-            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+            "[package]\nschema = 1\nname = \"pkg\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
 

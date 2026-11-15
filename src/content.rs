@@ -1,8 +1,7 @@
 //! Layered lookup for installed agent and skill content.
 //!
 //! The files under `.mars/` are whatever Mars version installed them, not authored package files:
-//! every reader parses them with `mars_schema::read::installed_agent` or `installed_skill`, which
-//! upgrade a file whose strict reading reports a pre-v1 spelling.
+//! every reader parses them with `mars_schema::agent::read` or `skill::read`.
 //!
 //! The primary root remains the sole authority for project configuration. A
 //! fallback root contributes only files from its canonical `.mars` store. A

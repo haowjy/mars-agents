@@ -18,7 +18,7 @@ fn opencode_plugin_rejects_authored_file_named_like_adapter() {
     fs::create_dir_all(&hook).unwrap();
     fs::write(
         root.join("mars.toml"),
-        "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        "[package]\nschema = 1\nname = \"pkg\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
     fs::write(

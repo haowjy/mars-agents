@@ -172,7 +172,6 @@ fn normalize_root<T: TreeSource>(
             }),
             selection: items.as_ref(),
             fallback_name: request.source.name.as_deref(),
-            ..RootOptions::default()
         },
     );
     let mut normalized = Normalized {
@@ -234,7 +233,6 @@ fn normalize_plugin<T: TreeSource>(
         }),
         selection: items.as_ref(),
         fallback_name: Some(&entry.name),
-        ..RootOptions::default()
     };
     let rooted = match &entry.source {
         PluginSource::Unsupported { reason } => {
@@ -325,7 +323,7 @@ fn finish_package<T: TreeSource>(
         && !refused
         && matches!(
             prepared.classification,
-            Classification::Foreign(_) | Classification::MarsLegacy
+            Classification::Foreign(_) | Classification::Schema1
         )
     {
         let name = spec

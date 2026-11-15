@@ -1,0 +1,44 @@
+{
+  "frontmatter": [
+    [
+      "allow_implicit_invocation",
+      true
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "license": null,
+    "compatibility": null,
+    "metadata": null
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.retired",
+      "severity": "warning",
+      "path": [
+        "allow_implicit_invocation"
+      ],
+      "message": "`allow_implicit_invocation` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-invocation"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "name"
+      ],
+      "message": "`name` must be a non-empty string"
+    },
+    {
+      "code": "field.required",
+      "severity": "error",
+      "path": [
+        "description"
+      ],
+      "message": "`description` must be a non-empty string"
+    }
+  ]
+}

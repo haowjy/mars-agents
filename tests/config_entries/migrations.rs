@@ -6,7 +6,7 @@ fn write_legacy_hook_source(dir: &TempDir, source_name: &str) -> std::path::Path
     source
         .child("mars.toml")
         .write_str(&format!(
-            "[package]\nname = \"{source_name}\"\nversion = \"0.8.9\"\n"
+            "[package]\nschema = 1\nname = \"{source_name}\"\nversion = \"0.8.9\"\n"
         ))
         .unwrap();
     write_hook(
@@ -23,7 +23,7 @@ fn write_migrated_hook_source(dir: &TempDir, source_name: &str) -> std::path::Pa
     source
         .child("mars.toml")
         .write_str(&format!(
-            "[package]\nname = \"{source_name}\"\nversion = \"0.9.0\"\n"
+            "[package]\nschema = 1\nname = \"{source_name}\"\nversion = \"0.9.0\"\n"
         ))
         .unwrap();
     write_hook(
@@ -51,7 +51,7 @@ fn write_named_hook_source(
     source
         .child("mars.toml")
         .write_str(&format!(
-            "[package]\nname = \"{source_name}\"\nversion = \"1.0.0\"\n"
+            "[package]\nschema = 1\nname = \"{source_name}\"\nversion = \"1.0.0\"\n"
         ))
         .unwrap();
     write_dependency_hook(&source, hook_name, ".claude", "SessionEnd", command);
@@ -93,7 +93,7 @@ fn upgrade_converges_in_one_shot_when_newest_source_is_readable() {
     source.create_dir_all().unwrap();
     source
         .child("mars.toml")
-        .write_str("[package]\nname = \"base\"\nversion = \"0.8.9\"\n")
+        .write_str("[package]\nschema = 1\nname = \"base\"\nversion = \"0.8.9\"\n")
         .unwrap();
     write_hook(
         &source,
@@ -123,7 +123,7 @@ fn upgrade_converges_in_one_shot_when_newest_source_is_readable() {
     fs::remove_dir_all(source.child("hooks/context-autosync").path()).unwrap();
     source
         .child("mars.toml")
-        .write_str("[package]\nname = \"base\"\nversion = \"0.9.0\"\n")
+        .write_str("[package]\nschema = 1\nname = \"base\"\nversion = \"0.9.0\"\n")
         .unwrap();
     write_dependency_hook(&source, "context-autosync", ".claude", "SessionEnd", "true");
     for args in [
@@ -340,7 +340,7 @@ fn malformed_dependency_hook_error_names_package_and_hook_not_staging_path() {
     source.create_dir_all().unwrap();
     source
         .child("mars.toml")
-        .write_str("[package]\nname = \"base\"\nversion = \"0.8.9\"\n")
+        .write_str("[package]\nschema = 1\nname = \"base\"\nversion = \"0.8.9\"\n")
         .unwrap();
     write_hook(
         &source,
@@ -377,7 +377,7 @@ fn filtered_transitive_removed_hook_error_hides_staging_path() {
     workflow
         .child("mars.toml")
         .write_str(&format!(
-            "[package]\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
+            "[package]\nschema = 1\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
              [dependencies.base]\npath = \"{}\"\nagents = [\"missing\"]\n",
             portable_path(&legacy)
         ))
@@ -649,7 +649,7 @@ fn override_can_replace_a_transitive_source_during_recovery() {
     workflow
         .child("mars.toml")
         .write_str(&format!(
-            "[package]\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
+            "[package]\nschema = 1\nname = \"workflow\"\nversion = \"1.0.0\"\n\n\
              [dependencies.base]\npath = \"{}\"\n",
             portable_path(&legacy)
         ))

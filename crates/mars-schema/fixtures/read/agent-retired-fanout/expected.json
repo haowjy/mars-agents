@@ -1,0 +1,42 @@
+{
+  "frontmatter": [
+    [
+      "fanout",
+      2
+    ]
+  ],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "",
+  "diagnostics": [
+    {
+      "code": "field.retired",
+      "severity": "warning",
+      "path": [
+        "fanout"
+      ],
+      "message": "`fanout` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-fanout"
+    }
+  ]
+}

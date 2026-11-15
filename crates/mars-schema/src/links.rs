@@ -6,7 +6,7 @@
 //! and what is installed in all; the definitions are also used to name the skill the author meant
 //! and to build the replacement link. [`check`] is the one rule behind every caller, and the
 //! caller picks the view: [`package`] judges a package as if only its own layout were installed
-//! (`mars check` and `mars migrate`, the WASM `prepare` and `normalize` exports), and the
+//! (`mars check`, the WASM `prepare` and `normalize` exports), and the
 //! binary's `sync` and plugin build judge every installed skill against the whole installed tree
 //! after the consumer's filters and renames.
 //!

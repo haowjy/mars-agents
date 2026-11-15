@@ -335,7 +335,7 @@ impl ResolveOptions {
 #[cfg(test)]
 pub(crate) fn prepared_with_deps(deps: &[&str]) -> std::sync::Arc<mars_schema::prepare::Prepared> {
     let manifest = (!deps.is_empty()).then(|| {
-        let mut text = String::from("[package]\nname = \"p\"\nversion = \"1.0.0\"\n");
+        let mut text = String::from("[package]\nschema = 1\nname = \"p\"\nversion = \"1.0.0\"\n");
         for dep in deps {
             text.push_str(&format!("\n[dependencies.{dep}]\npath = \"/{dep}\"\n"));
         }

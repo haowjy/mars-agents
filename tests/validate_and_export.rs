@@ -232,7 +232,7 @@ fn validate_json_strict_escalates_warnings_in_output() {
 }
 
 #[test]
-fn validate_json_reports_skill_removed_field_error() {
+fn validate_json_reports_retired_skill_key_warning() {
     let dir = TempDir::new().unwrap();
     let agent_content = "---\nname: reader\ndescription: reads things\n---\n# Reader";
     let skill_content = "---\nname: legacy\ndescription: legacy skill\n---\n# Legacy";
@@ -242,7 +242,6 @@ fn validate_json_reports_skill_removed_field_error() {
         &[("reader", agent_content)],
         &[("legacy", skill_content)],
     );
-    // Only an authored schema v1 package is refused for a removed field.
     fs::write(
         source.join("mars.toml"),
         "[package]\nname = \"src\"\nversion = \"0.1.0\"\nschema = 1\n",
@@ -280,22 +279,19 @@ fn validate_json_reports_skill_removed_field_error() {
         .output()
         .unwrap();
 
-    assert!(
-        !output.status.success(),
-        "removed field should make validate fail"
-    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let diagnostics = json["diagnostics"].as_array().unwrap();
     assert!(
         diagnostics.iter().any(|diag| {
-            diag["code"] == "field.removed"
+            diag["code"] == "field.retired"
+                && diag["level"] == "warning"
                 && diag["message"].as_str().is_some_and(|message| {
                     message.contains("allow_implicit_invocation")
-                        && message.contains("is a pre-v1 key")
+                        && message.contains("retired-keys.md#skill-invocation")
                 })
         }),
-        "expected removed skill field error: {stdout}"
+        "expected retired skill key warning: {stdout}"
     );
 }
 

@@ -355,20 +355,6 @@ pub(crate) fn prepare_authored(
     reported(root, source, prepared, false, diag)
 }
 
-/// `prepare_authored` as `mars migrate` runs it: preparation also rewrites what a schema 1 file
-/// can still need, because the migration writes the result back to the authored file. The
-/// package's own link verdict is added, since the migration is run in the package.
-pub(crate) fn prepare_authored_for_migration(
-    root: &Path,
-    context: PrepareContext,
-    diag: &mut DiagnosticCollector,
-) -> Result<Prepared, MarsError> {
-    let source = DiskTreeSource::new(root)?;
-    let mut prepared = mars_schema::prepare::prepare_for_migration(&source, context, None);
-    mars_schema::links::package(&mut prepared);
-    reported(root, source, prepared, false, diag)
-}
-
 fn reported(
     root: &Path,
     source: DiskTreeSource,
@@ -430,10 +416,9 @@ pub(crate) enum Subject<'a> {
 /// package (`meridian-base: skills/poc/SKILL.md`), never by where the cache keeps its
 /// archive; a project's own sources keep their real path.
 ///
-/// What preparing changed in each file (`Prepared::changes`) is not repeated on every sync: a
-/// pre-v1 package gets one warning and a translated one a summary line, each with the count of
-/// files, and `mars migrate` lists the changes. Except the ones that lost a restriction, which
-/// are printed every time with the file they are in. `own_files` is a package's own checkout
+/// What translating changed in each file (`Prepared::changes`) is not repeated on every sync: a
+/// translated package gets a summary line with the count of files. Except the ones that lost a
+/// restriction, which are printed every time with the file they are in. `own_files` is a package's own checkout
 /// (`mars check`), where the author can fix the file: it also prints each ignored execution
 /// field.
 pub(crate) fn report_diagnostics(
@@ -461,43 +446,16 @@ pub(crate) fn report_diagnostics(
     if files == 0 {
         return;
     }
-    let (name, migrate) = match subject {
-        Subject::Package(name) => (
-            format!("package `{name}`"),
-            "run `mars migrate` in its repository",
-        ),
-        Subject::AuthoredSource => (
-            "authored `.mars-src` content".to_string(),
-            "run `mars migrate`",
-        ),
-    };
-    let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
-    match &prepared.classification {
-        Classification::MarsLegacy => {
-            let no_manifest = prepared
-                .manifest
-                .as_ref()
-                .is_some_and(|manifest| manifest.source_path.is_none());
-            let format = if no_manifest {
-                "has no `mars.toml` and is declared `mars-native`"
-            } else {
-                "uses the pre-v1 format"
-            };
-            let advice = if no_manifest {
-                "add a `mars.toml` with a `[package]` table (name and version, no `schema`) and run `mars migrate` in its repository"
-            } else {
-                migrate
-            };
-            diag.warn_advisory_once(
-                "legacy-package",
-                format!("{name} {format} ({count} to upgrade); {advice}"),
-            );
-        }
-        Classification::Foreign(choice) => diag.info(
+    if let Classification::Foreign(choice) = &prepared.classification {
+        let name = match subject {
+            Subject::Package(name) => format!("package `{name}`"),
+            Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
+        };
+        let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
+        diag.info(
             "package-translated",
             format!("{name} is read as {}: {count} translated", choice.dialect),
-        ),
-        _ => {}
+        );
     }
 }
 

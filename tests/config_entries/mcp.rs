@@ -7,7 +7,7 @@ fn create_dependency_source(
 ) -> std::path::PathBuf {
     let source = dir.child(name);
     source.create_dir_all().unwrap();
-    let mut manifest = format!("[package]\nname = \"{name}\"\nversion = \"1.0.0\"\n");
+    let mut manifest = format!("[package]\nschema = 1\nname = \"{name}\"\nversion = \"1.0.0\"\n");
     if let Some((dependency_name, dependency_path)) = dependency {
         manifest.push_str(&format!(
             "\n[dependencies.{dependency_name}]\npath = \"{}\"\n",
@@ -188,6 +188,7 @@ fn unlink_preserves_unrelated_config_sections() {
         .write_str(
             r#"
 [package]
+schema = 1
 name = "sample"
 version = "0.1.0"
 
@@ -301,7 +302,7 @@ fn unlink_removes_only_owned_outputs_and_preserves_unmanaged_siblings() {
         .child(".mars-src")
         .child("agents")
         .child("owned.md")
-        .write_str("# Owned")
+        .write_str("---\n---\n# Owned")
         .unwrap();
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])
@@ -360,7 +361,7 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
     project.child(".mars-src/agents").create_dir_all().unwrap();
     project
         .child(".mars-src/agents/owned.md")
-        .write_str("# Owned")
+        .write_str("---\n---\n# Owned")
         .unwrap();
     mars()
         .args(["sync", "--root", project.path().to_str().unwrap()])

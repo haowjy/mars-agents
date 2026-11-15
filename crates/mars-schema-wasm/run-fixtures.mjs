@@ -92,7 +92,7 @@ const checkBytes = (item, input, expectedFiles, label) => {
 for (const name of cases("prepare")) {
   const request = json("prepare", name, "request.json");
   const input = tree(join(fixtures, "prepare", name, "input"));
-  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined, migrate: request.migrate ?? false });
+  const result = wasm.prepare({ files: input, context: request.context, declaredDialect: request.declared_dialect ?? undefined });
   const expectedDir = join(fixtures, "prepare", name, "expected");
   const expectedFiles = existsSync(expectedDir) ? tree(expectedDir) : new Map();
   for (const item of [result.manifest, ...result.definitions].filter(Boolean)) checkBytes(item, input, expectedFiles, `prepare/${name}`);
@@ -145,27 +145,6 @@ for (const name of cases("normalize")) {
   }
 }
 assert.throws(() => wasm.normalize({ tree: new Map(), hint: { dialect: "nonsense" } }));
-
-// upgrade: the legacy file in a legacy package comes back as expected.*, with the expected diagnostics
-const legacyManifest = '[package]\nname = "legacy"\nversion = "1.0.0"\n';
-const enc = new TextEncoder();
-for (const name of cases("upgrade")) {
-  const kind = text("upgrade", name, "kind.txt").trim();
-  if (kind === "payload") continue;
-  const ext = kind === "manifest" ? "toml" : "md";
-  const path = { manifest: "mars.toml", agent: "agents/probe.md", skill: "skills/probe/SKILL.md" }[kind];
-  const files = new Map([["mars.toml", enc.encode(kind === "manifest" ? text("upgrade", name, `input.${ext}`) : legacyManifest)]]);
-  if (kind !== "manifest") files.set(path, enc.encode(text("upgrade", name, `input.${ext}`)));
-  const result = wasm.prepare({ files, context: "package" });
-  const item = kind === "manifest" ? result.manifest : result.definitions.find(d => d.source_path === path);
-  assert.equal(Buffer.from(item.normalized_bytes).toString("utf8"), text("upgrade", name, `expected.${ext}`), `upgrade/${name} text`);
-  assert.equal(item.change.kind === "fully-rewritten", existsSync(join(fixtures, "upgrade", name, "fully-rewritten.txt")), `upgrade/${name} rewrite mode`);
-  const messages = (result.changes?.[path] ?? []).map(d => d.message);
-  const keys = json("upgrade", name, "expected-diagnostics.json");
-  assert.equal(messages.length, keys.length, `upgrade/${name} diagnostics ${JSON.stringify(messages)}`);
-  for (const key of keys) assert.ok(messages.some(m => m.includes(`\`${key}\``)), `upgrade/${name} names ${key}`);
-  checked++;
-}
 
 // version: the ops the package exports (`parse-constraint` and `parse-tag` are Rust-only). A
 // refusal is a thrown Error whose `code` the fixture names.

@@ -32,7 +32,7 @@ if let Reading::Agent(reading) = read("agents/coder.md", &text).unwrap() {
 | `diagnostics` | `SchemaDiagnostic { code, severity, path, message, range }` |
 | `dependencies`, `local-dependencies` | `mars.toml` only (`manifest::ManifestRead` flattens them beside the four fields above): the entries by name in declaration order, in the file's spellings, each read by `Entry::read`. A table is omitted when empty |
 
-The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with `read::installed_agent` and `read::installed_skill`, which upgrade a file whose strict reading reports a pre-v1 spelling, because those bytes are whatever Mars version installed them.
+The typed fields serialize with the spellings the file uses (kebab-case keys and values, `xhigh`, `read-only`); that serialization is the published shape, pinned by `fixtures/read/`. A refactor that changes it changes the contract. `agent::read`, `skill::read` and `manifest::read` are the three readers behind `read::read`, and nothing else in the workspace reads those keys. An installed `.mars/` tree is read with the same readers.
 
 Diagnostics are built directly with a structured `path` of keys and indexes. `range` is set only for fence and YAML-syntax errors, and no reader sets it yet; consumers locate a diagnostic by `path`.
 

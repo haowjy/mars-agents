@@ -56,7 +56,7 @@ pub mod package;
 pub mod package_tools;
 pub mod plugin_metadata;
 pub mod prepare;
+pub mod retired;
 mod set_aside;
-pub mod upgrade;
 pub mod version;
 pub mod visibility;

@@ -96,6 +96,37 @@ fn remove_keys(
         .collect()
 }
 
+/// Claude's `disable-model-invocation: true` is `model-invocable: false`. An existing
+/// `model-invocable: false` stays; beside `model-invocable: true` the restricting value wins, with
+/// a note.
+fn fold_disable_model_invocation(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) -> bool {
+    let Some(disable) = fm.remove("disable-model-invocation") else {
+        return false;
+    };
+    if disable.as_bool() != Some(true) {
+        return true;
+    }
+    match crate::invocability::find_invocability_field(fm, "model-invocable") {
+        None => fm.insert("model-invocable", Value::Bool(false)),
+        Some(field) if field.value == Value::Bool(true) => {
+            fm.insert(&field.consumed_key, Value::Bool(false));
+            notes.push(SchemaDiagnostic::new(
+                "field.removed",
+                Severity::Warning,
+                key_path("disable-model-invocation"),
+                format!(
+                    "`disable-model-invocation: {}` conflicts with `{}: {}`; kept `false`, the value that restricts",
+                    crate::ordered::plain(&disable),
+                    field.consumed_key,
+                    crate::ordered::plain(&field.value),
+                ),
+            ));
+        }
+        Some(_) => {}
+    }
+    true
+}
+
 fn scalar_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.clone()),
@@ -120,8 +151,7 @@ fn lift_skill(
         );
     }
 
-    changed |= crate::upgrade::fold_disable_model_invocation(fm, changes);
-    changed |= !remove_keys(fm, crate::upgrade::PRE_V1.skill_dropped.iter().copied()).is_empty();
+    changed |= fold_disable_model_invocation(fm, changes);
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.
     if matches!(fm.get("metadata"), None | Some(Value::Mapping(_))) {

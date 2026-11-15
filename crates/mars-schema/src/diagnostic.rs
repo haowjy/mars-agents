@@ -63,15 +63,21 @@ impl SchemaDiagnostic {
     }
 }
 
-/// What an Agent or skill reader reports for a key it has no field for: `field.removed` (an
-/// error) when it is a key of pre-v1 Mars's, else `field.unknown`. An unknown key stays in the
-/// authored file and reaches no native file.
+/// What an Agent or skill reader reports for a key it has no field for: `field.retired` when
+/// Mars moved off it, else `field.unknown`. Either way the key stays in the authored file and
+/// reaches no native file.
 pub(crate) fn unrecognized_field(kind: DefinitionKind, key: &str) -> SchemaDiagnostic {
-    if crate::upgrade::PRE_V1.key(kind, key) {
-        return crate::upgrade::pre_v1_key(key_path(key), key);
-    }
-    unknown_field(key_path(key), "", key)
+    let scope = match kind {
+        DefinitionKind::Agent => crate::retired::Scope::Agent,
+        DefinitionKind::Skill => crate::retired::Scope::Skill,
+    };
+    crate::retired::diagnostic(scope, key, key_path(key))
+        .unwrap_or_else(|| unknown_field(key_path(key), "", key))
 }
+
+/// The page that says how to fix a key Mars no longer reads, and where the docs for a
+/// `[package]` that predates schema 1 live.
+pub(crate) const DOCS: &str = "https://github.com/haowjy/mars-agents/blob/main/docs/config";
 
 /// A key a reader has no field for. Nothing is lost by ignoring it and it may be intended
 /// (a typo, or a key from a newer Mars), so it is `Info`: `validate`, `check` and `--verbose`

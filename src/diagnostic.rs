@@ -331,13 +331,6 @@ impl DiagnosticCollector {
         }
     }
 
-    pub(crate) fn warn_advisory_once(&mut self, code: &'static str, message: impl Into<String>) {
-        let message = message.into();
-        if !self.has(code, &message) {
-            self.warn_advisory(code, message);
-        }
-    }
-
     fn has(&self, code: &str, message: &str) -> bool {
         self.diagnostics
             .iter()

@@ -55,7 +55,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
     local_agents.create_dir_all().unwrap();
     fs::write(
         local_agents.child("local-agent.md").path(),
-        "# Local Agent\nThis is a local agent.",
+        "---\n---\n# Local Agent\nThis is a local agent.",
     )
     .unwrap();
 
@@ -169,7 +169,7 @@ fn full_pipeline_with_local_package_and_custom_target() {
     pkg_dir.create_dir_all().unwrap();
     fs::write(
         pkg_dir.child("mars.toml").path(),
-        "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n",
+        "[package]\nschema = 1\nname = \"pkg\"\nversion = \"1.0.0\"\n",
     )
     .unwrap();
     mars()

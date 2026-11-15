@@ -11,7 +11,7 @@ use crate::discover::{SelectedDefinition, payload_paths};
 use crate::dispatch::{AsPlugin, Dispatched, Layout, dispatch};
 use crate::frontmatter::Frontmatter;
 use crate::item::DefinitionKind;
-use crate::read::{DefinitionRead, Reading, read_definition};
+use crate::read::{DefinitionRead, Reading, read_authored, read_definition};
 use crate::selection::{Definition, Request, SelectionFacts};
 use crate::tool_policy::{RuleOrigin, ToolRule};
 use crate::tree::TreeSource;
@@ -344,12 +344,19 @@ pub(crate) fn prepare_root(
         })
         .collect::<Vec<_>>();
     let shaping = Shaping::of(&classification, options.migrate);
+    let authored = matches!(classification, Classification::Schema1);
     let definitions = if can_read_definitions {
         selected
             .iter()
             .map(|definition| {
-                let mut prepared =
-                    prepare_definition(source, definition, shaping, &mut diagnostics, &mut changes);
+                let mut prepared = prepare_definition(
+                    source,
+                    definition,
+                    shaping,
+                    authored,
+                    &mut diagnostics,
+                    &mut changes,
+                );
                 if let Some(manifest) = &manifest {
                     add_package_tools(&mut prepared, &manifest.reading);
                 }
@@ -606,6 +613,7 @@ fn prepare_definition(
     source: &impl TreeSource,
     selected: &SelectedDefinition,
     shaping: Shaping,
+    authored: bool,
     diagnostics: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
     changes: &mut BTreeMap<String, Vec<SchemaDiagnostic>>,
 ) -> PreparedDefinition {
@@ -676,6 +684,7 @@ fn prepare_definition(
 
     // Only text is upgraded or translated, so these bytes are the file's when they are not text.
     let reading = match std::str::from_utf8(&normalized_bytes) {
+        Ok(text) if authored => read_authored(selected.kind, text),
         Ok(text) => read_definition(selected.kind, text),
         Err(error) => unreadable(
             selected.kind,

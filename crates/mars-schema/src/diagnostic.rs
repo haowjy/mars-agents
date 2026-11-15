@@ -190,3 +190,13 @@ pub(crate) fn frontmatter_error(error: &crate::frontmatter::FrontmatterError) ->
     };
     SchemaDiagnostic::new(code, Severity::Error, Vec::new(), error.to_string())
 }
+
+/// An Agent whose first line is not exactly `---`, read where the file is schema 1.
+pub(crate) fn frontmatter_missing() -> SchemaDiagnostic {
+    SchemaDiagnostic::new(
+        "frontmatter.missing",
+        Severity::Error,
+        Vec::new(),
+        "an Agent's frontmatter must open with a first line that is exactly `---`; without it every field takes its default",
+    )
+}

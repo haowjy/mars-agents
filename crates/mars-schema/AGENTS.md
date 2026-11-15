@@ -13,6 +13,7 @@ and rules, so never add a binary-side copy.
   `skill::LOWERED_KEYS`, and network host lists; losing a deny entry can widen permissions.
   Record lost deny/ask tools, disallowed tools, deny hosts and restriction fields as
   `field.restriction-lost` changes, exposed by `Prepared::lost_restrictions`.
+- An Agent with no frontmatter is `frontmatter.missing` only where the file is schema 1: `read` and `prepare` of a `schema = 1` package go through `read_authored`. Installed trees, pre-v1 packages and foreign layouts use `read_definition`, because their body-only Agents were valid when written; `mars migrate` does not add a fence. A consumer's `.mars-src/` is always read with `read_definition` and is not checked.
 - Ordinary reading leaves schema-v1 files as written; migration may repair removed
   fields because it writes the result back. Upgrade definitions without changing
   unrelated bytes when possible. Do not change a dependency's `requires-mars` during

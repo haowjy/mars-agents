@@ -1,0 +1,35 @@
+{
+  "frontmatter": [],
+  "fields": {
+    "name": null,
+    "description": null,
+    "harness": null,
+    "model": null,
+    "mode": null,
+    "model-invocable": true,
+    "user-invocable": true,
+    "approval": null,
+    "sandbox": null,
+    "network": null,
+    "network-allow": [],
+    "network-deny": [],
+    "effort": null,
+    "skills": {
+      "load": [],
+      "available": []
+    },
+    "subagents": [],
+    "tools": [],
+    "harness-overrides": {},
+    "model-policies": []
+  },
+  "body": "You are a reviewer.\n",
+  "diagnostics": [
+    {
+      "code": "frontmatter.missing",
+      "severity": "error",
+      "path": [],
+      "message": "an Agent's frontmatter must open with a first line that is exactly `---`; without it every field takes its default"
+    }
+  ]
+}

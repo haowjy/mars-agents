@@ -713,7 +713,9 @@ Branch or commit pins (non-semver strings) bypass version resolution entirely an
 
 The `dialect` key on `[dependencies.<dep>]` controls how Mars reads a dependency's layout and frontmatter and translates it to schema v1 when the package is prepared (see [Preparation and the gate](../internals/sync-pipeline.md#preparation-and-the-gate)). It accepts: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, `mars-native`.
 
-It applies to a dependency with no `mars.toml`. A root with a `mars.toml` is a Mars package and is read as schema v1 (or upgraded, when it declares no `schema`) whatever `dialect` says.
+It applies to a dependency with no `mars.toml`. A root with a `mars.toml` is a Mars package and is read as schema v1 whatever `dialect` says; one with no `schema` is an error.
+
+A dependency declared `dialect = "mars-native"` with no `mars.toml` is read as schema v1, so an Agent in it with no frontmatter is the error `frontmatter.missing` and fails the sync. Remove the `dialect` declaration to read it as a foreign layout, or ask the package to add frontmatter.
 
 Resolution order (first-wins):
 

@@ -106,19 +106,17 @@ fn fold_disable_model_invocation(fm: &mut Frontmatter, notes: &mut Vec<SchemaDia
     if disable.as_bool() != Some(true) {
         return true;
     }
-    match crate::invocability::find_invocability_field(fm, "model-invocable") {
+    match fm.get("model-invocable") {
         None => fm.insert("model-invocable", Value::Bool(false)),
-        Some(field) if field.value == Value::Bool(true) => {
-            fm.insert(&field.consumed_key, Value::Bool(false));
+        Some(Value::Bool(true)) => {
+            fm.insert("model-invocable", Value::Bool(false));
             notes.push(SchemaDiagnostic::new(
                 "field.removed",
                 Severity::Warning,
                 key_path("disable-model-invocation"),
                 format!(
-                    "`disable-model-invocation: {}` conflicts with `{}: {}`; kept `false`, the value that restricts",
+                    "`disable-model-invocation: {}` conflicts with `model-invocable: true`; kept `false`, the value that restricts",
                     crate::ordered::plain(&disable),
-                    field.consumed_key,
-                    crate::ordered::plain(&field.value),
                 ),
             ));
         }

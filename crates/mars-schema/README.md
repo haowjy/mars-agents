@@ -1,6 +1,6 @@
 # mars-schema
 
-The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) the `[package]` table of `mars.toml`, and the `hook.toml` of a package's hooks. It holds the key tables, the validation, the tool vocabulary, the pre-v1 upgrade, the foreign-layout translation, the YAML emitter and the per-harness hook renderers. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
+The reader and editor for [Mars](https://github.com/haowjy/mars-agents) schema v1: the file format of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) the `[package]` table of `mars.toml`, and the `hook.toml` of a package's hooks. It holds the key tables, the validation, the tool vocabulary, the foreign-layout translation, the YAML emitter and the per-harness hook renderers. The `mars-agents` binary calls it directly, and the [`@meridian-flow/mars-schema`](https://github.com/haowjy/mars-agents/tree/main/npm/@meridian-flow/mars-schema) npm package compiles it to WebAssembly, so an editor and `mars sync` read a file the same way.
 
 The format is documented in [Schema v1](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md). This page covers the crate.
 

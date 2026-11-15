@@ -83,11 +83,13 @@ A value of a key Mars reads stays closed: an unknown value is an error listing w
 `retired.rs` is the one table of keys Mars moved off: (scope, key, anchor on
 `docs/config/retired-keys.md`). A reader that meets one emits `field.retired` as a Warning, because
 the user loses what it set, often a restriction (`disallowed-tools`, `permission`,
-`network_deny`). Delete the module and each key falls back to `field.unknown`. Add a key to it
+`network_deny`). Delete the module and each key falls back to `field.unknown`, except a
+`harness-overrides.flow` block, which becomes a `harness.unknown` Warning and stays a passthrough. Add a key to it
 only with the page's entry that says how to fix it. It covers keys of tables of fields and the
 `harness-overrides` namespaces; a model-policy `override` refuses what it does not define, so
 its retired keys stay an error that lists the keys it takes. A retired key is not a value: a
 value of a key Mars reads (`approval: yolo`) is an ordinary invalid value. The spellings of the
-Agent deny list (`tool_policy::DISALLOWED_SPELLINGS`) are also read by the translators, which
-is why they live there and `retired.rs` repeats them. The other code that names a key from
+Agent deny list (`tool_policy::DISALLOWED_SPELLINGS`) are also read by the translators, so
+they live there and `retired.rs` takes the Agent and Skill tool-policy rows from them and from
+`skill::tool_keys()`. The other code that names a key from
 outside is a translator from another format (`claude/`, `harness_overrides`, `set_aside`).

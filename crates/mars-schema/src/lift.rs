@@ -7,7 +7,6 @@ use crate::dialect::Dialect;
 use crate::frontmatter::Frontmatter;
 use crate::harness::HarnessId;
 use crate::harness_overrides::move_harness_only_keys;
-use crate::invocability::find_invocability_field;
 use crate::item::DefinitionKind;
 use crate::mcp::{ForeignMcpDialect, parse_foreign_mcp_token};
 use crate::tool_names::split_tool_name;
@@ -252,7 +251,7 @@ fn cursor_manual_rule_shape(fm: &Frontmatter) -> bool {
 
 fn lift_cursor_rule(fm: &mut Frontmatter) -> bool {
     let mut changed = false;
-    if find_invocability_field(fm, "model-invocable").is_none() {
+    if fm.get("model-invocable").is_none() {
         match fm.get("alwaysApply").and_then(Value::as_bool) {
             Some(true) => {
                 fm.insert("model-invocable", Value::Bool(true));

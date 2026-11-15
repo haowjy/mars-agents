@@ -1,4 +1,5 @@
-//! The class guard for translated definitions. After a foreign definition is translated, whatever the strict v1 reader would still reject is set aside, so a package its
+//! The class guard for translated definitions. After a foreign definition is translated, whatever the
+//! strict v1 reader would still reject is set aside, so a package its
 //! consumer cannot edit never fails for it. Only an authored schema-v1 file is refused for its
 //! fields.
 //!

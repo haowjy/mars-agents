@@ -3,6 +3,7 @@
 //! falls back to the ordinary `field.unknown`.
 
 use crate::diagnostic::{DOCS, PathSegment, SchemaDiagnostic, Severity};
+use crate::tool_policy::DISALLOWED_SPELLINGS;
 
 /// The table a retired key sat in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,11 +15,9 @@ pub(crate) enum Scope {
     Namespace,
 }
 
-/// (scope, key, the anchor on [`PAGE`]).
+/// (scope, key, the anchor on `retired-keys.md`). The tool-policy keys are not listed: they come
+/// from [`anchor`], which reads the spellings the translators already name.
 const RETIRED: &[(Scope, &str, &str)] = &[
-    (Scope::Agent, "disallowed-tools", "agent-deny-lists"),
-    (Scope::Agent, "disallowed_tools", "agent-deny-lists"),
-    (Scope::Agent, "disallowedTools", "agent-deny-lists"),
     (Scope::Agent, "mcp-tools", "agent-mcp-tools"),
     (
         Scope::Agent,
@@ -35,14 +34,8 @@ const RETIRED: &[(Scope, &str, &str)] = &[
     (Scope::Agent, "models", "agent-models"),
     (Scope::Agent, "autocompact", "agent-autocompact"),
     (Scope::Agent, "autocompact_pct", "agent-autocompact"),
-    (Scope::Skill, "type", "skill-type-and-when-to-use"),
-    (Scope::Skill, "when_to_use", "skill-type-and-when-to-use"),
-    (Scope::Skill, "tools", "skill-tool-policy"),
-    (Scope::Skill, "allowed-tools", "skill-tool-policy"),
-    (Scope::Skill, "allowed_tools", "skill-tool-policy"),
-    (Scope::Skill, "disallowed-tools", "skill-tool-policy"),
-    (Scope::Skill, "disallowed_tools", "skill-tool-policy"),
-    (Scope::Skill, "disallowedTools", "skill-tool-policy"),
+    (Scope::Skill, "type", "skill-type-and-when_to_use"),
+    (Scope::Skill, "when_to_use", "skill-type-and-when_to_use"),
     (
         Scope::Skill,
         "model_invocable",
@@ -61,15 +54,27 @@ const RETIRED: &[(Scope, &str, &str)] = &[
     (Scope::Namespace, "meridian", "host-namespaces"),
 ];
 
+fn anchor(scope: Scope, key: &str) -> Option<&'static str> {
+    let listed = RETIRED
+        .iter()
+        .find(|(known_scope, known, _)| *known_scope == scope && *known == key)
+        .map(|(_, _, anchor)| *anchor);
+    listed.or_else(|| match scope {
+        Scope::Agent if DISALLOWED_SPELLINGS.contains(&key) => Some("agent-deny-lists"),
+        Scope::Skill if crate::skill::tool_keys().any(|known| known == key) => {
+            Some("skill-tool-policy")
+        }
+        _ => None,
+    })
+}
+
 /// The warning for `key` of `scope` at `path`, when Mars retired it.
 pub(crate) fn diagnostic(
     scope: Scope,
     key: &str,
     path: Vec<PathSegment>,
 ) -> Option<SchemaDiagnostic> {
-    let (_, _, anchor) = RETIRED
-        .iter()
-        .find(|(known_scope, known, _)| *known_scope == scope && *known == key)?;
+    let anchor = anchor(scope, key)?;
     let name = match scope {
         Scope::Package => format!("package.{key}"),
         Scope::Namespace => format!("harness-overrides.{key}"),

@@ -55,12 +55,13 @@ fn prepare_package(
     rooted: crate::resolve::RootedSourceRef,
     effective_config: &EffectiveConfig,
     options: &ResolveOptions,
+    version: Option<&semver::Version>,
     diag: &mut DiagnosticCollector,
 ) -> Result<crate::package_prepare::PreparedRootedSource, MarsError> {
     if let Some(prepared) = options.prepared_sources.get(source_name) {
         crate::package_prepare::prepared_rooted(rooted, std::sync::Arc::clone(prepared), diag)
     } else {
-        crate::package_prepare::prepare_rooted(source_name, rooted, effective_config, diag)
+        crate::package_prepare::prepare_rooted(source_name, rooted, effective_config, version, diag)
     }
 }
 
@@ -166,6 +167,7 @@ pub(crate) fn resolve_package_bottom_up(
                         new_rooted,
                         effective_config,
                         options,
+                        new_ref.version.as_ref(),
                         diag,
                     )?;
                     ctx.set_pending_restart(
@@ -204,8 +206,14 @@ pub(crate) fn resolve_package_bottom_up(
             });
     let (resolved_ref, rooted_ref, hook_surface, prepared, manifest) = loop {
         let candidate = if let Some((resolved, rooted, _hook_surface)) = override_candidate.take() {
-            let prepared =
-                prepare_package(&pending_src.name, rooted, effective_config, options, diag)?;
+            let prepared = prepare_package(
+                &pending_src.name,
+                rooted,
+                effective_config,
+                options,
+                resolved.version.as_ref(),
+                diag,
+            )?;
             (
                 resolved,
                 prepared.rooted,
@@ -237,6 +245,7 @@ pub(crate) fn resolve_package_bottom_up(
                         rooted,
                         effective_config,
                         options,
+                        ref_.version.as_ref(),
                         diag,
                     )?;
                     (

@@ -86,7 +86,7 @@ Keys that belonged to one host moved under that host's block in `harness-overrid
 
 ## Skill tool policy
 
-A skill carries no tool policy: `tools`, `allowed-tools`, `allowed_tools` and the deny-list spellings have no schema 1 meaning. Delete them. A tool restriction belongs on the Agent that uses the skill.
+A skill carries no tool policy of Mars's own, so `tools` and `allowed_tools` have no schema 1 meaning: delete them. `allowed-tools`, `disallowed-tools` and `disallowedTools` are Claude's keys: move them under `harness-overrides.claude`. A tool restriction for every harness belongs on the Agent that uses the skill.
 
 ## Skill invocation
 

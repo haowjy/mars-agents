@@ -219,6 +219,7 @@ pub(crate) fn prepare_rooted(
     source_name: &crate::types::SourceName,
     rooted: crate::resolve::RootedSourceRef,
     effective_config: &crate::config::EffectiveConfig,
+    version: Option<&semver::Version>,
     diag: &mut DiagnosticCollector,
 ) -> Result<PreparedRootedSource, MarsError> {
     let dependency = effective_config.dependencies.get(source_name);
@@ -274,7 +275,7 @@ pub(crate) fn prepare_rooted(
     report_diagnostics(
         &prepared,
         &|relative| format!("{package_name}: {relative}"),
-        &Subject::Package(package_name),
+        &Subject::Dependency(package_name, version),
         false,
         diag,
     );
@@ -409,6 +410,8 @@ pub(crate) fn prepare_project(
 
 pub(crate) enum Subject<'a> {
     Package(&'a str),
+    /// A package a consumer depends on, at the version the sync resolved.
+    Dependency(&'a str, Option<&'a semver::Version>),
     AuthoredSource,
 }
 
@@ -431,7 +434,23 @@ pub(crate) fn report_diagnostics(
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
-            diag.schema(diagnostic, &context, false);
+            match subject {
+                // The consumer cannot edit the package, so the schema's wording for its author
+                // is no use to them.
+                Subject::Dependency(name, version)
+                    if diagnostic.code == "manifest.schema-missing" =>
+                {
+                    let mut for_consumer = diagnostic.clone();
+                    for_consumer.message = format!(
+                        "this dependency{} was published before schema 1. Mars 0.34.0 and later do not read it: run `mars upgrade {name}` for a newer version, or stay on a Mars before 0.34.0",
+                        version.map_or_else(String::new, |version| format!(
+                            " is locked at {version}, a version that"
+                        )),
+                    );
+                    diag.schema(&for_consumer, &context, false);
+                }
+                _ => diag.schema(diagnostic, &context, false),
+            }
         }
     }
     for (relative, lost) in prepared.lost_restrictions() {
@@ -448,7 +467,7 @@ pub(crate) fn report_diagnostics(
     }
     if let Classification::Foreign(choice) = &prepared.classification {
         let name = match subject {
-            Subject::Package(name) => format!("package `{name}`"),
+            Subject::Package(name) | Subject::Dependency(name, _) => format!("package `{name}`"),
             Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
         };
         let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
@@ -494,6 +513,7 @@ pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<P
         &name.into(),
         rooted,
         &config,
+        None,
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

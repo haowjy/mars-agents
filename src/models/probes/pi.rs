@@ -45,6 +45,25 @@ pub fn probe() -> PiProbeResult {
     probe_with_timeout(probe_timeout())
 }
 
+impl super::cache::CachedProbe for PiProbeResult {
+    const HARNESS: &'static str = "pi";
+    const CACHE_FILE: &'static str = "pi.json";
+    const LOCK_FILE: &'static str = ".pi.lock";
+    const SCHEMA_VERSION: u32 = 3;
+
+    fn probe() -> Self {
+        probe()
+    }
+
+    fn is_usable(&self) -> bool {
+        self.model_probe_success && self.error.is_none()
+    }
+
+    fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+}
+
 pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {
     let resolver = PathExecutableResolver;
     let Some(binary_path) = resolve_binary_path("pi", &resolver) else {

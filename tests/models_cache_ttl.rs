@@ -103,7 +103,9 @@ fn scenario_c_stale_cache_background_failure_retains_last_good_and_backs_off() {
     );
 
     wait_until(Duration::from_secs(5), || {
-        project_root.join(".mars/.models-cache.last-fail").exists()
+        cache_dir(&project_root)
+            .join(".models-cache.last-fail")
+            .exists()
     });
     let after = read_cache_raw(&project_root);
     assert_eq!(before, after, "stale fallback must not rewrite cache");

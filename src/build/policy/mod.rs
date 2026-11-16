@@ -225,10 +225,12 @@ pub fn resolve_policy(
         Err(err) => {
             warnings.push(format!("models cache unavailable: {err}"));
             (
-                model::load_models_cache(input.project_root).unwrap_or(models::ModelsCache {
-                    models: Vec::new(),
-                    fetched_at: None,
-                }),
+                model::load_models_cache(input.project_root, &providers).unwrap_or(
+                    models::ModelsCache {
+                        models: Vec::new(),
+                        fetched_at: None,
+                    },
+                ),
                 models::RefreshOutcome::Offline,
             )
         }

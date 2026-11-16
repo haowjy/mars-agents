@@ -64,12 +64,24 @@ visibility = "exported"
     source_dir.to_path_buf()
 }
 
-/// The mars binary with no user `config.toml`: the developer's own settings must not reach a
-/// fixture. Helpers that test the user layer set `MARS_CONFIG_DIR` again.
+/// The mars binary with no user `config.toml` and its own cache root: the developer's own settings
+/// must not reach a fixture. Helpers that test the user layer set `MARS_CONFIG_DIR` again.
 pub fn mars() -> Command {
     let mut cmd = Command::cargo_bin("mars").unwrap();
-    cmd.env("MARS_CONFIG_DIR", no_user_config_dir());
+    cmd.env("MARS_CONFIG_DIR", no_user_config_dir())
+        .env("MARS_CACHE_DIR", fresh_cache_dir());
     cmd
+}
+
+/// A cache root no other command sees: the models snapshot is per user, so a fixture that shared
+/// the developer's, or another test's, would read its catalog.
+fn fresh_cache_dir() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "test-cache-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ))
 }
 
 /// A config directory that is never created.
@@ -182,8 +194,18 @@ pub fn sample_cached_models() -> Vec<Value> {
     ]
 }
 
+/// The shared models cache directory of a project whose test root is its parent directory.
+pub fn cache_dir(project_root: &Path) -> PathBuf {
+    project_root
+        .parent()
+        .expect("project root has a test root")
+        .join("mars-cache")
+}
+
+/// The shared models snapshot of a project whose test root is its parent directory, as
+/// `configure_assert_cmd` lays out `MARS_CACHE_DIR`.
 pub fn cache_path(project_root: &Path) -> PathBuf {
-    project_root.join(".mars").join("models-cache.json")
+    cache_dir(project_root).join("models-catalog-v2.json")
 }
 
 pub fn write_local_source_with_model_alias(
@@ -230,14 +252,14 @@ pub fn model_ids_from_catalog_json(stdout: &[u8]) -> BTreeSet<String> {
 }
 
 pub fn write_cache(project_root: &Path, models: Vec<Value>, fetched_at: &str) {
-    let mars_dir = project_root.join(".mars");
-    fs::create_dir_all(&mars_dir).expect("failed to create .mars directory");
+    let path = cache_path(project_root);
+    fs::create_dir_all(path.parent().unwrap()).expect("failed to create cache directory");
     let cache = json!({
         "models": models,
         "fetched_at": fetched_at,
     });
     fs::write(
-        cache_path(project_root),
+        path,
         serde_json::to_vec_pretty(&cache).expect("failed to serialize cache fixture"),
     )
     .expect("failed to write cache fixture");

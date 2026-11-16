@@ -1309,10 +1309,18 @@ pub(crate) fn materialize_native_agents_after_link(
     );
     let mars_dir = input.mars_ctx.project_root.join(".mars");
     let mars_agent_scan = scan_mars_agents(&mars_dir, diag);
+    let catalog_providers = input
+        .effective
+        .settings
+        .catalog_providers
+        .clone()
+        .unwrap_or_else(crate::models::default_catalog_providers);
     let models_cache =
-        crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
+        crate::models::read_cache(&mars_dir, &catalog_providers).unwrap_or_else(|_| {
+            crate::models::ModelsCache {
+                models: Vec::new(),
+                fetched_at: None,
+            }
         });
     let model_aliases = crate::models::merged_model_aliases(input.graph, input.effective, diag);
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);

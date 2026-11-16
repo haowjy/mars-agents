@@ -54,7 +54,13 @@ pub fn safe_component(raw: &str) -> String {
 }
 
 pub fn safe_component_with_hash(raw: &str) -> String {
-    let prefix = safe_component(raw);
+    safe_component_with_hash_of(raw, raw)
+}
+
+/// A readable prefix taken from `display` and a hash of `identity`. A caller whose identity may hold
+/// a secret passes a display form without it: the name shows up in paths and error messages.
+pub fn safe_component_with_hash_of(display: &str, identity: &str) -> String {
+    let prefix = safe_component(display);
 
     let prefix_truncated = if prefix.len() > 60 {
         let mut end = 60;
@@ -67,7 +73,7 @@ pub fn safe_component_with_hash(raw: &str) -> String {
     };
 
     let mut hasher = Sha256::new();
-    hasher.update(raw.as_bytes());
+    hasher.update(identity.as_bytes());
     let hash = hasher.finalize();
     let hash_hex: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
 
@@ -81,8 +87,11 @@ pub fn git_cache_component(url: &str) -> Result<String, MarsError> {
 }
 
 pub fn archive_cache_component(url: &str, sha: &str) -> Result<String, MarsError> {
-    let combined = format!("{url}@{sha}");
-    Ok(safe_component_with_hash(&combined))
+    let canonical = mars_schema::git_url::canonicalize_git_url(url);
+    Ok(safe_component_with_hash_of(
+        &format!("{canonical}@{sha}"),
+        &format!("{url}@{sha}"),
+    ))
 }
 
 pub fn global_cache_root() -> Result<PathBuf, MarsError> {

@@ -18,6 +18,7 @@ pub enum Failure {
     Identity(Identity),
     EngineIncompatible {
         name: String,
+        failures: Vec<EngineFailure>,
         message: String,
     },
     /// Every candidate version was excluded by its engine requirement.
@@ -150,7 +151,7 @@ impl Failure {
             }) => format!(
                 "source `{name}` was referenced with conflicting identities: existing `{existing}`, incoming `{incoming}`"
             ),
-            Self::EngineIncompatible { name, message } => {
+            Self::EngineIncompatible { name, message, .. } => {
                 format!("source `{name}` is incompatible with the running engine: {message}")
             }
             Self::EngineUnsatisfiable { name, excluded } => format!(

@@ -1,0 +1,29 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "path",
+      "name": "local",
+      "declared_in": "a",
+      "message": "`a` declares a path dependency `local`, which a fetched package cannot"
+    },
+    "diagnostics": []
+  }
+]

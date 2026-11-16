@@ -445,7 +445,7 @@ pub(crate) fn mars_error(failure: Failure, answers: &CliAnswers<'_>) -> MarsErro
             incoming,
         }
         .into(),
-        Failure::EngineIncompatible { name, message } => {
+        Failure::EngineIncompatible { name, message, .. } => {
             ResolutionError::RequiresEngineIncompatible { name, message }.into()
         }
         Failure::EngineUnsatisfiable { name, excluded } => {

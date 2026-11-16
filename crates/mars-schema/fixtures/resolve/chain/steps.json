@@ -1,0 +1,98 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n\n[dependencies.c]\nurl = \"https://example.test/c\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/a"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+            }
+          ]
+        },
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/c"
+          },
+          "tags": [
+            {
+              "tag": "v0.3.0",
+              "commit": "7a448cc7f8fb71994fae0a68ae0f267d58fb5f4f"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/a",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies.b]\nurl = \"https://example.test/b\"\nversion = \"^1\"\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.0.0\n---\nbody a 1.0.0\n"
+          }
+        },
+        {
+          "url": "https://example.test/c",
+          "commit": "7a448cc7f8fb71994fae0a68ae0f267d58fb5f4f",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"c\"\nversion = \"0.3.0\"\n\n",
+            "skills/c-skill/SKILL.md": "---\nname: c-skill\ndescription: c 0.3.0\n---\nbody c 0.3.0\n"
+          }
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/b"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9"
+            },
+            {
+              "tag": "v1.2.0",
+              "commit": "122f1c221f26276a0b5d30539f69f67656b7f6e5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/b",
+          "commit": "122f1c221f26276a0b5d30539f69f67656b7f6e5",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"b\"\nversion = \"1.2.0\"\n\n",
+            "skills/b-skill/SKILL.md": "---\nname: b-skill\ndescription: b 1.2.0\n---\nbody b 1.2.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

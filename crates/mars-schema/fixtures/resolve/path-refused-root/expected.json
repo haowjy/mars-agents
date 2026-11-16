@@ -1,0 +1,11 @@
+[
+  {
+    "failed": {
+      "kind": "path",
+      "name": "local",
+      "declared_in": "root",
+      "message": "`mars.toml` declares a path dependency `local`, which a fetched package cannot"
+    },
+    "diagnostics": []
+  }
+]

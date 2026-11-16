@@ -1,0 +1,45 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.foo]\nurl = \"https://example.test/mk\"\nversion = \"^1\"\nplugin = \"foo\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/mk"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/mk",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "path": null,
+          "files": {
+            ".claude-plugin/marketplace.json": "{\"name\":\"mk\",\"owner\":{\"name\":\"o\"},\"plugins\":[{\"name\":\"foo\",\"source\":\"./plugins/foo\",\"description\":\"d\"}]}",
+            "plugins/foo/.claude-plugin/plugin.json": "{\"name\":\"foo\",\"version\":\"1.0.0\"}",
+            "plugins/foo/skills/foo-skill/SKILL.md": "---\nname: foo-skill\ndescription: foo\n---\nbody\n"
+          }
+        }
+      ]
+    }
+  ]
+}

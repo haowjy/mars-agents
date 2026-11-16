@@ -1,0 +1,35 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n"
+    },
+    "locked": {
+      "a": {
+        "url": "https://example.test/a",
+        "version": "v1.0.0",
+        "commit": "cdf8150ed6e545ef6c65ec61f63b8c40433b84d7"
+      }
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/a",
+          "commit": "cdf8150ed6e545ef6c65ec61f63b8c40433b84d7",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.0.0\"\n\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.0.0\n---\nbody a 1.0.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

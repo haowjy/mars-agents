@@ -797,3 +797,133 @@ export function renderHooks(
   targets: string[],
   tokens?: { hookDir?: string; hookTarget?: string } | null,
 ): { diagnostics: Diagnostic[]; targets: { [root: string]: HookTargetOutput } };
+
+// ---------------------------------------------------------------------------------------
+// resolve
+// ---------------------------------------------------------------------------------------
+
+/** One `[dependencies.<name>]` row of `mars.lock`, as `mars sync` writes it. Urls are the lock's canonical spelling (`github.com/owner/repo`). */
+export interface LockedDependency {
+  url?: string;
+  version?: string;
+  commit?: string;
+  /** The marketplace plugin installed from this source; `url`, `version` and `commit` are then the marketplace's. */
+  plugin?: string;
+  /** Where the plugin's files came from. */
+  content?: { url?: string; subpath?: string; commit?: string };
+}
+
+/** A fetch `resolve` still needs. Each need is its own key: answer it once. */
+export type Need =
+  | { kind: "tags"; url: string }
+  | { kind: "ref"; url: string; ref: string }
+  /** `path: null` is the whole repository. `commit` can be an annotated tag's object id, from a lock Mars 0.34 or earlier wrote. */
+  | { kind: "tree"; url: string; commit: string; path: string | null };
+
+export type Answer =
+  /** Every tag; the `commit` of an annotated tag is the commit it points at, never the tag object. Order and non-version tags don't matter. */
+  | { need: { kind: "tags"; url: string }; tags: { tag: string; commit: string }[] }
+  /** A branch, `HEAD` or a commit-as-ref, as a commit. */
+  | { need: { kind: "ref"; url: string; ref: string }; commit: string }
+  /**
+   * The files at `commit` under `path`, repository-relative (`path: null` is the whole repository).
+   * It answers every tree need at the same `url` and `commit` whose `path` is inside its own, so one
+   * whole-repository answer serves every later need there. Files only, a symlink as its target's
+   * content; binary files may be left out.
+   */
+  | { url: string; commit: string; path: string | null; files: { [path: string]: Uint8Array } | Map<string, Uint8Array> }
+  /** The commit or ref doesn't exist. A locked commit that is missing is dropped with a warning; any other is `unavailable`. */
+  | { need: Need; missing: true }
+  /** Any other error (network, auth, a 5xx, a limit of your own). Always `unavailable`; it never drops a lock. */
+  | { need: Need; failed: string };
+
+export interface ResolveDiagnostic {
+  /** `warning`: the sync fell short of what was asked; `advisory`: a note that doesn't imply it; `info`. */
+  level: "warning" | "advisory" | "info";
+  /** Stable code, e.g. `locked-commit-unreachable`, `requires-mars-fallback`. */
+  code: string;
+  message: string;
+}
+
+/** A requester (`"root"` for the root's own `mars.toml`) and the constraint it asked for (`null`: any version). */
+export interface Requester {
+  by: string;
+  constraint: string | null;
+}
+
+export type ResolveFailure = { message: string } & (
+  /** No version meets every constraint. */
+  | { kind: "conflict"; name: string; requesters: Requester[] }
+  /** Two names for one source, or one name for two sources (`existing` is the one it had first). */
+  | { kind: "identity"; detail: "one-source-two-names" | "one-name-two-sources"; names: string[]; source: string; existing?: string }
+  /** A pinned or locked version needs a newer Mars or Meridian. `engine` is `"mars"` or `"meridian"`; the first unmet requirement. */
+  | { kind: "engine-incompatible"; name: string; requirement: string | null; engine: "mars" | "meridian" | null }
+  /** Every candidate version was excluded by its engine requirement. */
+  | { kind: "engine-unsatisfiable"; name: string; excluded: { version: string; requirement: string; engine: "mars" | "meridian" }[] }
+  | { kind: "engine-requirement-invalid"; name: string; requirement: string; engine: string }
+  /** The `engine` version given does not parse. */
+  | { kind: "engine-version-invalid"; engine: string; version: string }
+  | {
+      kind: "plugin";
+      name: string;
+      detail: "not-a-marketplace" | "not-listed" | "refused" | "choice-needed" | "not-one-package" | "unusable-path";
+      plugin?: string;
+    }
+  | { kind: "subpath"; name: string; subpath: string; detail: "missing" | "not-a-directory" | "traversal" }
+  /** A package's manifest is not TOML. */
+  | { kind: "unreadable"; name: string; diagnostics: Diagnostic[] }
+  /** A fetched package (`declared_in`, or `"root"`) declares a path dependency. */
+  | { kind: "path"; name: string; declared_in: string }
+  /** A `failed` answer, or a `missing` one that did not come from a lock. */
+  | { kind: "unavailable"; need: Need; reason: string }
+  | { kind: "bounds"; limit: "packages" | "bytes"; at: string }
+  | { kind: "oscillation"; name: string; steps: { version: string | null; commit: string | null }[] }
+);
+
+export interface ResolvedDependency {
+  /** Where to vendor from: the repository (the marketplace's, for a plugin), at `commit`. */
+  url: string;
+  commit: string;
+  subpath: string | null;
+  /** The tag chosen; `null` when untagged or pinned to a ref. */
+  version: string | null;
+  /** Set for a marketplace plugin: where its files are (another repository, or a folder of the marketplace's own tree). */
+  content?: { url: string; subpath: string | null; commit: string };
+  required_by: Requester[];
+}
+
+/**
+ * Which version of which source, for a whole dependency graph: the rules of `mars sync` without
+ * the fetching. Stateless: each call replays the resolution from every answer so far, so keep the
+ * list of answers and call again with it grown until the result is not `needs`.
+ *
+ * - `{ needs }`: every open need on the current frontier (one with no answer), sorted; fetch them in
+ *   parallel. A later need can depend on an earlier answer, so a call can return needs more than
+ *   once. While any need is open the result is `needs`: a failure found after one waits.
+ * - `{ resolved }`: `lock` is exactly mars.lock's `[dependencies.<name>]` rows, to store verbatim;
+ *   `dependencies` is what to vendor and to hand to `check` and `selectItems`.
+ * - `{ failed }`: the first failure; resolution stops there. `message` is the text `mars sync`
+ *   prints for it.
+ *
+ * `refresh` ignores `locked` for the names it lists (`mars upgrade <name>`), or for every name
+ * (`"all"`, `mars upgrade`). `engine.mars` judges `requires-mars`; `engine.meridian`, when given,
+ * `requires-meridian`. `bounds.packages` caps the dependencies in the closure; `bounds.bytes` the
+ * bytes of the files Mars reads, counted afresh at each restart and checked at the end of each
+ * pass. A path dependency is never a need: it is the `path` failure. `supplied` (an edited
+ * manifest over a fetched tree) is not supported yet and throws.
+ *
+ * A malformed argument throws `input.invalid`.
+ */
+export function resolve(input: {
+  /** The root's `mars.toml` text; only its `[dependencies]` matter. */
+  root: { manifest: string };
+  supplied?: { [name: string]: { manifest: string } };
+  locked?: { [name: string]: LockedDependency };
+  refresh?: "all" | string[];
+  engine: { mars: string; meridian?: string };
+  bounds?: { packages?: number; bytes?: number };
+  answers: Answer[];
+}):
+  | { needs: Need[] }
+  | { resolved: { lock: { [name: string]: LockedDependency }; dependencies: { [name: string]: ResolvedDependency } }; diagnostics: ResolveDiagnostic[] }
+  | { failed: ResolveFailure; diagnostics: ResolveDiagnostic[] };

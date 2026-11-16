@@ -294,6 +294,18 @@ pub fn normalize(argument: JsValue) -> Result<JsValue, JsValue> {
     to_js(&normalized)
 }
 
+/// Which version of which source, for a whole dependency graph: `{root, locked?, refresh?, engine,
+/// bounds?, answers}` to `{needs}`, `{resolved, diagnostics}` or `{failed, diagnostics}`. Each call
+/// replays the resolution from every answer so far; see `index.d.ts`. A failure of the resolution
+/// is returned as data, an argument that is not that shape throws `input.invalid`.
+#[wasm_bindgen]
+pub fn resolve(input: JsValue) -> Result<JsValue, JsValue> {
+    let input: mars_schema::resolve::wire::Input = parse_fields(input)?;
+    let output =
+        mars_schema::resolve::wire::run(input).map_err(|error| fail(error.code(), error))?;
+    to_js(&output)
+}
+
 /// Whether `version` meets a dependency entry's `version` text (`null` or `"latest"` is any
 /// version; a branch or commit pin is met by none). A `version` that is not semver throws.
 #[wasm_bindgen]

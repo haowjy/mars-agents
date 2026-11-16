@@ -7,6 +7,26 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-16
+
+### Upgrade notes
+- `mars sync` no longer moves a dependency that has no `version` (or `version = "latest"`) to its newest release, nor a dependency locked at a bare commit to its repository's first tag. Run `mars upgrade` (or `mars upgrade <name>`) to pick up new releases; the sync summary names each dependency with one waiting. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#version-constraints).
+- `mars upgrade <name>` with a name not in the project now says `not found in the resolved project graph`, not `not found in mars.toml`, and checks the name after resolving.
+
+### Added
+- `read('mars.toml')` in `@meridian-flow/mars-schema` returns every table Mars reads, not only `[package]` and the dependencies: `settings`, `models`, `agents`, `skills` and `plugin`, with the diagnostics `mars validate` gives. Each table that is valid on its own is returned; a broken `[settings]`, `[models.<alias>]`, `[agents.<name>]` or `[skills.<name>]` is left out with an error whose `path` names it. A `mars.toml` with no `[package]` still returns its dependencies. Every value is plain JSON, dependency entries included (a TOML date becomes text; a `__proto__` key or an integer beyond 2^53 is dropped with a diagnostic). `fields` and the dependency tables are unchanged, and `mars` itself still refuses a project's own broken `mars.toml` whole, with the same messages. See [what changed](https://github.com/haowjy/mars-agents/blob/main/npm/@meridian-flow/mars-schema/README.md#effort-and-aliases).
+- `resolveAlias(rows, alias)` takes any model alias (a pinned `model` is returned as written), and `aliasCandidates(rows, alias)` and `resolveAliases(manifest, rows)` are new: every id an alias accepts, newest first, and every alias of a parsed manifest resolved the way `mars models resolve` does. The old `resolveAlias(rows, { match, exclude, provider })` call works as before. `narrowRows(rows, providers?)` applies the `catalog_providers` rule `mars` narrows models.dev by; resolve over narrowed rows to get the model `mars models resolve` picks. See [what changed](https://github.com/haowjy/mars-agents/blob/main/npm/@meridian-flow/mars-schema/README.md#effort-and-aliases).
+
+### Changed
+- `mars sync` keeps the locked version of a dependency that has no `version`, as it already did for one with a `version` the lock satisfies, and keeps a lock at a bare commit when the repository gains its first tag. The WASM `resolve` keeps them too.
+- `mars outdated` lists dependencies that other packages require, marked `(transitive)` (`"transitive": true` in `--json`), and `mars upgrade <name>` takes any dependency in the resolved graph. The upgrade hint `mars sync` prints names each dependency waiting (`up v1.0.0 → v1.1.0`); `--json` adds `upgrades`. See [`mars upgrade`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md).
+- `mars upgrade` says which dependencies it moved (`moved  up v1.0.0 → v1.1.0`) even when no installed file changed; before, it could print "already up to date". A move under the same label (a branch pin that advanced, a tag moved to a new commit) names both commits: `moved  r main@a78e35c96dc4 → main@5868c2a9effd`. `--json` carries them as `dependencies_moved`.
+- `mars outdated` shows a dependency locked at a bare commit by its short commit in LOCKED.
+- The WASM string exports (`read` and the others) throw `input.invalid` for a non-string argument instead of "memory access out of bounds".
+
+### Fixed
+- The `--frozen` error for a locked commit the repository no longer has now says to run `mars sync` without `--frozen`, or `mars upgrade`. A first `mars add` of a URL whose archive is missing no longer blames a lock.
+
 ## [0.35.1] - 2026-11-16
 
 ### Upgrade notes

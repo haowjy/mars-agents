@@ -1,0 +1,14 @@
+[dependencies.good]
+url = "https://example.org/good"
+extra = 9007199254740993
+"__proto__" = "x"
+
+[dependencies."__proto__"]
+url = "https://example.org/proto"
+
+[local-dependencies.dev]
+url = "https://example.org/dev"
+when = 1979-05-27
+
+[models.a]
+model = "gpt-5"

@@ -13,7 +13,7 @@ jobs:
     name: Schema WASM fixtures
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -59,7 +59,7 @@ jobs:
         rust: [stable, nightly]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -69,7 +69,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # `cargo test -p mars-schema` imports the generated hook.ts, which needs Node's type stripping.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -97,7 +97,7 @@ jobs:
     name: Check (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -105,7 +105,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 

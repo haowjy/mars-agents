@@ -12,7 +12,7 @@ jobs:
     name: Verify release provenance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
@@ -133,7 +133,7 @@ jobs:
             runner: windows-latest
             artifact: mars-windows-x64.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 
@@ -188,7 +188,7 @@ jobs:
           .\target\${{ matrix.target }}\release\mars.exe init --root $tmp
           .\target\${{ matrix.target }}\release\mars.exe doctor --root $tmp
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -231,7 +231,7 @@ jobs:
             runner: windows-latest
             artifact: wheels-windows-x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 
@@ -243,7 +243,7 @@ jobs:
           manylinux: auto
           args: --release --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: dist/*.whl
@@ -256,7 +256,7 @@ jobs:
       CARGO_HTTP_MULTIPLEXING: "false"
       CARGO_NET_RETRY: "10"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 
@@ -266,7 +266,7 @@ jobs:
           command: sdist
           args: --out dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -279,13 +279,13 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: wheels-*
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           name: sdist
@@ -308,7 +308,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 
@@ -327,7 +327,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts/
           merge-multiple: true
@@ -341,7 +341,7 @@ jobs:
             --version "${TAG_VERSION}" > "${RUNNER_TEMP}/release-notes.md"
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           prerelease: ${{ steps.release_meta.outputs.prerelease }}
@@ -355,11 +355,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
@@ -372,7 +372,7 @@ jobs:
           npm --version
           test -f "$(npm root -g)/npm/node_modules/sigstore/package.json"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts/
           pattern: mars-*
@@ -489,7 +489,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
 

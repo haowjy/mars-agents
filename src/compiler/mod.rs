@@ -150,13 +150,8 @@ fn compile_inner(
         .catalog_providers
         .clone()
         .unwrap_or_else(crate::models::default_catalog_providers);
-    let models_cache =
-        crate::models::read_cache(&mars_dir, &catalog_providers).unwrap_or_else(|_| {
-            crate::models::ModelsCache {
-                models: Vec::new(),
-                fetched_at: None,
-            }
-        });
+    let models_cache = crate::models::read_cache(&mars_dir, &catalog_providers)
+        .unwrap_or_else(|_| crate::models::ModelsCache::default());
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =

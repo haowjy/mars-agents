@@ -110,7 +110,7 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   file. `qualifying_agent_emissions` is where `Skip` becomes "no artifact". With nothing left,
   `EmitAll` clears and `EmitSelective` skips.
 - Nothing is persisted. The decision is recomputed every run; the memo is keyed on (token,
-  harness, Cursor effort).
+  harness, Cursor effort). Effort resolves per target harness: the same Agent can send `low` to Claude and `minimal` to Codex.
 - The plugin build resolves a model separately in `src/build/plugin/model.rs`
   (`NativeModel::Set` or `Clear`, with no routing and no `Skip`). A change to what a model token
   means here has to be made there too.

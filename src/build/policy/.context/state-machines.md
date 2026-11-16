@@ -47,26 +47,36 @@ An instance of [an ordered fallback walk](../../../../.context/state-machines/fa
 
 ## Cursor effort
 
-Whether a requested `effort` reached the Cursor model slug, in `runnable.rs`.
+Whether a requested effort level reached the Cursor model slug, in `runnable.rs`. Cursor's levels
+are an input to the effort rule: the suffixes its probe slugs list for the model (the bare slug is
+`medium`), so the rule picks the level and `cursor_tiers` only finds its slug.
 
 ```mermaid
 stateDiagram-v2
   [*] --> NotRequested
-  NotRequested --> Applied: Cursor, effort given, slug resolved from the probe
-  NotRequested --> ProbeUnavailable: Cursor, effort given, no probe result
+  NotRequested --> Applied: Cursor, a level requested, slug found among the model's tiers
+  NotRequested --> NotRequested: no level requested, or the rule sends none (the routed id stands)
+  NotRequested --> ProbeUnavailable: a level requested, no probe result
   NotRequested --> ProbeFailed: the probe ran and failed
   NotRequested --> ProbeReturnedNoSlugs: the probe listed no slugs
-  NotRequested --> NoEffortVariant: slugs listed, none for this effort
   NotRequested --> NoModelPrefixMatch: slugs listed, none for this model
-  Applied --> [*]: harness model replaced by the variant slug
-  ProbeUnavailable --> [*]
-  ProbeFailed --> [*]
-  ProbeReturnedNoSlugs --> [*]
-  NoEffortVariant --> [*]
-  NoModelPrefixMatch --> [*]
+  Applied --> [*]: harness model replaced by the tier's slug
+  ProbeUnavailable --> [*]: launch fails
+  ProbeFailed --> [*]: launch fails
+  ProbeReturnedNoSlugs --> [*]: launch fails
+  NoModelPrefixMatch --> [*]: launch fails
 ```
 
-- Every arm except `Applied` falls back to the routed model id unchanged and reports the reason in
-  the bundle. There is no retry.
-- The probe's own resolution error (`models/probes/cursor.rs`) has overlapping variants, and the
-  ladder maps one onto the other.
+- A request the model's tiers lack does not fail: it moves to the nearest tier and warns, like
+  every harness. The only failures are "probe unavailable" and "no slug for this model", and each
+  fails the launch with `invalid_execution_policy`.
+- With no probe at all (sync with no listing, a plugin build), Cursor's set is `Any` and the routed
+  id stands.
+
+## Effort resolution
+
+`runnable::resolve_routing` resolves the layers' effort request once the harness model is known:
+the catalog row of the provider the harness calls (`models::reasoning::catalog_row`; one join per
+harness), then `mars_schema::effort::resolve_effort` over the model's levels and the harness's. A
+move is a `launch.warning`. The same row goes into the bundle as `routing.catalog_row`, so
+consumers price from it and never re-join. Sync does the same in `profile_for_model`, per harness.

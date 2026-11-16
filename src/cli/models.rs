@@ -477,10 +477,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             );
         }
 
-        let fallback_cache = models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
+        let fallback_cache = models::ModelsCache::default();
         let fallback_outcome = models::RefreshOutcome::Offline;
         let fallback_catalog_slugs = models::catalog_model_slugs(&fallback_cache);
         let cache_catalog_slugs = cache_result

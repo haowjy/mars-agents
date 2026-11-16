@@ -8,12 +8,14 @@ use crate::build::policy::{
 };
 use crate::config::{AgentOverlay, Settings};
 use crate::models::ModelAlias;
-use mars_schema::agent::{AgentProfile, ApprovalMode, EffortLevel, SandboxMode};
+use mars_schema::agent::{AgentProfile, ApprovalMode, EffortRequest, SandboxMode};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 use mars_schema::permission_set::{PermissionSet, merge_permission_set};
 
 pub(super) struct ExecutionResolution {
-    pub(super) effort: ResolvedField<Option<String>>,
+    /// What the layers ask for; [`resolve_effort`](mars_schema::effort::resolve_effort) then
+    /// decides what the model and harness take.
+    pub(super) effort: ResolvedField<Option<EffortRequest>>,
     pub(super) approval: ResolvedField<Option<String>>,
     pub(super) sandbox: ResolvedField<Option<String>>,
     pub(super) network: ResolvedNetwork,
@@ -30,8 +32,9 @@ pub(super) fn resolve_execution_policy(
     settings: &Settings,
     native_config: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> ExecutionResolution {
-    let effort = resolve_effort(
+    let effort = effort_layer(
         input.effort_override,
+        input.config_effort,
         input.profile,
         alias,
         overlay,
@@ -157,29 +160,34 @@ fn alias_field<T>(value: Option<T>) -> ResolvedField<Option<T>> {
     resolved_field(value, source)
 }
 
-pub(super) fn resolve_effort(
-    cli: Option<&str>,
+/// The effort the layers ask for. `config` is the caller's own configuration (Meridian's
+/// `primary.effort`), the `Config` layer below the Agent and the model policies.
+pub(super) fn effort_layer(
+    cli: Option<EffortRequest>,
+    config: Option<EffortRequest>,
     profile: &AgentProfile,
     alias: Option<&ModelAlias>,
     overlay: Option<&AgentOverlay>,
     matched_policy: Option<&MatchedModelPolicy>,
-) -> ResolvedField<Option<String>> {
+) -> ResolvedField<Option<EffortRequest>> {
     resolve_policy_field(
         "effort",
         matched_policy,
-        policy_string_override_by_source,
+        |matched_policy, key, source| {
+            policy_string_override_by_source(matched_policy, key, source).map(|field| {
+                ResolvedField {
+                    value: field.value.as_deref().and_then(EffortRequest::parse),
+                    source: field.source,
+                    matched_rule: field.matched_rule,
+                }
+            })
+        },
         PolicyFieldLayers {
-            cli: cli.map(str::to_string),
-            overlay: overlay
-                .and_then(|entry| entry.effort.as_ref())
-                .map(|level| level.as_str().to_string()),
-            profile: profile
-                .effort
-                .as_ref()
-                .map(EffortLevel::as_str)
-                .map(str::to_string),
-            settings: None,
-            alias: alias.and_then(|entry| entry.default_effort.clone()),
+            cli,
+            overlay: overlay.and_then(|entry| entry.effort),
+            profile: profile.effort,
+            settings: config,
+            alias: alias.and_then(|entry| entry.default_effort),
         },
     )
 }

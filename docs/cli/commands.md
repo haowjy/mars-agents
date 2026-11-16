@@ -850,7 +850,8 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
-| `--effort <level>` | Override effort: `none`, `low`, `medium`, `high`, `xhigh`, `max`. `none` asks for no reasoning effort and is written as `"effort": "none"` in the bundle; see [Effort](../config/schema-v1.md#effort) for what each harness does with it. |
+| `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
+| `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
 | `--sandbox <mode>` | Override sandbox: `default`, `read-only`, `workspace-write`, `danger-full-access`. |
 | `--network <mode>` | Override shell network mode: `allow`, `deny`, `allowlist`. Built-in web tools remain controlled by `tools: web`. |
@@ -877,6 +878,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
     "harness_model": "...",
     "harness_model_source": "provider-match|cached-probe|passthrough|synthesized",
     "harness_model_confidence": "confirmed|likely|unknown",
+    "catalog_row": { "provider_key": "anthropic", "id": "claude-opus-4-8", "cost_input": 5.0, "cost_output": 25.0, "cost_cache_read": 0.5, "cost_cache_write": 6.25 },
     "route_trace": { "version": 3, "model_attempts": [{ "selected_by_preference": false }], "..." }
   },
   "execution_policy": {
@@ -935,7 +937,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
-- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is `none` when `--effort none` or a rule set it.
+- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Cursor, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
 - `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
   `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
   from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and

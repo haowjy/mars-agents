@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::DiagnosticCollector;
+use mars_schema::agent::EffortRequest;
 
 pub mod availability;
 mod catalog_api;
@@ -22,6 +23,7 @@ pub mod harness;
 pub mod harness_model;
 pub mod possible;
 pub mod probes;
+pub mod reasoning;
 
 pub use availability::ModelAvailability;
 pub use catalog_api::default_catalog_providers;
@@ -44,7 +46,7 @@ pub struct ModelAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompting: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_effort: Option<String>,
+    pub default_effort: Option<EffortRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,7 +106,7 @@ pub struct ResolvedAlias {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompting: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_effort: Option<String>,
+    pub default_effort: Option<EffortRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autocompact: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,16 +226,18 @@ impl<'de> Deserialize<'de> for ModelAlias {
                 "[models.<alias>.native] is no longer supported; Cursor model adaptation is internal",
             ));
         }
-        let default_effort = raw.default_effort.filter(|value| !value.trim().is_empty());
-        if let Some(ref effort) = default_effort {
-            const VALID_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max", "auto"];
-            if !VALID_EFFORTS.contains(&effort.as_str()) {
-                return Err(serde::de::Error::custom(format!(
-                    "invalid default_effort '{effort}'; accepted values: {}",
-                    VALID_EFFORTS.join(", ")
-                )));
-            }
-        }
+        let default_effort = raw
+            .default_effort
+            .filter(|value| !value.trim().is_empty())
+            .map(|effort| {
+                EffortRequest::parse(&effort).ok_or_else(|| {
+                    serde::de::Error::custom(format!(
+                        "invalid default_effort '{effort}'; accepted values: {}",
+                        EffortRequest::ALLOWED
+                    ))
+                })
+            })
+            .transpose()?;
         let autocompact: Option<u32> = match raw.autocompact {
             Some(toml::Value::Integer(value)) => match u32::try_from(value) {
                 Ok(v) => Some(v),
@@ -506,7 +510,7 @@ pub fn resolve_with_alias_prefix_static(
             autocompact_pct,
             spec: ModelSpec::Pinned { .. } | ModelSpec::PinnedWithMatch { .. },
             ..
-        }) => (default_effort.clone(), *autocompact, *autocompact_pct),
+        }) => (*default_effort, *autocompact, *autocompact_pct),
         _ => (None, None, None),
     };
     Some(ResolvedAlias {
@@ -698,7 +702,7 @@ pub fn resolve_one_static(
         harness_candidates: Vec::new(),
         description: alias.description.clone(),
         prompting: alias.prompting.clone(),
-        default_effort: alias.default_effort.clone(),
+        default_effort: alias.default_effort,
         autocompact: alias.autocompact,
         autocompact_pct: alias.autocompact_pct,
         availability: None,

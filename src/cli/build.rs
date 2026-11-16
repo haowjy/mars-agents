@@ -7,6 +7,7 @@ use crate::build::{LaunchBundleRequest, build_launch_bundle};
 use crate::cli::MarsContext;
 use crate::error::MarsError;
 use mars_schema::HarnessId;
+use mars_schema::agent::EffortRequest;
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 
 #[derive(Debug, clap::Args)]
@@ -47,27 +48,13 @@ fn parse_harness(value: &str) -> Result<HarnessId, String> {
     })
 }
 
-#[derive(Debug, Clone, ValueEnum)]
-enum EffortArg {
-    None,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-}
-
-impl EffortArg {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Xhigh => "xhigh",
-            Self::Max => "max",
-        }
-    }
+fn parse_effort(value: &str) -> Result<EffortRequest, String> {
+    EffortRequest::parse(value).ok_or_else(|| {
+        format!(
+            "unknown effort `{value}`; expected one of: {}",
+            EffortRequest::ALLOWED
+        )
+    })
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -135,9 +122,14 @@ pub struct LaunchBundleArgs {
     #[arg(long = "exclude-harness", value_parser = parse_harness, action = ArgAction::Append)]
     excluded_harnesses: Vec<HarnessId>,
 
-    /// Override effort level.
-    #[arg(long, value_enum)]
-    effort: Option<EffortArg>,
+    /// Override effort level; `auto` sends no effort.
+    #[arg(long, value_parser = parse_effort)]
+    effort: Option<EffortRequest>,
+
+    /// Effort from the caller's own configuration (Meridian's `primary.effort`). Below the
+    /// Agent's and the model policies' effort, above the model alias's `default_effort`.
+    #[arg(long, value_parser = parse_effort)]
+    config_effort: Option<EffortRequest>,
 
     /// Override approval mode.
     #[arg(long, value_enum)]
@@ -256,7 +248,8 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
             literal_model: args.literal_model,
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),
             excluded_harnesses: args.excluded_harnesses.clone(),
-            effort: args.effort.as_ref().map(|e| e.as_str().to_string()),
+            effort: args.effort,
+            config_effort: args.config_effort,
             approval: args.approval.as_ref().map(|a| a.as_str().to_string()),
             sandbox: args.sandbox.as_ref().map(|s| s.as_str().to_string()),
             network: args.network.clone(),

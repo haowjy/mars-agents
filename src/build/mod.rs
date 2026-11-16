@@ -20,7 +20,7 @@ use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::diagnostic::Diagnostic;
 use crate::error::{ConfigError, MarsError};
-use mars_schema::agent::AgentProfile;
+use mars_schema::agent::{AgentProfile, EffortRequest};
 use mars_schema::frontmatter::SkillsSpec;
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 
@@ -33,7 +33,8 @@ pub struct LaunchBundleRequest {
     pub literal_model: bool,
     pub harness: Option<String>,
     pub excluded_harnesses: Vec<mars_schema::HarnessId>,
-    pub effort: Option<String>,
+    pub effort: Option<EffortRequest>,
+    pub config_effort: Option<EffortRequest>,
     pub approval: Option<String>,
     pub sandbox: Option<String>,
     pub network: Option<NetworkPolicy>,
@@ -144,7 +145,8 @@ pub fn build_launch_bundle(
             literal_model: request.literal_model,
             harness_override: request.harness.as_deref(),
             excluded_harnesses: &request.excluded_harnesses,
-            effort_override: request.effort.as_deref(),
+            effort_override: request.effort,
+            config_effort: request.config_effort,
             approval_override: request.approval.as_deref(),
             sandbox_override: request.sandbox.as_deref(),
             network_override: request.network.as_ref(),

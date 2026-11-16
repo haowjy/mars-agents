@@ -77,7 +77,7 @@ export interface DefinitionRead<Fields> {
   diagnostics: Diagnostic[];
 }
 
-export type Effort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
 export type Network = "allow" | "deny" | "allowlist";
@@ -98,7 +98,7 @@ export interface ToolRule {
 
 export interface ModelPolicyRule {
   match: { model: string } | { alias: string } | { "model-glob": string };
-  override?: { effort?: Effort; sandbox?: Sandbox; approval?: Approval; network?: Network };
+  override?: { effort?: Effort | "auto"; sandbox?: Sandbox; approval?: Approval; network?: Network };
   "no-fallback"?: boolean;
   /** One non-empty line. */
   when?: string;
@@ -119,7 +119,8 @@ export interface AgentFields {
   /** Canonical hosts (lowercase, no trailing dot); `{ replace }` clears the lower layers' hosts. */
   "network-allow": string[] | { replace: string[] };
   "network-deny": string[];
-  effort: Effort | null;
+  /** `"auto"` is the harness's own default (`effort: auto` or YAML `null`); `null` is a key left out. */
+  effort: Effort | "auto" | null;
   skills: { load: string[]; available: string[] };
   subagents: string[];
   tools: ToolRule[];
@@ -797,3 +798,55 @@ export function renderHooks(
   targets: string[],
   tokens?: { hookDir?: string; hookTarget?: string } | null,
 ): { diagnostics: Diagnostic[]; targets: { [root: string]: HookTargetOutput } };
+
+// ---- Effort and aliases -------------------------------------------------------------------
+
+/** The reasoning levels, lowest first. */
+export function effortLevels(): Effort[];
+
+/** The models.dev fields `resolveEffort` reads from a model row. */
+export interface ModelsDevReasoning {
+  reasoning: boolean;
+  reasoning_options?: (
+    | { type: "effort"; values: string[] }
+    | { type: "toggle" }
+    | { type: "budget_tokens"; min?: number; max?: number }
+  )[];
+}
+
+/** Why a requested level moved; `code` strings are stable. */
+export type EffortMoveReason =
+  | "model_does_not_reason"
+  | "model_levels"
+  | "harness_levels"
+  | "no_common_level";
+
+export interface EffortResolution {
+  /** The level to send; `null` sends no effort. */
+  level: Effort | null;
+  /** Set when `level` differs from what was requested. */
+  moved: { from: Effort; to: Effort | null; why: EffortMoveReason } | null;
+}
+
+/**
+ * The level to send for `requested` on a model and a host. `requested` is a level, `"auto"` or
+ * `null` (both send no effort). `model` is the models.dev row's `reasoning` and
+ * `reasoning_options`, or `null` when the model is unknown. A level the model or host does not
+ * take moves to the nearest one they share (the nearest below, else the nearest above; never to
+ * `none` unless `none` was asked), and `moved` says from what, to what and why.
+ */
+export function resolveEffort(
+  requested: Effort | "auto" | null,
+  model: ModelsDevReasoning | null,
+  host: Host,
+): EffortResolution;
+
+/**
+ * The id an `auto` alias selects among models.dev rows, or `null`: every `match` glob hits, no
+ * `exclude` glob hits, `provider` (a models.dev key) matches when given, `-latest` ids are
+ * skipped, then the newest `release_date`, the shorter id and alphabetical order break ties.
+ */
+export function resolveAlias(
+  rows: { id: string; provider: string; release_date?: string | null }[],
+  options: { match: string[]; exclude?: string[]; provider?: string | null },
+): string | null;

@@ -4,7 +4,7 @@ Pi compatibility and model listing are separate observations. A failed listing d
 
 The Pi help check covers the spawn surface Meridian needs; a missing required token group marks Pi incompatible before launch. Each group admits alternative spellings to accommodate Pi versions. An empty successful model listing is evidence of no runnable models, unlike a failed listing.
 
-Cursor represents default effort tiers with an unsuffixed model slug. Resolve effort against the listing and fail closed if no matching slug exists; on success the launch bundle carries the chosen slug and clears the separate effort field.
+Cursor represents the `medium` tier with an unsuffixed model slug and the others with a suffix. `cursor_tiers` reads the tiers a model lists; they are Cursor's level set for the effort rule, which moves a level the model lacks to the nearest tier. Fail closed only when the listing is unavailable or has no slug for the model; on success the launch bundle carries the chosen slug and clears the separate effort field.
 
 A failed refresh retains last-good support evidence, but a failed latest Pi or Cursor listing does not prove current authentication. Background refresh can leave the current command using its prior observation. A command must keep the timestamp and error associated with the observation it loaded rather than rereading the cache later.
 

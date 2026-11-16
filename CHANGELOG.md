@@ -7,6 +7,15 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-11-16
+
+### Upgrade notes
+- A project that relied on a fetched package's `path` dependency now fails to sync. Declare that path dependency in your own `mars.toml` instead. The root's `path` dependencies, `[local-dependencies]` and `mars override --path` are unchanged. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md).
+- TypeScript consumers of `@meridian-flow/mars-schema`: since 0.35.0, `Effort` and `AgentFields.effort` include `"minimal"` and `"auto"`, so an exhaustive `switch` or a `Record<Effort, …>` stops compiling until it handles them. 0.35.0's notes left this out. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#effort).
+
+### Fixed
+- A git package's own `path` dependency is no longer read from your disk. `mars sync` used to follow it, install whatever package-shaped folder it found there and record the path in `mars.lock`. It now fails with `source error: <name>: `<package>` declares a path dependency `<name>`, which this resolution cannot read: a path names a folder on one machine`, the same `path` failure `resolve` in `@meridian-flow/mars-schema` already returned. v0.34.5 and v0.35.0 have this fault.
+
 ## [0.35.0] - 2026-11-16
 
 ### Upgrade notes

@@ -7,6 +7,10 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.6-rc.1] - 2026-11-16
+
+None. CI-only change: workflow actions move to majors that run on Node 24; nothing a user or developer notices changes.
+
 ## [0.34.5] - 2026-11-16
 
 ### Changed

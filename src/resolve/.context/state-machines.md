@@ -1,22 +1,27 @@
 # Resolve state machines
 
 Resolution turns a package request into a source at a version and a commit, with a documented
-order of attempts. All three machines here are in memory: a killed resolve leaves the locks and
-caches untouched, and `mars.lock` is written later. The index of all machines is
+order of attempts. The machines are in `mars_schema::resolve` (`package.rs` the walk, `version.rs`
+the ladder, `plugin.rs` the marketplace root), which asks an `Answers` for tags, refs and trees and
+never fetches; this crate's `CliAnswers` answers each lookup when it is asked and memoizes it. All
+three machines are in memory: a killed resolve leaves the locks and caches untouched, and
+`mars.lock` is written later. The index of all machines is
 [state-machines/index.md](../../../.context/state-machines/index.md). The pure choice among tags
 is in the [schema crate](../../../crates/mars-schema/.context/state-machines.md).
 
 ## Package resolution
 
-One source within one resolve pass, and the pass that restarts. `PackageResolutionState`
-(`package.rs`) is `Resolving` while the source's own subtree is walked and `Resolved` once it is in
-the registry; the absence of an entry is the third state, `Unstarted`. A restart builds a fresh
-`ResolverContext` (`mod.rs`), so `package_states`, the registry, the id index and the constraints
-all go; only `version_overrides`, `restart_history` and `exclusions` survive into the next pass.
+One source within one resolve pass, and the pass that restarts. `State` (core `package.rs`) is
+`Resolving` while the source's own subtree is walked and `Resolved` once it is in the registry;
+the absence of an entry is the third state, `Unstarted`. A restart builds a fresh `Pass`, so the
+states, the registry, the id index, the constraints and the notes all go; only `Run`'s `overrides`,
+`history` and `exclusions` survive into the next pass. A `Chosen` override carries the notes its
+choice reported (a stale lock row, an engine fallback), because the next pass reuses the choice
+without choosing again and a diagnostic belongs to the graph it describes.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Unstarted: a PendingSource names the source
+  [*] --> Unstarted: a Dependency names the source
   Unstarted --> Resolving: not in the map, mark it before the engine loop
   Resolving --> Resolving: reached again mid-flight, returns without re-checking
   Resolved --> Resolved: reached again, resolved ref already satisfies the constraint
@@ -31,18 +36,20 @@ stateDiagram-v2
   Oscillation --> [*]
 ```
 
-- **Anything that must survive a restart goes through `version_overrides`, `restart_history` or
-  `exclusions`.** Everything else is rebuilt.
+- **Anything that must survive a restart goes through `overrides`, `history` or `exclusions`.**
+  Everything else is rebuilt.
 - **`Resolving` is a cycle break, not an error.** A package re-reached while in flight returns
   `Ok(())` with nothing registered yet; its constraint was already recorded. Making that branch
   resolve again recurses forever on a dependency cycle.
-- **The restart is the only way a chosen version changes mid-run.** It is requested by returning
-  `MarsError::ResolutionRestartNeeded { package }` after storing the new ref, its rooted tree and
-  its hook surface in `ctx.pending_restart`. The outer loop takes both out together and fails
-  with "missing pending restart payload" if only one is set.
-- **Oscillation is checked per source by exact ref equality** (`version`, `version_tag`, `commit`,
-  `tree_path`). Only the source that restarted is checked, so two sources trading refs are not
-  caught.
+- **The restart is the only way a chosen version changes mid-run.** It is requested with
+  `Stop::Restart` after the new `Chosen` is stored in `pass.restart`; the outer loop takes it
+  out and fixes it in `overrides`. A restart wanted after an open need ends the pass instead
+  (`Stop::EndPass`), because the open answers may change the graph.
+- **Only work before the first open need may fail.** `fail` turns into `Stop::Skip` once an
+  answer is open, so a failure on a branch a later restart would drop is never reported; a `Skip`
+  ends only its own branch.
+- **Oscillation is checked per source by exact ref equality** (`version`, `commit`, `origin`). Only
+  the source that restarted is checked, so two sources trading refs are not caught.
 - **Wrong edits**: removing the `Resolved` early return re-resolves every resolved source once per
   request, and `mars add` fetches the same repository N times. Removing its constraint check
   turns a needed restart into a silently stale version. Comparing refs by commit alone in
@@ -54,13 +61,12 @@ stateDiagram-v2
 
 `requires-mars` and `requires-meridian` in a candidate's `package` table: a candidate whose
 requirements the running binaries do not meet is refused and the next candidate is tried. The
-state is the exclusion set, `EngineExclusions`, keyed `(source, version)` and threaded through
-every recursive call. `mars upgrade`'s scan uses the same mechanism with a local set
+state is the exclusion map, keyed `(source, version)` and kept on `Run` across passes. `mars upgrade`'s scan uses the same mechanism with a local set
 (`upgrade.rs`).
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Proposed: a version override, else resolve_single_source
+  [*] --> Proposed: a version override, else resolve_single_source (core)
   Proposed --> Checked: its manifest is read
   Checked --> Accepted: requires-* met, break out of the loop
   Checked --> Excluded: requires-* not met, exclusion recorded, advisory warning
@@ -91,9 +97,8 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   ends when `select` returns none. Nothing caps the number of fetches except the size of the tag
   list.
 - Each refusal emits `requires-mars-fallback` (advisory), `requires-mars-lock-fallback` when the
-  locked version was the refused one, and one `EngineFallback` record for the resolver to
-  reconcile. `rejected` duplicates the exclusion map to rebuild the same failures for
-  diagnostics.
+  locked version was the refused one, and nothing else: the `EngineFallback` records are built after the last pass from the
+  exclusion map, for the packages the final graph kept, newest skipped version first.
 
 ## Source version and commit
 
@@ -114,7 +119,7 @@ stateDiagram-v2
   LockedReplay --> TagScan: unreachable, warned, not frozen
   TagScan --> TagSelected: select() picks an allowed version
   TagScan --> Untagged: no selectable tag
-  TagSelected --> Resolved: fetch_git_version by the tag
+  TagSelected --> Resolved: the tag's commit is asked for as a tree
   Untagged --> Resolved: HEAD, or the locked commit when policy keeps it
   FrozenReplay --> Resolved
   FrozenReplay --> Failed: any lock mismatch is a FrozenViolation
@@ -126,11 +131,13 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
 
 - **A fallback is a warning, not a failure, except under `--frozen`**, where every fallback rung
   is an error. Codes: `locked-commit-unreachable`, `locked-ref-selector-mismatch`,
-  `stale-lock-source-identity`, and `potential-version-drift` (settled graph only).
-- **`LockedCommitUnreachable` means "git or HTTP said no", not "the commit is gone".** In
-  `source/git.rs`, `fetch_commit` maps any `GitCli` error to it, and a 404 on the archive does
-  too. A network outage therefore reads as an unreachable lock and re-resolves to a
-  new commit, which is how a sync silently moves a package forward.
+  `stale-lock-source-identity`, and `potential-version-drift` (settled graph only: the core adds it after the last pass).
+- **Only `Missing` drops a lock.** `CliAnswers` answers a tree `Missing` when the fetches succeeded
+  and the commit is not in the repository (`read-tree` of a pinned commit fails, or the archive is
+  a 404); every other error, a network or auth failure included, is `Failed` and stops the run.
+  Mapping every git error to "unreachable" re-resolved to a new commit on a network blip, which is
+  how a sync silently moved a package forward. A failure returns the `MarsError` the answer
+  stored, so the text and exit code are the fetch's own.
 - **`locked_commit_unreachable` is in memory only.** It stops the second replay attempt in the same
   call; nothing remembers it across runs.
 - Four blocks do "try the locked thing, fall back, warn" with the same shape and the same warning

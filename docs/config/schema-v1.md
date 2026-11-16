@@ -240,7 +240,7 @@ The vocabulary also records, per host, which native tools a capability becomes. 
 - *absent*: the host has no such tool, so a deny is already met (`ls` on Claude, Codex and Cursor; `work` everywhere but Meridian Flow);
 - *no switch*: the host can do it but has no tool to turn off (Codex reads files through its shell).
 
-The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `grep`, `ls`, `skill`, `ask_user`, `work`, and `spawn` with the `thread_*` family. Its `mcp(...)` rules and MCP wire tokens lower onto its connection tools (`mcp_describe`, `mcp_call`, `mcp_run`), which cannot be scoped to one server: a deny or ask covers all of them, and an allow or ask under an allow-list grants none and is reported `unscopable` ([`project`](../../npm/@meridian-flow/mars-schema/README.md#project)).
+The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `grep`, `ls`, `skill`, `ask_user`, `work`, and `spawn` with the `thread_*` family. Its `mcp(...)` rules and MCP wire tokens lower onto its connection tools (`mcp_describe`, `mcp_call`, `mcp_run`), which cannot be scoped to one server: a deny or ask covers all of them, and an allow or ask under an allow-list grants none (`known`, with a `note` saying so) ([`project`](../../npm/@meridian-flow/mars-schema/README.md#project)).
 
 ## The contract as data
 

@@ -34,7 +34,7 @@ and rules, so never add a binary-side copy.
 
 ## Tool projection for Meridian Flow
 
-Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the one list of the connection tools that `mcp(...)` rules and MCP wire tokens lower onto, and a new connection tool joins by being listed there. Flow cannot scope them to one server, so `project_flow_connection_tools` errs toward fewer connections: a deny or ask of any `mcp(...)` lands on every one of them (the `note` says it covers every server, which can be broader than written), and an allow or ask under an allow-list (`*` that is not `allow`) gives none and is `unscopable`, which the consumer reports as a warning. An allow with no allow-list changes nothing, since the tools are already available. Other hosts' MCP lowering must not change when Flow's does.
+Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the one list of the connection tools that `mcp(...)` rules and MCP wire tokens lower onto, and a new connection tool joins by being listed there. Flow cannot scope them to one server, so `project_flow_connection_tools` errs toward fewer connections: a deny or ask of any `mcp(...)` lands on every one of them (the `note` says it covers every server, which can be broader than written), and an allow or ask under an allow-list (`*` that is not `allow`) gives none and stays `known` with a note, which the consumer shows as a warning (`unscopable` is refused, so it must not be used here). An allow with no allow-list changes nothing, since the tools are already available. Other hosts' MCP lowering must not change when Flow's does.
 
 ## Checking
 

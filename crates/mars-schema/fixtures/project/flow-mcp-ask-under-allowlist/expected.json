@@ -22,7 +22,7 @@
         "action": "ask",
         "origin": "profile"
       },
-      "status": "unscopable",
+      "status": "known",
       "native": [],
       "native_tools": [],
       "note": "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given",

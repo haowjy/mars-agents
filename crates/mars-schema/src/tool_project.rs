@@ -67,9 +67,8 @@ pub enum NativeStatus {
     /// launch bundle reports the reason in `note` and nowhere else.
     Unknown(&'static str),
     /// The rule has a pattern and the host's tools take no scope, so it cannot be applied as
-    /// written, or the host cannot narrow a grant to the one thing it names. Carries the reason,
-    /// which the launch bundle and `project` report in `note`.
-    Unscopable(&'static str),
+    /// written. Only a host that does not scope patterns reports it.
+    Unscopable,
 }
 
 impl NativeStatus {
@@ -79,14 +78,15 @@ impl NativeStatus {
             Self::Known => "known",
             Self::Absent => "absent",
             Self::Unknown(_) => "unknown",
-            Self::Unscopable(_) => "unscopable",
+            Self::Unscopable => "unscopable",
         }
     }
 
     /// Why Mars could not name the rule, for `unknown` and `unscopable`.
     pub fn note(self) -> Option<&'static str> {
         match self {
-            Self::Unknown(note) | Self::Unscopable(note) => Some(note),
+            Self::Unknown(note) => Some(note),
+            Self::Unscopable => Some(UNSCOPABLE_NOTE),
             Self::Known | Self::Absent => None,
         }
     }
@@ -278,11 +278,12 @@ fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule 
 /// Flow has no per-server MCP tools, only the connection tools in
 /// [`tool_natives::FLOW_CONNECTION_TOOLS`], which take the server as an argument and cannot be
 /// scoped to one. A deny or an ask therefore lands on all of them, whatever it names. A grant
-/// under an allow-list would give every connection and not the one named, so it gives none.
+/// under an allow-list would give every connection and not the one named, so it gives none: the
+/// rule stays `known` with the note, because Flow refuses `unscopable` but shows a note as a warning.
 /// Without an allow-list the tools are available anyway, so an allow loses nothing.
 fn project_flow_connection_tools(action: ToolAction, restricted: bool) -> ProjectedRule {
     if restricted && action != ToolAction::Deny {
-        return ProjectedRule::with_status(NativeStatus::Unscopable(FLOW_MCP_GRANT_NOTE));
+        return ProjectedRule::known(Vec::new(), Some(FLOW_MCP_GRANT_NOTE));
     }
     let note = match action {
         ToolAction::Deny => Some(FLOW_MCP_DENY_NOTE),
@@ -313,7 +314,7 @@ fn project_builtin_capability(
         && !host.scopes_patterns()
         && matches!(row, Some(Native::Tools(_) | Native::ScopedTools { .. }))
     {
-        return ProjectedRule::with_status(NativeStatus::Unscopable(UNSCOPABLE_NOTE));
+        return ProjectedRule::with_status(NativeStatus::Unscopable);
     }
     match row {
         Some(Native::Tools(names)) => ProjectedRule::known(

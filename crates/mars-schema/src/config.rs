@@ -430,9 +430,24 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     let value = serde_ignored::deserialize(toml::Deserializer::new(content), |at| {
         ignored.push(segments(&at));
     })?;
+    let unknown_keys = unknown_notes(ignored, &[]);
+    let floor = content
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
+    Ok(Read {
+        value,
+        unknown_keys,
+        floor,
+    })
+}
 
-    let mut unknown_keys = Vec::new();
-    for mut at in ignored {
+/// One `field.unknown` note for each key a serde pass left unread, `prefix` being where the
+/// pass started.
+fn unknown_notes(ignored: Vec<Vec<PathSegment>>, prefix: &[PathSegment]) -> Vec<SchemaDiagnostic> {
+    let mut notes = Vec::new();
+    for at in ignored {
+        let mut at: Vec<PathSegment> = prefix.iter().cloned().chain(at).collect();
         let Some(PathSegment::Key(key)) = at.pop() else {
             continue;
         };
@@ -444,17 +459,172 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
         let table = table_name(&at);
         let mut path = at;
         path.push(PathSegment::Key(key.clone()));
-        unknown_keys.push(unknown_field(path, &table, &key));
+        notes.push(unknown_field(path, &table, &key));
     }
-    let floor = content
-        .parse::<toml::Table>()
-        .ok()
-        .and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
-    Ok(Read {
-        value,
-        unknown_keys,
-        floor,
-    })
+    notes
+}
+
+/// A table of a `mars.toml` this Mars refused, and why. `path` names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigIssue {
+    pub path: Vec<PathSegment>,
+    pub message: String,
+}
+
+/// A `mars.toml` read for its consumer configuration.
+pub struct ConsumerRead {
+    /// Every table that is valid on its own. A table the file breaks is absent (`models.a` of
+    /// `models`, or the whole of `settings`); `package` and the dependency tables come from the
+    /// whole-file pass only when it succeeds.
+    pub config: Config,
+    /// What was refused: a table that failed, `[settings.tools]` with a `*`, a
+    /// `min_mars_version` that is not a requirement.
+    pub issues: Vec<ConfigIssue>,
+    /// The error of the whole-file pass, when it failed. Its text points at the line, and the
+    /// CLI, which refuses the project's own file whole, reports it as it always has.
+    pub parse_error: Option<toml::de::Error>,
+}
+
+/// Read a project's `mars.toml`: the one reading the CLI's `parse_config` and the WASM
+/// `read('mars.toml')` share. The whole file is read in one serde pass; when that fails, each
+/// table is read apart, so one broken value costs its own table and nothing else.
+pub fn read_consumer(content: &str) -> ConsumerRead {
+    match read::<Config>(content) {
+        Ok(read) => {
+            let mut config = read.value;
+            config.unknown_keys = read.unknown_keys;
+            config.unknown_keys.extend(config.dependency_unknown_keys());
+            config.floor = read.floor;
+            let issues = settings_refusals(
+                Some(&config.settings.tools),
+                config.settings.min_mars_version.as_deref(),
+            );
+            ConsumerRead {
+                config,
+                issues,
+                parse_error: None,
+            }
+        }
+        Err(error) => {
+            let (config, issues) = read_tables(content, &error);
+            ConsumerRead {
+                config,
+                issues,
+                parse_error: Some(error),
+            }
+        }
+    }
+}
+
+fn key_path(parts: &[&str]) -> Vec<PathSegment> {
+    parts
+        .iter()
+        .map(|part| PathSegment::Key((*part).to_owned()))
+        .collect()
+}
+
+/// The tables of `content` that are valid alone. `package` and `[plugin]` are the package
+/// readers' and the dependency entries are only read for their unknown keys: their refusals are
+/// reported where the package and its dependencies are read.
+fn read_tables(content: &str, whole: &toml::de::Error) -> (Config, Vec<ConfigIssue>) {
+    let mut config = Config::default();
+    let Ok(table) = content.parse::<toml::Table>() else {
+        let issue = ConfigIssue {
+            path: Vec::new(),
+            message: whole.to_string(),
+        };
+        return (config, vec![issue]);
+    };
+    let mut issues = Vec::new();
+    let mut unknown = Vec::new();
+    config.floor = keys::floor(keys::used(&table, keys::Document::Consumer));
+    config.plugin = table.get("plugin").cloned();
+    if let Some(value) = table.get("settings") {
+        match read_value::<Settings>(value, key_path(&["settings"]), &mut unknown) {
+            Ok(settings) => {
+                issues.extend(settings_refusals(
+                    Some(&settings.tools),
+                    settings.min_mars_version.as_deref(),
+                ));
+                config.settings = settings;
+            }
+            Err(issue) => issues.push(issue),
+        }
+    }
+    config.models = read_entries(&table, "models", &mut unknown, &mut issues);
+    config.agents = read_entries(&table, "agents", &mut unknown, &mut issues);
+    config.skills = read_entries(&table, "skills", &mut unknown, &mut issues);
+    config.dependencies = read_dependency_entries(&table, "dependencies", &mut unknown);
+    config.local_dependencies = read_dependency_entries(&table, "local-dependencies", &mut unknown);
+    config.unknown_keys = unknown;
+    config.unknown_keys.extend(config.dependency_unknown_keys());
+    (config, issues)
+}
+
+fn read_value<T: DeserializeOwned>(
+    value: &toml::Value,
+    at: Vec<PathSegment>,
+    unknown: &mut Vec<SchemaDiagnostic>,
+) -> Result<T, ConfigIssue> {
+    let mut ignored = Vec::new();
+    match serde_ignored::deserialize(value.clone(), |path| ignored.push(segments(&path))) {
+        Ok(read) => {
+            unknown.extend(unknown_notes(ignored, &at));
+            Ok(read)
+        }
+        Err(error) => Err(ConfigIssue {
+            path: at,
+            message: error.to_string().trim_end().to_owned(),
+        }),
+    }
+}
+
+/// The entries of a table of named entries (`[models.<alias>]`), each read alone.
+fn read_entries<T: DeserializeOwned>(
+    table: &toml::Table,
+    key: &str,
+    unknown: &mut Vec<SchemaDiagnostic>,
+    issues: &mut Vec<ConfigIssue>,
+) -> IndexMap<String, T> {
+    let mut entries = IndexMap::new();
+    match table.get(key) {
+        None => {}
+        Some(toml::Value::Table(named)) => {
+            for (name, value) in named {
+                match read_value(value, key_path(&[key, name]), unknown) {
+                    Ok(entry) => {
+                        entries.insert(name.clone(), entry);
+                    }
+                    Err(issue) => issues.push(issue),
+                }
+            }
+        }
+        Some(_) => issues.push(ConfigIssue {
+            path: key_path(&[key]),
+            message: format!("`{key}` must be a table"),
+        }),
+    }
+    entries
+}
+
+fn read_dependency_entries(
+    table: &toml::Table,
+    key: &str,
+    unknown: &mut Vec<SchemaDiagnostic>,
+) -> IndexMap<SourceName, RawEntry> {
+    let mut entries = IndexMap::new();
+    let Some(toml::Value::Table(named)) = table.get(key) else {
+        return entries;
+    };
+    for (name, value) in named {
+        let Ok(source) = toml::Value::String(name.clone()).try_into::<SourceName>() else {
+            continue;
+        };
+        if let Ok(entry) = read_value(value, key_path(&[key, name]), unknown) {
+            entries.insert(source, entry);
+        }
+    }
+    entries
 }
 
 /// Only the `[models]` table of a manifest: a dependency's other consumer tables belong to its
@@ -468,13 +638,32 @@ pub fn read_models(content: &str) -> Result<IndexMap<String, ModelAlias>, toml::
     toml::from_str::<Models>(content).map(|parsed| parsed.models)
 }
 
-/// `[settings.tools]` takes no `*`: it would turn every agent into an allowlist or sit ahead of
-/// every profile's `approval`, which already is the default for calls no rule matches.
-pub fn settings_tools_refusal(tools: Option<&ToolRuleMap>) -> Option<String> {
-    tools?.wildcard_refusal(
-        "[settings.tools]",
-        "`approval` is the default for calls no rule matches",
-    )
+/// What a file's `[settings]` refuses. `[settings.tools]` takes no `*`: it would turn every agent
+/// into an allowlist or sit ahead of every profile's `approval`, which already is the default for
+/// calls no rule matches. A `min_mars_version` that is not a requirement is refused because the
+/// key's job is to stop an older Mars (see [`parse_min_mars_version`]).
+pub fn settings_refusals(
+    tools: Option<&ToolRuleMap>,
+    min_mars_version: Option<&str>,
+) -> Vec<ConfigIssue> {
+    let tools = tools
+        .and_then(|tools| {
+            tools.wildcard_refusal(
+                "[settings.tools]",
+                "`approval` is the default for calls no rule matches",
+            )
+        })
+        .map(|message| ConfigIssue {
+            path: key_path(&["settings", "tools"]),
+            message,
+        });
+    let min = min_mars_version
+        .and_then(|raw| parse_min_mars_version(raw).err())
+        .map(|message| ConfigIssue {
+            path: key_path(&["settings", "min_mars_version"]),
+            message,
+        });
+    tools.into_iter().chain(min).collect()
 }
 
 /// A project's `min_mars_version`, read as `requires-mars` is: a bare version means that version

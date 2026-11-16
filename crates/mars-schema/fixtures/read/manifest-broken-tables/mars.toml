@@ -1,0 +1,24 @@
+[package]
+name = "broken-tables"
+version = "1.0.0"
+
+[dependencies.x]
+url = "https://example.org/x"
+
+[settings]
+targets = 1
+
+[models.good]
+model = "gpt-5"
+
+[models.bad]
+exclude = ["*"]
+
+[agents.coder]
+approval = "bogus"
+
+[agents.reviewer]
+model = "good"
+
+[skills.s]
+description = 1

@@ -1,0 +1,78 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "broken-tables"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ]
+  ],
+  "fields": {
+    "name": "broken-tables",
+    "version": "1.0.0"
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "manifest.schema-missing",
+      "severity": "error",
+      "path": [
+        "package",
+        "schema"
+      ],
+      "message": "`[package]` has no `schema`: add `schema = 1`, or migrate the package with `mars migrate` from Mars 0.33.x (https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#package-without-schema)"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "settings"
+      ],
+      "message": "invalid type: integer `1`, expected a sequence\nin `targets`"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "models",
+        "bad"
+      ],
+      "message": "model alias must have either 'model' (pinned) or 'match' (auto-resolve)"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "agents",
+        "coder"
+      ],
+      "message": "`approval` has invalid value `bogus`; allowed: default, auto, confirm, never\nin `approval`"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "skills",
+        "s"
+      ],
+      "message": "invalid type: integer `1`, expected a string\nin `description`"
+    }
+  ],
+  "dependencies": {
+    "x": {
+      "url": "https://example.org/x"
+    }
+  },
+  "models": {
+    "good": {
+      "model": "gpt-5"
+    }
+  },
+  "agents": {
+    "reviewer": {
+      "model": "good"
+    }
+  }
+}

@@ -23,13 +23,28 @@
     {
       "code": "config.invalid",
       "severity": "error",
-      "path": [],
-      "message": "TOML parse error at line 12, column 1\n   |\n12 | [models.broken]\n   | ^^^^^^^^^^^^^^^\nmodel alias must have either 'model' (pinned) or 'match' (auto-resolve)\n"
+      "path": [
+        "settings",
+        "min_mars_version"
+      ],
+      "message": "`min_mars_version = \"not a version\"` is not a version requirement: unexpected character 'n' while parsing major version number"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "models",
+        "broken"
+      ],
+      "message": "model alias must have either 'model' (pinned) or 'match' (auto-resolve)"
     }
   ],
   "dependencies": {
     "base": {
       "url": "https://github.com/example/base"
     }
+  },
+  "settings": {
+    "min_mars_version": "not a version"
   }
 }

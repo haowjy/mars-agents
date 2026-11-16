@@ -160,16 +160,6 @@ pub fn merged_runtime_aliases(
     merged
 }
 
-pub fn auto_resolve(
-    provider: Option<&str>,
-    match_patterns: &[String],
-    exclude_patterns: &[String],
-    cache: &ModelsCache,
-) -> Option<String> {
-    auto_resolve_all(provider, match_patterns, exclude_patterns, &cache.models)
-        .first()
-        .map(|model| model.id.clone())
-}
 pub fn resolve_with_alias_prefix_static(
     input: &str,
     aliases: &IndexMap<String, ModelAlias>,
@@ -211,46 +201,13 @@ pub fn resolve_with_alias_prefix_static(
         }
     }
 
-    for (_alias_name, alias) in aliases {
-        match &alias.spec {
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                for candidate in auto_resolve_all(
-                    provider.as_deref(),
-                    match_patterns,
-                    exclude_patterns,
-                    &cache.models,
-                ) {
-                    if glob_match(&pattern, &candidate.id) {
-                        deduped
-                            .entry(candidate.id.clone())
-                            .or_insert_with(|| candidate.clone());
-                    }
-                }
+    for alias in aliases.values() {
+        for candidate in alias.selected(&cache.models) {
+            if glob_match(&pattern, &candidate.id) {
+                deduped
+                    .entry(candidate.id.clone())
+                    .or_insert_with(|| candidate.clone());
             }
-            ModelSpec::PinnedWithMatch {
-                model,
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                let provider = provider
-                    .as_deref()
-                    .or_else(|| infer_provider_from_model_id(model));
-                for candidate in
-                    auto_resolve_all(provider, match_patterns, exclude_patterns, &cache.models)
-                {
-                    if glob_match(&pattern, &candidate.id) {
-                        deduped
-                            .entry(candidate.id.clone())
-                            .or_insert_with(|| candidate.clone());
-                    }
-                }
-            }
-            ModelSpec::Pinned { .. } => {}
         }
     }
 
@@ -478,33 +435,21 @@ pub fn resolve_provider_for_alias(alias: &ModelAlias, cache: &ModelsCache) -> Op
 }
 
 fn resolve_model_and_provider(alias: &ModelAlias, cache: &ModelsCache) -> Option<(String, String)> {
-    match &alias.spec {
-        ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
-            let provider = provider_from_alias_spec(alias).unwrap_or_else(|| "unknown".to_string());
-            Some((model.clone(), provider))
-        }
-        ModelSpec::AutoResolve {
-            provider,
-            match_patterns,
-            exclude_patterns,
-        } => {
-            let model_id =
-                auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache)?;
-            // When provider is known from the alias, use it; otherwise look up
-            // the resolved model's provider in the cache.
-            let resolved_provider = provider
-                .clone()
-                .or_else(|| {
-                    cache
-                        .models
-                        .iter()
-                        .find(|m| m.id == model_id)
-                        .map(|m| m.provider.clone())
-                })
-                .unwrap_or_else(|| "unknown".to_string());
-            Some((model_id, resolved_provider))
-        }
-    }
+    let model_id = alias.resolve(&cache.models)?;
+    let spec_provider = provider_from_alias_spec(alias);
+    // An auto alias with no `provider` takes the resolved row's.
+    let provider = if alias.pinned_model_id().is_some() {
+        spec_provider
+    } else {
+        spec_provider.or_else(|| {
+            cache
+                .models
+                .iter()
+                .find(|m| m.id == model_id)
+                .map(|m| m.provider.clone())
+        })
+    };
+    Some((model_id, provider.unwrap_or_else(|| "unknown".to_string())))
 }
 
 /// Authored provider restriction, never inferred from a preferred harness.
@@ -549,18 +494,10 @@ fn format_alias_resolution_for_diag(
             format!("{source_name} → {model} (pinned+match)"),
             Some(model.clone()),
         ),
-        ModelSpec::AutoResolve {
-            provider,
-            match_patterns,
-            exclude_patterns,
-        } => {
-            let resolved =
-                auto_resolve(provider.as_deref(), match_patterns, exclude_patterns, cache);
-            match resolved {
-                Some(model_id) => (format!("{source_name} → {model_id}"), Some(model_id)),
-                None => (format!("{source_name} → <unresolvable>"), None),
-            }
-        }
+        ModelSpec::AutoResolve { .. } => match alias.resolve(&cache.models) {
+            Some(model_id) => (format!("{source_name} → {model_id}"), Some(model_id)),
+            None => (format!("{source_name} → <unresolvable>"), None),
+        },
     }
 }
 

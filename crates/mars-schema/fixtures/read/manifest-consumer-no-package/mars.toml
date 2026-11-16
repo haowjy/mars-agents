@@ -1,0 +1,5 @@
+[dependencies.x]
+url = "https://example.org/x"
+
+[models.a]
+model = "gpt-5"

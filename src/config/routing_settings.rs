@@ -175,7 +175,7 @@ pub fn resolve(settings: &Settings) -> ResolvedRoutingSettings {
                 .collect(),
         });
 
-    let harness_scope = settings.effective_links().harness_scope();
+    let harness_scope = crate::config::targets::effective_links(settings).harness_scope();
 
     ResolvedRoutingSettings {
         harness_order,

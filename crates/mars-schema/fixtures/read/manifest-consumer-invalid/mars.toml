@@ -1,0 +1,13 @@
+[package]
+name = "consumer-invalid"
+version = "1.0.0"
+schema = 1
+
+[dependencies.base]
+url = "https://github.com/example/base"
+
+[settings]
+min_mars_version = "not a version"
+
+[models.broken]
+exclude = ["*"]

@@ -1,0 +1,21 @@
+{
+  "composer": "composer-2.5",
+  "deepseek": "deepseek-flash",
+  "deepseekpro": "deepseek-v4-pro",
+  "opus": "claude-opus-5-5",
+  "sonnet": "claude-sonnet-5-5",
+  "haiku": "claude-haiku-5-5",
+  "fable": "claude-fable-5-1",
+  "glm": "opencode-go/glm-5.2",
+  "kimi": "kimi-k3",
+  "muse": "muse-spark-1.3",
+  "muse-contributor": "opencode-go/muse-spark-1.3-contributor",
+  "grok": "grok-4.7",
+  "argon": "gemini-4-argon",
+  "hydrogen": null,
+  "argon-contributor": "opencode-go/gemini-4-argon-contributor",
+  "sol": "gpt-6.1-sol",
+  "terra": "gpt-5.6-terra",
+  "luna": "gpt-6-luna",
+  "astra": "gpt-6-astra"
+}

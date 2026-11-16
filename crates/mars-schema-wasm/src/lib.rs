@@ -658,46 +658,56 @@ pub fn resolve_effort(
 #[derive(serde::Deserialize)]
 struct AliasRow {
     id: String,
-    /// models.dev's provider key (`anthropic`).
+    /// models.dev's provider key (`anthropic`); the key a row read from Mars's own snapshot
+    /// carries as `provider_key` wins, since there `provider` is the display name.
     provider: String,
+    provider_key: Option<String>,
     release_date: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
-struct AliasOptions {
-    #[serde(rename = "match")]
-    match_patterns: Vec<String>,
-    #[serde(default)]
-    exclude: Vec<String>,
-    provider: Option<String>,
-}
-
-/// The model id an `auto` alias selects among models.dev rows, or `null`: every `match` glob
-/// hits, no `exclude` glob hits, the provider matches when given, `-latest` ids are skipped, and
-/// the newest `release_date` wins, then the shorter id, then alphabetical order. The code
-/// `mars models resolve` runs.
-#[wasm_bindgen(js_name = resolveAlias)]
-pub fn resolve_alias(rows: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
-    let options: AliasOptions = parse_fields(options)?;
+fn alias_rows(rows: JsValue) -> Result<Vec<mars_schema::models::CachedModel>, JsValue> {
     let rows: Vec<AliasRow> = parse_input(rows)?;
-    let models: Vec<mars_schema::models::CachedModel> = rows
+    Ok(rows
         .into_iter()
         .map(|row| mars_schema::models::CachedModel {
-            provider: row.provider.clone(),
-            provider_key: row.provider,
+            provider_key: row.provider_key.unwrap_or_else(|| row.provider.clone()),
+            provider: row.provider,
             id: row.id,
             release_date: row.release_date,
             ..Default::default()
         })
-        .collect();
-    let winner = mars_schema::models::auto_resolve_all(
-        options.provider.as_deref(),
-        &options.match_patterns,
-        &options.exclude,
-        &models,
+        .collect())
+}
+
+/// The model id an alias resolves to among models.dev rows, or `null`: a pinned `model` as
+/// written, else the best row an `auto` alias selects. The code `mars models resolve` runs.
+#[wasm_bindgen(js_name = resolveAlias)]
+pub fn resolve_alias(rows: JsValue, alias: JsValue) -> Result<JsValue, JsValue> {
+    let alias: mars_schema::alias::ModelAlias = parse_fields(alias)?;
+    to_js(&alias.resolve(&alias_rows(rows)?))
+}
+
+/// Every id an alias accepts, in `resolveAlias`'s order.
+#[wasm_bindgen(js_name = aliasCandidates)]
+pub fn alias_candidates(rows: JsValue, alias: JsValue) -> Result<JsValue, JsValue> {
+    let alias: mars_schema::alias::ModelAlias = parse_fields(alias)?;
+    to_js(&alias.candidates(&alias_rows(rows)?))
+}
+
+/// Resolve every alias of a parsed manifest's `models`, the way `mars models resolve` does.
+#[wasm_bindgen(js_name = resolveAliases)]
+pub fn resolve_aliases(manifest: JsValue, rows: JsValue) -> Result<JsValue, JsValue> {
+    #[derive(serde::Deserialize)]
+    struct Models {
+        #[serde(default)]
+        models: indexmap::IndexMap<String, mars_schema::alias::ModelAlias>,
+    }
+    let Models { models } = parse_input(manifest)?;
+    let rows = alias_rows(rows)?;
+    to_js(
+        &models
+            .iter()
+            .map(|(name, alias)| (name, alias.resolve(&rows)))
+            .collect::<indexmap::IndexMap<_, _>>(),
     )
-    .into_iter()
-    .next()
-    .map(|model| model.id.as_str());
-    to_js(&winner)
 }

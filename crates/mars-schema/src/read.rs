@@ -14,7 +14,7 @@ use crate::ordered::OrderedValue;
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Reading {
-    Manifest(crate::manifest::ManifestRead),
+    Manifest(Box<crate::manifest::ManifestRead>),
     Agent(DefinitionRead<crate::agent::AgentProfile>),
     Skill(DefinitionRead<crate::skill::SkillProfile>),
 }
@@ -48,7 +48,7 @@ impl UnrecognizedPath {
 pub fn read(path: &str, text: &str) -> Result<Reading, UnrecognizedPath> {
     let parts: Vec<&str> = path.split('/').collect();
     match parts.as_slice() {
-        ["mars.toml"] => Ok(Reading::Manifest(crate::manifest::read(text))),
+        ["mars.toml"] => Ok(Reading::Manifest(Box::new(crate::manifest::read_all(text)))),
         ["agents", file]
             if file
                 .strip_suffix(".md")

@@ -1,6 +1,6 @@
 # `@meridian-flow/mars-schema`
 
-WebAssembly build of [Mars schema v1](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md): the one reader of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) and the `[package]` table of `mars.toml`, the YAML emitter that lossless editors splice with, the tool vocabulary, and the code that reads a whole repository as Mars packages. The Mars CLI uses the same code, so a file means the same thing to an editor and to `mars sync`.
+WebAssembly build of [Mars schema v1](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md): the one reader of agent definitions (`agents/<slug>.md`), skills (`skills/<slug>/SKILL.md`) and `mars.toml` (`[package]`, the dependency tables and every consumer table: `[settings]`, `[models]`, `[agents]`, `[skills]`, `[plugin]`), the YAML emitter that lossless editors splice with, the tool vocabulary, and the code that reads a whole repository as Mars packages. The Mars CLI uses the same code, so a file means the same thing to an editor and to `mars sync`.
 
 Types are in `index.d.ts`; the shapes are pinned by the shipped `fixtures/`.
 
@@ -26,6 +26,7 @@ await init();
 | Function | Does |
 |---|---|
 | `read(path, text)` | Reads one file. The package-relative `path` picks the reader: `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md`. Any other path throws `read.unrecognized-path`. |
+| `resolveAlias(rows, alias)`, `aliasCandidates(rows, alias)`, `resolveAliases(manifest, rows)` | Resolve a `[models.<alias>]` over models.dev rows, as `mars models resolve` does. See Effort and aliases. |
 | `emitValue(value, indent)` | YAML for one value, to splice after a key. |
 | `rewriteBlock(frontmatter)` | The whole frontmatter block between the `---` fences for ordered `[key, value]` pairs. |
 | `vocabulary()` | The tool capabilities, their aliases, and the native tools of each host. |
@@ -177,7 +178,9 @@ A package cycle resolves when its constraints agree, as in `mars sync`; each pac
 
 `resolveEffort(requested, model, host)` is the effort rule `mars build launch-bundle` and `mars sync` apply, so a gateway and Mars agree on what is sent. The ladder is `none < minimal < low < medium < high < xhigh < max` (`effortLevels()`); `"auto"` and `null` both mean "send no effort". `model` is the models.dev row's `reasoning` and `reasoning_options`, or `null` for an unknown model; `host` is a harness or `meridian-flow`. A level that is on neither the model's list nor the host's moves to the nearest level on the ladder that both take, below or above (a tie goes up), and never lands on `none` unless `none` was asked (off is not less thinking); the result is `{ level, moved }`, with `moved.why` one of `model_does_not_reason`, `model_levels`, `harness_levels`, `no_common_level`. A model that reasons but lists no effort values (toggle only, budget only, no control) takes every level, less `none` unless it has a toggle, so `none` moves up to the lowest level the host takes; an unknown model (`null`) takes any level; a model that does not reason gets none. Each host's levels are recorded, with the version they were checked against, on `harness_levels` in the crate.
 
-`resolveAlias(rows, { match, exclude, provider })` is the rule `mars models resolve` applies to an `auto` alias: it returns the selected `id`, or `null`. Rows are models.dev rows, with `provider` the models.dev key.
+`read('mars.toml', text)` returns every table Mars reads, so a caller needs no second reader: beside `fields` (`[package]`) and `dependencies` / `local-dependencies` it has `models`, `settings`, `agents`, `skills` and `plugin`, each left out when empty. The CLI loads `mars.toml` through the same code, so the diagnostics match what `mars validate` prints. One serde pass reads the consumer tables: a table that breaks a rule leaves all five out with one `config.invalid` error (the parser's text, as `mars` prints it without the file name), unless `[package]` or a dependency entry already has an error, which then stands alone. A key Mars does not read is a `field.unknown` info. Table fields come back as Mars writes them (`default_effort`, `managed_root`, `model-invocable`), not as the file spelled them: `network_allow` reads as `network-allow`.
+
+`resolveAlias(rows, alias)` is the rule `mars models resolve` applies to an alias: it returns the model id, or `null`. `alias` is a `ModelAlias`, the object `read` returns under `models` or one built in code. A pinned `model` is taken as written; an `auto` alias selects among the rows by `match`, `exclude` and `provider` (newest `release_date` first). The old call form, `{ match, exclude, provider }`, is an `auto` alias and still works. `aliasCandidates(rows, alias)` lists every id the alias accepts in the same order: a pinned `model` first, then the selected rows. `resolveAliases(manifest, rows)` resolves each alias of a parsed manifest's `models` and returns `{ [name]: id | null }`. Rows are models.dev rows, with `provider` the models.dev key; a row from Mars's own snapshot may carry `provider_key`, which then wins.
 
 ### Versions and selection
 

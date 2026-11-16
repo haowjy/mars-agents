@@ -155,7 +155,7 @@ fn source_target_membership(
     source_abs: &Path,
 ) -> Result<(String, PathBuf), MarsError> {
     let source_canon = dunce::canonicalize(source_abs)?;
-    for target_name in config.settings.managed_targets() {
+    for target_name in crate::config::targets::managed_targets(&config.settings) {
         let target_root = ctx.project_root.join(&target_name);
         let Ok(target_canon) = dunce::canonicalize(&target_root) else {
             continue;

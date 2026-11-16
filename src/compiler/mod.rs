@@ -139,7 +139,7 @@ fn compile_inner(
     let effective_settings = &applied.planned.targeted.resolved.loaded.effective.settings;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         effective_settings.meridian_agent_copy(),
-        &effective_settings.managed_targets(),
+        &crate::config::targets::managed_targets(effective_settings),
         diag,
     );
     let agent_surface_policy = agent_surface_policy(

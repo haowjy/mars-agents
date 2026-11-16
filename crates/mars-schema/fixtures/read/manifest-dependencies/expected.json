@@ -19,7 +19,18 @@
     "schema": 1
   },
   "body": null,
-  "diagnostics": [],
+  "diagnostics": [
+    {
+      "code": "field.unknown",
+      "severity": "info",
+      "path": [
+        "dependencies",
+        "market",
+        "future-key"
+      ],
+      "message": "[dependencies.market] unknown key `future-key` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
+    }
+  ],
   "dependencies": {
     "base": {
       "url": "https://github.com/haowjy/meridian-base",

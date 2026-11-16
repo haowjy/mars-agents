@@ -203,7 +203,8 @@ pub fn resolve_policy(
         .agent
         .and_then(|name| effective_config.agents.get(name));
     let settings_model_policies = effective_config.settings.model_policies();
-    let harness_scope = effective_config.settings.effective_links().harness_scope();
+    let harness_scope =
+        crate::config::targets::effective_links(&effective_config.settings).harness_scope();
     let default_harness_order = crate::harness::registry::default_harness_order_names();
     let harness_order = effective_config
         .settings

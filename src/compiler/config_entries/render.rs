@@ -187,7 +187,7 @@ pub(crate) fn preflight_config_entries(
     if errors.is_empty() {
         report_skips(
             targeted,
-            &resolved.loaded.effective.settings.managed_targets(),
+            &crate::config::targets::managed_targets(&resolved.loaded.effective.settings),
             reported,
             diag,
         );

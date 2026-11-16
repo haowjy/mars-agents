@@ -443,7 +443,7 @@ pub(crate) fn build_target_state(
     let (mut target, explicit_renames, collision_renames, invalid_hooks) =
         target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
     extend(&mut target, diag)?;
-    let managed_targets = effective.settings.managed_targets();
+    let managed_targets = crate::config::targets::managed_targets(&effective.settings);
     target.kept_hooks = kept_hooks::settle(
         invalid_hooks,
         &target.items,
@@ -709,14 +709,9 @@ pub(crate) fn sync_targets(
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,
             &ctx.project_root.join(".mars"),
-            &applied
-                .planned
-                .targeted
-                .resolved
-                .loaded
-                .effective
-                .settings
-                .managed_targets(),
+            &crate::config::targets::managed_targets(
+                &applied.planned.targeted.resolved.loaded.effective.settings,
+            ),
             &applied.applied.outcomes,
             diag,
         );
@@ -734,14 +729,9 @@ pub(crate) fn sync_targets(
     }
 
     let mars_dir = ctx.project_root.join(".mars");
-    let targets = applied
-        .planned
-        .targeted
-        .resolved
-        .loaded
-        .effective
-        .settings
-        .managed_targets();
+    let targets = crate::config::targets::managed_targets(
+        &applied.planned.targeted.resolved.loaded.effective.settings,
+    );
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;

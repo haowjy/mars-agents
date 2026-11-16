@@ -177,15 +177,99 @@ export interface DependencyEntry {
 }
 
 /**
- * The reading of `mars.toml`: the `[package]` table as any definition reading, and the
- * dependencies the package declares in declaration order, one `selectVersion` call per entry. A
- * table is omitted when empty, and both when `fields` is `null`. An entry that breaks a rule is
- * left out with a `dependency.*` diagnostic (an error in `[dependencies]`, a warning in
- * `[local-dependencies]`, which a dependent never installs from).
+ * A `[models.<alias>]` table, as Mars writes it back: `model` pins an id, `match` (with
+ * `exclude` and `provider`) selects from the catalog, and an alias may have both, `match`
+ * then widening what a pinned alias accepts. At least one of `model` and `match` is set.
+ * Pass one to `resolveAlias`, `aliasCandidates` or build it in code; a key outside this list is
+ * refused.
+ */
+export interface ModelAlias {
+  /** A pinned model id, taken as written. */
+  model?: string;
+  /** Globs (`*` only) every selected id matches. */
+  match?: string[];
+  /** Globs no selected id matches; only with `match`. */
+  exclude?: string[];
+  /** A models.dev provider key (`anthropic`); `meta-llama` and `meta` are one provider. */
+  provider?: string;
+  harness?: Harness;
+  description?: string;
+  prompting?: string;
+  default_effort?: Effort | "auto";
+  autocompact?: number;
+  autocompact_pct?: number;
+}
+
+/** Launch overrides for one agent, `[agents.<name>]`. Omitted keys are unset. */
+export interface AgentOverlay {
+  description?: string;
+  model?: string;
+  harness?: string;
+  effort?: Effort | "auto";
+  approval?: Approval;
+  sandbox?: Sandbox;
+  network?: Network;
+  "network-allow"?: string[] | { replace: string[] };
+  "network-deny"?: string[] | { replace: string[] };
+  "model-invocable"?: boolean;
+  "user-invocable"?: boolean;
+  tools?: Record<string, "allow" | "deny" | "ask">;
+  "model-policies"?: ModelPolicyRule[];
+}
+
+/** `[skills.<name>]`. */
+export interface SkillOverlay {
+  description?: string;
+  "model-invocable"?: boolean;
+  "user-invocable"?: boolean;
+}
+
+/** `[settings]`, in the spellings Mars writes back; omitted when the file has none. Keys unset in the file are omitted. */
+export interface Settings {
+  managed_root?: string;
+  targets?: string[];
+  models_cache_ttl_hours?: number;
+  min_mars_version?: string;
+  default_harness?: string;
+  default_model?: string;
+  default_network?: Network;
+  "network-allow"?: string[] | { replace: string[] };
+  "network-deny"?: string[] | { replace: string[] };
+  tools?: Record<string, "allow" | "deny" | "ask">;
+  harness_order?: string[];
+  provider_order?: string[];
+  catalog_providers?: string[];
+  agent_emission?: "auto" | "always" | "never";
+  meridian?: {
+    agent_copy?: { harnesses: string[]; include_fanout: boolean };
+    fanout?: { agents: string[] };
+  };
+  "model-policies"?: ModelPolicyRule[];
+}
+
+/**
+ * The reading of `mars.toml`: the `[package]` table as any definition reading, the dependencies
+ * the package declares in declaration order (one `selectVersion` call per entry), and every
+ * other table Mars reads. A table is omitted when empty or absent, and the dependency tables
+ * when `fields` is `null`. An entry that breaks a rule is left out with a `dependency.*`
+ * diagnostic (an error in `[dependencies]`, a warning in `[local-dependencies]`, which a
+ * dependent never installs from).
+ *
+ * One pass reads the consumer tables (`plugin`, `settings`, `models`, `agents`, `skills`): a
+ * table that breaks a rule leaves all of them out with one `config.invalid` error carrying the
+ * parser's text, the text `mars` prints without the file name. A key Mars does not read is a
+ * `field.unknown` info at its path, as `mars validate` shows it. `settings` is omitted when the
+ * file sets nothing in it.
  */
 export interface ManifestRead extends DefinitionRead<ManifestFields> {
   dependencies?: { [name: string]: DependencyEntry };
   "local-dependencies"?: { [name: string]: DependencyEntry };
+  /** `[plugin]`, as written. */
+  plugin?: JsonValue;
+  settings?: Settings;
+  models?: { [alias: string]: ModelAlias };
+  agents?: { [name: string]: AgentOverlay };
+  skills?: { [name: string]: SkillOverlay };
 }
 
 export type Reading =
@@ -978,12 +1062,37 @@ export function resolveEffort(
   host: Host,
 ): EffortResolution;
 
+/** A models.dev model as an alias reads it: `provider` is the models.dev key (`anthropic`). */
+export interface ModelRow {
+  id: string;
+  provider: string;
+  /** A row from Mars's own snapshot: `provider` is the display name, so this key is used instead. */
+  provider_key?: string | null;
+  release_date?: string | null;
+}
+
 /**
- * The id an `auto` alias selects among models.dev rows, or `null`: every `match` glob hits, no
- * `exclude` glob hits, `provider` (a models.dev key) matches when given, `-latest` ids are
- * skipped, then the newest `release_date`, the shorter id and alphabetical order break ties.
+ * The id `alias` resolves to among models.dev rows, or `null`: a pinned `model` as written, else
+ * the best row an `auto` alias selects. Every `match` glob hits, no `exclude` glob hits,
+ * `provider` matches when given, `-latest` ids are skipped, then the newest `release_date`, the
+ * shorter id and alphabetical order break ties. The code `mars models resolve` runs.
  */
-export function resolveAlias(
-  rows: { id: string; provider: string; release_date?: string | null }[],
-  options: { match: string[]; exclude?: string[]; provider?: string | null },
-): string | null;
+export function resolveAlias(rows: ModelRow[], alias: ModelAlias): string | null;
+
+/**
+ * Every id `alias` accepts, in `resolveAlias`'s order (newest first). A pinned `model` comes
+ * first, then the rows `match`, `exclude` and `provider` select (a pinned alias with `match` and
+ * no `provider` takes the provider its model id names). A pinned alias with no `match` accepts
+ * its `model` alone.
+ */
+export function aliasCandidates(rows: ModelRow[], alias: ModelAlias): string[];
+
+/**
+ * `resolveAlias` for each alias of a parsed manifest's `models`, keyed by alias name in file
+ * order: the id, or `null` when an `auto` alias selects nothing. A manifest with no `models`
+ * gives `{}`.
+ */
+export function resolveAliases(
+  manifest: { models?: { [alias: string]: ModelAlias } },
+  rows: ModelRow[],
+): { [alias: string]: string | null };

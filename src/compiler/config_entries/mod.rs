@@ -60,7 +60,7 @@ pub(crate) fn compile_config_entries(
     use crate::target::TargetRegistry;
 
     let effective = &applied.planned.targeted.resolved.loaded.effective;
-    let target_roots: Vec<String> = effective.settings.managed_targets();
+    let target_roots: Vec<String> = crate::config::targets::managed_targets(&effective.settings);
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     // Env ref preflight (non-strict by default). A server selected for several

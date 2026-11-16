@@ -2,22 +2,36 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
+use crate::alias::ModelAlias;
+use crate::config::{AgentOverlay, Config, Settings, SkillOverlay};
 use crate::dependency::Dependencies;
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 use crate::read::DefinitionRead;
+use indexmap::IndexMap;
 use serde::Serialize;
 
-/// The reading of a `mars.toml`: the `[package]` table as every definition reading has it, and
-/// the dependency entries the package declares. The dependency keys are the file's spellings and
-/// are left out when empty.
+/// The reading of a `mars.toml`: the `[package]` table as every definition reading has it, the
+/// dependency entries the package declares, and, from [`read_all`], the consumer tables. Table
+/// keys are the file's names and are left out when empty; the fields inside `settings`, `agents`
+/// and `models` are spelled as Mars writes them back (`managed_root`, `default_effort`).
 #[derive(Debug, Clone, Serialize)]
 pub struct ManifestRead {
     #[serde(flatten)]
     pub package: DefinitionRead<PackageMetadata>,
     #[serde(flatten)]
     pub dependencies: Dependencies,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<toml::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<Settings>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    pub models: IndexMap<String, ModelAlias>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    pub agents: IndexMap<String, AgentOverlay>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    pub skills: IndexMap<String, SkillOverlay>,
 }
 
 /// Read package identity and dependency entries while leaving consumer-only top-level tables
@@ -47,7 +61,67 @@ pub fn read(content: &str) -> ManifestRead {
     ManifestRead {
         package: reading,
         dependencies,
+        ..ManifestRead::unread(Vec::new())
     }
+}
+
+/// [`read`], and the consumer tables beside `[package]` and the dependencies: what a project's
+/// `mars.toml` and the CLI's loader read. One serde pass reads the whole file, so a table that
+/// breaks a rule leaves every consumer table out with one `config.invalid` error (the CLI's text
+/// without the file name); `read` itself never fails on them, because a dependent reads only a
+/// package's `[models]` and refuses nothing else. When `[package]` or a dependency entry is
+/// already refused, the pass fails on the same value, so that report stands alone.
+pub fn read_all(content: &str) -> ManifestRead {
+    let mut reading = read(content);
+    if reading
+        .first_error()
+        .is_some_and(|e| e.code == "toml.invalid")
+    {
+        return reading;
+    }
+    let invalid = |message: String| {
+        SchemaDiagnostic::new("config.invalid", Severity::Error, Vec::new(), message)
+    };
+    let read = match crate::config::read::<Config>(content) {
+        Ok(read) => read,
+        Err(error) => {
+            if reading.first_error().is_none() {
+                reading.package.diagnostics.push(invalid(error.to_string()));
+            }
+            return reading;
+        }
+    };
+    let refusals = [
+        crate::config::settings_tools_refusal(Some(&read.value.settings.tools)),
+        read.value
+            .settings
+            .min_mars_version
+            .as_deref()
+            .and_then(|raw| crate::config::parse_min_mars_version(raw).err()),
+    ];
+    reading
+        .package
+        .diagnostics
+        .extend(refusals.into_iter().flatten().map(invalid));
+    reading.package.diagnostics.extend(read.unknown_keys);
+    reading
+        .package
+        .diagnostics
+        .extend(read.value.dependency_unknown_keys());
+    let Config {
+        plugin,
+        settings,
+        models,
+        agents,
+        skills,
+        ..
+    } = read.value;
+    reading.plugin = plugin;
+    reading.settings = (settings != Settings::default()).then_some(settings);
+    reading.models = models;
+    reading.agents = agents;
+    reading.skills = skills;
+    reading
 }
 
 impl ManifestRead {
@@ -64,6 +138,11 @@ impl ManifestRead {
         Self {
             package: DefinitionRead::unread(diagnostics),
             dependencies: Dependencies::default(),
+            plugin: None,
+            settings: None,
+            models: IndexMap::new(),
+            agents: IndexMap::new(),
+            skills: IndexMap::new(),
         }
     }
 }

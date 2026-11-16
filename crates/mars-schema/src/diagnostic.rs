@@ -82,7 +82,7 @@ pub(crate) const DOCS: &str = "https://github.com/haowjy/mars-agents/blob/main/d
 /// A key a reader has no field for. Nothing is lost by ignoring it and it may be intended
 /// (a typo, or a key from a newer Mars), so it is `Info`: `validate`, `check` and `--verbose`
 /// show it. `table` is as in [`unknown_key_message`].
-pub(crate) fn unknown_field(path: Vec<PathSegment>, table: &str, key: &str) -> SchemaDiagnostic {
+pub fn unknown_field(path: Vec<PathSegment>, table: &str, key: &str) -> SchemaDiagnostic {
     SchemaDiagnostic::new(
         "field.unknown",
         Severity::Info,

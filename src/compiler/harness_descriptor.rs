@@ -117,8 +117,7 @@ pub(crate) fn known_canonical_ids() -> impl Iterator<Item = &'static str> {
 
 /// Harnesses that would receive native agent artifacts during sync for these settings.
 pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessId> {
-    settings
-        .managed_targets()
+    crate::config::targets::managed_targets(settings)
         .iter()
         .filter_map(|target| {
             DESCRIPTORS

@@ -601,3 +601,103 @@ pub fn check(argument: JsValue) -> Result<JsValue, JsValue> {
         .collect();
     to_js(&mars_schema::check::check(&tree, &prepared, &dependencies))
 }
+
+// ---- Effort and aliases -------------------------------------------------------------------
+
+/// The reasoning levels, lowest first: `none < minimal < low < medium < high < xhigh < max`.
+#[wasm_bindgen(js_name = effortLevels)]
+pub fn effort_levels() -> Result<JsValue, JsValue> {
+    let levels: Vec<&str> = mars_schema::agent::EffortLevel::LADDER
+        .iter()
+        .map(|level| level.as_str())
+        .collect();
+    to_js(&levels)
+}
+
+/// The level to send for `requested` on a model and a host: `{ level, moved }`. `requested` is
+/// a level, `"auto"` or `null` (both send no effort). `model` is the models.dev row's
+/// `{ reasoning, reasoning_options }`, or `null` when the model is unknown. `host` is a harness
+/// or `meridian-flow`. A level the model or host does not take moves to the nearest one they
+/// share, and `moved` says from what, to what and why.
+#[wasm_bindgen(js_name = resolveEffort)]
+pub fn resolve_effort(
+    requested: Option<String>,
+    model: JsValue,
+    host: &str,
+) -> Result<JsValue, JsValue> {
+    use mars_schema::agent::EffortRequest;
+    let requested = match requested {
+        None => EffortRequest::Default,
+        Some(text) => EffortRequest::parse(&text).ok_or_else(|| {
+            fail(
+                "input.invalid",
+                format!(
+                    "unknown effort `{text}`; allowed: {}, or null",
+                    EffortRequest::ALLOWED
+                ),
+            )
+        })?,
+    };
+    let host = mars_schema::Host::parse(host)
+        .ok_or_else(|| fail("input.invalid", format!("unknown host `{host}`")))?;
+    let row = if model.is_null() || model.is_undefined() {
+        None
+    } else {
+        let model: serde_json::Value = parse_input(model)?;
+        mars_schema::models::ModelReasoningRow::from_models_dev(&model)
+    };
+    let reasoning = mars_schema::effort::ModelReasoning::from_row(row.as_ref());
+    to_js(&mars_schema::effort::resolve_effort(
+        requested,
+        &reasoning,
+        &mars_schema::effort::harness_levels(host),
+    ))
+}
+
+/// A models.dev model as Flow holds it: the fields an alias reads.
+#[derive(serde::Deserialize)]
+struct AliasRow {
+    id: String,
+    /// models.dev's provider key (`anthropic`).
+    provider: String,
+    release_date: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AliasOptions {
+    #[serde(rename = "match")]
+    match_patterns: Vec<String>,
+    #[serde(default)]
+    exclude: Vec<String>,
+    provider: Option<String>,
+}
+
+/// The model id an `auto` alias selects among models.dev rows, or `null`: every `match` glob
+/// hits, no `exclude` glob hits, the provider matches when given, `-latest` ids are skipped, and
+/// the newest `release_date` wins, then the shorter id, then alphabetical order. The code
+/// `mars models resolve` runs.
+#[wasm_bindgen(js_name = resolveAlias)]
+pub fn resolve_alias(rows: JsValue, options: JsValue) -> Result<JsValue, JsValue> {
+    let options: AliasOptions = parse_fields(options)?;
+    let rows: Vec<AliasRow> = parse_input(rows)?;
+    let models: Vec<mars_schema::models::CachedModel> = rows
+        .into_iter()
+        .map(|row| mars_schema::models::CachedModel {
+            provider: row.provider.clone(),
+            provider_key: row.provider,
+            id: row.id,
+            release_date: row.release_date,
+            ..Default::default()
+        })
+        .collect();
+    let winner = mars_schema::models::auto_resolve_all(
+        options.provider.as_deref(),
+        &options.match_patterns,
+        &options.exclude,
+        &models,
+    )
+    .into_iter()
+    .next()
+    .map(|model| model.id.as_str());
+    to_js(&winner)
+}

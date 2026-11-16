@@ -33,5 +33,5 @@ The rules that go wrong in practice:
 | [Git cache entry](../../src/source/.context/state-machines.md) | a cloned repository |
 | [Archive cache entry](../../src/source/.context/state-machines.md) | an extracted tarball |
 | [Probe cache](../../src/models/probes/.context/state-machines.md) | one harness's model listing |
-| [Model catalog snapshot](../../src/models/.context/state-machines.md) | the catalog in `.mars/models-cache.json` |
+| [Model catalog snapshot](../../src/models/.context/state-machines.md) | the per-user catalog snapshot in the Mars cache root |
 | [Probe loading](../../src/harness/.context/state-machines.md) | each probe outcome in one command's session |

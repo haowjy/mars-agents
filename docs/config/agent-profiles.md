@@ -300,10 +300,10 @@ network: it bypasses the policy the launch bundle carries.
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `none`, `low`, `medium`, `high`, `xhigh`, `max` (case-insensitive) |
-| Default | none (the model's default) |
+| Allowed values | `auto` (or YAML `null`), `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (case-insensitive) |
+| Default | none (the harness's default, then the model's) |
 
-Reasoning effort. `none` means reasoning off and is different from leaving the key out. Mars lowers it to each harness's own control (`--effort` for Claude, `model_reasoning_effort` for Codex); Claude has no off value, so its native file omits `effort` and Mars warns. The per-harness table is in [Schema v1](schema-v1.md#effort).
+Reasoning effort. `none` means reasoning off and is different from leaving the key out; `auto` or `null` sends no effort. Mars lowers the level to each harness's own control (`--effort` for Claude, `model_reasoning_effort` for Codex) after moving it to a level the model and harness both take, and warns when it moves: `none` on Claude, which has no off value, becomes `low`. The per-harness levels are in [Schema v1](schema-v1.md#effort). A value other than the original six needs `requires-mars >= 0.35.0`.
 
 ```yaml
 effort: high

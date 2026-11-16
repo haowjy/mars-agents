@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::error::MarsError;
 use crate::package_prepare::{DiskTreeSource, FileFindings, source_label};
 
+use mars_schema::agent::EffortRequest;
 use mars_schema::check::Check;
 use mars_schema::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use mars_schema::item::DefinitionKind;
@@ -239,6 +240,24 @@ pub(crate) fn package_floor(
     let manifest: toml::Table = manifest.parse().ok()?;
     manifest.get("package")?;
     let mut uses = keys::used(&manifest, keys::Document::Package);
+    // An effort value an older Mars refuses fails its whole sync, in any package.
+    for definition in &prepared.definitions {
+        let Reading::Agent(reading) = &definition.reading else {
+            continue;
+        };
+        if let Some(agent) = &reading.fields {
+            let policy_efforts = agent
+                .model_policies
+                .iter()
+                .filter_map(|rule| rule.overrides.effort.as_deref());
+            let efforts = agent.effort.map(EffortRequest::as_str).into_iter();
+            uses.extend(
+                efforts
+                    .chain(policy_efforts)
+                    .map(|value| keys::Used::profile_effort(&definition.slug, value)),
+            );
+        }
+    }
     // Only a schema 1 package states its tool rules in a form an older Mars can misread.
     if uses.iter().any(|used| used.key == "schema") {
         for definition in &prepared.definitions {

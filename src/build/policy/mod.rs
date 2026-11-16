@@ -10,7 +10,7 @@ use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::models::{self, ModelAlias};
 use crate::routing;
-use mars_schema::agent::AgentProfile;
+use mars_schema::agent::{AgentProfile, EffortRequest};
 use mars_schema::network::{NetworkHost, NetworkPolicy};
 use mars_schema::permission_set::PermissionSet;
 
@@ -18,7 +18,8 @@ mod execution;
 mod harness;
 mod model;
 mod runnable;
-use runnable::CursorEffortOutcome;
+use crate::models::reasoning;
+use runnable::CursorEffortFailure;
 
 struct SessionProbeResolver<'a> {
     session: &'a mut CapabilitySession,
@@ -54,7 +55,8 @@ pub struct PolicyInput<'a> {
     pub literal_model: bool,
     pub harness_override: Option<&'a str>,
     pub excluded_harnesses: &'a [mars_schema::HarnessId],
-    pub effort_override: Option<&'a str>,
+    pub effort_override: Option<EffortRequest>,
+    pub config_effort: Option<EffortRequest>,
     pub approval_override: Option<&'a str>,
     pub sandbox_override: Option<&'a str>,
     pub network_override: Option<&'a NetworkPolicy>,
@@ -225,10 +227,7 @@ pub fn resolve_policy(
         Err(err) => {
             warnings.push(format!("models cache unavailable: {err}"));
             (
-                model::load_models_cache(input.project_root).unwrap_or(models::ModelsCache {
-                    models: Vec::new(),
-                    fetched_at: None,
-                }),
+                model::load_models_cache(input.project_root, &providers).unwrap_or_default(),
                 models::RefreshOutcome::Offline,
             )
         }
@@ -553,71 +552,64 @@ pub fn resolve_policy(
             .to_string(),
         provider_constraint: resolved_model.provider_constraint.as_deref(),
         provider_for_order: resolved_model.provider_for_order.as_deref(),
-        effort: execution_resolution.effort.value.clone(),
+        effort: execution_resolution.effort.value,
+        catalog: &cache.catalog,
         cursor_probe_result: cursor_probe_result.as_ref(),
         route_report: report,
     });
 
     warnings.extend(routing_resolution.warnings);
-    let mut effort = execution_resolution.effort.value.clone();
     if routing_resolution.effort_consumed {
-        effort = None;
         provenance.insert(
             "effort_applied_to_harness_model".to_string(),
             "true".to_string(),
         );
-    } else if needs_cursor_probe
-        && let Some(cursor_effort) = effort
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    {
+    }
+    if let (Some(failure), Some(requested)) = (
+        routing_resolution.cursor_effort_failure,
+        execution_resolution.effort.value,
+    ) {
         let actor = input
             .agent
             .map(|agent| format!("agent {agent}"))
             .unwrap_or_else(|| "requested model".to_string());
-        let message = match routing_resolution.cursor_effort_outcome {
-            CursorEffortOutcome::NoEffortVariant => Some(format!(
-                "{actor} selected effort {cursor_effort}; Cursor model {} has no {cursor_effort} variant; try --effort medium/none.",
-                resolved_model.model
-            )),
-            CursorEffortOutcome::ProbeUnavailable => Some(format!(
-                "{actor} selected effort {cursor_effort}; Cursor model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
-            )),
-            CursorEffortOutcome::ProbeFailed { error } => {
+        let requested = requested.as_str();
+        let message = match failure {
+            CursorEffortFailure::ProbeUnavailable => format!(
+                "{actor} selected effort {requested}; Cursor model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
+            ),
+            CursorEffortFailure::ProbeFailed { error } => {
                 let detail = error
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(|value| format!(" ({value})"))
                     .unwrap_or_default();
-                Some(format!(
-                    "{actor} selected effort {cursor_effort}; Cursor model list probe failed{detail}."
-                ))
+                format!(
+                    "{actor} selected effort {requested}; Cursor model list probe failed{detail}."
+                )
             }
-            CursorEffortOutcome::ProbeReturnedNoSlugs => Some(format!(
-                "{actor} selected effort {cursor_effort}; Cursor model list returned no model slugs; rerun without --no-refresh-models or with --refresh-models."
-            )),
-            CursorEffortOutcome::NoModelPrefixMatch => Some(format!(
-                "{actor} selected effort {cursor_effort}; Cursor model catalog has no matching model slug for `{}`.",
+            CursorEffortFailure::ProbeReturnedNoSlugs => format!(
+                "{actor} selected effort {requested}; Cursor model list returned no model slugs; rerun without --no-refresh-models or with --refresh-models."
+            ),
+            CursorEffortFailure::NoModelPrefixMatch => format!(
+                "{actor} selected effort {requested}; Cursor model catalog has no matching model slug for `{}`.",
                 resolved_model.model
-            )),
-            CursorEffortOutcome::NotRequested | CursorEffortOutcome::Applied => None,
+            ),
         };
-
-        if let Some(message) = message {
-            return Err(MarsError::Selection {
-                code: "invalid_execution_policy",
-                message,
-                report: Box::new(routing_resolution.routing.route_trace),
-            });
-        }
+        return Err(MarsError::Selection {
+            code: "invalid_execution_policy",
+            message,
+            report: Box::new(routing_resolution.routing.route_trace),
+        });
     }
 
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
-            effort,
+            effort: routing_resolution
+                .effort
+                .map(|level| level.as_str().to_string()),
             approval: execution_resolution.approval.value,
             sandbox: execution_resolution.sandbox.value,
             network: execution_resolution.network.policy,
@@ -639,11 +631,31 @@ pub(crate) struct ModelRef<'a> {
     pub alias: Option<&'a ModelAlias>,
 }
 
+/// Where a profile is lowered, for the effort the model and harness take.
+pub(crate) struct EffortRoute<'a> {
+    pub harness: mars_schema::HarnessId,
+    /// Every provider's rows; empty when there is no catalog (a package build).
+    pub catalog: &'a [mars_schema::models::CachedModel],
+    /// The levels the harness takes for this model when its own set depends on the model
+    /// (Cursor's probe slugs); `None` uses the harness's table.
+    pub harness_levels: Option<mars_schema::effort::Levels>,
+}
+
+/// A profile resolved for one model and harness, and the warning its effort earned.
+pub(crate) struct ModelProfile {
+    pub profile: AgentProfile,
+    /// Names the model, both levels and why, when the requested effort moved.
+    pub effort_moved: Option<String>,
+}
+
 /// The profile as it launches on one model: effort, approval, sandbox and network resolved
 /// through the launch bundle's precedence functions, with every layer known at sync time
 /// (overlay scalars, the first matching model policy across overlay, profile and settings, the
 /// profile's top-level fields, the alias default effort); only the CLI layer is absent. `model`
 /// is `None` when the artifact emits no model: no policy or alias applies then.
+///
+/// The resolved `effort` is the level the harness takes for the model, or `None` to send none.
+/// A package build has no catalog, so only the harness's own levels apply.
 ///
 /// Network comes from the Agent's own layers only (overlay, model-policy override, profile).
 /// The project's `[settings]` network is not the Agent's: a package build never receives it, and
@@ -656,8 +668,9 @@ pub(crate) fn profile_for_model(
     overlay: Option<&AgentOverlay>,
     settings_policies: &[ModelPolicyRule],
     model: Option<ModelRef<'_>>,
-) -> AgentProfile {
-    use mars_schema::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    route: &EffortRoute<'_>,
+) -> ModelProfile {
+    use mars_schema::agent::{ApprovalMode, SandboxMode};
     let matched = model.as_ref().and_then(|model| {
         match_model_policy(
             effective_policies(None, &profile.model_policies, settings_policies),
@@ -667,10 +680,26 @@ pub(crate) fn profile_for_model(
     });
     let alias = model.as_ref().and_then(|model| model.alias);
     let mut resolved = profile.clone();
-    resolved.effort = execution::resolve_effort(None, profile, alias, overlay, matched.as_ref())
-        .value
-        .as_deref()
-        .and_then(EffortLevel::parse);
+    let mut effort_moved = None;
+    resolved.effort =
+        execution::effort_layer(None, None, profile, alias, overlay, matched.as_ref())
+            .value
+            .and_then(|request| {
+                let harness_set = route
+                    .harness_levels
+                    .clone()
+                    .unwrap_or_else(|| reasoning::harness_set(route.harness));
+                let effort = reasoning::resolve_for_route(
+                    request,
+                    route.catalog,
+                    route.harness,
+                    model.as_ref().map_or("", |model| model.canonical_id),
+                    "",
+                    &harness_set,
+                );
+                effort_moved = effort.warning;
+                effort.resolution.level.map(EffortRequest::Level)
+            });
     resolved.approval = execution::resolve_approval(None, profile, overlay, matched.as_ref())
         .value
         .as_deref()
@@ -694,7 +723,10 @@ pub(crate) fn profile_for_model(
     resolved.network = network.mode;
     resolved.network_allow = PermissionSet::Add(network.allow);
     resolved.network_deny = PermissionSet::Add(network.deny);
-    resolved
+    ModelProfile {
+        profile: resolved,
+        effort_moved,
+    }
 }
 
 pub(super) fn policy_override_string(rule: &ModelPolicyRule, key: &str) -> Option<String> {

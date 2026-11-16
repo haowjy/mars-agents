@@ -166,20 +166,21 @@ fn overlay_value<'de, D: serde::Deserializer<'de>>(
     }
 }
 
-/// `effort` in an overlay takes the levels an Agent file does.
+/// `effort` in an overlay takes the values an Agent file does; TOML has no null, so the
+/// harness default is `auto`.
 fn overlay_effort<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Option<mars_schema::agent::EffortLevel>, D::Error> {
-    use mars_schema::agent::EffortLevel;
+) -> Result<Option<mars_schema::agent::EffortRequest>, D::Error> {
+    use mars_schema::agent::EffortRequest;
     let Some(value) = Option::<String>::deserialize(deserializer)? else {
         return Ok(None);
     };
-    if let Some(level) = EffortLevel::parse(&value) {
-        return Ok(Some(level));
+    if let Some(request) = EffortRequest::parse(&value) {
+        return Ok(Some(request));
     }
     Err(serde::de::Error::custom(format!(
         "`effort` has invalid value `{value}`; allowed: {}",
-        EffortLevel::ALLOWED
+        EffortRequest::ALLOWED
     )))
 }
 
@@ -221,7 +222,7 @@ pub struct AgentOverlay {
         deserialize_with = "overlay_effort",
         skip_serializing_if = "Option::is_none"
     )]
-    pub effort: Option<mars_schema::agent::EffortLevel>,
+    pub effort: Option<mars_schema::agent::EffortRequest>,
     #[serde(
         default,
         deserialize_with = "overlay_approval",
@@ -1666,7 +1667,9 @@ override = { effort = "high" }
                 description: Some("project description".to_string()),
                 model: Some("gpt55".to_string()),
                 harness: Some("codex".to_string()),
-                effort: Some(mars_schema::agent::EffortLevel::High),
+                effort: Some(mars_schema::agent::EffortRequest::Level(
+                    mars_schema::agent::EffortLevel::High,
+                )),
                 network: Some(NetworkPolicy::Deny),
                 network_deny: vec!["project.example".parse().unwrap()].into(),
                 tools: toml::from_str("Write = \"deny\"").unwrap(),

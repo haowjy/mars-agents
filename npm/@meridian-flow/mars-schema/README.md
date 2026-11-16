@@ -8,7 +8,7 @@ Types are in `index.d.ts`; the shapes are pinned by the shipped `fixtures/`.
 import { read } from "@meridian-flow/mars-schema";
 
 const reading = read("agents/coder.md", text);
-reading.fields?.effort;            // "high" | ... | null
+reading.fields?.effort;            // "high" | ... | "auto" | null
 reading.diagnostics;               // [{ code, severity, path, message }]
 ```
 
@@ -171,6 +171,12 @@ The result is one of:
 `diagnostics` are the notes of the final pass, plus the notes of choices kept across restarts (an engine fallback, a stale lock row).
 
 A package cycle resolves, as in `mars sync`; each package is in the other's `required_by`. `supplied` (an edited manifest over a fetched tree) is reserved and throws for now.
+
+### Effort and aliases
+
+`resolveEffort(requested, model, host)` is the effort rule `mars build launch-bundle` and `mars sync` apply, so a gateway and Mars agree on what is sent. The ladder is `none < minimal < low < medium < high < xhigh < max` (`effortLevels()`); `"auto"` and `null` both mean "send no effort". `model` is the models.dev row's `reasoning` and `reasoning_options`, or `null` for an unknown model; `host` is a harness or `meridian-flow`. A level that is on neither the model's list nor the host's moves to the nearest level below it that both take, else the nearest above, and never lands on `none` unless `none` was asked (off is not less thinking); the result is `{ level, moved }`, with `moved.why` one of `model_does_not_reason`, `model_levels`, `harness_levels`, `no_common_level`. A model with no effort values (toggle only, budget only, unknown) takes any level; a model that does not reason gets none. Each host's levels are recorded, with the version they were checked against, on `harness_levels` in the crate.
+
+`resolveAlias(rows, { match, exclude, provider })` is the rule `mars models resolve` applies to an `auto` alias: it returns the selected `id`, or `null`. Rows are models.dev rows, with `provider` the models.dev key.
 
 ### Versions and selection
 

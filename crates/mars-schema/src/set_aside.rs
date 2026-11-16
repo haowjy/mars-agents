@@ -46,12 +46,12 @@ pub(crate) const EXECUTION_IGNORED: &str = "field.execution-ignored";
 
 /// Execution fields (in a profile, or in a model policy's `override`) and what each accepts.
 fn execution_allowed(key: &str) -> Option<&'static str> {
-    use crate::agent::{ApprovalMode, EffortLevel, SandboxMode};
+    use crate::agent::{ApprovalMode, EffortRequest, SandboxMode};
     use crate::network::NetworkPolicy;
     Some(match key {
         "harness" => "claude, codex, opencode, cursor, pi",
         "mode" => "primary, subagent",
-        "effort" => EffortLevel::ALLOWED,
+        "effort" => EffortRequest::ALLOWED,
         "approval" => ApprovalMode::ALLOWED,
         "sandbox" => SandboxMode::ALLOWED,
         "network" => NetworkPolicy::ALLOWED,

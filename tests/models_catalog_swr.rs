@@ -290,11 +290,13 @@ fn empty_background_refresh_keeps_cache_and_enters_cooldown() {
     cmd.args(["--json", "models", "catalog"]);
     cmd.assert().success();
     wait_until(Duration::from_secs(5), || {
-        project_root.join(".mars/.models-cache.last-fail").exists()
+        cache_dir(&project_root)
+            .join(".models-cache.last-fail")
+            .exists()
     });
     wait_until(Duration::from_secs(5), || {
-        !project_root
-            .join(".mars/.models-cache.refresh-claim")
+        !cache_dir(&project_root)
+            .join(".models-cache.refresh-claim")
             .exists()
     });
     assert_eq!(read_cache_raw(&project_root), before);

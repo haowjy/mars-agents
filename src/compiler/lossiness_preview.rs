@@ -72,10 +72,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         false,
     );
     let fanout_agents = settings.meridian_fanout_agents();
-    let models_cache = ModelsCache {
-        models: Vec::new(),
-        fetched_at: None,
-    };
+    let models_cache = ModelsCache::default();
     let routing_settings = ResolvedRoutingSettings::from_settings(settings);
     let empty_model_aliases = indexmap::IndexMap::new();
     let model_aliases = lens
@@ -152,6 +149,7 @@ fn collect_agent_content_lossiness(
         harness,
         model,
         profile,
+        effort_moved,
     } in qualifying_agent_emissions(
         AgentRef {
             profile: &profile,
@@ -167,6 +165,9 @@ fn collect_agent_content_lossiness(
         codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
         diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields);
+        if let Some(moved) = effort_moved {
+            diag.record_effort_move(agent_name, harness.as_str(), moved);
+        }
     }
     codex_emitted
 }

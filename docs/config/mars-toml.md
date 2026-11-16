@@ -375,7 +375,7 @@ include_fanout = false
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
-| `catalog_providers` | string[] | unset | models.dev provider keys ingested into the models cache. Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` ingests every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
+| `catalog_providers` | string[] | unset | models.dev provider keys this project reads from the shared catalog snapshot (which holds every provider). Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` reads every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
 | `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `default-network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
@@ -624,7 +624,7 @@ agent = "deny"
 | `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
 | `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`) |
-| `effort` | string | Effort level: `none`, `low`, `medium`, `high`, `xhigh`, `max`. See [Effort](schema-v1.md#effort) |
+| `effort` | string | Effort level: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. See [Effort](schema-v1.md#effort) |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
 | `network` | string | Shell network mode: `allow`, `deny`, `allowlist`; unset follows the sandbox in Meridian and does not affect built-in web tools |
@@ -770,7 +770,7 @@ exclude = ["thinking"]
 | `exclude` | string[] | no | Glob patterns to exclude from matches |
 | `autocompact` | u32 | no | Token count threshold that triggers context compaction (0–4294967295) |
 | `autocompact_pct` | u8 | no | Context fill percentage (1–100) that triggers compaction; launchers may combine it with `autocompact` when the harness exposes both controls |
-| `default_effort` | string | no | Effort used when nothing above the alias sets one: `low`, `medium`, `high`, `xhigh`, `max` or `auto` (not `none`) |
+| `default_effort` | string | no | Effort used when nothing above the alias sets one: any value an Agent's `effort` takes, case-insensitive: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. `none` and `minimal` need `requires-mars >= 0.35.0` |
 | `prompting` | string | no | Guidance text that `mars models prompting <alias>` prints |
 
 Compaction settings come only from the alias. An Agent has no compaction keys in schema 1, and an `[agents.<name>]` overlay has none, so a threshold moves with the model rather than with the Agent. `default_effort` is the last step of the [precedence chain](schema-v1.md#model-policies).

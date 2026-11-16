@@ -242,6 +242,9 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
+        Command::Models(models::ModelsArgs {
+            command: models::ModelsCommand::RefreshCatalog(args),
+        }) => models::run_refresh_catalog(args),
         cmd => {
             let ctx = match find_agents_root(cli.root.as_deref()) {
                 Ok(ctx) => ctx,
@@ -295,8 +298,6 @@ fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
             command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs { agent: None, .. })
         }) | Command::Build(build::BuildArgs {
             command: build::BuildCommand::Plugin(build::PluginArgs { path: Some(_), .. })
-        }) | Command::Models(models::ModelsArgs {
-            command: models::ModelsCommand::RefreshCatalog(_),
         })
     )
 }

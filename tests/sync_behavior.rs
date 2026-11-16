@@ -1295,6 +1295,7 @@ path = "{}"
         &fresh_fetched_at(),
     );
     let output = mars()
+        .env("MARS_CACHE_DIR", cache_dir(project.path()))
         .args([
             "--json",
             "models",

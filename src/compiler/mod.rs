@@ -146,11 +146,12 @@ fn compile_inner(
     let configured_emit_harnesses =
         harness_descriptor::configured_emit_harnesses(effective_settings);
     let mars_dir = ctx.project_root.join(".mars");
-    let models_cache =
-        crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        });
+    let catalog_providers = effective_settings
+        .catalog_providers
+        .clone()
+        .unwrap_or_else(crate::models::default_catalog_providers);
+    let models_cache = crate::models::read_cache(&mars_dir, &catalog_providers)
+        .unwrap_or_else(|_| crate::models::ModelsCache::default());
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =

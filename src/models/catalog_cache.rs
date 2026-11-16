@@ -1,12 +1,17 @@
 //! Last-known-good models.dev snapshot and stale-while-revalidate lifecycle.
+//!
+//! One snapshot per user, in the Mars cache root, shared by every project and every Mars
+//! build on the machine. It holds every provider; a project's `catalog_providers` filters
+//! what it reads. The file name carries [`SNAPSHOT_SCHEMA`], so a build that reads another
+//! format finds no file instead of rewriting the other build's.
 
-use super::catalog_api::{
-    CATALOG_HTTP_DEADLINE_SECS, CachedModel, default_catalog_providers, fetch_models_with_providers,
-};
+use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models, provider_filter};
 use crate::error::MarsError;
+use mars_schema::models::{CachedModel, provider_key_from_display};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod tracing {
@@ -14,12 +19,18 @@ mod tracing {
     pub(super) use debug;
 }
 
-/// Cached model catalog from external API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A project's view of the shared catalog snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelsCache {
+    /// The rows the project's `catalog_providers` allows: what aliases resolve over and what
+    /// is routable and listed.
     pub models: Vec<CachedModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<String>,
+    /// Every provider's rows. A model's reasoning is read from the row of the provider its
+    /// harness calls, which `catalog_providers` need not include (`opencode-go`).
+    #[serde(skip)]
+    pub catalog: Arc<Vec<CachedModel>>,
 }
 
 /// One durable, atomically replaced catalog record. Legacy snapshots without
@@ -35,16 +46,18 @@ struct Snapshot {
 impl Snapshot {
     fn empty() -> Self {
         Self {
-            cache: ModelsCache {
-                models: Vec::new(),
-                fetched_at: None,
-            },
+            cache: ModelsCache::default(),
             revision: 0,
         }
     }
 }
 
-const CACHE_FILE: &str = "models-cache.json";
+/// Bump when an older build could not read the file. The file name is the version, so the old
+/// and new builds each keep their own.
+const SNAPSHOT_SCHEMA: u32 = 2;
+/// What builds before the shared snapshot wrote into each project's `.mars/`. Never written
+/// now; read only to seed a machine that has no snapshot yet.
+const LEGACY_PROJECT_CACHE_FILE: &str = "models-cache.json";
 const FETCH_FAIL_MARKER_FILE: &str = ".models-cache.last-fail";
 const REFRESH_CLAIM_FILE: &str = ".models-cache.refresh-claim";
 const REFRESH_CLAIM_LOCK_FILE: &str = ".models-cache.refresh-claim.lock";
@@ -132,6 +145,10 @@ pub fn now_unix_secs() -> String {
     now_unix_secs_value().to_string()
 }
 
+fn snapshot_file_name() -> String {
+    format!("models-catalog-v{SNAPSHOT_SCHEMA}.json")
+}
+
 pub fn is_mars_offline() -> bool {
     match std::env::var("MARS_OFFLINE") {
         Ok(value) => matches!(
@@ -141,16 +158,6 @@ pub fn is_mars_offline() -> bool {
         Err(_) => false,
     }
 }
-fn read_snapshot_tolerant(mars_dir: &Path) -> Snapshot {
-    match read_snapshot(mars_dir) {
-        Ok(snapshot) => snapshot,
-        Err(err) => {
-            tracing::debug!("models cache read failed, treating as empty: {err}");
-            Snapshot::empty()
-        }
-    }
-}
-
 fn is_fresh(cache: &ModelsCache, ttl_hours: u32) -> bool {
     if ttl_hours == 0 {
         return false;
@@ -184,14 +191,14 @@ struct FetchFailure {
     reason: String,
 }
 
-fn read_fetch_fail_marker(mars_dir: &Path) -> Option<FetchFailure> {
-    let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
+fn read_fetch_fail_marker(dir: &Path) -> Option<FetchFailure> {
+    let marker = dir.join(FETCH_FAIL_MARKER_FILE);
     let raw = std::fs::read_to_string(marker).ok()?;
     serde_json::from_str(&raw).ok()
 }
 
-fn write_fetch_fail_marker(mars_dir: &Path, reason: &str) {
-    let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
+fn write_fetch_fail_marker(dir: &Path, reason: &str) {
+    let marker = dir.join(FETCH_FAIL_MARKER_FILE);
     let failure = FetchFailure {
         at: now_unix_secs_value(),
         reason: reason.to_string(),
@@ -202,8 +209,8 @@ fn write_fetch_fail_marker(mars_dir: &Path, reason: &str) {
     }
 }
 
-fn clear_fetch_fail_marker(mars_dir: &Path) {
-    let marker = mars_dir.join(FETCH_FAIL_MARKER_FILE);
+fn clear_fetch_fail_marker(dir: &Path) {
+    let marker = dir.join(FETCH_FAIL_MARKER_FILE);
     if let Err(err) = std::fs::remove_file(marker)
         && err.kind() != std::io::ErrorKind::NotFound
     {
@@ -217,8 +224,8 @@ struct RefreshClaim {
     at: u64,
 }
 
-fn read_refresh_claim(mars_dir: &Path) -> Result<Option<RefreshClaim>, MarsError> {
-    let path = mars_dir.join(REFRESH_CLAIM_FILE);
+fn read_refresh_claim(dir: &Path) -> Result<Option<RefreshClaim>, MarsError> {
+    let path = dir.join(REFRESH_CLAIM_FILE);
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -241,82 +248,126 @@ enum RefreshClaimDecision {
     },
 }
 
-struct CatalogCache<'a> {
-    mars_dir: &'a Path,
+struct CatalogCache {
+    /// The shared cache directory: snapshot, lock, claim and failure marker.
+    dir: PathBuf,
+    /// The project's `.mars/`, read only to seed a machine with no snapshot.
+    seed_dir: Option<PathBuf>,
     ttl_hours: u32,
-    providers: &'a [String],
 }
 
-fn refresh_claim_is_owned(mars_dir: &Path, token: &str) -> Result<bool, MarsError> {
-    let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
-    Ok(read_refresh_claim(mars_dir)?.is_some_and(|claim| claim.token == token))
+fn refresh_claim_is_owned(dir: &Path, token: &str) -> Result<bool, MarsError> {
+    let _lock = crate::fs::FileLock::acquire(&dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    Ok(read_refresh_claim(dir)?.is_some_and(|claim| claim.token == token))
 }
 
-fn release_refresh_claim(mars_dir: &Path, token: &str) -> Result<(), MarsError> {
-    let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
-    if read_refresh_claim(mars_dir)?.is_some_and(|claim| claim.token == token) {
-        std::fs::remove_file(mars_dir.join(REFRESH_CLAIM_FILE))?;
+fn release_refresh_claim(dir: &Path, token: &str) -> Result<(), MarsError> {
+    let _lock = crate::fs::FileLock::acquire(&dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+    if read_refresh_claim(dir)?.is_some_and(|claim| claim.token == token) {
+        std::fs::remove_file(dir.join(REFRESH_CLAIM_FILE))?;
     }
     Ok(())
 }
 
 struct RefreshClaimGuard<'a> {
-    mars_dir: &'a Path,
+    dir: &'a Path,
     token: &'a str,
 }
 
 impl Drop for RefreshClaimGuard<'_> {
     fn drop(&mut self) {
-        if let Err(error) = release_refresh_claim(self.mars_dir, self.token) {
+        if let Err(error) = release_refresh_claim(self.dir, self.token) {
             tracing::debug!("failed to clear catalog refresh claim: {error}");
         }
     }
 }
 
-pub fn ensure_fresh(
-    mars_dir: &Path,
-    ttl_hours: u32,
-    mode: RefreshMode,
-) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
-    ensure_fresh_with_catalog_providers(mars_dir, ttl_hours, mode, &default_catalog_providers())
-}
-
+/// The snapshot, refreshed per `mode`, filtered to the project's `providers`.
+/// `project_mars_dir` is the project's `.mars/`: its pre-snapshot catalog seeds a machine that
+/// has none.
 pub fn ensure_fresh_with_catalog_providers(
-    mars_dir: &Path,
+    project_mars_dir: &Path,
     ttl_hours: u32,
     mode: RefreshMode,
     providers: &[String],
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
-    CatalogCache::new(mars_dir, ttl_hours, providers).ensure(mode)
+    let (cache, outcome) = CatalogCache::new(Some(project_mars_dir), ttl_hours)?.ensure(mode)?;
+    Ok((filtered(cache, providers), outcome))
 }
 
 /// Entry point for the hidden worker command. Never selects Background, so it cannot recurse.
 pub fn run_background_refresh(
-    mars_dir: &Path,
     ttl_hours: u32,
-    providers: &[String],
     expected_revision: u64,
     claim_token: &str,
 ) -> Result<(), MarsError> {
-    CatalogCache::new(mars_dir, ttl_hours, providers).run_worker(expected_revision, claim_token)
+    CatalogCache::new(None, ttl_hours)?.run_worker(expected_revision, claim_token)
 }
 
-impl<'a> CatalogCache<'a> {
-    fn new(mars_dir: &'a Path, ttl_hours: u32, providers: &'a [String]) -> Self {
-        Self {
-            mars_dir,
+/// The snapshot as it is on disk, filtered to `providers`, with no refresh.
+pub fn read_cache(project_mars_dir: &Path, providers: &[String]) -> Result<ModelsCache, MarsError> {
+    let cache = CatalogCache::new(Some(project_mars_dir), 0)?.load()?.cache;
+    Ok(filtered(cache, providers))
+}
+
+fn filtered(mut cache: ModelsCache, providers: &[String]) -> ModelsCache {
+    let all = std::mem::take(&mut cache.models);
+    let allowed = provider_filter(providers);
+    cache.models = all.iter().filter(|model| allowed(model)).cloned().collect();
+    cache.catalog = Arc::new(all);
+    cache
+}
+
+impl CatalogCache {
+    fn new(seed_dir: Option<&Path>, ttl_hours: u32) -> Result<Self, MarsError> {
+        Ok(Self {
+            dir: crate::platform::cache::global_cache_root()?,
+            seed_dir: seed_dir.map(Path::to_path_buf),
             ttl_hours,
-            providers,
+        })
+    }
+
+    fn snapshot_path(&self) -> PathBuf {
+        self.dir.join(snapshot_file_name())
+    }
+
+    /// The shared snapshot; a missing or unreadable one falls back to the seed, then to empty.
+    fn load(&self) -> Result<Snapshot, MarsError> {
+        match read_snapshot(&self.snapshot_path()) {
+            Ok(Some(snapshot)) => Ok(snapshot),
+            Ok(None) => Ok(self.seed()),
+            Err(err) => {
+                tracing::debug!("models cache read failed, treating as empty: {err}");
+                Ok(self.seed())
+            }
         }
     }
 
+    fn load_or_empty(&self) -> Snapshot {
+        self.load().unwrap_or_else(|_| Snapshot::empty())
+    }
+
+    /// The project's pre-snapshot catalog, stale by construction so it is refreshed but serves
+    /// an offline first run.
+    fn seed(&self) -> Snapshot {
+        let Some(seed_dir) = &self.seed_dir else {
+            return Snapshot::empty();
+        };
+        let Ok(Some(mut snapshot)) = read_snapshot(&seed_dir.join(LEGACY_PROJECT_CACHE_FILE))
+        else {
+            return Snapshot::empty();
+        };
+        snapshot.cache.fetched_at = None;
+        snapshot.revision = 0;
+        snapshot
+    }
+
     fn ensure(&self, mode: RefreshMode) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
-        let mars_dir = self.mars_dir;
+        let dir = self.dir.as_path();
         let ttl_hours = self.ttl_hours;
-        let providers = self.providers;
         if mode == RefreshMode::Background && !is_mars_offline() {
-            std::fs::create_dir_all(mars_dir)?;
-            let snapshot = read_snapshot_tolerant(mars_dir);
+            std::fs::create_dir_all(dir)?;
+            let snapshot = self.load_or_empty();
             let observed_revision = snapshot.revision;
             let prior = snapshot.cache;
             if is_usable(&prior) {
@@ -330,22 +381,22 @@ impl<'a> CatalogCache<'a> {
                 );
             }
         }
-        self.refresh_with_fetcher(mode, None, move || fetch_models_with_providers(providers))
+        self.refresh_with_fetcher(mode, None, fetch_models)
     }
 
     fn claim_refresh(&self, observed_revision: u64) -> Result<RefreshClaimDecision, MarsError> {
-        let mars_dir = self.mars_dir;
+        let dir = self.dir.as_path();
         let ttl_hours = self.ttl_hours;
-        let _lock = crate::fs::FileLock::acquire(&mars_dir.join(REFRESH_CLAIM_LOCK_FILE))?;
+        let _lock = crate::fs::FileLock::acquire(&dir.join(REFRESH_CLAIM_LOCK_FILE))?;
         // The worker holds its claim until snapshot and failure marker
         // updates are complete. Rechecking here closes the read-to-claim race.
-        let snapshot = read_snapshot_tolerant(mars_dir);
+        let snapshot = self.load_or_empty();
         let current_revision = snapshot.revision;
         let cache = snapshot.cache;
-        let failure = read_fetch_fail_marker(mars_dir);
+        let failure = read_fetch_fail_marker(dir);
         let last_failure = failure.as_ref().map(|failure| failure.reason.clone());
         let now = now_unix_secs_value();
-        if read_refresh_claim(mars_dir)?
+        if read_refresh_claim(dir)?
             .is_some_and(|claim| claim.at <= now && now - claim.at < REFRESH_CLAIM_LEASE_SECS)
         {
             let outcome = if is_fresh(&cache, ttl_hours) {
@@ -386,7 +437,7 @@ impl<'a> CatalogCache<'a> {
         // dependency. Only the durable claim record remains after this scope.
         let token_file = tempfile::Builder::new()
             .prefix(".models-claim-token-")
-            .tempfile_in(mars_dir)?;
+            .tempfile_in(dir)?;
         let token = token_file
             .path()
             .file_name()
@@ -398,7 +449,7 @@ impl<'a> CatalogCache<'a> {
             at: now,
         };
         crate::fs::atomic_write(
-            &mars_dir.join(REFRESH_CLAIM_FILE),
+            &dir.join(REFRESH_CLAIM_FILE),
             &serde_json::to_vec(&claim).expect("refresh claim is serializable"),
         )?;
         Ok(RefreshClaimDecision::Claimed {
@@ -414,7 +465,7 @@ impl<'a> CatalogCache<'a> {
         prior: ModelsCache,
         spawn: impl FnOnce(&str) -> std::io::Result<()>,
     ) -> (ModelsCache, RefreshOutcome) {
-        let mars_dir = self.mars_dir;
+        let dir = self.dir.as_path();
         match self.claim_refresh(observed_revision) {
             Ok(RefreshClaimDecision::Suppressed { cache, outcome }) => (cache, outcome),
             Ok(RefreshClaimDecision::Claimed {
@@ -426,7 +477,7 @@ impl<'a> CatalogCache<'a> {
                     Ok(()) => BackgroundRefresh::Spawned,
                     Err(error) => {
                         let mut reason = error.to_string();
-                        if let Err(release_error) = release_refresh_claim(mars_dir, &token) {
+                        if let Err(release_error) = release_refresh_claim(dir, &token) {
                             reason.push_str(&format!(
                                 "; failed to clear refresh claim: {release_error}"
                             ));
@@ -448,7 +499,7 @@ impl<'a> CatalogCache<'a> {
                     refresh: BackgroundRefresh::SpawnFailed {
                         reason: error.to_string(),
                     },
-                    last_failure: read_fetch_fail_marker(mars_dir).map(|failure| failure.reason),
+                    last_failure: read_fetch_fail_marker(dir).map(|failure| failure.reason),
                 },
             ),
         }
@@ -459,28 +510,14 @@ impl<'a> CatalogCache<'a> {
         expected_revision: u64,
         claim_token: &str,
     ) -> std::io::Result<()> {
-        let mars_dir = self.mars_dir;
         let ttl_hours = self.ttl_hours;
-        let providers = self.providers;
         let program = std::env::current_exe()?;
         let mut args = vec![
-            OsString::from("--root"),
-            mars_dir
-                .parent()
-                .unwrap_or(mars_dir)
-                .as_os_str()
-                .to_os_string(),
             OsString::from("models"),
             OsString::from("__refresh-catalog"),
-            OsString::from("--mars-dir"),
-            mars_dir.as_os_str().to_os_string(),
             OsString::from("--refresh-after-hours"),
             OsString::from(ttl_hours.to_string()),
         ];
-        for provider in providers {
-            args.push(OsString::from("--provider"));
-            args.push(OsString::from(provider));
-        }
         args.extend([
             OsString::from("--expected-revision"),
             OsString::from(expected_revision.to_string()),
@@ -491,16 +528,16 @@ impl<'a> CatalogCache<'a> {
     }
 
     fn run_worker(&self, expected_revision: u64, claim_token: &str) -> Result<(), MarsError> {
-        let mars_dir = self.mars_dir;
+        let dir = self.dir.as_path();
         let _claim = RefreshClaimGuard {
-            mars_dir,
+            dir,
             token: claim_token,
         };
-        if !refresh_claim_is_owned(mars_dir, claim_token)? {
+        if !refresh_claim_is_owned(dir, claim_token)? {
             return Ok(());
         }
         self.refresh_with_fetcher(RefreshMode::Synchronous, Some(expected_revision), || {
-            fetch_models_with_providers(self.providers)
+            fetch_models()
         })?;
         Ok(())
     }
@@ -514,9 +551,9 @@ impl<'a> CatalogCache<'a> {
     where
         F: FnOnce() -> Result<Vec<CachedModel>, MarsError>,
     {
-        let mars_dir = self.mars_dir;
+        let dir = self.dir.as_path();
         let ttl_hours = self.ttl_hours;
-        std::fs::create_dir_all(mars_dir)?;
+        std::fs::create_dir_all(dir)?;
 
         let effective_mode = if is_mars_offline() {
             RefreshMode::Offline
@@ -524,7 +561,7 @@ impl<'a> CatalogCache<'a> {
             mode
         };
 
-        let prior = read_snapshot_tolerant(mars_dir).cache;
+        let prior = self.load_or_empty().cache;
 
         if matches!(
             effective_mode,
@@ -543,10 +580,10 @@ impl<'a> CatalogCache<'a> {
             });
         }
 
-        let lock_path = mars_dir.join(".models-cache.lock");
+        let lock_path = dir.join(".models-cache.lock");
         let _guard = crate::fs::FileLock::acquire(&lock_path)?;
 
-        let snapshot = read_snapshot_tolerant(mars_dir);
+        let snapshot = self.load_or_empty();
         let under_lock = snapshot.cache;
         if expected_revision.is_some_and(|expected| snapshot.revision != expected) {
             return Ok((under_lock, RefreshOutcome::AlreadyFresh));
@@ -561,7 +598,7 @@ impl<'a> CatalogCache<'a> {
 
         if mode != RefreshMode::Force && is_usable(&under_lock) {
             let now = now_unix_secs_value();
-            if let Some(last_fail) = read_fetch_fail_marker(mars_dir)
+            if let Some(last_fail) = read_fetch_fail_marker(dir)
                 && now.saturating_sub(last_fail.at) < FETCH_FAIL_COOLDOWN_SECS
             {
                 return Ok((
@@ -584,25 +621,26 @@ impl<'a> CatalogCache<'a> {
                 let cache = ModelsCache {
                     models,
                     fetched_at: Some(now_unix_secs()),
+                    ..ModelsCache::default()
                 };
                 write_snapshot(
-                    mars_dir,
+                    dir,
                     &Snapshot {
                         cache: cache.clone(),
                         revision,
                     },
                 )?;
-                clear_fetch_fail_marker(mars_dir);
+                clear_fetch_fail_marker(dir);
                 Ok((cache, RefreshOutcome::Refreshed { models_count }))
             }
             Ok(_) => fallback_to_stale_or_error(
-                mars_dir,
+                dir,
                 under_lock,
                 "API returned empty catalog".to_string(),
                 "API returned an empty catalog and no prior cache exists".to_string(),
             ),
             Err(err) => fallback_to_stale_or_error(
-                mars_dir,
+                dir,
                 under_lock,
                 format!("fetch failed: {err}"),
                 format!("automatic refresh failed: {err}"),
@@ -612,13 +650,13 @@ impl<'a> CatalogCache<'a> {
 }
 
 fn fallback_to_stale_or_error(
-    mars_dir: &Path,
+    dir: &Path,
     under_lock: ModelsCache,
     stale_reason: String,
     unavailable_reason: String,
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
     if is_usable(&under_lock) {
-        write_fetch_fail_marker(mars_dir, &stale_reason);
+        write_fetch_fail_marker(dir, &stale_reason);
         Ok((
             under_lock,
             RefreshOutcome::StaleFallback {
@@ -643,36 +681,40 @@ fn offline_unavailable_reason(requested_mode: RefreshMode) -> String {
     }
 }
 
-pub fn read_cache(mars_dir: &Path) -> Result<ModelsCache, MarsError> {
-    read_snapshot(mars_dir).map(|snapshot| snapshot.cache)
-}
-
-fn read_snapshot(mars_dir: &Path) -> Result<Snapshot, MarsError> {
-    let path = mars_dir.join(CACHE_FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => {
-            let snapshot: Snapshot =
-                serde_json::from_str(&content).map_err(|e| crate::error::ConfigError::Invalid {
+/// `None` when there is no file at `path`.
+fn read_snapshot(path: &Path) -> Result<Option<Snapshot>, MarsError> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<Snapshot>(&content)
+            .map(|mut snapshot| {
+                // Rows from before the provider key existed.
+                for model in &mut snapshot.cache.models {
+                    if model.provider_key.is_empty() {
+                        model.provider_key = provider_key_from_display(&model.provider);
+                    }
+                }
+                Some(snapshot)
+            })
+            .map_err(|e| {
+                crate::error::ConfigError::Invalid {
                     message: format!("failed to parse models cache: {e}"),
-                })?;
-            Ok(snapshot)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Snapshot::empty()),
+                }
+                .into()
+            }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(source) => Err(MarsError::Io {
             operation: "read models cache".to_string(),
-            path,
+            path: path.to_path_buf(),
             source,
         }),
     }
 }
 
-fn write_snapshot(mars_dir: &Path, snapshot: &Snapshot) -> Result<(), MarsError> {
-    std::fs::create_dir_all(mars_dir)?;
-    let path = mars_dir.join(CACHE_FILE);
-    let content =
-        serde_json::to_string_pretty(snapshot).map_err(|e| crate::error::ConfigError::Invalid {
-            message: format!("failed to serialize models cache: {e}"),
-        })?;
-    crate::fs::atomic_write(&path, content.as_bytes())?;
+fn write_snapshot(dir: &Path, snapshot: &Snapshot) -> Result<(), MarsError> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(snapshot_file_name());
+    let content = serde_json::to_vec(snapshot).map_err(|e| crate::error::ConfigError::Invalid {
+        message: format!("failed to serialize models cache: {e}"),
+    })?;
+    crate::fs::atomic_write(&path, &content)?;
     Ok(())
 }

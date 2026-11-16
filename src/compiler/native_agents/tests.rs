@@ -7,14 +7,12 @@ use crate::lock::{LockFile, LockedItemV2, OutputRecord};
 use crate::models::{ModelAlias, ModelsCache};
 use indexmap::IndexMap;
 use mars_schema::HarnessId;
+use mars_schema::agent::EffortRequest;
 use mars_schema::item::ItemKind;
 use tempfile::TempDir;
 
 fn empty_models_cache() -> ModelsCache {
-    ModelsCache {
-        models: Vec::new(),
-        fetched_at: None,
-    }
+    ModelsCache::default()
 }
 
 struct MissingResolver;
@@ -203,7 +201,7 @@ fn pinned_alias_with_harness(
         harness: Some(harness.to_string()),
         description: None,
         prompting: None,
-        default_effort: default_effort.map(str::to_owned),
+        default_effort: default_effort.map(|effort| EffortRequest::parse(effort).unwrap()),
         autocompact: None,
         autocompact_pct: None,
         spec: ModelSpec::Pinned {

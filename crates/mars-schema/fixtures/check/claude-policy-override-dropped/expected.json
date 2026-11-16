@@ -21,7 +21,7 @@
           "override",
           "effort"
         ],
-        "message": "agent `g`: `model-policies.0.override.effort: \"nonsense\"` ignored (not valid here); use none, low, medium, high, xhigh or max"
+        "message": "agent `g`: `model-policies.0.override.effort: \"nonsense\"` ignored (not valid here); use auto, none, minimal, low, medium, high, xhigh or max"
       }
     ]
   },

@@ -136,6 +136,8 @@ pub struct DiagnosticCollector {
     rerun_verbose: &'static str,
     /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
     lossy_records: Vec<LossRecord>,
+    /// Agents whose effort moved to a level the model takes; `drain` renders them.
+    effort_moves: Vec<crate::compiler::lossiness::EffortMoveRecord>,
     /// Files that carry each repeated `field.unknown` note, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
@@ -159,6 +161,7 @@ impl DiagnosticCollector {
             lossiness_mode,
             rerun_verbose: "mars sync --verbose",
             lossy_records: Vec::new(),
+            effort_moves: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
     }
@@ -237,6 +240,19 @@ impl DiagnosticCollector {
                 item_name: item_name.to_string(),
                 field: field.clone(),
             }));
+    }
+
+    /// Buffer an Agent's effort move for `harness`; `drain` renders it by mode.
+    pub(crate) fn record_effort_move(&mut self, agent: &str, harness: &str, message: String) {
+        if !self.lossiness_mode.surfaces_lossiness() {
+            return;
+        }
+        self.effort_moves
+            .push(crate::compiler::lossiness::EffortMoveRecord {
+                agent: agent.to_string(),
+                harness: harness.to_string(),
+                message,
+            });
     }
 
     pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
@@ -384,6 +400,13 @@ impl DiagnosticCollector {
             self.lossiness_mode,
             self.rerun_verbose,
         ));
+        let moves = std::mem::take(&mut self.effort_moves);
+        crate::compiler::lossiness::render_effort_moves(
+            &moves,
+            self.lossiness_mode,
+            self.rerun_verbose,
+            &mut self.diagnostics,
+        );
         std::mem::take(&mut self.diagnostics)
     }
 }

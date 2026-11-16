@@ -110,12 +110,7 @@ pub struct RefreshProbeArgs {
 #[derive(Debug, Parser)]
 pub struct RefreshCatalogArgs {
     #[arg(long)]
-    mars_dir: std::path::PathBuf,
-    #[arg(long)]
     refresh_after_hours: u32,
-    #[arg(long)]
-    #[arg(long = "provider")]
-    providers: Vec<String>,
     #[arg(long)]
     expected_revision: u64,
     #[arg(long)]
@@ -136,6 +131,16 @@ pub struct AddAliasArgs {
     pub description: Option<String>,
 }
 
+/// The detached catalog worker: it needs no project, since the snapshot is per user.
+pub fn run_refresh_catalog(args: &RefreshCatalogArgs) -> Result<i32, MarsError> {
+    models::run_background_refresh(
+        args.refresh_after_hours,
+        args.expected_revision,
+        &args.claim_token,
+    )?;
+    Ok(0)
+}
+
 pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         ModelsCommand::Refresh => run_refresh(ctx, json),
@@ -146,39 +151,10 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
         ModelsCommand::Prompting(a) => super::models_prompting::run(a, ctx, json),
         ModelsCommand::Alias(a) => run_alias(a, ctx, json),
         ModelsCommand::RefreshProbe(a) => run_refresh_probe(a),
-        ModelsCommand::RefreshCatalog(a) => {
-            if !catalog_worker_path_matches_root(&a.mars_dir, &ctx.project_root) {
-                return Err(MarsError::Config(crate::error::ConfigError::Invalid {
-                    message: "internal catalog worker path does not match project root".to_string(),
-                }));
-            }
-            models::run_background_refresh(
-                &a.mars_dir,
-                a.refresh_after_hours,
-                &a.providers,
-                a.expected_revision,
-                &a.claim_token,
-            )?;
-            Ok(0)
+        ModelsCommand::RefreshCatalog(_) => {
+            unreachable!("the catalog worker runs before a project is looked up")
         }
     }
-}
-
-fn catalog_worker_path_matches_root(
-    mars_dir: &std::path::Path,
-    project_root: &std::path::Path,
-) -> bool {
-    let (Ok(root), Ok(expected), Ok(actual)) = (
-        dunce::canonicalize(project_root),
-        dunce::canonicalize(project_root.join(".mars")),
-        dunce::canonicalize(mars_dir),
-    ) else {
-        return false;
-    };
-    // Compare filesystem identities, not spellings: Windows roots can differ
-    // in case/long-name form, and callers may include `..`. Keep a linked
-    // `.mars` inside the project; never let it redirect the worker outside.
-    actual == expected && expected.starts_with(&root) && expected != root
 }
 
 fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
@@ -221,11 +197,11 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     } else {
         if cache_warning.is_some() {
             println!(
-                "Using stale models cache with {} models in .mars/models-cache.json",
+                "Using stale models cache with {} models in the models cache",
                 count
             );
         } else {
-            println!("Cached {} models in .mars/models-cache.json", count);
+            println!("Cached {} models in the models cache", count);
         }
     }
 
@@ -501,10 +477,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             );
         }
 
-        let fallback_cache = models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        };
+        let fallback_cache = models::ModelsCache::default();
         let fallback_outcome = models::RefreshOutcome::Offline;
         let fallback_catalog_slugs = models::catalog_model_slugs(&fallback_cache);
         let cache_catalog_slugs = cache_result
@@ -1425,35 +1398,6 @@ mod tests {
 
     fn write_mars_toml(temp: &TempDir, contents: &str) {
         std::fs::write(temp.path().join("mars.toml"), contents).unwrap();
-    }
-
-    #[test]
-    fn catalog_worker_accepts_equivalent_path_but_not_another_cache() {
-        let root = TempDir::new().unwrap();
-        let other = TempDir::new().unwrap();
-        std::fs::create_dir(root.path().join(".mars")).unwrap();
-        std::fs::create_dir(other.path().join(".mars")).unwrap();
-        let equivalent = root
-            .path()
-            .join("..")
-            .join(root.path().file_name().unwrap())
-            .join(".mars");
-        assert!(catalog_worker_path_matches_root(&equivalent, root.path()));
-        assert!(!catalog_worker_path_matches_root(
-            &other.path().join(".mars"),
-            root.path()
-        ));
-
-        #[cfg(unix)]
-        {
-            std::fs::remove_dir(root.path().join(".mars")).unwrap();
-            std::os::unix::fs::symlink(other.path().join(".mars"), root.path().join(".mars"))
-                .unwrap();
-            assert!(!catalog_worker_path_matches_root(
-                &root.path().join(".mars"),
-                root.path()
-            ));
-        }
     }
 
     #[test]

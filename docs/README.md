@@ -61,7 +61,6 @@ project/
   .mars/                 # Canonical store (gitignored)
     agents/              # Resolved agent profiles
     skills/              # Resolved skills
-    models-cache.json    # Cached model catalog
   .claude/               # Linked target — content copied from .mars/ (committed)
     agents/
     skills/

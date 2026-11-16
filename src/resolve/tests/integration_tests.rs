@@ -305,7 +305,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -655,7 +655,7 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "shared".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/shared.git".into()),
             path: None,
             subpath: None,
@@ -673,7 +673,7 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
     );
     assert_eq!(
         graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("mock-commit"),
+        Some("mock-commit-v1.0.0"),
         "`latest` must force current resolution instead of replaying the locked commit"
     );
 }
@@ -697,7 +697,7 @@ fn frozen_rejects_engine_incompatible_lock() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,

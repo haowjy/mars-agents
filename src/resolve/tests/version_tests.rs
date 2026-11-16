@@ -18,7 +18,7 @@ fn frozen_mode_errors_when_lock_entry_identity_url_mismatches_source() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a-old.git".into()),
             path: None,
             subpath: None,
@@ -52,7 +52,7 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -115,7 +115,7 @@ fn frozen_ref_pin_errors_when_locked_commit_missing() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -151,7 +151,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -191,7 +191,7 @@ fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -237,7 +237,7 @@ fn ref_pin_selector_missing_ignores_locked_commit_in_normal_sync() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -285,7 +285,7 @@ fn frozen_ref_pin_errors_when_selector_mismatches_requested_ref() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -318,7 +318,7 @@ fn frozen_ref_pin_errors_when_selector_missing() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -356,7 +356,7 @@ fn maximize_with_specific_targets_replays_non_target_lock_entry() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "b".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/b.git".into()),
             path: None,
             subpath: None,
@@ -438,7 +438,7 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -478,7 +478,7 @@ fn frozen_mode_replays_unversioned_locked_commit_even_when_tags_now_exist() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some(url.into()),
             path: None,
             subpath: None,
@@ -528,7 +528,7 @@ fn frozen_mode_errors_when_locked_semver_is_incompatible() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -559,7 +559,7 @@ fn frozen_semver_malformed_lock_fails_before_listing_versions() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some(url.into()),
             path: None,
             subpath: None,
@@ -593,7 +593,7 @@ fn frozen_semver_replays_locked_commit_even_when_tag_missing_from_remote() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some(url.into()),
             path: None,
             subpath: None,
@@ -649,7 +649,7 @@ fn frozen_mode_errors_when_transitive_lock_entry_is_missing() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -697,7 +697,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -709,7 +709,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     );
     lock.dependencies.insert(
         "shared".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/shared.git".into()),
             path: None,
             subpath: None,
@@ -757,7 +757,7 @@ fn r5_frozen_replays_transitive_from_lock() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -769,7 +769,7 @@ fn r5_frozen_replays_transitive_from_lock() {
     );
     lock.dependencies.insert(
         "shared".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/shared.git".into()),
             path: None,
             subpath: None,
@@ -896,7 +896,7 @@ fn stale_lock_entry_with_mismatched_url_is_ignored_in_normal_sync() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a-old.git".into()),
             path: None,
             subpath: None,

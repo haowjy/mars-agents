@@ -1146,17 +1146,6 @@ pub(crate) fn entry_source(
     }
 }
 
-impl SourceSpec {
-    /// The version constraint a request for this source carries: a git source's `version`; a path
-    /// has none.
-    pub(crate) fn constraint(&self) -> mars_schema::version::Constraint {
-        match self {
-            Self::Git(git) => mars_schema::version::parse_constraint(git.version.as_deref()),
-            Self::Path(_) => mars_schema::version::Constraint::Latest,
-        }
-    }
-}
-
 pub(crate) fn source_id_for_spec(
     root: &Path,
     spec: &SourceSpec,

@@ -7,7 +7,6 @@ use indexmap::IndexMap;
 use crate::config::{EffectiveDependency, Manifest};
 use crate::source::ResolvedRef;
 use crate::types::{SourceId, SourceName, SourceUrl};
-use mars_schema::claude::manifest::PluginSource;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedGraph {
@@ -157,35 +156,7 @@ pub struct RootedSourceRef {
     pub plugin: Option<PluginRoot>,
 }
 
-/// A marketplace plugin as acquired: kept with the rooted package so that preparing it again
-/// (a restart pass) reads it through the same marketplace entry, never a fresh fetch.
-#[derive(Debug, Clone)]
-pub struct PluginRoot {
-    pub hint: mars_schema::inspect::PluginHint,
-    pub content: crate::lock::LockedContent,
-    /// The dependency named this plugin; otherwise its marketplace lists only this one.
-    pub named: bool,
-}
-
-impl PluginRoot {
-    pub fn name(&self) -> &str {
-        &self.hint.entry.name
-    }
-
-    /// The plugin the lock records: only one the dependency named, so a lock written for a
-    /// dependency that never named one (v0.19.0's) still describes it.
-    pub fn locked_name(&self) -> Option<&str> {
-        self.named.then(|| self.name())
-    }
-
-    /// Where the plugin's files came from, when the lock must say: for a plugin the dependency
-    /// named, or one in another repository, which a later sync fetches again by this record. An
-    /// only plugin in the marketplace's own tree is the marketplace's commit and needs none.
-    pub fn locked_content(&self) -> Option<&crate::lock::LockedContent> {
-        (self.named || matches!(self.hint.entry.source, PluginSource::Remote { .. }))
-            .then_some(&self.content)
-    }
-}
+pub use mars_schema::resolve::PluginRoot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveMode {
@@ -229,14 +200,6 @@ impl Default for ResolveOptions {
             root: None,
         }
     }
-}
-
-/// How a source's version is decided: the schema crate's choice among tags, or `--frozen`, which
-/// replays the lock exactly and is the resolver's own rule, not a way of choosing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VersionMode {
-    Choose(mars_schema::version::SelectionPolicy),
-    Frozen,
 }
 
 impl ResolveOptions {
@@ -315,19 +278,6 @@ impl ResolveOptions {
                 targets.is_empty() || targets.contains(source_name)
             }
             ResolveMode::Sync | ResolveMode::Frozen => false,
-        }
-    }
-
-    pub(crate) fn version_mode(&self, source_name: &SourceName) -> VersionMode {
-        use mars_schema::version::SelectionPolicy;
-        match &self.mode {
-            ResolveMode::Frozen => VersionMode::Frozen,
-            ResolveMode::Upgrade { .. } if self.is_upgrade_target(source_name) => {
-                VersionMode::Choose(SelectionPolicy::LatestOnly)
-            }
-            ResolveMode::Sync | ResolveMode::Upgrade { .. } => {
-                VersionMode::Choose(SelectionPolicy::PreferLockThenLatest)
-            }
         }
     }
 }

@@ -1,12 +1,14 @@
 //! Git CLI operations — ls-remote, clone, fetch, checkout.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
 use crate::platform::cache::{archive_cache_component, git_cache_component};
 use crate::platform::fs::{publish_cache_dir_if_absent, safe_remove};
 use crate::platform::process::{display_command, run_git, run_git_with_index, run_git_with_ref};
-use crate::source::{AvailableVersion, GlobalCache};
+use crate::source::GlobalCache;
+use mars_schema::resolve::Tag;
 
 /// Dependency data (a URL, a tag or branch, a locked commit) reaches git as an argument, and one
 /// starting with `-` would be an option: `--upload-pack=<cmd>` runs `<cmd>`. Every function here
@@ -46,15 +48,16 @@ pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsEr
     })
 }
 
-pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
+/// Every tag of the repository and the commit it points at: an annotated tag's own line names the
+/// tag object, and its peeled `^{}` line the commit, which is the one that is recorded.
+pub fn ls_remote_tags(url: &str) -> Result<Vec<Tag>, MarsError> {
     not_an_option("URL", url)?;
     let output = run_git(
         &["ls-remote", "--tags", "--", url],
         Path::new("."),
         "list remote git tags",
     )?;
-    let mut versions = Vec::new();
-
+    let mut tags: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
     for line in output.lines() {
         let Some((sha, reference)) = line.split_once('\t') else {
             continue;
@@ -62,26 +65,19 @@ pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
         let Some(tag) = reference.strip_prefix("refs/tags/") else {
             continue;
         };
-
-        // Annotated tags show up twice (`tag` and peeled `tag^{}`).
-        // Keep only the non-peeled entry to avoid duplicates.
-        if tag.ends_with("^{}") {
-            continue;
+        let sha = sha.trim().to_string();
+        match tag.strip_suffix("^{}") {
+            Some(tag) => tags.entry(tag.to_string()).or_default().1 = Some(sha),
+            None => tags.entry(tag.to_string()).or_default().0 = sha,
         }
-
-        let Some(version) = mars_schema::version::parse_tag(tag) else {
-            continue;
-        };
-
-        versions.push(AvailableVersion {
-            tag: tag.to_string(),
-            version,
-            commit_id: sha.trim().to_string(),
-        });
     }
-
-    versions.sort_by(|a, b| a.version.cmp(&b.version));
-    Ok(versions)
+    Ok(tags
+        .into_iter()
+        .map(|(tag, (object, peeled))| Tag {
+            tag,
+            commit: peeled.unwrap_or(object),
+        })
+        .collect())
 }
 
 pub fn ls_remote_head(url: &str) -> Result<String, MarsError> {
@@ -179,7 +175,15 @@ pub(crate) fn fetch_git_content(
         }
     }
 
-    export_commit(&cache_path, commit, &content_path)?;
+    // A pinned commit that survived the fetches above and still cannot be read is not in the
+    // repository; any other failure says nothing about the commit.
+    export_commit(&cache_path, commit, &content_path).map_err(|error| match error {
+        MarsError::GitCli { .. } if pinned => MarsError::LockedCommitUnreachable {
+            commit: commit.to_string(),
+            url: url.to_string(),
+        },
+        other => other,
+    })?;
     Ok(content_path)
 }
 

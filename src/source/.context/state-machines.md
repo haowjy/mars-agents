@@ -33,7 +33,7 @@ stateDiagram-v2
   Cloned --> CommitAvailable
   CommitAvailable --> Exporting: read-tree -u with a private index into <key>.tmp
   Exporting --> Published: rename into place if absent
-  Exporting --> CommitAvailable: export failed, scratch removed, the error returned
+  Exporting --> CommitAvailable: export failed, scratch removed; a pinned commit that cannot be read is LockedCommitUnreachable, any other error is returned as it is
   Published --> [*]: the content directory is returned
 ```
 
@@ -65,7 +65,7 @@ An instance of [a lazy cache entry](../../../.context/state-machines/lazy-cache-
 A GitHub tarball in the global cache: absent, half-extracted or published (`archive.rs`). Used for
 `https://github.com/...` sources, so one source can reach either this machine or the git one,
 depending on the URL form. The bytes come from `https://github.com/<owner>/<repo>/archive/<sha>.tar.gz`;
-a 404 for a locked commit becomes `LockedCommitUnreachable` in `git.rs`, which feeds the
+a 404 becomes `LockedCommitUnreachable` in `git.rs::fetch_content` (a commit the repository does not have), which `CliAnswers` answers `Missing` and feeds the
 [source version ladder](../../resolve/.context/state-machines.md).
 
 ```mermaid

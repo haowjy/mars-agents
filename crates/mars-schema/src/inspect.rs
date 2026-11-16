@@ -119,6 +119,32 @@ pub fn inspect(source: &impl TreeSource, hint: &Hint) -> Inspection {
     }
 }
 
+/// What a root is and the plugins it lists, with no plugin's files read: the resolver reads a
+/// marketplace this way, then [`inspect_listed_plugin`] for the one it chose, so importing one
+/// plugin of a large marketplace costs that plugin.
+pub struct Listing {
+    pub kind: Kind,
+    pub entries: Vec<MarketplaceEntry>,
+}
+
+pub fn list_marketplace(source: &impl TreeSource) -> Listing {
+    let dispatched = dispatch(source, PrepareContext::Package, None, None, None);
+    let kind = dispatched.kind();
+    let entries = match dispatched.layout {
+        Layout::Marketplace(marketplace) => marketplace.plugins,
+        _ => Vec::new(),
+    };
+    Listing { kind, entries }
+}
+
+/// One listed plugin, as [`inspect`] reports it.
+pub fn inspect_listed_plugin(
+    source: &impl TreeSource,
+    entry: &MarketplaceEntry,
+) -> InspectedPlugin {
+    inspect_plugin(source, None, entry)
+}
+
 fn inspect_root(source: &impl TreeSource, hint: &Hint) -> Inspection {
     let dispatched = dispatch(
         source,

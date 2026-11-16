@@ -7,11 +7,8 @@
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use mars_schema::dialect::Dialect;
-use mars_schema::inspect::{Hint, Kind};
-use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
 use mars_schema::prepare::{Classification, PrepareContext, Prepared};
 use mars_schema::tree::TreeSource;
 
@@ -208,71 +205,24 @@ fn valid_relative(path: &str) -> bool {
                 .any(|component| component.is_empty() || matches!(component, "." | "..")))
 }
 
-pub(crate) struct PreparedRootedSource {
-    pub rooted: crate::resolve::RootedSourceRef,
-    pub prepared: Arc<Prepared>,
-    pub manifest: Option<crate::config::Manifest>,
-    pub hook_surface: crate::staging::HookSurfaceState,
-}
-
-pub(crate) fn prepare_rooted(
-    source_name: &crate::types::SourceName,
-    rooted: crate::resolve::RootedSourceRef,
+/// What preparing a resolved dependency's files found, framed for its consumer: who can edit the
+/// files (a git source cannot) decides how a finding is worded.
+pub(crate) fn report_dependency(
     effective_config: &crate::config::EffectiveConfig,
+    source_name: &crate::types::SourceName,
     version: Option<&semver::Version>,
     upgrading: bool,
+    prepared: &Prepared,
+    normalized: &std::collections::BTreeMap<String, Vec<mars_schema::diagnostic::SchemaDiagnostic>>,
     diag: &mut DiagnosticCollector,
-) -> Result<PreparedRootedSource, MarsError> {
+) {
     let dependency = effective_config.dependencies.get(source_name);
-    let source = DiskTreeSource::new(&rooted.authored_root)?;
-    let request = NormalizeRequest {
-        tree: &source,
-        source: SourceInfo {
-            name: Some(source_name.to_string()),
-            ..SourceInfo::default()
-        },
-        hint: Hint {
-            dialect: dependency.and_then(|entry| entry.dialect),
-            plugin: rooted.plugin.as_ref().map(|plugin| plugin.hint.clone()),
-            ..Hint::default()
-        },
-        selection: Selection::default(),
-    };
-    let mut normalized = normalize(&request);
-    if let Some(error) = source.take_error() {
-        return Err(error);
-    }
-    for (path, diagnostics) in &normalized.diagnostics {
+    for (path, diagnostics) in normalized {
         for diagnostic in diagnostics {
             diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
         }
     }
-    if normalized.kind == Kind::Marketplace {
-        return Err(match &rooted.plugin {
-            // The plugin was chosen from its marketplace; what is wrong is the plugin itself,
-            // which the crate refuses by reporting the root as a marketplace.
-            Some(plugin) => MarsError::InvalidRequest {
-                message: format!(
-                    "`{source_name}`, plugin `{}`: {}",
-                    plugin.name(),
-                    normalized
-                        .diagnostics
-                        .values()
-                        .flatten()
-                        .find(|diagnostic| diagnostic.is_error())
-                        .map_or("it cannot be imported", |refusal| refusal.message.as_str())
-                ),
-            },
-            None => marketplace_choice_error(source_name, &source, &request.hint),
-        });
-    }
-    let [package] = normalized.packages.as_mut_slice() else {
-        return Err(MarsError::InvalidRequest {
-            message: format!("`{source_name}` did not normalize to exactly one package"),
-        });
-    };
-    let prepared = package.prepared.clone();
-    let package_name = dependency_name(&prepared, source_name);
+    let package_name = dependency_name(prepared, source_name);
     // Only a git source is a tree the consumer cannot edit; a path source or an override is
     // theirs, and `mars upgrade` would leave it unchanged.
     let subject = match dependency.map(|entry| &entry.spec) {
@@ -282,14 +232,12 @@ pub(crate) fn prepare_rooted(
         _ => Subject::Package(package_name),
     };
     report_diagnostics(
-        &prepared,
+        prepared,
         &|relative| format!("{package_name}: {relative}"),
         &subject,
         false,
         diag,
     );
-
-    prepared_rooted(rooted, Arc::new(prepared), diag)
 }
 
 /// How diagnostics name a dependency: by its manifest, else by its source name; never by where
@@ -305,53 +253,6 @@ pub(crate) fn dependency_name<'a>(
         .map(|package| package.name.as_str())
         .filter(|name| !name.is_empty())
         .unwrap_or(source_name.as_ref())
-}
-
-/// A marketplace dependency installs one plugin, and the lock records which: the dependency
-/// must say which it wants.
-fn marketplace_choice_error(
-    source_name: &crate::types::SourceName,
-    source: &DiskTreeSource,
-    hint: &Hint,
-) -> MarsError {
-    let inspection = mars_schema::inspect::inspect(source, hint);
-    MarsError::InvalidRequest {
-        message: format!(
-            "`{source_name}` is a marketplace with these plugins:\n{}\nname the one to install with `--plugin <name>` on `mars add`, or `plugin = \"<name>\"` on its dependency entry",
-            crate::resolve::plugin_list(&inspection.plugins)
-        ),
-    }
-}
-
-pub(crate) fn prepared_rooted(
-    rooted: crate::resolve::RootedSourceRef,
-    prepared: Arc<Prepared>,
-    diag: &mut DiagnosticCollector,
-) -> Result<PreparedRootedSource, MarsError> {
-    let manifest = prepared
-        .manifest
-        .as_ref()
-        .and_then(|manifest| std::str::from_utf8(&manifest.normalized_bytes).ok())
-        .map(|content| {
-            let prepared_manifest = prepared
-                .manifest
-                .as_ref()
-                .expect("prepared manifest bytes came from a prepared manifest");
-            crate::config::parse_prepared_manifest(
-                content,
-                &rooted.authored_root.join("mars.toml"),
-                &prepared_manifest.reading,
-            )
-        })
-        .transpose()?
-        .flatten();
-    let hook_surface = crate::staging::detect_unreadable_hook_surface(&rooted.authored_root, diag)?;
-    Ok(PreparedRootedSource {
-        rooted,
-        prepared,
-        manifest,
-        hook_surface,
-    })
 }
 
 pub(crate) fn prepare_authored(
@@ -544,28 +445,19 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> Arc<Prepared> {
-    let config = crate::config::EffectiveConfig {
-        dependencies: indexmap::IndexMap::new(),
-        settings: crate::config::Settings::default(),
-        models: indexmap::IndexMap::new(),
-        agents: indexmap::IndexMap::new(),
-        skills: indexmap::IndexMap::new(),
+pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> std::sync::Arc<Prepared> {
+    use mars_schema::inspect::Hint;
+    use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
+    let source = DiskTreeSource::new(root).unwrap();
+    let request = NormalizeRequest {
+        tree: &source,
+        source: SourceInfo {
+            name: Some(name.to_string()),
+            ..SourceInfo::default()
+        },
+        hint: Hint::default(),
+        selection: Selection::default(),
     };
-    let rooted = crate::resolve::RootedSourceRef {
-        checkout_root: root.to_path_buf(),
-        authored_root: root.to_path_buf(),
-        package_root: root.to_path_buf(),
-        plugin: None,
-    };
-    let prepared = prepare_rooted(
-        &name.into(),
-        rooted,
-        &config,
-        None,
-        false,
-        &mut DiagnosticCollector::new(),
-    )
-    .unwrap();
-    prepared.prepared
+    let mut normalized = normalize(&request);
+    std::sync::Arc::new(normalized.packages.remove(0).prepared)
 }

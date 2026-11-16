@@ -1,26 +1,49 @@
-//! Real source provider implementation for dependency resolution.
-//!
-//! Bridges the resolver's trait-based interface to the concrete source module
-//! for sync and other production resolution lenses.
+//! What the resolver's answerer asks of git and the disk, and the real implementation.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::diagnostic::DiagnosticCollector;
+use mars_schema::resolve::{Tag, sort_tags};
+
 use crate::error::MarsError;
-use crate::resolve::{SourceFetcher, VersionLister};
-use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
+use crate::source::{self, AvailableVersion, GlobalCache};
 use crate::types::SourceUrl;
 
-/// Real source provider that delegates to the source module.
-///
-/// Implements the SourceProvider trait so the resolver can fetch sources
-/// and read manifests through a uniform interface.
+pub trait SourceProvider {
+    /// Every tag of the repository, with the commit it points at (peeled for an annotated tag).
+    fn list_tags(&self, url: &SourceUrl) -> Result<Vec<Tag>, MarsError>;
+
+    /// The commit a branch, `HEAD` or commit-as-ref names.
+    fn resolve_ref(&self, url: &SourceUrl, reference: &str) -> Result<String, MarsError>;
+
+    /// The content directory of `commit`. `tag` is the tag it was listed under, if it was.
+    /// `LockedCommitUnreachable` is a commit the repository does not have; any other error says
+    /// nothing about the commit.
+    fn fetch_content(
+        &self,
+        url: &SourceUrl,
+        commit: &str,
+        tag: Option<&str>,
+    ) -> Result<PathBuf, MarsError>;
+
+    /// The canonical directory a path dependency names.
+    fn fetch_path(&self, path: &Path, source_name: &str) -> Result<PathBuf, MarsError>;
+
+    /// The tags that are versions, oldest first.
+    fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError> {
+        Ok(sort_tags(self.list_tags(url)?)
+            .into_iter()
+            .map(|listed| AvailableVersion {
+                tag: listed.tag,
+                version: listed.version,
+                commit_id: listed.commit,
+            })
+            .collect())
+    }
+}
+
 pub(crate) struct RealSourceProvider<'a> {
     pub cache: &'a GlobalCache,
     pub project_root: &'a Path,
-    version_cache: RefCell<HashMap<SourceUrl, Vec<AvailableVersion>>>,
 }
 
 impl<'a> RealSourceProvider<'a> {
@@ -28,70 +51,29 @@ impl<'a> RealSourceProvider<'a> {
         Self {
             cache,
             project_root,
-            version_cache: RefCell::new(HashMap::new()),
         }
     }
 }
 
-impl VersionLister for RealSourceProvider<'_> {
-    fn list_versions(
-        &self,
-        url: &crate::types::SourceUrl,
-    ) -> Result<Vec<AvailableVersion>, MarsError> {
-        if let Some(available) = self.version_cache.borrow().get(url) {
-            return Ok(available.clone());
-        }
-        let available = source::list_versions(url, self.cache)?;
-        self.version_cache
-            .borrow_mut()
-            .insert(url.clone(), available.clone());
-        Ok(available)
-    }
-}
-
-impl SourceFetcher for RealSourceProvider<'_> {
-    fn fetch_git_version(
-        &self,
-        url: &crate::types::SourceUrl,
-        version: &AvailableVersion,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch(
-            url.as_ref(),
-            Some(&version.tag),
-            source_name,
-            self.cache,
-            diag,
-        )
+impl SourceProvider for RealSourceProvider<'_> {
+    fn list_tags(&self, url: &SourceUrl) -> Result<Vec<Tag>, MarsError> {
+        source::git::ls_remote_tags(url.as_ref())
     }
 
-    fn fetch_git_ref(
-        &self,
-        url: &crate::types::SourceUrl,
-        ref_name: &str,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch(url.as_ref(), Some(ref_name), source_name, self.cache, diag)
+    fn resolve_ref(&self, url: &SourceUrl, reference: &str) -> Result<String, MarsError> {
+        source::git::ls_remote_ref(url.as_ref(), reference)
     }
 
-    fn fetch_git_commit(
+    fn fetch_content(
         &self,
-        url: &crate::types::SourceUrl,
+        url: &SourceUrl,
         commit: &str,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        source::git::fetch_commit(url.as_ref(), commit, source_name, self.cache, diag)
+        tag: Option<&str>,
+    ) -> Result<PathBuf, MarsError> {
+        source::git::fetch_content(url.as_ref(), commit, tag, self.cache)
     }
 
-    fn fetch_path(
-        &self,
-        path: &Path,
-        source_name: &str,
-        _diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
+    fn fetch_path(&self, path: &Path, source_name: &str) -> Result<PathBuf, MarsError> {
         source::path::fetch_path(path, self.project_root, source_name)
     }
 }

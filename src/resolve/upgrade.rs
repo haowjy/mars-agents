@@ -11,7 +11,7 @@ use crate::error::MarsError;
 use crate::source::AvailableVersion;
 use crate::types::{SourceName, SourceUrl};
 
-use super::requires::check_package_requirements;
+use super::requires::engines_accept as package_accepts;
 use super::{ResolveOptions, SourceProvider};
 
 /// The newest of `available` newer than `floor` (the version in use) that `constraints` allow and
@@ -68,17 +68,17 @@ fn engines_accept(
     candidate: &AvailableVersion,
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
-    diag: &mut DiagnosticCollector,
+    _diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
-    let fetched = provider.fetch_git_version(url, candidate, name.as_ref(), diag)?;
-    let root = super::path::apply_subpath(name, &fetched.tree_path, subpath)?;
-    let text = match std::fs::read_to_string(root.package_root.join("mars.toml")) {
+    let checkout = provider.fetch_content(url, &candidate.commit_id, Some(&candidate.tag))?;
+    let root = super::answers::apply_subpath(name.as_ref(), &checkout, subpath)?;
+    let text = match std::fs::read_to_string(root.join("mars.toml")) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(error.into()),
     };
     match mars_schema::manifest::read(&text).package.fields {
-        Some(package) => Ok(check_package_requirements(&package, options)?.is_empty()),
+        Some(package) => Ok(package_accepts(&package, options)?),
         None => Ok(true),
     }
 }

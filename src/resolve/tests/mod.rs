@@ -16,35 +16,31 @@ use mars_schema::names::{RenameMap, SourceSubpath};
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use crate::source::AvailableVersion;
+use mars_schema::resolve::Tag;
 use tempfile::TempDir;
 
-/// Mock provider for testing the resolver without real git repos.
+/// A provider over temp-dir trees, keyed by source name. A url is bound to a name when the config
+/// or a registered manifest names it (`bind`), because the core asks by url and commit.
 pub(crate) struct MockProvider {
     /// url → sorted available versions
     versions: HashMap<String, Vec<AvailableVersion>>,
-    /// Number of version list calls keyed by URL.
+    /// Number of tag listings keyed by URL.
     list_versions_counts: RefCell<HashMap<String, usize>>,
-    /// URLs where listing versions should fail.
+    /// URLs where listing tags should fail.
     list_versions_failures: HashSet<String>,
     /// source tree paths keyed by source name (pre-created temp dirs)
     trees: HashMap<String, PathBuf>,
     /// Optional source tree overrides keyed by (source name, version tag).
     versioned_trees: HashMap<(String, String), PathBuf>,
-    /// Optional commit sequences keyed by source name.
-    /// When set, each `fetch_git_version` call rotates
-    /// through the sequence to simulate ref drift for restart-cap tests.
-    commit_sequences: HashMap<String, Vec<String>>,
-    commit_sequence_indices: RefCell<HashMap<String, usize>>,
-    /// Commits for which `fetch_git_commit` fails, simulating an unreachable lock replay.
+    /// url → source name
+    names: RefCell<HashMap<String, String>>,
+    /// Commits for which `fetch_content` fails, simulating an unreachable lock replay.
     unreachable_commits: HashSet<String>,
-    /// One entry per fetch, in order: `Some(commit)` for an exact-commit replay, `None` for a
-    /// version or ref fetch. Tests assert the replay order with it.
+    /// One entry per content fetch, in order: `Some(commit)` for an exact-commit replay, `None`
+    /// for a tag or ref fetch. Tests assert the replay order with it.
     commit_fetches: RefCell<Vec<Option<String>>>,
-    /// When true, fetch_git_ref fails to prove commit-replay paths do not depend on refs.
-    fail_fetch_git_ref: bool,
-    /// Number of fetches keyed by source name.
-    fetch_counts: RefCell<HashMap<String, usize>>,
 }
 
 impl MockProvider {
@@ -55,12 +51,9 @@ impl MockProvider {
             list_versions_failures: HashSet::new(),
             trees: HashMap::new(),
             versioned_trees: HashMap::new(),
-            commit_sequences: HashMap::new(),
-            commit_sequence_indices: RefCell::new(HashMap::new()),
+            names: RefCell::new(HashMap::new()),
             unreachable_commits: HashSet::new(),
             commit_fetches: RefCell::new(Vec::new()),
-            fail_fetch_git_ref: false,
-            fetch_counts: RefCell::new(HashMap::new()),
         }
     }
 
@@ -71,16 +64,36 @@ impl MockProvider {
             .map(|(major, minor, patch)| AvailableVersion {
                 tag: format!("v{major}.{minor}.{patch}"),
                 version: Version::new(major, minor, patch),
-                commit_id: "0000000000000000000000000000000000000000".to_string(),
+                commit_id: format!("mock-commit-v{major}.{minor}.{patch}"),
             })
             .collect();
         self.versions.insert(url.to_string(), avs);
+    }
+
+    fn bind(&self, url: &str, name: &str) {
+        self.names
+            .borrow_mut()
+            .entry(url.to_string())
+            .or_insert_with(|| name.to_string());
+    }
+
+    fn bind_config(&self, config: &EffectiveConfig) {
+        for (name, dependency) in &config.dependencies {
+            if let SourceSpec::Git(git) = &dependency.spec {
+                self.bind(git.url.as_ref(), name.as_ref());
+            }
+        }
     }
 
     /// Register a source tree for a source name; a manifest is written to the tree's `mars.toml`.
     fn add_source(&mut self, name: &str, tree_path: PathBuf, manifest: Option<Manifest>) {
         if let Some(manifest) = &manifest {
             write_manifest(&tree_path, manifest);
+            for (dep_name, entry) in &manifest.dependencies {
+                if let Some(url) = entry.url() {
+                    self.bind(url, dep_name);
+                }
+            }
         }
         self.trees.insert(name.to_string(), tree_path);
     }
@@ -94,6 +107,11 @@ impl MockProvider {
     ) {
         if let Some(manifest) = &manifest {
             write_manifest(&tree_path, manifest);
+            for (dep_name, entry) in &manifest.dependencies {
+                if let Some(url) = entry.url() {
+                    self.bind(url, dep_name);
+                }
+            }
         }
         self.versioned_trees
             .insert((name.to_string(), version_tag.to_string()), tree_path);
@@ -115,137 +133,70 @@ impl MockProvider {
             .unwrap_or(0)
     }
 
-    fn bump_fetch_count(&self, source_name: &str) {
-        let mut counts = self.fetch_counts.borrow_mut();
-        let entry = counts.entry(source_name.to_string()).or_insert(0);
-        *entry += 1;
+    fn name_of(&self, url: &SourceUrl) -> String {
+        self.names
+            .borrow()
+            .get(url.as_ref())
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
-impl VersionLister for MockProvider {
-    fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError> {
-        let mut counts = self.list_versions_counts.borrow_mut();
-        let entry = counts.entry(url.to_string()).or_insert(0);
-        *entry += 1;
+impl SourceProvider for MockProvider {
+    fn list_tags(&self, url: &SourceUrl) -> Result<Vec<Tag>, MarsError> {
+        *self
+            .list_versions_counts
+            .borrow_mut()
+            .entry(url.to_string())
+            .or_insert(0) += 1;
         if self.list_versions_failures.contains(url.as_ref()) {
             return Err(MarsError::Source {
                 source_name: url.to_string(),
                 message: "mock list_versions failure".to_string(),
             });
         }
-        Ok(self.versions.get(url.as_ref()).cloned().unwrap_or_default())
-    }
-}
-
-impl SourceFetcher for MockProvider {
-    fn fetch_git_version(
-        &self,
-        _url: &SourceUrl,
-        version: &AvailableVersion,
-        source_name: &str,
-        _diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        self.bump_fetch_count(source_name);
-        self.commit_fetches.borrow_mut().push(None);
-
-        let tree_path = self
-            .versioned_trees
-            .get(&(source_name.to_string(), version.tag.clone()))
-            .cloned()
-            .or_else(|| self.trees.get(source_name).cloned())
-            .unwrap_or_default();
-        let commit = if let Some(sequence) = self
-            .commit_sequences
-            .get(source_name)
-            .filter(|sequence| !sequence.is_empty())
-        {
-            let mut indices = self.commit_sequence_indices.borrow_mut();
-            let idx = indices.entry(source_name.to_string()).or_insert(0);
-            let commit = sequence[*idx % sequence.len()].clone();
-            *idx += 1;
-            commit
-        } else {
-            "mock-commit".to_string()
-        };
-        Ok(ResolvedRef {
-            source_name: source_name.into(),
-            version: Some(version.version.clone()),
-            version_tag: Some(version.tag.clone()),
-            commit: Some(commit.into()),
-            tree_path,
-        })
+        Ok(self
+            .versions
+            .get(url.as_ref())
+            .into_iter()
+            .flatten()
+            .map(|version| Tag {
+                tag: version.tag.clone(),
+                commit: version.commit_id.clone(),
+            })
+            .collect())
     }
 
-    fn fetch_git_ref(
-        &self,
-        _url: &SourceUrl,
-        ref_name: &str,
-        source_name: &str,
-        _diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        self.bump_fetch_count(source_name);
-        self.commit_fetches.borrow_mut().push(None);
-
-        if self.fail_fetch_git_ref {
-            return Err(MarsError::Source {
-                source_name: source_name.to_string(),
-                message: "mock fetch_git_ref failure".to_string(),
-            });
-        }
-
-        let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
-        Ok(ResolvedRef {
-            source_name: source_name.into(),
-            version: None,
-            version_tag: None,
-            commit: Some(format!("ref:{ref_name}").into()),
-            tree_path,
-        })
+    fn resolve_ref(&self, _url: &SourceUrl, reference: &str) -> Result<String, MarsError> {
+        Ok(format!("ref:{reference}"))
     }
 
-    fn fetch_git_commit(
+    fn fetch_content(
         &self,
         url: &SourceUrl,
         commit: &str,
-        source_name: &str,
-        _diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        self.bump_fetch_count(source_name);
+        tag: Option<&str>,
+    ) -> Result<PathBuf, MarsError> {
+        let replay = tag.is_none() && !commit.starts_with("ref:");
         self.commit_fetches
             .borrow_mut()
-            .push(Some(commit.to_string()));
-
+            .push(replay.then(|| commit.to_string()));
         if self.unreachable_commits.contains(commit) {
             return Err(MarsError::LockedCommitUnreachable {
                 commit: commit.to_string(),
                 url: url.to_string(),
             });
         }
-
-        let tree_path = self.trees.get(source_name).cloned().unwrap_or_default();
-        Ok(ResolvedRef {
-            source_name: source_name.into(),
-            version: None,
-            version_tag: None,
-            commit: Some(commit.into()),
-            tree_path,
-        })
+        let name = self.name_of(url);
+        Ok(tag
+            .and_then(|tag| self.versioned_trees.get(&(name.clone(), tag.to_string())))
+            .or_else(|| self.trees.get(&name))
+            .cloned()
+            .unwrap_or_default())
     }
 
-    fn fetch_path(
-        &self,
-        path: &Path,
-        source_name: &str,
-        _diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError> {
-        self.bump_fetch_count(source_name);
-        Ok(ResolvedRef {
-            source_name: source_name.into(),
-            version: None,
-            version_tag: None,
-            commit: None,
-            tree_path: path.to_path_buf(),
-        })
+    fn fetch_path(&self, path: &Path, _source_name: &str) -> Result<PathBuf, MarsError> {
+        Ok(path.to_path_buf())
     }
 }
 
@@ -364,7 +315,7 @@ fn default_options() -> ResolveOptions {
 
 fn resolve(
     config: &EffectiveConfig,
-    provider: &dyn SourceProvider,
+    provider: &MockProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
 ) -> Result<ResolvedGraph, MarsError> {
@@ -373,13 +324,14 @@ fn resolve(
 
 fn resolve_with_diagnostics(
     config: &EffectiveConfig,
-    provider: &dyn SourceProvider,
+    provider: &MockProvider,
     locked: Option<&LockFile>,
     options: &ResolveOptions,
 ) -> (
     Result<ResolvedGraph, MarsError>,
     Vec<crate::diagnostic::Diagnostic>,
 ) {
+    provider.bind_config(config);
     let mut diag = DiagnosticCollector::new();
     let result = super::resolve(config, provider, locked, options, &mut diag);
     (result, diag.drain())

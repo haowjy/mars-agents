@@ -18,6 +18,7 @@ pub mod inspect;
 pub mod manifest;
 pub mod normalize;
 pub mod read;
+pub mod resolve;
 pub mod selection;
 pub mod skill;
 pub mod tree;

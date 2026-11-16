@@ -1,0 +1,16 @@
+{
+  "frontmatter": [],
+  "fields": null,
+  "body": null,
+  "diagnostics": [],
+  "dependencies": {
+    "x": {
+      "url": "https://example.org/x"
+    }
+  },
+  "models": {
+    "a": {
+      "model": "gpt-5"
+    }
+  }
+}

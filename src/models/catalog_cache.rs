@@ -6,9 +6,10 @@
 //! format finds no file instead of rewriting the other build's.
 
 use super::catalog::Catalog;
-use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models, provider_filter};
+use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models};
 use crate::error::MarsError;
 use crate::types::managed_cmd;
+use mars_schema::models::provider_filter;
 use mars_schema::models::{CachedModel, provider_key_from_display};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;

@@ -1,0 +1,100 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "unsafe-values"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "unsafe-values",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "plugin",
+        "big"
+      ],
+      "message": "integer 9007199254740993 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "plugin",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "plugin",
+        "nested"
+      ],
+      "message": "integer 9007199254740993 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "settings",
+        "tools",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "models",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "agents",
+        "a",
+        "tools",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    }
+  ],
+  "plugin": {
+    "when": "1979-05-27",
+    "ok": 1
+  },
+  "settings": {
+    "tools": {}
+  },
+  "models": {
+    "fine": {
+      "model": "gpt-5"
+    }
+  },
+  "agents": {
+    "a": {
+      "tools": {
+        "bash(git *)": "ask"
+      }
+    }
+  }
+}

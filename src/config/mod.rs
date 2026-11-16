@@ -298,32 +298,26 @@ pub fn load(root: &Path) -> Result<Config, MarsError> {
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
-    let mars_schema::config::Read {
-        mut value,
-        mut unknown_keys,
-        floor,
-    } = read_file::<Config>(content, path)?;
-    unknown_keys.extend(value.dependency_unknown_keys());
-    validate_settings(
-        path,
-        Some(&value.settings.tools),
-        value.settings.min_mars_version.as_deref(),
-    )?;
-    value.unknown_keys = unknown_keys;
-    value.floor = floor;
-    Ok(value)
+    let read = mars_schema::config::read_consumer(content);
+    if let Some(error) = read.parse_error {
+        return Err(parse_failed(path, &error));
+    }
+    refuse(path, &read.issues)?;
+    Ok(read.config)
+}
+
+fn parse_failed(path: &Path, error: &toml::de::Error) -> MarsError {
+    ConfigError::Invalid {
+        message: format!("failed to parse {}: {error}", path.display()),
+    }
+    .into()
 }
 
 fn read_file<T: DeserializeOwned>(
     content: &str,
     path: &Path,
 ) -> Result<mars_schema::config::Read<T>, MarsError> {
-    mars_schema::config::read(content).map_err(|error| {
-        ConfigError::Invalid {
-            message: format!("failed to parse {}: {error}", path.display()),
-        }
-        .into()
-    })
+    mars_schema::config::read(content).map_err(|error| parse_failed(path, &error))
 }
 
 /// Interpret consumer-owned manifest sections from bytes already normalized by
@@ -357,10 +351,12 @@ fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
         unknown_keys,
         floor,
     } = read_file::<LocalConfig>(content, path)?;
-    validate_settings(
+    refuse(
         path,
-        value.settings.tools.as_ref(),
-        value.settings.min_mars_version.as_deref(),
+        &mars_schema::config::settings_refusals(
+            value.settings.tools.as_ref(),
+            value.settings.min_mars_version.as_deref(),
+        ),
     )?;
     value.unknown_keys = unknown_keys;
     value.floor = floor;
@@ -450,18 +446,11 @@ fn effective_project_config(
     }
 }
 
-/// The refusals a file's settings carry, as the file's own error.
-fn validate_settings(
-    file: &Path,
-    tools: Option<&ToolRuleMap>,
-    min_mars_version: Option<&str>,
-) -> Result<(), MarsError> {
-    let refusal = mars_schema::config::settings_tools_refusal(tools).or_else(|| {
-        min_mars_version.and_then(|raw| mars_schema::config::parse_min_mars_version(raw).err())
-    });
-    match refusal {
-        Some(message) => Err(ConfigError::Invalid {
-            message: format!("{}: {message}", file.display()),
+/// The first refusal a file carries, as the file's own error.
+fn refuse(file: &Path, issues: &[mars_schema::config::ConfigIssue]) -> Result<(), MarsError> {
+    match issues.first() {
+        Some(issue) => Err(ConfigError::Invalid {
+            message: format!("{}: {}", file.display(), issue.message),
         }
         .into()),
         None => Ok(()),
@@ -1185,10 +1174,7 @@ override = { effort = "high" }
     #[test]
     fn settings_tools_take_every_action_but_the_wildcard() {
         let file = Path::new("mars.toml");
-        let check = |source: &str| {
-            let config: Config = toml::from_str(source).unwrap();
-            validate_settings(file, Some(&config.settings.tools), None)
-        };
+        let check = |source: &str| parse_config(source, file);
         for action in ["allow", "ask", "deny"] {
             assert!(
                 check(&format!(

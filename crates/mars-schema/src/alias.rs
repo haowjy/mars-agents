@@ -284,7 +284,7 @@ impl ModelAlias {
 
     /// The rows `match`, `exclude` and `provider` select; a pinned model's provider is inferred
     /// from its id when the alias names none.
-    fn selected<'a>(&self, rows: &'a [CachedModel]) -> Vec<&'a CachedModel> {
+    pub fn selected<'a>(&self, rows: &'a [CachedModel]) -> Vec<&'a CachedModel> {
         match &self.spec {
             ModelSpec::Pinned { .. } => Vec::new(),
             ModelSpec::PinnedWithMatch {

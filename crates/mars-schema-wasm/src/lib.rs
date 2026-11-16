@@ -95,6 +95,22 @@ fn parse_fields<T: serde::de::DeserializeOwned>(value: JsValue) -> Result<T, JsV
     parse_input(value)
 }
 
+/// A string argument. `wasm-bindgen`'s own `&str` conversion reads a number or an object as
+/// memory, so an export takes the `JsValue` and checks it here.
+fn text_arg(value: &JsValue, name: &str) -> Result<String, JsValue> {
+    value
+        .as_string()
+        .ok_or_else(|| fail("input.invalid", format!("`{name}` must be a string")))
+}
+
+fn optional_text_arg(value: &JsValue, name: &str) -> Result<Option<String>, JsValue> {
+    if value.is_null() || value.is_undefined() {
+        Ok(None)
+    } else {
+        text_arg(value, name).map(Some)
+    }
+}
+
 fn to_js(value: &impl Serialize) -> Result<JsValue, JsValue> {
     value
         .serialize(&Serializer::json_compatible().serialize_bytes_as_arrays(false))
@@ -145,8 +161,10 @@ pub fn version() -> String {
 /// Read one schema file. `path` is package-relative and picks the reader: `mars.toml`,
 /// `agents/<slug>.md` or `skills/<slug>/SKILL.md`. Any other path throws.
 #[wasm_bindgen]
-pub fn read(path: &str, text: &str) -> Result<JsValue, JsValue> {
-    let reading = mars_schema::read::read(path, text).map_err(|error| fail(error.code(), error))?;
+pub fn read(path: JsValue, text: JsValue) -> Result<JsValue, JsValue> {
+    let (path, text) = (text_arg(&path, "path")?, text_arg(&text, "text")?);
+    let reading =
+        mars_schema::read::read(&path, &text).map_err(|error| fail(error.code(), error))?;
     to_js(&reading)
 }
 
@@ -186,8 +204,9 @@ struct RuleInput {
 /// `meridian-flow`): the native names per action, each rule's gap or coverage, and how the
 /// host handles `ask`. The same code `mars sync` lowers an agent's tools with.
 #[wasm_bindgen]
-pub fn project(rules: JsValue, host: &str) -> Result<JsValue, JsValue> {
-    let host = mars_schema::Host::parse(host)
+pub fn project(rules: JsValue, host: JsValue) -> Result<JsValue, JsValue> {
+    let host = text_arg(&host, "host")?;
+    let host = mars_schema::Host::parse(&host)
         .ok_or_else(|| fail("input.invalid", format!("unknown host `{host}`")))?;
     let rules: Vec<RuleInput> = parse_input(rules)?;
     let policy = mars_schema::tool_policy::EffectiveToolPolicy {
@@ -309,9 +328,11 @@ pub fn resolve(input: JsValue) -> Result<JsValue, JsValue> {
 /// Whether `version` meets a dependency entry's `version` text (`null` or `"latest"` is any
 /// version; a branch or commit pin is met by none). A `version` that is not semver throws.
 #[wasm_bindgen]
-pub fn satisfies(constraint: Option<String>, version: &str) -> Result<bool, JsValue> {
+pub fn satisfies(constraint: JsValue, version: JsValue) -> Result<bool, JsValue> {
+    let constraint = optional_text_arg(&constraint, "constraint")?;
+    let version = text_arg(&version, "version")?;
     let version =
-        mars_schema::version::parse_version(version).map_err(|error| fail(error.code(), error))?;
+        mars_schema::version::parse_version(&version).map_err(|error| fail(error.code(), error))?;
     let constraint = mars_schema::version::parse_constraint(constraint.as_deref());
     Ok(mars_schema::version::satisfies(&constraint, &version))
 }
@@ -319,10 +340,14 @@ pub fn satisfies(constraint: Option<String>, version: &str) -> Result<bool, JsVa
 /// Whether `version` meets a package's `requires-mars` / `requires-meridian`. A requirement that
 /// is not one, or a `version` that is not semver, throws.
 #[wasm_bindgen(js_name = satisfiesRequirement)]
-pub fn satisfies_requirement(requirement: &str, version: &str) -> Result<bool, JsValue> {
+pub fn satisfies_requirement(requirement: JsValue, version: JsValue) -> Result<bool, JsValue> {
+    let (requirement, version) = (
+        text_arg(&requirement, "requirement")?,
+        text_arg(&version, "version")?,
+    );
     let version =
-        mars_schema::version::parse_version(version).map_err(|error| fail(error.code(), error))?;
-    mars_schema::version::satisfies_requirement(requirement, &version)
+        mars_schema::version::parse_version(&version).map_err(|error| fail(error.code(), error))?;
+    mars_schema::version::satisfies_requirement(&requirement, &version)
         .map_err(|error| fail(error.code(), error))
 }
 
@@ -330,8 +355,9 @@ pub fn satisfies_requirement(requirement: &str, version: &str) -> Result<bool, J
 /// `{pin} | {locked: true} | {tag} | {untagged: true}`. `available` is the repository's tags; one
 /// that is not a version (`nightly`) is ignored. `constraints` is every `[requester, version |
 /// null]` on the package, as the manifests spell them; `locked` is kept (`{locked: true}`, even
-/// if `available` no longer lists it) when it meets every range and no constraint is `latest`,
-/// else the newest allowed version is chosen. A refusal throws with a `version.*` code.
+/// if `available` no longer lists it) when it meets every range, a `latest` or `null` constraint
+/// included (it allows any version, so a locked package stays until it is upgraded); otherwise
+/// the newest allowed version is chosen. A refusal throws with a `version.*` code.
 #[wasm_bindgen(js_name = selectVersion)]
 pub fn select_version(argument: JsValue) -> Result<JsValue, JsValue> {
     use mars_schema::version::{Chosen, SelectionPolicy, require_tag};
@@ -665,12 +691,18 @@ struct AliasRow {
     release_date: Option<String>,
 }
 
+impl AliasRow {
+    fn key(&self) -> &str {
+        self.provider_key.as_deref().unwrap_or(&self.provider)
+    }
+}
+
 fn alias_rows(rows: JsValue) -> Result<Vec<mars_schema::models::CachedModel>, JsValue> {
     let rows: Vec<AliasRow> = parse_input(rows)?;
     Ok(rows
         .into_iter()
         .map(|row| mars_schema::models::CachedModel {
-            provider_key: row.provider_key.unwrap_or_else(|| row.provider.clone()),
+            provider_key: row.key().to_owned(),
             provider: row.provider,
             id: row.id,
             release_date: row.release_date,
@@ -679,33 +711,86 @@ fn alias_rows(rows: JsValue) -> Result<Vec<mars_schema::models::CachedModel>, Js
         .collect())
 }
 
+/// An alias as the three alias exports take it: a plain object of `ModelAlias`'s keys, and no
+/// other.
+fn alias_arg(alias: JsValue) -> Result<mars_schema::alias::ModelAlias, JsValue> {
+    parse_fields(alias)
+}
+
+/// The rows of the providers a project's `catalog_providers` names, the rows `mars models
+/// resolve` resolves over: `providers` is that list, `["*"]` allows every provider, and
+/// `undefined` is the list a project that sets none gets. A row's provider is its `provider_key`,
+/// else its `provider`. The rows come back as given.
+#[wasm_bindgen(js_name = narrowRows)]
+pub fn narrow_rows(rows: JsValue, providers: JsValue) -> Result<JsValue, JsValue> {
+    let providers: Vec<String> = if providers.is_undefined() {
+        mars_schema::models::DEFAULT_CATALOG_PROVIDERS
+            .iter()
+            .map(|provider| (*provider).to_owned())
+            .collect()
+    } else {
+        parse_input(providers)?
+    };
+    let allowed = mars_schema::models::provider_filter(&providers);
+    if !js_sys::Array::is_array(&rows) {
+        return Err(fail("input.invalid", "`rows` must be an array"));
+    }
+    let kept = js_sys::Array::new();
+    for row in js_sys::Array::from(&rows).iter() {
+        let parsed: AliasRow = parse_input(row.clone())?;
+        if allowed(parsed.key()) {
+            kept.push(&row);
+        }
+    }
+    Ok(kept.into())
+}
+
 /// The model id an alias resolves to among models.dev rows, or `null`: a pinned `model` as
 /// written, else the best row an `auto` alias selects. The code `mars models resolve` runs.
 #[wasm_bindgen(js_name = resolveAlias)]
 pub fn resolve_alias(rows: JsValue, alias: JsValue) -> Result<JsValue, JsValue> {
-    let alias: mars_schema::alias::ModelAlias = parse_fields(alias)?;
+    let alias = alias_arg(alias)?;
     to_js(&alias.resolve(&alias_rows(rows)?))
 }
 
 /// Every id an alias accepts, in `resolveAlias`'s order.
 #[wasm_bindgen(js_name = aliasCandidates)]
 pub fn alias_candidates(rows: JsValue, alias: JsValue) -> Result<JsValue, JsValue> {
-    let alias: mars_schema::alias::ModelAlias = parse_fields(alias)?;
+    let alias = alias_arg(alias)?;
     to_js(&alias.candidates(&alias_rows(rows)?))
 }
 
-/// Resolve every alias of a parsed manifest's `models`, the way `mars models resolve` does.
+/// Resolve every alias of a parsed manifest's `models`, the way `mars models resolve` does. The
+/// manifest is a full reading, so its other keys are not checked; each alias is checked as
+/// `resolveAlias` checks its own.
 #[wasm_bindgen(js_name = resolveAliases)]
 pub fn resolve_aliases(manifest: JsValue, rows: JsValue) -> Result<JsValue, JsValue> {
-    #[derive(serde::Deserialize)]
-    struct Models {
-        #[serde(default)]
-        models: indexmap::IndexMap<String, mars_schema::alias::ModelAlias>,
+    let not_object = || fail("input.invalid", "`manifest` must be an object");
+    if !manifest.is_object() || js_sys::Array::is_array(&manifest) {
+        return Err(not_object());
     }
-    let Models { models } = parse_input(manifest)?;
+    let models = js_sys::Reflect::get(&manifest, &"models".into()).map_err(|_| not_object())?;
+    let mut aliases = Vec::new();
+    if !models.is_undefined() && !models.is_null() {
+        if !models.is_object() || js_sys::Array::is_array(&models) {
+            return Err(fail("input.invalid", "`manifest.models` must be an object"));
+        }
+        for entry in js_sys::Object::entries(&js_sys::Object::from(models)).iter() {
+            let entry = js_sys::Array::from(&entry);
+            let name = entry.get(0).as_string().unwrap_or_default();
+            // The result is a plain object, which cannot hold this key.
+            if name == "__proto__" {
+                return Err(fail(
+                    "input.invalid",
+                    "an alias cannot be named `__proto__`: JavaScript cannot hold it as a plain property",
+                ));
+            }
+            aliases.push((name, alias_arg(entry.get(1))?));
+        }
+    }
     let rows = alias_rows(rows)?;
     to_js(
-        &models
+        &aliases
             .iter()
             .map(|(name, alias)| (name, alias.resolve(&rows)))
             .collect::<indexmap::IndexMap<_, _>>(),

@@ -1,0 +1,29 @@
+{
+  "rows": [
+    {
+      "id": "deepseek-v4-flash",
+      "provider": "deepseek",
+      "release_date": "2026-01-01"
+    },
+    {
+      "id": "deepseek-v4-flash-x",
+      "provider": "nvidia",
+      "release_date": "2026-03-01"
+    },
+    {
+      "id": "claude-opus-4",
+      "provider": "Anthropic",
+      "provider_key": "anthropic",
+      "release_date": "2026-02-01"
+    },
+    {
+      "id": "llama-4",
+      "provider": "Meta",
+      "provider_key": "meta-llama"
+    },
+    {
+      "id": "mistral-large",
+      "provider": "mistral"
+    }
+  ]
+}

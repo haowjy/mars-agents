@@ -45,9 +45,13 @@ Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the o
 ## Models catalog
 
 `models.rs` is the models.dev row (`CachedModel`) and the pure selection over rows
-(`auto_resolve_all`, `glob_match`); `alias.rs` is `ModelAlias`, the `[models.<alias>]` table, with `resolve` and
-`candidates` over rows: the binary's snapshot and Flow's rows go through the same code, and the WASM
-`resolveAlias`, `aliasCandidates` and `resolveAliases` call them. Keep alias rules there, never in `src/models/`.
+(`auto_resolve_all`, `glob_match`); `alias.rs` is `ModelAlias`, the `[models.<alias>]` table, with `resolve`, `candidates` and `selected`
+over rows: the binary's snapshot and Flow's rows go through the same code, and the WASM
+`resolveAlias`, `aliasCandidates` and `resolveAliases` call them; the CLI's `src/models/` calls the
+same methods and holds no copy of the selection. Keep alias rules there. `provider_filter` and
+`DEFAULT_CATALOG_PROVIDERS` are the rule that narrows models.dev to a project's `catalog_providers`;
+the binary applies it when it reads the snapshot and the WASM `narrowRows` exports it, so a caller
+resolving over all of models.dev narrows first.
 Providers compare by `catalog_provider_canonical` of the raw models.dev key (`provider_key`), never
 by display name: `meta` and `meta-llama` both display as "Meta". Fetching, the snapshot file and the
 per-project provider filter are the binary's.
@@ -63,14 +67,24 @@ less `none` when it cannot be switched off; the listing shows the shape, never t
 
 `config.rs` is the one reader of the tables a project's `mars.toml` holds beyond `[package]` and the
 dependencies (`Config`: `[settings]`, `[models]`, `[agents]`, `[skills]`, `[plugin]`), and of the
-`mars.local.toml` and user `config.toml` the binary builds on it (`read<T>`). The binary loads files
-and maps errors to its own type; the TOML shape, the validations and the unknown-key notes live here,
-and `manifest::read_all` (the WASM `read('mars.toml')`) runs the same pass. Do not use
-`#[serde(flatten)]` in `Config` or anything it nests: `serde_ignored` cannot see unread keys inside a
-flattened struct, so a typo would stop being reported. `manifest::read` (package and dependencies only)
-stays what dependency preparation uses: a dependent reads a package's `[models]` and refuses nothing
-else in its consumer tables, so those must not become errors of `read`. A new table of `mars.toml` goes
-on `Config` and on `ManifestRead`, and `fixtures/read/manifest-every-table` gets a case.
+`mars.local.toml` and user `config.toml` the binary builds on it (`read<T>`). `read_consumer` is the
+one function that reads a `mars.toml` and returns its refusals (`ConsumerRead`: `[settings.tools]`
+with a `*`, an unparseable `min_mars_version`, a table that fails); the CLI's `parse_config` and the
+WASM `read('mars.toml')` (`manifest::read_all`) both call it, and neither repeats a step. It reads
+the whole file in one serde pass, and when that fails reads each table alone (`settings`, each
+`models.<alias>`, `agents.<name>`, `skills.<name>`), so one broken value costs its own table and an
+issue whose path names it. `parse_error` keeps the whole-file error because the CLI refuses the
+project's own file whole with that text, line number included; the WASM never shows it. The binary
+loads files and maps errors to its own type; the TOML shape, the validations and the unknown-key
+notes live here. Do not use `#[serde(flatten)]` in `Config` or anything it nests: `serde_ignored`
+cannot see unread keys inside a flattened struct, so a typo would stop being reported.
+`manifest::read` (package and dependencies only) stays what dependency preparation uses: a dependent
+reads a package's `[models]` and refuses nothing else in its consumer tables, so those must not
+become errors of `read`. `read_all` returns every table as `OrderedValue`, built from the typed
+table and stripped of `__proto__` keys (`safe_table`), and `[plugin]` through the same
+TOML-to-JSON conversion as the `[package]` pairs (`table_pairs`): nothing reaches the WASM
+serializer unchecked. A new table of `mars.toml` goes on `Config`, in `read_tables` and
+`read_all`, and `fixtures/read/manifest-every-table` gets a case.
 Target links (`targets.rs`) stay in the binary: they need its harness registry.
 
 ## Checking

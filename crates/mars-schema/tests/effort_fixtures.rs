@@ -1,7 +1,7 @@
 //! Effort resolution and alias selection, the pure parts of `mars models`:
 //! `fixtures/effort/<case>/{request.json, expected.json}` pins `resolveEffort`,
 //! `fixtures/alias/<case>/{request.json, expected.json}` pins `resolveAlias`,
-//! `fixtures/alias-candidates/` `aliasCandidates`, `fixtures/alias-resolve-all/` `resolveAliases`, and
+//! `fixtures/alias-candidates/` `aliasCandidates`, `fixtures/alias-narrow/` `narrowRows`, `fixtures/alias-resolve-all/` `resolveAliases`, and
 //! `fixtures/effort-levels/expected.json` the ladder `effortLevels` returns.
 
 use std::fs;
@@ -101,6 +101,33 @@ fn alias_candidates_fixtures_match() {
             &case_dir.join("expected.json"),
             &common::pretty(&alias.candidates(&models(rows))),
         );
+    }
+}
+
+#[test]
+fn alias_narrow_fixtures_match() {
+    #[derive(Deserialize)]
+    struct Request {
+        rows: Vec<serde_json::Value>,
+        providers: Option<Vec<String>>,
+    }
+    for case_dir in common::cases("alias-narrow") {
+        let Request { rows, providers } = request(&case_dir);
+        let providers = providers.unwrap_or_else(|| {
+            mars_schema::models::DEFAULT_CATALOG_PROVIDERS
+                .iter()
+                .map(|provider| (*provider).to_owned())
+                .collect()
+        });
+        let allowed = mars_schema::models::provider_filter(&providers);
+        let kept: Vec<_> = rows
+            .iter()
+            .filter(|row| {
+                let key = row.get("provider_key").or_else(|| row.get("provider"));
+                allowed(key.and_then(|key| key.as_str()).unwrap())
+            })
+            .collect();
+        common::assert_file(&case_dir.join("expected.json"), &common::pretty(&kept));
     }
 }
 

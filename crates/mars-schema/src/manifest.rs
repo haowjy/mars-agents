@@ -2,20 +2,20 @@
 //!
 //! The reading's `frontmatter` holds the `[package]` table's pairs, unknown keys included.
 
-use crate::alias::ModelAlias;
-use crate::config::{AgentOverlay, Config, Settings, SkillOverlay};
+use crate::config::Settings;
 use crate::dependency::Dependencies;
-use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path};
+use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity, child_path, key_path};
 use crate::ordered::{MAX_SAFE_INTEGER, OrderedValue};
 use crate::package::PackageMetadata;
 use crate::read::DefinitionRead;
-use indexmap::IndexMap;
 use serde::Serialize;
 
 /// The reading of a `mars.toml`: the `[package]` table as every definition reading has it, the
 /// dependency entries the package declares, and, from [`read_all`], the consumer tables. Table
 /// keys are the file's names and are left out when empty; the fields inside `settings`, `agents`
-/// and `models` are spelled as Mars writes them back (`managed_root`, `default_effort`).
+/// and `models` are spelled as Mars writes them back (`managed_root`, `default_effort`). The
+/// consumer tables are plain JSON values, the same as the `[package]` pairs: a key or value JSON
+/// cannot hold is left out with a `toml.non-json-value` diagnostic.
 #[derive(Debug, Clone, Serialize)]
 pub struct ManifestRead {
     #[serde(flatten)]
@@ -23,35 +23,25 @@ pub struct ManifestRead {
     #[serde(flatten)]
     pub dependencies: Dependencies,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<toml::Value>,
+    pub plugin: Option<OrderedValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub settings: Option<Settings>,
-    #[serde(skip_serializing_if = "IndexMap::is_empty")]
-    pub models: IndexMap<String, ModelAlias>,
-    #[serde(skip_serializing_if = "IndexMap::is_empty")]
-    pub agents: IndexMap<String, AgentOverlay>,
-    #[serde(skip_serializing_if = "IndexMap::is_empty")]
-    pub skills: IndexMap<String, SkillOverlay>,
+    pub settings: Option<OrderedValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<OrderedValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<OrderedValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<OrderedValue>,
 }
 
 /// Read package identity and dependency entries while leaving consumer-only top-level tables
-/// outside the schema.
+/// outside the schema. A package with an error has no dependencies: a dependent installs from
+/// what is declared, so it is refused whole.
 pub fn read(content: &str) -> ManifestRead {
-    let value: toml::Value = match toml::from_str(content) {
-        Ok(value) => value,
-        Err(error) => {
-            return ManifestRead::unread(vec![SchemaDiagnostic::new(
-                "toml.invalid",
-                Severity::Error,
-                Vec::new(),
-                error.to_string(),
-            )]);
-        }
+    let (value, document) = match parse(content) {
+        Ok(parsed) => parsed,
+        Err(refusal) => return ManifestRead::unread(vec![refusal]),
     };
-    // `content` parsed as TOML above, so it parses here.
-    let document = content
-        .parse::<toml_edit::DocumentMut>()
-        .expect("content that parses as TOML parses as a document");
     let mut reading = read_package(&document, &value);
     let dependencies = if reading.fields.is_some() {
         Dependencies::read(&document, &mut reading.diagnostics)
@@ -66,62 +56,159 @@ pub fn read(content: &str) -> ManifestRead {
 }
 
 /// [`read`], and the consumer tables beside `[package]` and the dependencies: what a project's
-/// `mars.toml` and the CLI's loader read. One serde pass reads the whole file, so a table that
-/// breaks a rule leaves every consumer table out with one `config.invalid` error (the CLI's text
-/// without the file name); `read` itself never fails on them, because a dependent reads only a
-/// package's `[models]` and refuses nothing else. When `[package]` or a dependency entry is
-/// already refused, the pass fails on the same value, so that report stands alone.
+/// `mars.toml` and the CLI's loader read. The file is read as the consumer configuration it is:
+/// `[package]` is optional, and the dependencies are returned with or without it. Each table
+/// that is valid on its own is returned; one that breaks a rule is left out with a
+/// `config.invalid` error whose path names it (`models.a`, `settings`), and the others stay. A
+/// `[settings]` refusal (`[settings.tools]` with a `*`, a `min_mars_version` that is not a
+/// requirement) is an error too, the table kept. `read` itself never fails on a consumer table,
+/// because a dependent reads only a package's `[models]` and refuses nothing else.
 pub fn read_all(content: &str) -> ManifestRead {
-    let mut reading = read(content);
-    if reading
-        .first_error()
-        .is_some_and(|e| e.code == "toml.invalid")
+    let (value, document) = match parse(content) {
+        Ok(parsed) => parsed,
+        Err(refusal) => return ManifestRead::unread(vec![refusal]),
+    };
+    let mut package = if value.get("package").is_some() {
+        read_package(&document, &value)
+    } else {
+        DefinitionRead::unread(Vec::new())
+    };
+    let dependencies = Dependencies::read(&document, &mut package.diagnostics);
+    let mut reading = ManifestRead {
+        package,
+        dependencies,
+        ..ManifestRead::unread(Vec::new())
+    };
+    let consumer = crate::config::read_consumer(content);
+    let diagnostics = &mut reading.package.diagnostics;
+    let reported = diagnostics.iter().any(SchemaDiagnostic::is_error);
+    // The whole-file pass can fail on a value the package or dependency reading already
+    // refused; when nothing else says why it failed, its own text does.
+    if let Some(error) = &consumer.parse_error
+        && consumer.issues.is_empty()
+        && !reported
     {
-        return reading;
+        diagnostics.push(invalid(Vec::new(), error.to_string()));
     }
-    let invalid = |message: String| {
-        SchemaDiagnostic::new("config.invalid", Severity::Error, Vec::new(), message)
-    };
-    let read = match crate::config::read::<Config>(content) {
-        Ok(read) => read,
-        Err(error) => {
-            if reading.first_error().is_none() {
-                reading.package.diagnostics.push(invalid(error.to_string()));
+    diagnostics.extend(
+        consumer
+            .issues
+            .into_iter()
+            .map(|issue| invalid(issue.path.clone(), issue.message)),
+    );
+    let config = consumer.config;
+    diagnostics.extend(config.unknown_keys.iter().cloned());
+    reading.plugin = plugin_json(&document, diagnostics);
+    reading.settings = (config.settings != Settings::default())
+        .then(|| safe_table("settings", &config.settings, diagnostics))
+        .flatten();
+    reading.models = safe_table("models", &config.models, diagnostics);
+    reading.agents = safe_table("agents", &config.agents, diagnostics);
+    reading.skills = safe_table("skills", &config.skills, diagnostics);
+    reading
+}
+
+fn invalid(path: Vec<PathSegment>, message: String) -> SchemaDiagnostic {
+    SchemaDiagnostic::new("config.invalid", Severity::Error, path, message)
+}
+
+/// `content` as TOML, or the diagnostic that says it is not.
+fn parse(content: &str) -> Result<(toml::Value, toml_edit::DocumentMut), SchemaDiagnostic> {
+    let value: toml::Value = toml::from_str(content).map_err(|error| {
+        SchemaDiagnostic::new(
+            "toml.invalid",
+            Severity::Error,
+            Vec::new(),
+            error.to_string(),
+        )
+    })?;
+    // `content` parsed as TOML above, so it parses here.
+    let document = content
+        .parse::<toml_edit::DocumentMut>()
+        .expect("content that parses as TOML parses as a document");
+    Ok((value, document))
+}
+
+/// A consumer table as a plain JSON value in its written order, `None` when it holds nothing.
+/// What the typed tables can carry beyond strings and small integers is a key, so a `__proto__`
+/// at any depth is left out with a diagnostic.
+fn safe_table(
+    table: &str,
+    value: &impl Serialize,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) -> Option<OrderedValue> {
+    // Serialization order is the written order; `serde_json::Value` would sort it.
+    let text = serde_json::to_string(value).expect("a config table serializes");
+    let mut value: OrderedValue =
+        serde_json::from_str(&text).expect("JSON text this crate wrote reads back");
+    strip_unholdable_keys(&mut value, &mut key_path(table), diagnostics);
+    match &value {
+        OrderedValue::Object(map) if map.is_empty() => None,
+        _ => Some(value),
+    }
+}
+
+fn strip_unholdable_keys(
+    value: &mut OrderedValue,
+    at: &mut Vec<PathSegment>,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) {
+    match value {
+        OrderedValue::Object(map) => {
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for key in keys {
+                at.push(PathSegment::Key(key.clone()));
+                if let Err(message) = reject_key(&key) {
+                    map.shift_remove(&key);
+                    diagnostics.push(SchemaDiagnostic::new(
+                        "toml.non-json-value",
+                        Severity::Error,
+                        at.clone(),
+                        message,
+                    ));
+                } else if let Some(inner) = map.get_mut(&key) {
+                    strip_unholdable_keys(inner, at, diagnostics);
+                }
+                at.pop();
             }
-            return reading;
         }
-    };
-    let refusals = [
-        crate::config::settings_tools_refusal(Some(&read.value.settings.tools)),
-        read.value
-            .settings
-            .min_mars_version
-            .as_deref()
-            .and_then(|raw| crate::config::parse_min_mars_version(raw).err()),
-    ];
-    reading
-        .package
-        .diagnostics
-        .extend(refusals.into_iter().flatten().map(invalid));
-    reading.package.diagnostics.extend(read.unknown_keys);
-    reading
-        .package
-        .diagnostics
-        .extend(read.value.dependency_unknown_keys());
-    let Config {
-        plugin,
-        settings,
-        models,
-        agents,
-        skills,
-        ..
-    } = read.value;
-    reading.plugin = plugin;
-    reading.settings = (settings != Settings::default()).then_some(settings);
-    reading.models = models;
-    reading.agents = agents;
-    reading.skills = skills;
-    reading
+        OrderedValue::Array(values) => {
+            for (index, inner) in values.iter_mut().enumerate() {
+                at.push(PathSegment::Index(index));
+                strip_unholdable_keys(inner, at, diagnostics);
+                at.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `[plugin]` as written: its pairs the way the `[package]` pairs are read, or the whole value
+/// when it is not a table.
+fn plugin_json(
+    document: &toml_edit::DocumentMut,
+    diagnostics: &mut Vec<SchemaDiagnostic>,
+) -> Option<OrderedValue> {
+    let item = document.get("plugin")?;
+    if item.as_table_like().is_some() {
+        return Some(OrderedValue::Object(
+            table_pairs(document, "plugin", diagnostics)
+                .into_iter()
+                .collect(),
+        ));
+    }
+    match item_json(item) {
+        Ok(value) => Some(value),
+        Err(message) => {
+            diagnostics.push(SchemaDiagnostic::new(
+                "toml.non-json-value",
+                Severity::Error,
+                crate::diagnostic::key_path("plugin"),
+                message,
+            ));
+            None
+        }
+    }
 }
 
 impl ManifestRead {
@@ -140,9 +227,9 @@ impl ManifestRead {
             dependencies: Dependencies::default(),
             plugin: None,
             settings: None,
-            models: IndexMap::new(),
-            agents: IndexMap::new(),
-            skills: IndexMap::new(),
+            models: None,
+            agents: None,
+            skills: None,
         }
     }
 }
@@ -151,7 +238,6 @@ fn read_package(
     document: &toml_edit::DocumentMut,
     value: &toml::Value,
 ) -> DefinitionRead<PackageMetadata> {
-    use crate::diagnostic::key_path;
     let Some(package) = value.get("package").and_then(toml::Value::as_table) else {
         return DefinitionRead::unread(vec![SchemaDiagnostic::new(
             "manifest.package-required",
@@ -285,22 +371,23 @@ fn read_package(
         }
     };
     DefinitionRead {
-        frontmatter: package_pairs(document, &mut diagnostics),
+        frontmatter: table_pairs(document, "package", &mut diagnostics),
         fields,
         body: None,
         diagnostics,
     }
 }
 
-/// The `[package]` pairs in file order, at every depth. A value JSON cannot hold exactly (an
-/// integer beyond ±(2^53 − 1), NaN, infinity, a `__proto__` key) leaves its pair out with a
+/// The pairs of the table `name` in file order, at every depth. A value JSON cannot hold exactly
+/// (an integer beyond ±(2^53 − 1), NaN, infinity, a `__proto__` key) leaves its pair out with a
 /// `toml.non-json-value` diagnostic; a datetime is its TOML text, a string.
-fn package_pairs(
+fn table_pairs(
     document: &toml_edit::DocumentMut,
+    name: &str,
     diagnostics: &mut Vec<crate::diagnostic::SchemaDiagnostic>,
 ) -> Vec<(String, OrderedValue)> {
     use toml_edit::Item;
-    let Some(package) = document.get("package").and_then(Item::as_table_like) else {
+    let Some(package) = document.get(name).and_then(Item::as_table_like) else {
         return Vec::new();
     };
     let mut pairs = Vec::new();
@@ -310,7 +397,7 @@ fn package_pairs(
             Err(message) => diagnostics.push(SchemaDiagnostic::new(
                 "toml.non-json-value",
                 Severity::Error,
-                child_path("package", key),
+                child_path(name, key),
                 message,
             )),
         }

@@ -92,6 +92,29 @@ pub fn catalog_provider_canonical(key: &str) -> String {
     }
 }
 
+/// The providers a project reads when it sets no `catalog_providers`.
+pub const DEFAULT_CATALOG_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "google",
+    "meta",
+    "deepseek",
+    "xai",
+    "openrouter",
+];
+
+/// Whether a provider key is one of the project's `catalog_providers`: the rule that narrows
+/// models.dev to the rows aliases resolve over. `*` allows every provider; a key compares by
+/// [`catalog_provider_canonical`].
+pub fn provider_filter(allowlist: &[String]) -> impl Fn(&str) -> bool {
+    let all = allowlist.iter().any(|provider| provider.trim() == "*");
+    let allowed: Vec<String> = allowlist
+        .iter()
+        .map(|provider| catalog_provider_canonical(provider))
+        .collect();
+    move |key| all || allowed.contains(&catalog_provider_canonical(key))
+}
+
 /// The display name of a models.dev provider key.
 pub fn normalize_provider(key: &str) -> String {
     match key {

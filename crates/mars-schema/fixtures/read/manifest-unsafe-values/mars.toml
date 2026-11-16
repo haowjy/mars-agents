@@ -1,0 +1,28 @@
+[package]
+name = "unsafe-values"
+version = "1.0.0"
+schema = 1
+
+[plugin]
+big = 9007199254740993
+when = 1979-05-27
+ok = 1
+
+[plugin.__proto__]
+x = "test"
+
+[plugin.nested]
+items = [{ n = 9007199254740993 }]
+
+[models.__proto__]
+model = "gpt-5"
+
+[models.fine]
+model = "gpt-5"
+
+[agents.a.tools]
+"__proto__" = "deny"
+"bash(git *)" = "ask"
+
+[settings.tools]
+"__proto__" = "allow"

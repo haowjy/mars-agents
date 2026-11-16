@@ -1,0 +1,235 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "meridian-base"
+    ],
+    [
+      "version",
+      "0.16.5"
+    ],
+    [
+      "description",
+      "Core coordination primitives for Meridian — agent profiles and skills for spawning, state tracking, and session context."
+    ],
+    [
+      "requires-mars",
+      ">=0.30.0"
+    ],
+    [
+      "requires-meridian",
+      ">=0.21.0"
+    ],
+    [
+      "schema",
+      1
+    ],
+    [
+      "tools",
+      {
+        "bash(pkill -f *)": "deny",
+        "bash(killall *)": "deny"
+      }
+    ]
+  ],
+  "fields": {
+    "name": "meridian-base",
+    "version": "0.16.5",
+    "description": "Core coordination primitives for Meridian — agent profiles and skills for spawning, state tracking, and session context.",
+    "schema": 1,
+    "requires-mars": ">=0.30.0",
+    "requires-meridian": ">=0.21.0",
+    "tools": {
+      "bash(killall *)": "deny",
+      "bash(pkill -f *)": "deny"
+    }
+  },
+  "body": null,
+  "diagnostics": [],
+  "local-dependencies": {
+    "meridian-prompter": {
+      "url": "https://github.com/meridian-flow/meridian-prompter"
+    }
+  },
+  "settings": {
+    "models_cache_ttl_hours": 24
+  },
+  "models": {
+    "composer": {
+      "harness": "cursor",
+      "description": "Cheap coder for bounded edits, tests and implementing a settled plan.",
+      "model": "composer-2.5",
+      "provider": "cursor"
+    },
+    "deepseek": {
+      "description": "Cheap coder for concrete repo changes, tool loops and bulk drafting.",
+      "prompting": "Give the desired outcome, relevant source/design context, constraints, acceptance criteria, and concrete verification evidence. Define a coherent objective rather than prescribing each edit.",
+      "default_effort": "high",
+      "match": [
+        "deepseek*flash*"
+      ],
+      "exclude": [
+        "*/*",
+        "*:*",
+        "*vision*",
+        "*exp*"
+      ]
+    },
+    "deepseekpro": {
+      "description": "Legacy alias for `deepseek`.",
+      "default_effort": "high",
+      "match": [
+        "deepseek*pro*"
+      ],
+      "exclude": [
+        "*/*",
+        "*:*",
+        "*flash*"
+      ]
+    },
+    "opus": {
+      "harness": "claude",
+      "description": "Orchestration, conversation, writing, and judging code quality and direction.",
+      "default_effort": "high",
+      "match": [
+        "claude*opus*"
+      ],
+      "exclude": [
+        "*:*"
+      ]
+    },
+    "sonnet": {
+      "harness": "claude",
+      "description": "Daily implementation, frontend polish, documents and bounded review.",
+      "default_effort": "high",
+      "match": [
+        "claude*sonnet*"
+      ],
+      "exclude": [
+        "*:*"
+      ]
+    },
+    "haiku": {
+      "harness": "claude",
+      "description": "Summaries, classification, notes and light parallel subagents.",
+      "match": [
+        "claude*haiku*"
+      ],
+      "exclude": [
+        "*:*"
+      ]
+    },
+    "fable": {
+      "harness": "claude",
+      "description": "Escalation only: a second opinion when a strong model runs out of depth. Slowest and priciest.",
+      "default_effort": "high",
+      "match": [
+        "claude*fable*"
+      ],
+      "exclude": [
+        "*:*"
+      ]
+    },
+    "glm": {
+      "harness": "opencode",
+      "description": "Open-weight coder for backend and repo-scale work; weak at UI.",
+      "default_effort": "high",
+      "model": "opencode-go/glm-5.2",
+      "provider": "opencode-go"
+    },
+    "kimi": {
+      "harness": "opencode",
+      "description": "Long coding and research over large inputs; good at frontend. Slow.",
+      "default_effort": "high",
+      "model": "kimi-k3"
+    },
+    "muse": {
+      "harness": "opencode",
+      "description": "Coding and computer use on simpler and UI tasks.",
+      "model": "muse-spark-1.3"
+    },
+    "muse-contributor": {
+      "harness": "opencode",
+      "description": "`muse` on a free endpoint that may train on your prompts; use only when that's acceptable.",
+      "model": "opencode-go/muse-spark-1.3-contributor",
+      "provider": "opencode-go"
+    },
+    "grok": {
+      "harness": "opencode",
+      "description": "Long-horizon coding and knowledge work. Slow.",
+      "default_effort": "high",
+      "provider": "xai",
+      "match": [
+        "grok-*"
+      ],
+      "exclude": [
+        "*-imagine-*",
+        "*-image*",
+        "*-video*",
+        "grok-build-*"
+      ]
+    },
+    "argon": {
+      "description": "Creative writing and editing long manuscripts; send the text inline, since its tool calling is unreliable.",
+      "match": [
+        "*gemini*argon*"
+      ],
+      "exclude": [
+        "*image*",
+        "*tts*",
+        "*live*",
+        "*contributor*"
+      ]
+    },
+    "hydrogen": {
+      "description": "Fast, cheap worker for agentic coding, UI builds and tool loops.",
+      "match": [
+        "*gemini*hydrogen*"
+      ],
+      "exclude": [
+        "*image*",
+        "*tts*",
+        "*live*",
+        "*contributor*"
+      ]
+    },
+    "argon-contributor": {
+      "harness": "opencode",
+      "description": "`argon` on a free endpoint that may train on your prompts; never for manuscripts the author hasn't cleared.",
+      "model": "opencode-go/gemini-4-argon-contributor",
+      "provider": "opencode-go"
+    },
+    "sol": {
+      "harness": "codex",
+      "description": "Hard technical analysis, complex coding and long implementation. Slow.",
+      "prompting": "Outcome-first executor. Include the north-star goal, success criteria, relevant high-level context, constraints, expected output shape, and concrete verification: how to prove the goal is met and what evidence to report.",
+      "match": [
+        "gpt-*-sol"
+      ]
+    },
+    "terra": {
+      "harness": "codex",
+      "description": "Fast computer use and clear technical writing.",
+      "prompting": "To be used as as subagent. Make sure to provide all the important context of what it needs to do. ",
+      "match": [
+        "gpt-*-terra"
+      ]
+    },
+    "luna": {
+      "harness": "codex",
+      "description": "Cheap general worker for implementation, exploration and summaries; check its claims.",
+      "prompting": "Outcome-first executor. Include the north-star goal, success criteria, relevant high-level context, constraints, expected output shape, and concrete verification: how to prove the goal is met and what evidence to report.",
+      "match": [
+        "gpt-*-luna"
+      ]
+    },
+    "astra": {
+      "harness": "codex",
+      "description": "The hardest cross-system decisions, and finding bugs, security issues and regressions. Slow.",
+      "default_effort": "high",
+      "match": [
+        "gpt-*-astra"
+      ]
+    }
+  }
+}

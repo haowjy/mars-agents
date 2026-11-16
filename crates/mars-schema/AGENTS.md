@@ -44,8 +44,14 @@ Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the o
 
 ## Models catalog
 
-`models.rs` is the models.dev row (`CachedModel`) and the pure alias resolver over rows
-(`auto_resolve_all`, `glob_match`): the binary's snapshot and Flow's rows go through the same code.
+`models.rs` is the models.dev row (`CachedModel`) and the pure selection over rows
+(`auto_resolve_all`, `glob_match`); `alias.rs` is `ModelAlias`, the `[models.<alias>]` table, with `resolve`, `candidates` and `selected`
+over rows: the binary's snapshot and Flow's rows go through the same code, and the WASM
+`resolveAlias`, `aliasCandidates` and `resolveAliases` call them; the CLI's `src/models/` calls the
+same methods and holds no copy of the selection. Keep alias rules there. `provider_filter` and
+`DEFAULT_CATALOG_PROVIDERS` are the rule that narrows models.dev to a project's `catalog_providers`;
+the binary applies it when it reads the snapshot and the WASM `narrowRows` exports it, so a caller
+resolving over all of models.dev narrows first.
 Providers compare by `catalog_provider_canonical` of the raw models.dev key (`provider_key`), never
 by display name: `meta` and `meta-llama` both display as "Meta". Fetching, the snapshot file and the
 per-project provider filter are the binary's.
@@ -57,6 +63,30 @@ reasoning is `ModelReasoning`: unknown, does not reason, or reasons with whether
 and the levels its row names, if any. A model that reasons with no named levels takes the whole ladder,
 less `none` when it cannot be switched off; the listing shows the shape, never that set.
 
+## Consumer config
+
+`config.rs` is the one reader of the tables a project's `mars.toml` holds beyond `[package]` and the
+dependencies (`Config`: `[settings]`, `[models]`, `[agents]`, `[skills]`, `[plugin]`), and of the
+`mars.local.toml` and user `config.toml` the binary builds on it (`read<T>`). `read_consumer` is the
+one function that reads a `mars.toml` and returns its refusals (`ConsumerRead`: `[settings.tools]`
+with a `*`, an unparseable `min_mars_version`, a table that fails); the CLI's `parse_config` and the
+WASM `read('mars.toml')` (`manifest::read_all`) both call it, and neither repeats a step. It reads
+the whole file in one serde pass, and when that fails reads each table alone (`settings`, each
+`models.<alias>`, `agents.<name>`, `skills.<name>`), so one broken value costs its own table and an
+issue whose path names it. `parse_error` keeps the whole-file error because the CLI refuses the
+project's own file whole with that text, line number included; the WASM never shows it. The binary
+loads files and maps errors to its own type; the TOML shape, the validations and the unknown-key
+notes live here. Do not use `#[serde(flatten)]` in `Config` or anything it nests: `serde_ignored`
+cannot see unread keys inside a flattened struct, so a typo would stop being reported.
+`manifest::read` (package and dependencies only) stays what dependency preparation uses: a dependent
+reads a package's `[models]` and refuses nothing else in its consumer tables, so those must not
+become errors of `read`. `read_all` returns every table as `OrderedValue`, built from the typed
+table and stripped of `__proto__` keys (`safe_table`), and `[plugin]` through the same
+TOML-to-JSON conversion as the `[package]` pairs (`table_pairs`): nothing reaches the WASM
+serializer unchecked. A new table of `mars.toml` goes on `Config`, in `read_tables` and
+`read_all`, and `fixtures/read/manifest-every-table` gets a case.
+Target links (`targets.rs`) stay in the binary: they need its harness registry.
+
 ## Checking
 
 `check.rs` is what `mars check` and the WASM `check` report about a package's own files. A rule about an Agent, a skill or `mars.toml` goes there, never in `src/cli/check.rs`. It reports what is true of the package wherever it runs: what a harness target can't express, or an older Mars can't read (the `requires-mars` floor, hooks, lost-in-lowering fields), stays in the binary. Grade a finding by what the author loses: `Error` it won't load or install, `Warning` something written won't take effect, `Info` nothing written is lost. For each path the result is `prepare`'s findings plus the check's own, so dropping the check's codes must leave what `prepare` returns for the path; both runners hold that. A new code is a fixture under `fixtures/check/` and a row in the code lists of both runners.
@@ -67,8 +97,10 @@ less `none` when it cannot be switched off; the listing shows the shape, never t
   grammars: bare `0.20` is a caret range for a dependency and a minimum for a
   requirement. Keep their parsers distinct.
 - `version::keeps_lock` keeps a lock under `PreferLockThenLatest` when every
-  semver constraint allows it, it is not excluded, and no request asks for latest,
-  without checking whether its tag still exists upstream. This lets a locked
+  semver constraint allows it and it is not excluded (a `latest` request allows
+  any version, so an unversioned dependency keeps its lock; `mars upgrade` moves it).
+  A lock row that is a bare commit, with no version, is kept too when no constraint is
+  a semver range: no tag the repository gains later moves it. It does this without checking whether its tag still exists upstream. This lets a locked
   install replay without listing tags. Every constraint must hold at the chosen ref;
   incompatible pins and a pin beside a range fail.
 - Preserve the published read, edit, preparation, selection and hook output shapes,
@@ -91,7 +123,7 @@ A file's version floor is `keys::floor` over the keys it uses, and every caller 
 `keys::used(document, Document)`, which walks a parsed `mars.toml`. The uses that live in other
 files are the caller's to add as `Used::hook` and `Used::profile_rule` (`check::package_floor`
 does, and `mars check` and `mars version` both call it); the consumer reader
-(`config/read.rs`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
+(`config::read`) calls `used` with `Document::Consumer`. A gated row is `Gate::Present` (the
 key's presence) or `Gate::Rules` (each rule whose action restricts: `deny` and `ask`, not
 `allow`). A consumer floor is reported only above `MIN_MARS_VERSION_SINCE`, since a Mars older
 than that ignores `min_mars_version`.

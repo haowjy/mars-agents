@@ -6,24 +6,10 @@ use std::path::{Path, PathBuf};
 use mars_schema::names::{ItemName, RelativePathError, SourceSubpath, normalize_relative};
 use mars_schema::string_newtype;
 
-string_newtype!(SourceName);
+pub use mars_schema::names::SourceName;
 string_newtype!(SourceUrl);
 string_newtype!(CommitHash);
 string_newtype!(ContentHash);
-
-macro_rules! impl_as_str {
-    ($($name:ident),+ $(,)?) => {
-        $(
-            impl $name {
-                pub fn as_str(&self) -> &str {
-                    &self.0
-                }
-            }
-        )+
-    };
-}
-
-impl_as_str!(SourceName, SourceUrl, ContentHash);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DestPathError {

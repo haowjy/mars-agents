@@ -55,7 +55,7 @@
       {
         "level": "advisory",
         "code": "requires-mars-fallback",
-        "message": "skipping `d` 2.0.0: requires-mars `>=99.0.0` (running {version}; use a mars version matching `>=99.0.0`); required by mars.toml"
+        "message": "skipping `d` 2.0.0: requires-mars `>=99.0.0` (running 0.35.0; use a mars version matching `>=99.0.0`); required by mars.toml"
       }
     ]
   }

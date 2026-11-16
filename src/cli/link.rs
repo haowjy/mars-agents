@@ -69,8 +69,8 @@ fn link_target(
     let user = crate::config::load_user_config()?;
     let (effective, _) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, &ctx.project_root)?;
-    let mut runtime_targets = effective.settings.managed_targets();
-    let mut persisted_targets = config.settings.managed_targets();
+    let mut runtime_targets = crate::config::targets::managed_targets(&effective.settings);
+    let mut persisted_targets = crate::config::targets::managed_targets(&config.settings);
     ensure_target_list_contains(&mut runtime_targets, target_name);
     ensure_target_list_contains(&mut persisted_targets, target_name);
 

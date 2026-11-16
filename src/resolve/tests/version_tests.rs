@@ -164,10 +164,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
 
     let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(
-        result,
-        Err(MarsError::LockedCommitUnreachable { .. })
-    ));
+    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
     assert_eq!(
         provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]
@@ -451,10 +448,7 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
 
     let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(
-        result,
-        Err(MarsError::LockedCommitUnreachable { .. })
-    ));
+    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
     assert_eq!(
         provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]
@@ -723,7 +717,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
     assert!(
-        matches!(result, Err(MarsError::LockedCommitUnreachable { .. })),
+        matches!(result, Err(MarsError::FrozenViolation { .. })),
         "frozen + unreachable transitive locked commit should error: {result:?}"
     );
 }

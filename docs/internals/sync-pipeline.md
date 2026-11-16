@@ -119,13 +119,13 @@ Fetches sources, resolves concrete versions, and prepares each package.
 
 | Mode | Strategy | Used by |
 |---|---|---|
-| Normal | The locked version when it still satisfies every constraint (whether or not its tag still exists upstream), otherwise the newest compatible version | `mars sync`, `mars add` |
+| Normal | The locked version or bare commit when it still satisfies every constraint, including a dependency with no `version` (whether or not its tag still exists upstream; a commit-only lock holds when no constraint is a semver range), otherwise the newest compatible version | `mars sync`, `mars add` |
 | Maximize | The newest compatible version, ignoring the lock | `mars upgrade` |
 | Frozen | The locked version, or an error | `--frozen` |
 
 Mars never picks the oldest version that satisfies the constraints. A sync keeps what the lock recorded, so versions move only when a constraint stops allowing the locked one or `mars upgrade` asks.
 
-**Lock replay:** When a lock file exists, the resolver tries to reuse locked commits for sources whose version constraints haven't changed. This makes `mars sync` deterministic after the first install. Normal sync runs a post-resolution compatible-upgrade check; `--no-upgrade-hint` skips that lookup. In `--frozen` mode, lock replay failures become hard errors (the lock must fully reproduce the previous state).
+**Lock replay:** When a lock file exists, the resolver tries to reuse locked commits for sources whose version constraints haven't changed. This makes `mars sync` deterministic after the first install. Normal sync runs a post-resolution compatible-upgrade check over every node of the resolved graph, direct or transitive (`sync::upgrades::pending_upgrades`); `mars outdated` and `mars upgrade <name>` work from the same graph, and the finished sync reports each dependency whose version or commit moved (`moved_dependencies`). `--no-upgrade-hint` skips that lookup. In `--frozen` mode, lock replay failures become hard errors (the lock must fully reproduce the previous state).
 
 **Source types:**
 

@@ -448,14 +448,6 @@ impl std::fmt::Display for Diagnostic {
     }
 }
 
-/// A project's `min_mars_version`, read as `requires-mars` is: a bare version means that version
-/// or newer, and a range is accepted.
-pub fn parse_min_mars_version(raw: &str) -> Result<semver::VersionReq, String> {
-    mars_schema::package::parse_requirement(raw).map_err(|error| {
-        format!("`min_mars_version = \"{raw}\"` is not a version requirement: {error}")
-    })
-}
-
 /// Compatibility preflight: whether the running Mars meets a project's `min_mars_version`.
 ///
 /// `None` when it does, or when the project states no requirement. A requirement that does not
@@ -465,7 +457,7 @@ pub fn compatibility_preflight(min_required: Option<&str>) -> Result<Option<Diag
     let Some(min) = min_required else {
         return Ok(None);
     };
-    let requirement = parse_min_mars_version(min)?;
+    let requirement = mars_schema::config::parse_min_mars_version(min)?;
     let running =
         semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver");
     if mars_schema::package::requirement_matches(&requirement, &running) {

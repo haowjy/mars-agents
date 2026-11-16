@@ -1,0 +1,50 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "consumer-invalid"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "consumer-invalid",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "settings",
+        "min_mars_version"
+      ],
+      "message": "`min_mars_version = \"not a version\"` is not a version requirement: unexpected character 'n' while parsing major version number"
+    },
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [
+        "models",
+        "broken"
+      ],
+      "message": "model alias must have either 'model' (pinned) or 'match' (auto-resolve)"
+    }
+  ],
+  "dependencies": {
+    "base": {
+      "url": "https://github.com/example/base"
+    }
+  },
+  "settings": {
+    "min_mars_version": "not a version"
+  }
+}

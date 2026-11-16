@@ -1329,7 +1329,6 @@ dependencies = [
  "rustversion",
  "semver",
  "serde",
- "serde_ignored",
  "serde_json",
  "serde_yaml",
  "serial_test",
@@ -1358,6 +1357,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_bytes",
+ "serde_ignored",
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
@@ -1370,6 +1370,7 @@ dependencies = [
 name = "mars-schema-wasm"
 version = "0.35.1"
 dependencies = [
+ "indexmap",
  "js-sys",
  "mars-schema",
  "serde",

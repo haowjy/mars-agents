@@ -93,7 +93,21 @@ pub(crate) fn finalize(
         .resolved
         .loaded
         .dependency_changes;
-    let upgrades_available = state.applied.planned.targeted.resolved.upgrades_available;
+    let upgrades = state.applied.planned.targeted.resolved.upgrades;
+    // Only `mars upgrade` reports moves: any other command moves a dependency only because its
+    // own change asked for it.
+    let dependency_moves = if matches!(
+        request.resolution,
+        crate::sync::ResolutionMode::Maximize { .. }
+    ) {
+        crate::sync::upgrades::moved_dependencies(
+            old_lock,
+            graph,
+            &state.applied.planned.targeted.resolved.loaded.effective,
+        )
+    } else {
+        Vec::new()
+    };
 
     let diagnostics = diag.drain();
 
@@ -101,7 +115,8 @@ pub(crate) fn finalize(
         applied: state.applied.applied,
         diagnostics,
         dependency_changes,
-        upgrades_available,
+        upgrades,
+        dependency_moves,
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
         native_emitted,

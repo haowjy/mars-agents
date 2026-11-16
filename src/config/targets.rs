@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use mars_schema::HarnessId;
 
+use super::Settings;
+
 /// Permission to route through configured harness targets. An empty set is not autodiscovery.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum HarnessScope {
@@ -150,11 +152,8 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
         kind: LinkKind::GenericTarget,
     }
 }
-pub fn effective_links(
-    targets: Option<&[String]>,
-    managed_root: Option<&String>,
-) -> EffectiveLinks {
-    if let Some(targets) = targets {
+pub fn effective_links(settings: &Settings) -> EffectiveLinks {
+    if let Some(targets) = settings.targets.as_deref() {
         return EffectiveLinks {
             links: targets
                 .iter()
@@ -164,7 +163,7 @@ pub fn effective_links(
         };
     }
 
-    if let Some(managed_root) = managed_root {
+    if let Some(managed_root) = settings.managed_root.as_ref() {
         return EffectiveLinks {
             links: vec![normalize_link(managed_root)],
             source: LinkSource::ManagedRoot,
@@ -175,4 +174,19 @@ pub fn effective_links(
         links: Vec::new(),
         source: LinkSource::None,
     }
+}
+
+/// The managed target directories: `targets` as normalized, else the normalized `managed_root`
+/// (the older spelling), else none (`.mars/` stays the canonical compiled store).
+pub fn managed_targets(settings: &Settings) -> Vec<String> {
+    effective_links(settings).managed_targets()
+}
+
+/// The known harnesses the configured links name; generic targets are ignored.
+pub fn linked_harnesses(settings: &Settings) -> Vec<String> {
+    effective_links(settings)
+        .linked_harnesses()
+        .into_iter()
+        .map(|harness| harness.to_string())
+        .collect()
 }

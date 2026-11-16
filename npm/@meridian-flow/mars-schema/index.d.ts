@@ -177,15 +177,110 @@ export interface DependencyEntry {
 }
 
 /**
- * The reading of `mars.toml`: the `[package]` table as any definition reading, and the
- * dependencies the package declares in declaration order, one `selectVersion` call per entry. A
- * table is omitted when empty, and both when `fields` is `null`. An entry that breaks a rule is
- * left out with a `dependency.*` diagnostic (an error in `[dependencies]`, a warning in
- * `[local-dependencies]`, which a dependent never installs from).
+ * A `[models.<alias>]` table, as Mars writes it back: `model` pins an id, `match` (with
+ * `exclude` and `provider`) selects from the catalog, and an alias may have both, `match`
+ * then widening what a pinned alias accepts. At least one of `model` and `match` is set.
+ * Pass one to `resolveAlias`, `aliasCandidates` or `resolveAliases` (each alias of its `models`),
+ * or build it in code. Every one of the three refuses a key outside this list with
+ * `input.invalid`; a key may be `null`, the same as unset. `native` is on the error's list of
+ * keys but is refused with its own message: `[models.<alias>.native]` is no longer supported.
+ */
+export interface ModelAlias {
+  /** A pinned model id, taken as written. */
+  model?: string;
+  /** Globs (`*` only) every selected id matches. */
+  match?: string[];
+  /** Globs no selected id matches; only with `match`. */
+  exclude?: string[];
+  /** A models.dev provider key (`anthropic`); `meta-llama` and `meta` are one provider. */
+  provider?: string | null;
+  harness?: Harness;
+  description?: string;
+  prompting?: string;
+  default_effort?: Effort | "auto";
+  autocompact?: number;
+  autocompact_pct?: number;
+}
+
+/** Launch overrides for one agent, `[agents.<name>]`. Omitted keys are unset. */
+export interface AgentOverlay {
+  description?: string;
+  model?: string;
+  harness?: string;
+  effort?: Effort | "auto";
+  approval?: Approval;
+  sandbox?: Sandbox;
+  network?: Network;
+  "network-allow"?: string[] | { replace: string[] };
+  "network-deny"?: string[] | { replace: string[] };
+  "model-invocable"?: boolean;
+  "user-invocable"?: boolean;
+  tools?: Record<string, "allow" | "deny" | "ask">;
+  "model-policies"?: ModelPolicyRule[];
+}
+
+/** `[skills.<name>]`. */
+export interface SkillOverlay {
+  description?: string;
+  "model-invocable"?: boolean;
+  "user-invocable"?: boolean;
+}
+
+/** `[settings]`, in the spellings Mars writes back; omitted when the file has none. Keys unset in the file are omitted. */
+export interface Settings {
+  managed_root?: string;
+  targets?: string[];
+  models_cache_ttl_hours?: number;
+  min_mars_version?: string;
+  default_harness?: string;
+  default_model?: string;
+  default_network?: Network;
+  "network-allow"?: string[] | { replace: string[] };
+  "network-deny"?: string[] | { replace: string[] };
+  tools?: Record<string, "allow" | "deny" | "ask">;
+  harness_order?: string[];
+  provider_order?: string[];
+  catalog_providers?: string[];
+  agent_emission?: "auto" | "always" | "never";
+  meridian?: {
+    agent_copy?: { harnesses: string[]; include_fanout: boolean };
+    fanout?: { agents: string[] };
+  };
+  "model-policies"?: ModelPolicyRule[];
+}
+
+/**
+ * The reading of `mars.toml`: the `[package]` table as any definition reading, the dependencies
+ * the package declares in declaration order (one `selectVersion` call per entry), and every
+ * other table Mars reads. A table is omitted when empty or absent, and the dependency tables
+ * when `fields` is `null`. An entry that breaks a rule is left out with a `dependency.*`
+ * diagnostic (an error in `[dependencies]`, a warning in `[local-dependencies]`, which a
+ * dependent never installs from).
+ *
+ * A `mars.toml` with no `[package]` is consumer configuration: `fields` is `null`, there is no
+ * error for the missing table, and the dependency tables and every consumer table are read.
+ *
+ * Each consumer table (`plugin`, `settings`, `models.<alias>`, `agents.<name>`,
+ * `skills.<name>`) is read on its own: one that breaks a rule is left out with a
+ * `config.invalid` error whose `path` names it (`["models", "a"]`, `["settings"]`), and the others
+ * are returned. A refusal (`[settings.tools]` with a `*`, a `min_mars_version` that is not a
+ * requirement) is a `config.invalid` error too, the table kept. A key Mars does not read is a
+ * `field.unknown` info at its path, as `mars validate` shows it. `settings` is omitted when the
+ * file sets nothing in it.
+ *
+ * Every table is plain JSON, as `frontmatter` is: a TOML datetime is its text, and a value or
+ * key JSON cannot hold (an integer beyond ±(2^53 − 1), a `__proto__` key) is left out with a
+ * `toml.non-json-value` error at its path (for `plugin`, at the key under it).
  */
 export interface ManifestRead extends DefinitionRead<ManifestFields> {
   dependencies?: { [name: string]: DependencyEntry };
   "local-dependencies"?: { [name: string]: DependencyEntry };
+  /** `[plugin]`, as written. */
+  plugin?: JsonValue;
+  settings?: Settings;
+  models?: { [alias: string]: ModelAlias };
+  agents?: { [name: string]: AgentOverlay };
+  skills?: { [name: string]: SkillOverlay };
 }
 
 export type Reading =
@@ -195,7 +290,8 @@ export type Reading =
 
 /**
  * Read one file; the package-relative `path` picks the reader. Any path other than
- * `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md` throws.
+ * `mars.toml`, `agents/<slug>.md` or `skills/<slug>/SKILL.md` throws `read.unrecognized-path`, and
+ * an argument that is not a string throws `input.invalid`.
  */
 export function read(path: "mars.toml", text: string): ManifestRead;
 export function read(path: `agents/${string}.md`, text: string): DefinitionRead<AgentFields>;
@@ -633,8 +729,7 @@ export function satisfiesRequirement(requirement: string, version: string): bool
  * first (one branch or commit pin wins; two pins, or a pin beside a semver range, throw), then
  * keeps `locked` (`{ locked: true }`) when it meets every range, even if `available` no longer
  * lists its tag (only an upgrade moves a lock), else chooses the newest tag in `available` that
- * meets them. A `latest` (or `null`) constraint allows any tag and makes the newest win over
- * `locked`. A tag that is not a version (`nightly`) is ignored, and with none left the result is
+ * meets them. A `latest` (or `null`) constraint allows any tag, so it keeps `locked` too. A tag that is not a version (`nightly`) is ignored, and with none left the result is
  * `untagged`: the default branch. Constraints are `[requester, version | null]` as the manifests spell them
  * (`v2`, `^1.2`, `>=0.5`, a branch, `latest`); see `satisfies` for the grammar.
  */
@@ -978,12 +1073,49 @@ export function resolveEffort(
   host: Host,
 ): EffortResolution;
 
+/** A models.dev model as an alias reads it: `provider` is the models.dev key (`anthropic`). */
+export interface ModelRow {
+  id: string;
+  provider: string;
+  /** A row from Mars's own snapshot: `provider` is the display name, so this key is used instead. */
+  provider_key?: string | null;
+  release_date?: string | null;
+}
+
 /**
- * The id an `auto` alias selects among models.dev rows, or `null`: every `match` glob hits, no
- * `exclude` glob hits, `provider` (a models.dev key) matches when given, `-latest` ids are
- * skipped, then the newest `release_date`, the shorter id and alphabetical order break ties.
+ * The rows of the providers a project's `catalog_providers` names: the rows `mars models resolve`
+ * resolves over, since the CLI narrows models.dev this way before it resolves any alias. Pass
+ * every row models.dev lists and the project's `settings.catalog_providers` (`["*"]` keeps every
+ * provider); with `undefined` it keeps the providers a project that sets none gets: `anthropic`,
+ * `openai`, `google`, `meta`, `deepseek`, `xai` and `openrouter`. A row's provider is its
+ * `provider_key`, else its `provider`; `meta-llama` and `meta` are one provider. The rows come back
+ * as given. Resolve over the unnarrowed rows and an alias may pick a model from a provider the
+ * project does not read (`deepseek`, `sol`).
  */
-export function resolveAlias(
-  rows: { id: string; provider: string; release_date?: string | null }[],
-  options: { match: string[]; exclude?: string[]; provider?: string | null },
-): string | null;
+export function narrowRows(rows: ModelRow[], providers?: string[]): ModelRow[];
+
+/**
+ * The id `alias` resolves to among models.dev rows, or `null`: a pinned `model` as written, else
+ * the best row an `auto` alias selects. Every `match` glob hits, no `exclude` glob hits,
+ * `provider` matches when given, `-latest` ids are skipped, then the newest `release_date`, the
+ * shorter id and alphabetical order break ties. The code `mars models resolve` runs.
+ */
+export function resolveAlias(rows: ModelRow[], alias: ModelAlias): string | null;
+
+/**
+ * Every id `alias` accepts, in `resolveAlias`'s order (newest first). A pinned `model` comes
+ * first, then the rows `match`, `exclude` and `provider` select (a pinned alias with `match` and
+ * no `provider` takes the provider its model id names). A pinned alias with no `match` accepts
+ * its `model` alone.
+ */
+export function aliasCandidates(rows: ModelRow[], alias: ModelAlias): string[];
+
+/**
+ * `resolveAlias` for each alias of a parsed manifest's `models`, keyed by alias name in file
+ * order: the id, or `null` when an `auto` alias selects nothing. A manifest with no `models`
+ * gives `{}`.
+ */
+export function resolveAliases(
+  manifest: { models?: { [alias: string]: ModelAlias } },
+  rows: ModelRow[],
+): { [alias: string]: string | null };

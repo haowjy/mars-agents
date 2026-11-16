@@ -37,7 +37,8 @@ pub(super) fn merge_local_items(
         // `.mars/` is the canonical content root for diff and collision checks.
         managed_root: ctx.project_root.join(".mars"),
     };
-    let managed_targets = resolved.loaded.effective.settings.managed_targets();
+    let managed_targets =
+        crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
     let mcp_targets = target::mcp_config_targets(&managed_targets);
     for item in local_items {
         match &item.content {
@@ -119,7 +120,8 @@ impl LocalMerge<'_> {
             kind == ItemKind::Skill && item.discovered.source_path == Path::new(".");
         let excluded_paths =
             if is_flat_skill {
-                let mut targets = self.loaded().effective.settings.managed_targets();
+                let mut targets =
+                    crate::config::targets::managed_targets(&self.loaded().effective.settings);
                 targets.extend(
                     self.loaded().old_lock.items.values().flat_map(|item| {
                         item.outputs.iter().map(|output| output.target_root.clone())

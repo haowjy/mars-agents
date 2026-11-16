@@ -408,11 +408,20 @@ impl<'a> Run<'a> {
             }
         };
 
+        // A lock row with a commit and no version is an untagged repository's HEAD; the same
+        // rule keeps it. A selector that is no version (a ref pin since dropped) is not it.
         let mut locked_unreachable = false;
-        if let (Some(locked_version), Some(commit)) = (locked_version.as_ref(), locked_commit)
-            && keeps_lock(&requests, locked_version, policy, &excluded)
+        if let Some(commit) = locked_commit
+            && (locked_version.is_some() || locked_version_raw.is_none())
+            && keeps_lock(&requests, locked_version.as_ref(), policy, &excluded)
         {
-            match self.replay(dep, url, commit, locked_version, locked_version_raw)? {
+            let kept = match locked_version.as_ref() {
+                Some(version) => self.replay(dep, url, commit, version, locked_version_raw)?,
+                None => self
+                    .fetch_commit(dep, url, commit)?
+                    .map(|_| git_ref(url, commit)),
+            };
+            match kept {
                 Some(resolved) => return Ok(resolved),
                 None => {
                     self.locked_unreachable(url, commit);
@@ -438,18 +447,6 @@ impl<'a> Run<'a> {
         let Some(selected) = selected else {
             return self.resolve_untagged(dep, url, locked_commit, locked_unreachable, policy);
         };
-        // A `Latest` request does not keep the lock, but the newest may be the locked version: the
-        // lock row stays as it is, so an existing lock keeps the id it holds (an older build
-        // recorded a tag object's id, a new pin records the peeled commit).
-        if let (Some(locked_version), Some(commit)) = (locked_version.as_ref(), locked_commit)
-            && !locked_unreachable
-            && *locked_version == selected.version
-        {
-            match self.replay(dep, url, commit, locked_version, locked_version_raw)? {
-                Some(resolved) => return Ok(resolved),
-                None => self.locked_unreachable(url, commit),
-            }
-        }
         let resolved = Ref {
             version: Some(selected.version.clone()),
             tag: Some(selected.tag.clone()),

@@ -213,7 +213,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
             sync_lock: Some(sync_lock),
         },
         graph,
-        upgrades_available: 0,
+        upgrades: Vec::new(),
         preparation: crate::platform::fs::PendingStagingGeneration::create(
             &fixture.project_root().join(".mars"),
         )
@@ -273,7 +273,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
             sync_lock: Some(sync_lock),
         },
         graph,
-        upgrades_available: 0,
+        upgrades: Vec::new(),
         preparation: crate::platform::fs::PendingStagingGeneration::create(
             &fixture.project_root().join(".mars"),
         )

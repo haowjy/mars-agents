@@ -1,0 +1,11 @@
+[
+  {
+    "id": "llama-4",
+    "provider": "Meta",
+    "provider_key": "meta-llama"
+  },
+  {
+    "id": "mistral-large",
+    "provider": "mistral"
+  }
+]

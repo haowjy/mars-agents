@@ -14,6 +14,8 @@ pub struct OutdatedArgs {}
 #[derive(Debug, Serialize)]
 struct OutdatedEntry {
     source: String,
+    /// Required by another dependency, not named in `mars.toml`.
+    transitive: bool,
     locked: String,
     constraint: String,
     updateable: String,
@@ -38,29 +40,50 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
     let graph = crate::resolve::resolve(&effective, &provider, Some(&lock), &options, &mut diag)?;
     let mut entries = Vec::new();
 
-    for (name, dep) in &effective.dependencies {
-        let Some(node) = graph.nodes.get(name) else {
-            continue;
-        };
+    // Every dependency in the resolved graph, the ones `mars.toml` names first: the same set
+    // `mars upgrade <name>` accepts and the sync hint counts.
+    let names = effective
+        .dependencies
+        .keys()
+        .chain(
+            graph
+                .nodes
+                .keys()
+                .filter(|name| !effective.dependencies.contains_key(*name)),
+        )
+        .filter(|name| graph.nodes.contains_key(*name));
+    for name in names {
+        let node = &graph.nodes[name];
+        let direct = effective.dependencies.get(name);
+        let transitive = direct.is_none();
         let is_overridden = overridden.contains(name);
-        let git_version = match &dep.spec {
-            crate::config::SourceSpec::Git(git) => git.version.clone(),
-            // An override replaces the dependency's source; a plain path dependency has no version.
-            crate::config::SourceSpec::Path(_) if is_overridden => None,
-            crate::config::SourceSpec::Path(_) => continue,
+        // An override replaces the dependency's source; a plain path dependency has no version.
+        let constraint = if is_overridden {
+            "-".to_string()
+        } else {
+            match (direct.map(|dep| &dep.spec), &node.source_id) {
+                (Some(crate::config::SourceSpec::Git(git)), _) => {
+                    git.version.clone().unwrap_or_else(|| "latest".to_string())
+                }
+                (Some(crate::config::SourceSpec::Path(_)), _) => continue,
+                (None, crate::types::SourceId::Git { .. }) => transitive_constraint(&graph, name),
+                (None, _) => continue,
+            }
         };
 
+        // A lock at a bare commit shows the commit, as the upgrade hint does.
         let locked_version = lock
             .dependencies
             .get(name)
-            .and_then(|s| s.version.clone())
+            .and_then(|s| {
+                s.version
+                    .clone()
+                    .or_else(|| s.commit.as_deref().map(crate::sync::upgrades::short_commit))
+            })
             .unwrap_or_else(|| "-".to_string());
-        let constraint = match (&git_version, is_overridden) {
-            (_, true) => "-".to_string(),
-            (version, false) => version.clone().unwrap_or_else(|| "latest".to_string()),
-        };
         let unchecked = |updateable: &str, latest: &str| OutdatedEntry {
             source: name.to_string(),
+            transitive,
             locked: locked_version.clone(),
             constraint: constraint.clone(),
             updateable: updateable.to_string(),
@@ -124,6 +147,7 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             };
             entries.push(OutdatedEntry {
                 source: name.to_string(),
+                transitive,
                 locked: locked_short,
                 constraint: "HEAD".to_string(),
                 updateable: current_head.clone(),
@@ -152,18 +176,34 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
     Ok(0)
 }
 
+/// What the packages that require `name` ask of its version: the ranges and pins, or `latest`.
+fn transitive_constraint(
+    graph: &crate::resolve::ResolvedGraph,
+    name: &crate::types::SourceName,
+) -> String {
+    let asked: Vec<String> = graph
+        .version_constraints
+        .get(name)
+        .into_iter()
+        .flatten()
+        .filter(|(_, constraint)| !matches!(constraint, mars_schema::version::Constraint::Latest))
+        .map(|(_, constraint)| constraint.to_string())
+        .collect();
+    if asked.is_empty() {
+        "latest".to_string()
+    } else {
+        asked.join(", ")
+    }
+}
+
 fn print_outdated_table(entries: &[OutdatedEntry]) {
     if entries.is_empty() {
         output::print_info("no git dependencies to check");
         return;
     }
 
-    let name_w = entries
-        .iter()
-        .map(|e| e.source.len())
-        .max()
-        .unwrap_or(6)
-        .max(6);
+    let labels: Vec<String> = entries.iter().map(source_label).collect();
+    let name_w = labels.iter().map(String::len).max().unwrap_or(6).max(6);
     let locked_w = entries
         .iter()
         .map(|e| e.locked.len())
@@ -188,10 +228,18 @@ fn print_outdated_table(entries: &[OutdatedEntry]) {
         "SOURCE", "LOCKED", "CONSTRAINT", "UPDATEABLE"
     );
 
-    for entry in entries {
+    for (entry, label) in entries.iter().zip(&labels) {
         println!(
-            "{:<name_w$}  {:<locked_w$}  {:<constraint_w$}  {:<update_w$}  {}",
-            entry.source, entry.locked, entry.constraint, entry.updateable, entry.latest
+            "{label:<name_w$}  {:<locked_w$}  {:<constraint_w$}  {:<update_w$}  {}",
+            entry.locked, entry.constraint, entry.updateable, entry.latest
         );
+    }
+}
+
+fn source_label(entry: &OutdatedEntry) -> String {
+    if entry.transitive {
+        format!("{} (transitive)", entry.source)
+    } else {
+        entry.source.clone()
     }
 }

@@ -366,13 +366,12 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
     match crate::config::load(project_root) {
         Ok(config) => {
             if config.settings.managed_root.is_some()
-                && let Some(name) = config.settings.managed_targets().first()
+                && let Some(name) =
+                    crate::config::targets::managed_targets(&config.settings).first()
             {
                 return Ok(project_root.join(name));
             }
-            if config
-                .settings
-                .managed_targets()
+            if crate::config::targets::managed_targets(&config.settings)
                 .iter()
                 .any(|target| target == WELL_KNOWN[0])
             {

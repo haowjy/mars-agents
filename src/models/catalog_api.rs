@@ -2,7 +2,7 @@
 
 use crate::error::MarsError;
 use mars_schema::models::{
-    CachedModel, ModelReasoningRow, catalog_provider_canonical, normalize_provider,
+    CachedModel, DEFAULT_CATALOG_PROVIDERS, ModelReasoningRow, normalize_provider,
 };
 use std::time::Duration;
 
@@ -15,16 +15,6 @@ pub fn default_catalog_providers() -> Vec<String> {
         .map(|provider| (*provider).to_string())
         .collect()
 }
-
-const DEFAULT_CATALOG_PROVIDERS: &[&str] = &[
-    "anthropic",
-    "openai",
-    "google",
-    "meta",
-    "deepseek",
-    "xai",
-    "openrouter",
-];
 
 /// Fetch every provider's models from the models.dev API. Which providers a project sees is
 /// decided when the snapshot is read ([`retain_providers`]), not here: the snapshot is shared.
@@ -136,14 +126,4 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
     }
 
     Ok(models)
-}
-
-/// The provider keys a project's `catalog_providers` allows; `*` allows every provider.
-pub fn provider_filter(allowlist: &[String]) -> impl Fn(&str) -> bool {
-    let all = allowlist.iter().any(|provider| provider.trim() == "*");
-    let allowed: Vec<String> = allowlist
-        .iter()
-        .map(|provider| catalog_provider_canonical(provider))
-        .collect();
-    move |key| all || allowed.contains(&catalog_provider_canonical(key))
 }

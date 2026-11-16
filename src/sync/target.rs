@@ -309,7 +309,7 @@ pub(crate) fn build_with_collisions_and_diag(
         mcp_scan_failed: false,
     };
     let mut explicit_renames = Vec::new();
-    let managed_target_roots = config.settings.managed_targets();
+    let managed_target_roots = crate::config::targets::managed_targets(&config.settings);
     let mcp_target_roots = mcp_config_targets(&managed_target_roots);
     let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);

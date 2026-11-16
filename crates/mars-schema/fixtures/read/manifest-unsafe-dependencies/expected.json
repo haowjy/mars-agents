@@ -1,0 +1,82 @@
+{
+  "frontmatter": [],
+  "fields": null,
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "toml.non-json-value",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "good",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "warning",
+      "path": [
+        "dependencies",
+        "good",
+        "extra"
+      ],
+      "message": "integer 9007199254740993 is beyond ±(2^53 − 1), which JavaScript cannot hold exactly"
+    },
+    {
+      "code": "toml.non-json-value",
+      "severity": "error",
+      "path": [
+        "dependencies",
+        "__proto__"
+      ],
+      "message": "key `__proto__` cannot be held as a plain property by JavaScript"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "info",
+      "path": [
+        "dependencies",
+        "good",
+        "__proto__"
+      ],
+      "message": "[dependencies.good] unknown key `__proto__` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "info",
+      "path": [
+        "dependencies",
+        "good",
+        "extra"
+      ],
+      "message": "[dependencies.good] unknown key `extra` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
+    },
+    {
+      "code": "field.unknown",
+      "severity": "info",
+      "path": [
+        "local-dependencies",
+        "dev",
+        "when"
+      ],
+      "message": "[local-dependencies.dev] unknown key `when` is not read by Mars v{version} (a typo, or a key from a newer Mars); it stays in the file"
+    }
+  ],
+  "dependencies": {
+    "good": {
+      "url": "https://example.org/good"
+    }
+  },
+  "local-dependencies": {
+    "dev": {
+      "url": "https://example.org/dev",
+      "when": "1979-05-27"
+    }
+  },
+  "models": {
+    "a": {
+      "model": "gpt-5"
+    }
+  }
+}

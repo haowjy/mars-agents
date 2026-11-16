@@ -151,9 +151,9 @@ mars upgrade [names...]
 
 | Argument | Description |
 |---|---|
-| `names` | Specific dependency names to upgrade (default: all) |
+| `names` | Specific dependency names to upgrade (default: all). Any dependency in the resolved graph, one a package requires as well as one `mars.toml` names |
 
-Takes the newest compatible version instead of keeping the locked one. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions.
+Takes the newest compatible version instead of keeping the locked one. `mars sync` never does this, for a dependency with no `version` either: `mars.lock` is kept until you run `mars upgrade`. Git sources are upgradeable, with or without a `version`; path sources have no version to maximize. An untagged repository's dependency locked at a commit moves to the first tag it gains, or to the new HEAD. The summary names each dependency it moved (`moved       up v1.0.0 → v1.1.0`, or `up 1a2b3c4d5e6f → v1.0.0` from a commit) even when no installed file changed; `--json` carries them as `dependencies_moved` (`name`, `from`, `to`, `transitive`). It moves dependency versions and never edits definitions.
 
 A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 
@@ -172,7 +172,7 @@ Show available updates without applying them.
 mars outdated
 ```
 
-Displays a table with columns: SOURCE, LOCKED, CONSTRAINT, UPDATEABLE, LATEST.
+Displays a table with columns: SOURCE, LOCKED, CONSTRAINT, UPDATEABLE, LATEST. It lists every dependency in the resolved graph, the ones `mars.toml` names first, then the ones a package requires, marked `(transitive)` (`"transitive": true` in `--json`); their CONSTRAINT is what the requiring packages ask. `mars upgrade <name>` takes any name listed here, and the hint `mars sync` prints (`ℹ 2 upgrades available`, one `name v1.0.0 → v1.1.0` line each, and `upgrades` in `--json`) names the same dependencies.
 
 - For tagged repos: compares locked version against available tags
 - For untagged repos: compares locked commit against current HEAD

@@ -366,6 +366,50 @@ for (const name of cases("alias")) {
   const { rows, options } = json("alias", name, "request.json");
   check(wasm.resolveAlias(rows, options), json("alias", name, "expected.json"), `alias/${name}`);
 }
+for (const name of cases("alias-candidates")) {
+  const { rows, alias } = json("alias-candidates", name, "request.json");
+  check(wasm.aliasCandidates(rows, alias), json("alias-candidates", name, "expected.json"), `alias-candidates/${name}`);
+}
+for (const name of cases("alias-resolve-all")) {
+  const { rows, manifest } = json("alias-resolve-all", name, "request.json");
+  check(wasm.resolveAliases(manifest, rows), json("alias-resolve-all", name, "expected.json"), `alias-resolve-all/${name}`);
+}
+assert.equal(attempt(() => wasm.resolveAlias([], { match: ["a"], typo: 1 })).error?.code, "input.invalid", "an alias key Mars does not read");
+// an argument that is not a string is `input.invalid`, never a memory error
+for (const bad of [5, {}, true, null, undefined, [], new Uint8Array(2)]) {
+  assert.equal(attempt(() => wasm.read("mars.toml", bad)).error?.code, "input.invalid", `read text ${String(bad)}`);
+  assert.equal(attempt(() => wasm.read(bad, "")).error?.code, "input.invalid", `read path ${String(bad)}`);
+}
+assert.equal(attempt(() => wasm.satisfies(5, "1.0.0")).error?.code, "input.invalid", "satisfies constraint");
+assert.equal(attempt(() => wasm.satisfiesRequirement(">=1", {})).error?.code, "input.invalid", "satisfiesRequirement version");
+assert.equal(attempt(() => wasm.project([], 5)).error?.code, "input.invalid", "project host");
+// the reading is plain data: a `__proto__` key never changes a prototype
+{
+  const reading = wasm.read("mars.toml", text("read", "manifest-unsafe-values", "mars.toml"));
+  for (const table of [reading.plugin, reading.settings, reading.settings.tools, reading.models, reading.agents.a.tools]) {
+    assert.equal(Object.getPrototypeOf(table), Object.prototype, "a consumer table's prototype");
+  }
+}
+for (const [name, call] of Object.entries({
+  resolveAlias: bad => wasm.resolveAlias([], bad),
+  aliasCandidates: bad => wasm.aliasCandidates([], bad),
+  resolveAliases: bad => wasm.resolveAliases({ models: { a: bad } }, []),
+})) {
+  assert.equal(attempt(() => call({ match: ["a"], provder: "x" })).error?.code, "input.invalid", `${name}: a misspelled key`);
+  assert.equal(attempt(() => call({ exclude: ["a"] })).error?.code, "input.invalid", `${name}: neither model nor match`);
+}
+assert.equal(attempt(() => wasm.resolveAliases(5, [])).error?.code, "input.invalid", "resolveAliases manifest");
+assert.equal(attempt(() => wasm.resolveAliases({ models: [] }, [])).error?.code, "input.invalid", "resolveAliases models");
+assert.equal(attempt(() => wasm.resolveAliases({ models: JSON.parse('{"__proto__": {"model": "x"}}') }, [])).error?.code, "input.invalid", "an alias named __proto__");
+assert.deepStrictEqual(wasm.resolveAliases({ readings: 1 }, []), {}, "a manifest with no models");
+for (const name of cases("alias-narrow")) {
+  const { rows, providers } = json("alias-narrow", name, "request.json");
+  check(wasm.narrowRows(rows, providers ?? undefined), json("alias-narrow", name, "expected.json"), `alias-narrow/${name}`);
+}
+assert.equal(attempt(() => wasm.narrowRows({}, [])).error?.code, "input.invalid", "narrowRows rows");
+assert.equal(attempt(() => wasm.resolveAlias([], { exclude: ["a"] })).error?.code, "input.invalid", "an alias with neither model nor match");
+check(wasm.resolveAliases({ models: {} }, []), {}, "resolveAliases of no models");
+check(wasm.resolveAliases({}, []), {}, "resolveAliases of a manifest with no models");
 check(wasm.effortLevels(), json("effort-levels", "expected.json"), "effortLevels");
 assert.equal(attempt(() => wasm.resolveEffort("loud", null, "claude")).error?.code, "input.invalid", "unknown effort");
 assert.equal(attempt(() => wasm.resolveEffort("high", null, "gemini")).error?.code, "input.invalid", "unknown host");

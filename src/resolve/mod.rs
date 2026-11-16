@@ -76,7 +76,20 @@ pub fn resolve(
             for note in &failed.diagnostics {
                 replay(note, diag);
             }
-            Err(mars_error(failed.failure, &answers))
+            Err(match mars_error(failed.failure, &answers) {
+                // Only `--frozen` reads a commit from the lock and stops at the first one gone;
+                // a plain sync re-resolves, so this is the one place the lock is the cause.
+                MarsError::CommitUnreachable { commit, url }
+                    if matches!(options.mode, ResolveMode::Frozen) =>
+                {
+                    MarsError::FrozenViolation {
+                        message: format!(
+                            "locked commit {commit} is no longer reachable in {url} (the tag may have been force-pushed); run `mars sync` without --frozen to re-resolve it, or `mars upgrade` to move to the newest version"
+                        ),
+                    }
+                }
+                error => error,
+            })
         }
         Outcome::Resolved(resolved) => finish(config, options, resolved, &answers, diag),
     }

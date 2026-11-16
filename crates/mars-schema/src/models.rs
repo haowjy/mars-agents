@@ -92,6 +92,29 @@ pub fn catalog_provider_canonical(key: &str) -> String {
     }
 }
 
+/// The providers a project reads when it sets no `catalog_providers`.
+pub const DEFAULT_CATALOG_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "google",
+    "meta",
+    "deepseek",
+    "xai",
+    "openrouter",
+];
+
+/// Whether a provider key is one of the project's `catalog_providers`: the rule that narrows
+/// models.dev to the rows aliases resolve over. `*` allows every provider; a key compares by
+/// [`catalog_provider_canonical`].
+pub fn provider_filter(allowlist: &[String]) -> impl Fn(&str) -> bool {
+    let all = allowlist.iter().any(|provider| provider.trim() == "*");
+    let allowed: Vec<String> = allowlist
+        .iter()
+        .map(|provider| catalog_provider_canonical(provider))
+        .collect();
+    move |key| all || allowed.contains(&catalog_provider_canonical(key))
+}
+
 /// The display name of a models.dev provider key.
 pub fn normalize_provider(key: &str) -> String {
     match key {
@@ -111,6 +134,38 @@ pub fn normalize_provider(key: &str) -> String {
 /// The key of a row that only has a display name. Holds for every default catalog provider.
 pub fn provider_key_from_display(display: &str) -> String {
     display.to_ascii_lowercase()
+}
+
+/// The provider a model id's prefix names, for ids no alias or row gives one for.
+pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
+    let id = model_id.to_lowercase();
+    if id.starts_with("claude-") {
+        return Some("anthropic");
+    }
+    if id.starts_with("gpt-")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4")
+        || id.starts_with("codex-")
+    {
+        return Some("openai");
+    }
+    if id.starts_with("gemini") {
+        return Some("google");
+    }
+    if id.starts_with("llama") {
+        return Some("meta");
+    }
+    if id.starts_with("mistral") || id.starts_with("codestral") {
+        return Some("mistral");
+    }
+    if id.starts_with("deepseek") {
+        return Some("deepseek");
+    }
+    if id.starts_with("command") {
+        return Some("cohere");
+    }
+    None
 }
 
 /// `*` globs over a whole string; no other metacharacter.

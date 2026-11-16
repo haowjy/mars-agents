@@ -318,10 +318,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
 
     let options = ResolveOptions::frozen();
     let result = resolve(&config, &provider, Some(&lock), &options);
-    assert!(matches!(
-        result,
-        Err(MarsError::LockedCommitUnreachable { .. })
-    ));
+    assert!(matches!(result, Err(MarsError::FrozenViolation { .. })));
     assert_eq!(
         provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]

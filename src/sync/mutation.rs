@@ -42,12 +42,13 @@ pub struct DependencyUpsertChange {
     pub new_filter: FilterConfig,
 }
 
-/// The error for a dependency name `mars.toml` does not have. A dependency added with a subpath or
+/// The error for a dependency name `place` (`mars.toml`, the resolved graph) does not have. A dependency added with a subpath or
 /// `--plugin` is named `<repository>/<path or plugin>`, so the bare repository name finds nothing:
 /// the names that start with it are listed.
 pub(crate) fn dependency_not_found<'a>(
     names: impl Iterator<Item = &'a SourceName>,
     name: &SourceName,
+    place: &str,
 ) -> MarsError {
     let prefix = format!("{name}/");
     let similar: Vec<String> = names
@@ -62,7 +63,7 @@ pub(crate) fn dependency_not_found<'a>(
     };
     MarsError::Source {
         source_name: name.to_string(),
-        message: format!("dependency `{name}` not found in mars.toml{hint}"),
+        message: format!("dependency `{name}` not found in {place}{hint}"),
     }
 }
 
@@ -83,7 +84,11 @@ pub(crate) fn apply_mutation(
         }
         ConfigMutation::RemoveDependency { name } => {
             if !config.dependencies.contains_key(name) {
-                return Err(dependency_not_found(config.dependencies.keys(), name));
+                return Err(dependency_not_found(
+                    config.dependencies.keys(),
+                    name,
+                    "mars.toml",
+                ));
             }
             config.dependencies.shift_remove(name);
             Ok(Vec::new())
@@ -98,6 +103,7 @@ pub(crate) fn apply_mutation(
                 return Err(dependency_not_found(
                     config.dependencies.keys(),
                     source_name,
+                    "mars.toml",
                 ));
             }
             let dep = &mut config.dependencies[source_name];

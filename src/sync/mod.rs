@@ -43,7 +43,10 @@ pub struct SyncReport {
     pub applied: ApplyResult,
     pub diagnostics: Vec<Diagnostic>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
-    pub upgrades_available: usize,
+    /// What `mars upgrade` would move, for the sync hint.
+    pub upgrades: Vec<upgrades::VersionStep>,
+    /// Dependencies this run moved to another version or commit.
+    pub dependency_moves: Vec<upgrades::VersionStep>,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub dry_run: bool,
     /// Native harness agent outputs emitted this run that are new or content-changed
@@ -131,7 +134,7 @@ impl LoadedConfig {
 pub(crate) struct ResolvedState {
     pub loaded: LoadedConfig,
     pub graph: ResolvedGraph,
-    pub upgrades_available: usize,
+    pub upgrades: Vec<upgrades::VersionStep>,
     /// Owns every normalized package tree until the compiler has passed its
     /// complete diagnostic gate. Durable staging is published only afterward.
     pub preparation: crate::platform::fs::PendingStagingGeneration,
@@ -180,7 +183,8 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             },
             diagnostics: diag.drain(),
             dependency_changes: ir.resolved.loaded.dependency_changes,
-            upgrades_available: ir.resolved.upgrades_available,
+            upgrades: ir.resolved.upgrades,
+            dependency_moves: Vec::new(),
             target_outcomes: Vec::new(),
             dry_run: request.options.dry_run,
             native_emitted: Vec::new(),
@@ -337,8 +341,6 @@ pub(crate) fn resolve_graph(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedState, MarsError> {
-    validate_targets(&request.resolution, &loaded.effective)?;
-
     let cache = GlobalCache::new()?;
     let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
     let source_overrides = loaded.local.source_overrides(&ctx.project_root);
@@ -356,6 +358,7 @@ pub(crate) fn resolve_graph(
         &resolve_options,
         diag,
     )?;
+    validate_targets(&request.resolution, &graph)?;
     if let Some(ConfigMutation::SetOverride { source_name, .. }) = &request.mutation
         && !graph.nodes.contains_key(source_name)
     {
@@ -374,10 +377,16 @@ pub(crate) fn resolve_graph(
             );
         }
     }
-    let upgrades_available = if request.options.frozen || !request.options.check_upgrades {
-        0
+    let upgrades = if request.options.frozen || !request.options.check_upgrades {
+        Vec::new()
     } else {
-        upgrades::count_compatible_upgrades(&graph, &source_provider, &resolve_options, diag)
+        upgrades::pending_upgrades(
+            &graph,
+            &loaded.effective,
+            &source_provider,
+            &resolve_options,
+            diag,
+        )
     };
 
     let bump_entries = planned_bump_entries(&loaded.config, &graph, &request.resolution);
@@ -394,7 +403,7 @@ pub(crate) fn resolve_graph(
     Ok(ResolvedState {
         loaded,
         graph,
-        upgrades_available,
+        upgrades,
         preparation,
     })
 }
@@ -443,7 +452,7 @@ pub(crate) fn build_target_state(
     let (mut target, explicit_renames, collision_renames, invalid_hooks) =
         target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
     extend(&mut target, diag)?;
-    let managed_targets = effective.settings.managed_targets();
+    let managed_targets = crate::config::targets::managed_targets(&effective.settings);
     target.kept_hooks = kept_hooks::settle(
         invalid_hooks,
         &target.items,
@@ -709,14 +718,9 @@ pub(crate) fn sync_targets(
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,
             &ctx.project_root.join(".mars"),
-            &applied
-                .planned
-                .targeted
-                .resolved
-                .loaded
-                .effective
-                .settings
-                .managed_targets(),
+            &crate::config::targets::managed_targets(
+                &applied.planned.targeted.resolved.loaded.effective.settings,
+            ),
             &applied.applied.outcomes,
             diag,
         );
@@ -734,14 +738,9 @@ pub(crate) fn sync_targets(
     }
 
     let mars_dir = ctx.project_root.join(".mars");
-    let targets = applied
-        .planned
-        .targeted
-        .resolved
-        .loaded
-        .effective
-        .settings
-        .managed_targets();
+    let targets = crate::config::targets::managed_targets(
+        &applied.planned.targeted.resolved.loaded.effective.settings,
+    );
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;
@@ -814,16 +813,15 @@ fn validate_request(request: &SyncRequest) -> Result<(), MarsError> {
     Ok(())
 }
 
-fn validate_targets(
-    resolution: &ResolutionMode,
-    effective: &EffectiveConfig,
-) -> Result<(), MarsError> {
+/// An upgrade names any dependency in the resolved graph, direct or required by another one.
+fn validate_targets(resolution: &ResolutionMode, graph: &ResolvedGraph) -> Result<(), MarsError> {
     if let ResolutionMode::Maximize { targets, .. } = resolution {
         for name in targets {
-            if !effective.dependencies.contains_key(name) {
+            if !graph.nodes.contains_key(name) {
                 return Err(mutation::dependency_not_found(
-                    effective.dependencies.keys(),
+                    graph.nodes.keys(),
                     name,
+                    "the resolved project graph",
                 ));
             }
         }

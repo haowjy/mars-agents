@@ -150,34 +150,29 @@ pub(crate) fn fetch_git_content(
 
         run_git(&args, &cache.git_dir(), "clone git source into cache")?;
     } else {
+        // `--force`: the cache is a mirror of what the remote says now, so a tag the remote moved
+        // is taken, not rejected. A lock that wants the old commit is kept by the resolver.
         run_git(
-            &["fetch", "--depth", "1", "--tags", "--prune-tags", "origin"],
+            &[
+                "fetch",
+                "--depth",
+                "1",
+                "--force",
+                "--tags",
+                "--prune-tags",
+                "origin",
+            ],
             &cache_path,
             "fetch cached git source",
         )?;
-        if let Some(sha) = sha {
-            match run_git(
-                &["fetch", "--depth", "1", "--", "origin", sha],
-                &cache_path,
-                "fetch cached git commit",
-            ) {
-                Ok(_) => {}
-                Err(_) => {
-                    run_git(
-                        &["fetch", "--unshallow", "origin"],
-                        &cache_path,
-                        "unshallow cached git source for locked commit",
-                    )
-                    .or_else(|_| {
-                        run_git(
-                            &["fetch", "origin"],
-                            &cache_path,
-                            "fetch cached git source for locked commit",
-                        )
-                    })?;
-                }
-            }
-        }
+    }
+
+    // Cold and warm caches reach a pinned commit the same way: a commit no advertised ref reaches
+    // is still asked of the remote by hash before it is called missing.
+    if let Some(sha) = sha
+        && !git_has_commit(&cache_path, sha)?
+    {
+        fetch_commit(&cache_path, sha)?;
     }
 
     // A pinned commit that survived the fetches above and is still not in the clone is gone from
@@ -191,6 +186,34 @@ pub(crate) fn fetch_git_content(
     }
     export_commit(&cache_path, commit, &content_path)?;
     Ok(content_path)
+}
+
+/// Fetch `sha` by hash; a server that won't serve a bare hash gets a full fetch instead. An error
+/// from every attempt is returned as it is: it says the remote could not be asked, not that the
+/// commit is gone.
+fn fetch_commit(cache_path: &Path, sha: &str) -> Result<(), MarsError> {
+    if run_git(
+        &["fetch", "--depth", "1", "--", "origin", sha],
+        cache_path,
+        "fetch cached git commit",
+    )
+    .is_ok()
+    {
+        return Ok(());
+    }
+    run_git(
+        &["fetch", "--unshallow", "origin"],
+        cache_path,
+        "unshallow cached git source for locked commit",
+    )
+    .or_else(|_| {
+        run_git(
+            &["fetch", "origin"],
+            cache_path,
+            "fetch cached git source for locked commit",
+        )
+    })
+    .map(|_| ())
 }
 
 /// Write the files of `commit` into `content_path`, whole or not at all. The lock held by the

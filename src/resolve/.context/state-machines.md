@@ -16,8 +16,9 @@ moment it starts (`Pass::started`) until it is in the registry, which happens be
 subtree is walked; a name in the registry is `Resolved` for every later request, a cycle's
 included. A restart builds a fresh `Pass`, so the registry, the id index, the constraints and the
 notes all go; only `Run`'s `overrides`, `history` and `exclusions` survive into the next pass.
-`overrides` and `exclusions` are keyed by `SourceId`: a choice or an engine exclusion made for one
-source says nothing about another source that a later pass gives the same name. A `Chosen` override
+`overrides`, `history` and `exclusions` are keyed by `SourceId`: a choice, a ref fixed, or an engine
+exclusion made for one source says nothing about another source that a later pass gives the same name
+(a `Ref` has no subpath or plugin, so a name-keyed history read another folder's ref as a return). A `Chosen` override
 carries the notes its choice reported (a stale lock row, an engine fallback), because the next
 pass reuses the choice without choosing again and a diagnostic belongs to the graph it describes;
 it is reused only while it meets every constraint on the name (`reusable_choice`), else dropped.
@@ -54,12 +55,13 @@ stateDiagram-v2
 - **Only work before the first open need may fail.** `fail` turns into `Stop::Skip` once an
   answer is open, so a failure on a branch a later restart would drop is never reported; a `Skip`
   ends only its own branch.
-- **Oscillation is checked per source by exact ref equality** (`version`, `commit`, `origin`). Only
+- **Oscillation is checked per source by exact ref equality** (`version`, `tag`, `commit`, `origin`). Only
   the source that restarted is checked, so two sources trading refs are not caught.
 - **Wrong edits**: removing the `Resolved` early return re-resolves every resolved source once per
   request, and `mars add` fetches the same repository N times. Removing its constraint check
   turns a needed restart into a silently stale version. Comparing refs by commit alone in
   `same_resolved_ref` misses a tag move at the same commit.
+- **`recheck` compares the whole `Ref`.** The selector in `tag` is part of a lock row (`--frozen` checks it), so the same commit under a newly met ref selector restarts to carry the selector. A `--frozen` first walk replays the lock's commit when its selector is no version and no semver request has been met, because the ref request that wrote it may come later in a cycle.
 - `recheck` only judges a git source; a path source re-entered after registration returns `Ok(())`.
 
 ## Engine-requirement fallback

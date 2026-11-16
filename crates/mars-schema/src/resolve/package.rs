@@ -89,7 +89,8 @@ pub(super) struct Run<'a> {
     pub(super) req: &'a Request,
     pub(super) answers: &'a dyn Answers,
     overrides: BTreeMap<SourceId, Chosen>,
-    history: BTreeMap<String, Vec<Ref>>,
+    /// The refs each source has been fixed at, in order: one that comes back is an oscillation.
+    history: BTreeMap<SourceId, Vec<Ref>>,
     /// Versions of a source its engine requirement rules out.
     pub(super) exclusions: BTreeMap<(SourceId, Version), Vec<EngineFailure>>,
     pass: Pass,
@@ -206,7 +207,7 @@ impl<'a> Run<'a> {
             .restart
             .take()
             .expect("a restart carries the version that caused it");
-        let history = self.history.entry(name.clone()).or_default();
+        let history = self.history.entry(chosen.id.clone()).or_default();
         if let Some(start) = history.iter().position(|seen| *seen == chosen.resolved) {
             let steps = history[start..]
                 .iter()
@@ -769,11 +770,9 @@ impl<'a> Run<'a> {
             }
             Err(error) => return Err(error.stop(self)),
         };
-        // Maximizing can select a different commit at the same version.
-        if resolved.version == existing.version
-            && resolved.commit == existing.commit
-            && resolved.origin == existing.origin
-        {
+        // Maximizing can select a different commit at the same version, or the same commit under
+        // another selector, which the lock records and `--frozen` checks.
+        if resolved == existing {
             return Ok(());
         }
         let (rooted, plugin) = self.root_package(&pending, &resolved)?;

@@ -16,6 +16,8 @@ struct Map {
     /// Each lookup of a ref takes the next commit, wrapping: a branch that moves.
     refs: RefCell<BTreeMap<String, (Vec<String>, usize)>>,
     trees: BTreeMap<(String, String), Rc<FileTree>>,
+    /// The tree rooted at a subpath, `(url, commit, path)`; a lookup with a path reads this only.
+    subtrees: BTreeMap<(String, String, String), Rc<FileTree>>,
     paths: BTreeMap<String, Rc<FileTree>>,
     asked: RefCell<Vec<String>>,
 }
@@ -51,10 +53,16 @@ impl Answers for Map {
         &self,
         url: &str,
         commit: &str,
-        _path: Option<&str>,
+        path: Option<&str>,
     ) -> Option<Answer<Rc<dyn TreeSource>>> {
         self.asked.borrow_mut().push(format!("{url}@{commit}"));
-        let tree = self.trees.get(&(url.to_string(), commit.to_string()))?;
+        let tree = match path {
+            Some(path) => {
+                self.subtrees
+                    .get(&(url.to_string(), commit.to_string(), path.to_string()))?
+            }
+            None => self.trees.get(&(url.to_string(), commit.to_string()))?,
+        };
         Some(Answer::Found(Rc::clone(tree) as Rc<dyn TreeSource>))
     }
 
@@ -200,6 +208,91 @@ fn restarts_that_come_back_to_a_chosen_ref_are_an_oscillation() {
             .message()
             .contains("resolution oscillation detected for `b`")
     );
+}
+
+/// `b` as the subpath `folder` of repository `b`, at `version`, depending on itself at `=1.0.0`
+/// when `selfdep`.
+fn release_b_subpath(map: &mut Map, folder: &str, version: &str, selfdep: bool) {
+    let url = format!("{D}b.git");
+    let commit = format!("b-{version}");
+    let mut text = package("b", "", &[]);
+    if selfdep {
+        text.push_str(&format!(
+            "\n[dependencies.b]\nurl = \"{url}\"\nversion = \"=1.0.0\"\nsubpath = \"{folder}\"\n"
+        ));
+    }
+    let tree = FileTree::from_files([("mars.toml".to_string(), text.into_bytes())]).unwrap();
+    map.subtrees
+        .insert((url, commit, folder.to_string()), Rc::new(tree));
+}
+
+/// A restart that moves `b` to another folder of the same repository: the second folder's own
+/// restart is the first time it is fixed at 1.0.0, not a return to the first folder's choice.
+#[test]
+fn restart_history_is_kept_per_source() {
+    let mut map = Map::default();
+    let b = format!("{D}b.git");
+    for version in ["1.0.0", "1.1.0"] {
+        map.tags.entry(b.clone()).or_default().push(Tag {
+            tag: format!("v{version}"),
+            commit: format!("b-{version}"),
+        });
+        for folder in ["old", "new"] {
+            release_b_subpath(&mut map, folder, version, version == "1.1.0");
+        }
+    }
+    let asks_b = |folder: &str| {
+        format!(
+            "{}\n[dependencies.b]\nurl = \"{b}\"\nversion = \"^1\"\nsubpath = \"{folder}\"\n",
+            package("a", "", &[])
+        )
+    };
+    map.release("a", "1.0.0", &asks_b("new"));
+    map.release("a", "1.1.0", &asks_b("old"));
+    map.release("c", "1.0.0", &package("c", "", &[("a", "=1.0.0")]));
+    let resolved = resolved(resolve(
+        &request(vec![root("a", "^1"), root("c", "^1")]),
+        &map,
+    ));
+    assert_eq!(resolved.nodes["a"].resolved.tag.as_deref(), Some("v1.0.0"));
+    assert_eq!(resolved.nodes["b"].resolved.tag.as_deref(), Some("v1.0.0"));
+}
+
+/// A package that asks for itself at a ref is the first request's own ref, found again: the node
+/// keeps the selector it discovers, because the lock records it and `--frozen` requires it.
+#[test]
+fn a_rechecked_cycle_node_keeps_the_ref_selector() {
+    let mut map = Map::default();
+    let a = format!("{D}a.git");
+    map.tags.insert(a.clone(), vec![]);
+    map.refs
+        .borrow_mut()
+        .insert(format!("{a}#HEAD"), (vec!["a-head".into()], 0));
+    map.refs
+        .borrow_mut()
+        .insert(format!("{a}#main"), (vec!["a-head".into()], 0));
+    map.trees.insert(
+        (a.clone(), "a-head".into()),
+        Rc::new(
+            FileTree::from_files([(
+                "mars.toml".to_string(),
+                format!(
+                    "{}\n[dependencies.a]\nurl = \"{a}\"\nversion = \"main\"\n",
+                    package("a", "", &[])
+                )
+                .into_bytes(),
+            )])
+            .unwrap(),
+        ),
+    );
+    let mut unconstrained = root("a", "x");
+    unconstrained.spec = Spec::Git {
+        url: a.clone(),
+        version: None,
+    };
+    unconstrained.constraint = crate::version::parse_constraint(None);
+    let resolved = resolved(resolve(&request(vec![unconstrained]), &map));
+    assert_eq!(resolved.nodes["a"].resolved.tag.as_deref(), Some("main"));
 }
 
 #[test]

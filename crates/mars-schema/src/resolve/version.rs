@@ -176,6 +176,18 @@ impl<'a> Run<'a> {
         self.at_commit(dep, url, &commit)
     }
 
+    /// The lock row names a commit the remote lacks: say so, and resolve from the tags.
+    fn locked_unreachable(&mut self, url: &str, commit: &str) {
+        self.note(
+            Level::Warning,
+            "locked-commit-unreachable",
+            format!(
+                "locked commit {commit} for {url} is unreachable; re-resolving from current tags"
+            ),
+            false,
+        );
+    }
+
     fn replay(
         &mut self,
         dep: &Dependency,
@@ -353,7 +365,10 @@ impl<'a> Run<'a> {
                 let has_semver = requests
                     .iter()
                     .any(|(_, constraint)| matches!(constraint, Constraint::Semver(_)));
-                if locked_version_raw.is_none() && !has_semver {
+                // A lock row with a selector that is no version was written under a ref request
+                // the walk has not met yet (a package that asks for itself at a ref, later): the
+                // commit is replayed, and that request checks the selector when it comes.
+                if locked_version.is_none() && !has_semver {
                     let Some(commit) = locked_commit else {
                         return self.frozen(format!(
                             "--frozen requires locked commit for unpinned source `{name}` ({url})"
@@ -400,14 +415,7 @@ impl<'a> Run<'a> {
             match self.replay(dep, url, commit, locked_version, locked_version_raw)? {
                 Some(resolved) => return Ok(resolved),
                 None => {
-                    self.note(
-                        Level::Warning,
-                        "locked-commit-unreachable",
-                        format!(
-                            "locked commit {commit} for {url} is unreachable; re-resolving from current tags"
-                        ),
-                        false,
-                    );
+                    self.locked_unreachable(url, commit);
                     locked_unreachable = true;
                 }
             }
@@ -436,10 +444,11 @@ impl<'a> Run<'a> {
         if let (Some(locked_version), Some(commit)) = (locked_version.as_ref(), locked_commit)
             && !locked_unreachable
             && *locked_version == selected.version
-            && let Some(resolved) =
-                self.replay(dep, url, commit, locked_version, locked_version_raw)?
         {
-            return Ok(resolved);
+            match self.replay(dep, url, commit, locked_version, locked_version_raw)? {
+                Some(resolved) => return Ok(resolved),
+                None => self.locked_unreachable(url, commit),
+            }
         }
         let resolved = Ref {
             version: Some(selected.version.clone()),

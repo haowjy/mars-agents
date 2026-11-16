@@ -24,7 +24,6 @@ pub(crate) fn check_upgrade(
     graph: &ResolvedGraph,
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
-    diag: &mut DiagnosticCollector,
 ) -> Result<Option<UpgradeCheck>, MarsError> {
     let (
         Some(fetch_url),
@@ -56,7 +55,6 @@ pub(crate) fn check_upgrade(
             &constraints,
             provider,
             options,
-            diag,
         )?
         .cloned(),
         None => None,
@@ -78,20 +76,18 @@ pub(crate) fn count_compatible_upgrades(
     graph
         .nodes
         .values()
-        .filter(
-            |node| match check_upgrade(node, graph, provider, options, diag) {
-                Ok(checked) => checked.is_some_and(|checked| checked.candidate.is_some()),
-                Err(err) => {
-                    diag.warn(
-                        "upgrade-hint-unavailable",
-                        format!(
-                            "could not check newer versions of `{}`: {err}",
-                            node.source_name
-                        ),
-                    );
-                    false
-                }
-            },
-        )
+        .filter(|node| match check_upgrade(node, graph, provider, options) {
+            Ok(checked) => checked.is_some_and(|checked| checked.candidate.is_some()),
+            Err(err) => {
+                diag.warn(
+                    "upgrade-hint-unavailable",
+                    format!(
+                        "could not check newer versions of `{}`: {err}",
+                        node.source_name
+                    ),
+                );
+                false
+            }
+        })
         .count()
 }

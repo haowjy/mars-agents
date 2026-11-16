@@ -145,7 +145,6 @@ impl<'a> Run<'a> {
                     checkout: marketplace.origin.clone(),
                     subpath: subpath.as_ref().map(ToString::to_string),
                 };
-                self.check_subpath(dep, &rooted)?;
                 let content = LockedContent {
                     url: marketplace_url,
                     subpath,
@@ -179,7 +178,6 @@ impl<'a> Run<'a> {
                     },
                     subpath: subpath.as_ref().map(ToString::to_string),
                 };
-                self.check_subpath(dep, &rooted)?;
                 let content = LockedContent {
                     url: Some(url),
                     subpath,
@@ -208,22 +206,6 @@ impl<'a> Run<'a> {
                 named: named.is_some(),
             }),
         ))
-    }
-
-    /// The package folder of a git checkout has to exist: an answerer with no folder there hands
-    /// back an empty tree.
-    fn check_subpath(&mut self, dep: &Dependency, rooted: &Rooted) -> Flow<()> {
-        let tree = self.rooted_tree(dep, rooted)?;
-        if let (Origin::Git { .. }, Some(subpath)) = (&rooted.checkout, &rooted.subpath)
-            && crate::tree::TreeSource::children(&*tree, "").is_empty()
-        {
-            return self.fail(Failure::Subpath {
-                name: dep.name.clone(),
-                subpath: subpath.clone(),
-                detail: super::SubpathDetail::Missing,
-            });
-        }
-        Ok(())
     }
 
     fn locked_row(&self, pending: &Pending<'_>) -> Option<&'a LockedDependency> {

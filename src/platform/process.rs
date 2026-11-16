@@ -143,15 +143,34 @@ pub(crate) fn run_git_with_index(
     }
 }
 
-pub fn run_git_with_ref(
-    base_args: &[&str],
-    ref_arg: &str,
-    cwd: &Path,
-    context: &str,
-) -> Result<String, MarsError> {
-    let mut args: Vec<&str> = base_args.to_vec();
-    args.push(ref_arg);
-    run_git(&args, cwd, context)
+/// Whether the repository at `cwd` has `commit` as a commit. `git rev-parse --verify --quiet`
+/// exits 1, and says nothing, for a name that is no commit there (absent, or not a name at all);
+/// any other failure (an unreadable repository, a spawn error) is an error, not an answer.
+pub(crate) fn git_has_commit(cwd: &Path, commit: &str) -> Result<bool, MarsError> {
+    let peeled = format!("{commit}^{{commit}}");
+    let args = ["rev-parse", "--verify", "--quiet", peeled.as_str()];
+    let mut command = Command::new("git");
+    remove_git_local_env(&mut command);
+    let output = command
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .map_err(|e| MarsError::GitCli {
+            command: display_command(&args),
+            message: format!("check cached git commit: failed to execute git: {e}"),
+        })?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) if output.stderr.is_empty() => Ok(false),
+        code => Err(MarsError::GitCli {
+            command: display_command(&args),
+            message: format!(
+                "check cached git commit: exit {}: {}",
+                code.unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        }),
+    }
 }
 
 pub fn display_command(args: &[&str]) -> String {
@@ -164,21 +183,9 @@ pub fn display_command(args: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
-
     use tempfile::TempDir;
 
     use super::*;
-
-    fn test_git_command() -> Command {
-        let mut command = Command::new("git");
-        remove_git_local_env(&mut command);
-        command.env("GIT_AUTHOR_NAME", "Mars Test");
-        command.env("GIT_AUTHOR_EMAIL", "mars@example.com");
-        command.env("GIT_COMMITTER_NAME", "Mars Test");
-        command.env("GIT_COMMITTER_EMAIL", "mars@example.com");
-        command
-    }
 
     #[test]
     fn run_git_version_succeeds() {
@@ -222,39 +229,6 @@ mod tests {
             display_command(&["log", "--oneline", "-5"]),
             "git log --oneline -5"
         );
-    }
-
-    #[test]
-    fn run_git_with_ref_passes_ref_without_shell_interpretation() {
-        let tmp = TempDir::new().unwrap();
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["init", "."])
-            .output()
-            .expect("git init");
-        std::fs::write(tmp.path().join("README.md"), "hello").unwrap();
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["add", "README.md"])
-            .output()
-            .expect("git add");
-        test_git_command()
-            .current_dir(tmp.path())
-            .args(["commit", "-m", "init"])
-            .output()
-            .expect("git commit");
-
-        let result = run_git_with_ref(
-            &["rev-parse", "--verify"],
-            "HEAD;echo shell-injected",
-            tmp.path(),
-            "verify ref",
-        );
-
-        let err = result.expect_err("metacharacter ref should be passed as one invalid git ref");
-        let message = err.to_string();
-        assert!(message.contains("HEAD;echo shell-injected"));
-        assert!(!message.contains("shell-injected\n"));
     }
 
     #[test]

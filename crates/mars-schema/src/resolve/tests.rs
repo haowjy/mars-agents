@@ -2,7 +2,7 @@
 //! failure would be a wrong version rather than an error.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use super::*;
@@ -16,6 +16,8 @@ struct Map {
     /// Each lookup of a ref takes the next commit, wrapping: a branch that moves.
     refs: RefCell<BTreeMap<String, (Vec<String>, usize)>>,
     trees: BTreeMap<(String, String), Rc<FileTree>>,
+    /// The tree rooted at a subpath, `(url, commit, path)`; a lookup with a path reads this only.
+    subtrees: BTreeMap<(String, String, String), Rc<FileTree>>,
     paths: BTreeMap<String, Rc<FileTree>>,
     asked: RefCell<Vec<String>>,
 }
@@ -51,10 +53,16 @@ impl Answers for Map {
         &self,
         url: &str,
         commit: &str,
-        _path: Option<&str>,
+        path: Option<&str>,
     ) -> Option<Answer<Rc<dyn TreeSource>>> {
         self.asked.borrow_mut().push(format!("{url}@{commit}"));
-        let tree = self.trees.get(&(url.to_string(), commit.to_string()))?;
+        let tree = match path {
+            Some(path) => {
+                self.subtrees
+                    .get(&(url.to_string(), commit.to_string(), path.to_string()))?
+            }
+            None => self.trees.get(&(url.to_string(), commit.to_string()))?,
+        };
         Some(Answer::Found(Rc::clone(tree) as Rc<dyn TreeSource>))
     }
 
@@ -64,7 +72,7 @@ impl Answers for Map {
                 canonical: request.path.to_string(),
                 tree: Rc::clone(tree) as Rc<dyn TreeSource>,
             }),
-            None => Answer::Failed("no such path".to_string()),
+            None => Answer::Failed(FailedFetch::Fetch("no such path".to_string())),
         }
     }
 }
@@ -202,6 +210,91 @@ fn restarts_that_come_back_to_a_chosen_ref_are_an_oscillation() {
     );
 }
 
+/// `b` as the subpath `folder` of repository `b`, at `version`, depending on itself at `=1.0.0`
+/// when `selfdep`.
+fn release_b_subpath(map: &mut Map, folder: &str, version: &str, selfdep: bool) {
+    let url = format!("{D}b.git");
+    let commit = format!("b-{version}");
+    let mut text = package("b", "", &[]);
+    if selfdep {
+        text.push_str(&format!(
+            "\n[dependencies.b]\nurl = \"{url}\"\nversion = \"=1.0.0\"\nsubpath = \"{folder}\"\n"
+        ));
+    }
+    let tree = FileTree::from_files([("mars.toml".to_string(), text.into_bytes())]).unwrap();
+    map.subtrees
+        .insert((url, commit, folder.to_string()), Rc::new(tree));
+}
+
+/// A restart that moves `b` to another folder of the same repository: the second folder's own
+/// restart is the first time it is fixed at 1.0.0, not a return to the first folder's choice.
+#[test]
+fn restart_history_is_kept_per_source() {
+    let mut map = Map::default();
+    let b = format!("{D}b.git");
+    for version in ["1.0.0", "1.1.0"] {
+        map.tags.entry(b.clone()).or_default().push(Tag {
+            tag: format!("v{version}"),
+            commit: format!("b-{version}"),
+        });
+        for folder in ["old", "new"] {
+            release_b_subpath(&mut map, folder, version, version == "1.1.0");
+        }
+    }
+    let asks_b = |folder: &str| {
+        format!(
+            "{}\n[dependencies.b]\nurl = \"{b}\"\nversion = \"^1\"\nsubpath = \"{folder}\"\n",
+            package("a", "", &[])
+        )
+    };
+    map.release("a", "1.0.0", &asks_b("new"));
+    map.release("a", "1.1.0", &asks_b("old"));
+    map.release("c", "1.0.0", &package("c", "", &[("a", "=1.0.0")]));
+    let resolved = resolved(resolve(
+        &request(vec![root("a", "^1"), root("c", "^1")]),
+        &map,
+    ));
+    assert_eq!(resolved.nodes["a"].resolved.tag.as_deref(), Some("v1.0.0"));
+    assert_eq!(resolved.nodes["b"].resolved.tag.as_deref(), Some("v1.0.0"));
+}
+
+/// A package that asks for itself at a ref is the first request's own ref, found again: the node
+/// keeps the selector it discovers, because the lock records it and `--frozen` requires it.
+#[test]
+fn a_rechecked_cycle_node_keeps_the_ref_selector() {
+    let mut map = Map::default();
+    let a = format!("{D}a.git");
+    map.tags.insert(a.clone(), vec![]);
+    map.refs
+        .borrow_mut()
+        .insert(format!("{a}#HEAD"), (vec!["a-head".into()], 0));
+    map.refs
+        .borrow_mut()
+        .insert(format!("{a}#main"), (vec!["a-head".into()], 0));
+    map.trees.insert(
+        (a.clone(), "a-head".into()),
+        Rc::new(
+            FileTree::from_files([(
+                "mars.toml".to_string(),
+                format!(
+                    "{}\n[dependencies.a]\nurl = \"{a}\"\nversion = \"main\"\n",
+                    package("a", "", &[])
+                )
+                .into_bytes(),
+            )])
+            .unwrap(),
+        ),
+    );
+    let mut unconstrained = root("a", "x");
+    unconstrained.spec = Spec::Git {
+        url: a.clone(),
+        version: None,
+    };
+    unconstrained.constraint = crate::version::parse_constraint(None);
+    let resolved = resolved(resolve(&request(vec![unconstrained]), &map));
+    assert_eq!(resolved.nodes["a"].resolved.tag.as_deref(), Some("main"));
+}
+
 #[test]
 fn a_package_cycle_resolves_and_each_is_the_others_requester() {
     let mut map = Map::default();
@@ -214,6 +307,77 @@ fn a_package_cycle_resolves_and_each_is_the_others_requester() {
         .map(|(by, _)| by.as_str())
         .collect();
     assert_eq!(requesters, ["mars.toml", "b"]);
+}
+
+/// The edge that closes a cycle is a request like any other: it holds the package to its constraint.
+#[test]
+fn a_cycle_back_to_a_package_with_an_incompatible_constraint_conflicts() {
+    let mut map = Map::default();
+    map.release("a", "1.0.0", &package("a", "", &[("b", "^1")]));
+    map.release("b", "1.0.0", &package("b", "", &[("a", "^2")]));
+    let failure = failed(resolve(&request(vec![root("a", "^1")]), &map)).failure;
+    assert!(
+        matches!(&failure, Failure::Conflict { name, .. } if name == "a"),
+        "{}",
+        failure.message()
+    );
+}
+
+/// A manifest whose dependency `b` is fetched from repository `repo`.
+fn asks_b_from(repo: &str, constraint: &str) -> String {
+    format!(
+        "{}\n[dependencies.b]\nurl = \"{D}{repo}.git\"\nversion = \"{constraint}\"\n",
+        package("a", "", &[])
+    )
+}
+
+/// `a` 1.1.0 asks for `b` (its newest needs a newer Mars, so an older one is chosen and kept), then
+/// `c` pins `a` to 1.0.0 and the walk restarts: the kept choice must not outlive what it answered.
+fn restart_after_an_engine_fallback(a_1_0_0: &str, a_1_1_0: &str) -> Map {
+    let mut map = Map::default();
+    map.release("a", "1.0.0", a_1_0_0);
+    map.release("a", "1.1.0", a_1_1_0);
+    map.release("c", "1.0.0", &package("c", "", &[("a", "=1.0.0")]));
+    map
+}
+
+#[test]
+fn a_kept_choice_is_not_reused_for_another_source() {
+    let mut map =
+        restart_after_an_engine_fallback(&asks_b_from("newb", "^1"), &asks_b_from("oldb", "^1"));
+    map.release("oldb", "1.0.0", &package("b", "", &[]));
+    map.release(
+        "oldb",
+        "1.1.0",
+        &package("b", "requires-mars = \">=99\"", &[]),
+    );
+    map.release("newb", "1.0.0", &package("b", "", &[]));
+    let resolved = resolved(resolve(
+        &request(vec![root("a", "^1"), root("c", "^1")]),
+        &map,
+    ));
+    let b = &resolved.nodes["b"];
+    assert_eq!(
+        b.rooted.checkout,
+        Origin::Git {
+            url: format!("{D}newb.git"),
+            commit: "newb-1.0.0".into()
+        }
+    );
+}
+
+#[test]
+fn a_kept_choice_is_not_reused_against_a_new_constraint() {
+    let mut map =
+        restart_after_an_engine_fallback(&asks_b_from("b", "^2"), &asks_b_from("b", "^1"));
+    map.release("b", "1.0.0", &package("b", "", &[]));
+    map.release("b", "1.1.0", &package("b", "requires-mars = \">=99\"", &[]));
+    map.release("b", "2.0.0", &package("b", "", &[]));
+    let resolved = resolved(resolve(
+        &request(vec![root("a", "^1"), root("c", "^1")]),
+        &map,
+    ));
+    assert_eq!(resolved.nodes["b"].resolved.tag.as_deref(), Some("v2.0.0"));
 }
 
 #[test]
@@ -312,18 +476,19 @@ fn an_open_need_is_returned_and_a_failure_after_it_waits() {
 #[test]
 fn every_open_need_on_the_frontier_is_returned_together() {
     let map = Map::default();
-    let Outcome::Needs(needs) = resolve(&request(vec![root("a", "^1"), root("b", "^1")]), &map)
+    // Asked for b first; the needs come back sorted, not in walk order.
+    let Outcome::Needs(needs) = resolve(&request(vec![root("b", "^1"), root("a", "^1")]), &map)
     else {
         panic!("needs");
     };
-    let urls: BTreeSet<_> = needs
+    let urls: Vec<_> = needs
         .iter()
         .map(|need| match need {
             Need::Tags { url } => url.as_str(),
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(urls.len(), 2);
+    assert_eq!(urls, [format!("{D}a.git"), format!("{D}b.git")]);
 }
 
 #[test]
@@ -354,11 +519,8 @@ fn bytes_count_the_files_mars_reads_not_the_files_in_an_answer() {
     let failure = failed(resolve(&over, &map)).failure;
     assert!(
         matches!(
-            failure,
-            Failure::Bounds {
-                limit: BoundsLimit::Bytes,
-                ..
-            }
+            &failure,
+            Failure::Bounds { limit: BoundsLimit::Bytes, at } if at == "a"
         ),
         "{}",
         failure.message()
@@ -373,12 +535,10 @@ fn packages_are_bounded_by_the_closure() {
     let mut bounded = request(vec![root("a", "^1")]);
     bounded.bounds.packages = Some(1);
     let failure = failed(resolve(&bounded, &map)).failure;
+    // The limit is crossed by registering b, whatever is walked next.
     assert!(matches!(
-        failure,
-        Failure::Bounds {
-            limit: BoundsLimit::Packages,
-            ..
-        }
+        &failure,
+        Failure::Bounds { limit: BoundsLimit::Packages, at } if at == "b"
     ));
 }
 

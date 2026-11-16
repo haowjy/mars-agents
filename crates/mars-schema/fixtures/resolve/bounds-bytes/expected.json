@@ -21,8 +21,8 @@
     "failed": {
       "kind": "bounds",
       "limit": "bytes",
-      "at": "b",
-      "message": "the dependency graph is over its size limit at `b`"
+      "at": "a",
+      "message": "the dependency graph is over its size limit at `a`"
     },
     "diagnostics": []
   }

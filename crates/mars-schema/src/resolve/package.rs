@@ -13,16 +13,16 @@ use semver::Version;
 use super::engine::{EngineFailure, describe};
 use super::{
     Answer, Answers, BoundsLimit, Dependency, Diagnostic, EngineFallback, EngineFallbackSkipped,
-    Failed, Failure, Identity, Level, Need, Node, Origin, Outcome, PathRequest, PathSource,
-    PluginRoot, Ref, Request, Resolved, Rooted, SourceId, Spec, Step as Oscillation, Tag,
-    TagVersion,
+    Failed, FailedFetch, Failure, Identity, Level, Need, Node, Origin, Outcome, PathRequest,
+    PathSource, PluginRoot, Ref, Request, Resolved, Rooted, SourceId, Spec, Step as Oscillation,
+    Tag, TagVersion,
 };
 use crate::diagnostic::SchemaDiagnostic;
 use crate::inspect::{Hint, Kind, inspect};
 use crate::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
 use crate::prepare::Prepared;
 use crate::tree::TreeSource;
-use crate::version::Constraint;
+use crate::version::{Constraint, satisfies, settle};
 
 /// Why the walk left a branch.
 pub(super) enum Stop {
@@ -38,9 +38,11 @@ pub(super) enum Stop {
 
 pub(super) type Flow<T> = Result<T, Stop>;
 
-/// A version chosen for a package, kept across restarts so the walk does not choose it again.
+/// A version chosen for a source, kept across restarts so the walk does not choose it again. It
+/// is used only for that source and only while it meets every constraint on it.
 #[derive(Clone)]
 pub(super) struct Chosen {
+    pub id: SourceId,
     pub resolved: Ref,
     pub rooted: Rooted,
     pub plugin: Option<PluginRoot>,
@@ -49,38 +51,48 @@ pub(super) struct Chosen {
     pub notes: Vec<Diagnostic>,
 }
 
-enum State {
-    /// Reached again while its own subtree is walked: a cycle, which is not an error.
-    Resolving,
-    Resolved,
-}
-
 #[derive(Default)]
 struct Pass {
     registry: IndexMap<String, Node>,
-    states: BTreeMap<String, State>,
+    /// Names whose resolution began: one in here and not in the registry is waiting on an answer.
+    started: BTreeSet<String>,
     ids: BTreeMap<SourceId, String>,
     constraints: BTreeMap<String, Vec<(String, Constraint)>>,
     notes: Vec<Diagnostic>,
     open: Vec<Need>,
     restart: Option<(String, Chosen)>,
-    /// The package being walked, for a bound's `at`.
-    current: String,
 }
 
 /// The bytes of each file read, once per file per pass, whatever the number of rereads.
-#[derive(Default)]
 struct Counter {
     seen: BTreeSet<(String, String, String)>,
     bytes: u64,
+    limit: Option<u64>,
+    /// The package being walked: the bytes read now are its, so it is where the limit is crossed.
+    reading: String,
+    over: Option<String>,
+}
+
+impl Counter {
+    fn new(limit: Option<u64>) -> Self {
+        Self {
+            seen: BTreeSet::new(),
+            bytes: 0,
+            limit,
+            reading: String::new(),
+            over: None,
+        }
+    }
 }
 
 pub(super) struct Run<'a> {
     pub(super) req: &'a Request,
     pub(super) answers: &'a dyn Answers,
-    pub(super) overrides: BTreeMap<String, Chosen>,
-    history: BTreeMap<String, Vec<Ref>>,
-    pub(super) exclusions: BTreeMap<(String, Version), Vec<EngineFailure>>,
+    overrides: BTreeMap<SourceId, Chosen>,
+    /// The refs each source has been fixed at, in order: one that comes back is an oscillation.
+    history: BTreeMap<SourceId, Vec<Ref>>,
+    /// Versions of a source its engine requirement rules out.
+    pub(super) exclusions: BTreeMap<(SourceId, Version), Vec<EngineFailure>>,
     pass: Pass,
     counter: Rc<RefCell<Counter>>,
 }
@@ -107,6 +119,9 @@ impl TreeSource for Counted {
             .insert((self.origin.0.clone(), self.origin.1.clone(), full))
         {
             counter.bytes += bytes.len() as u64;
+            if counter.over.is_none() && counter.limit.is_some_and(|limit| counter.bytes > limit) {
+                counter.over = Some(counter.reading.clone());
+            }
         }
         Some(bytes)
     }
@@ -133,14 +148,14 @@ impl<'a> Run<'a> {
             history: BTreeMap::new(),
             exclusions: BTreeMap::new(),
             pass: Pass::default(),
-            counter: Rc::default(),
+            counter: Rc::new(RefCell::new(Counter::new(req.bounds.bytes))),
         }
     }
 
     pub(super) fn run(mut self) -> Outcome {
         loop {
             self.pass = Pass::default();
-            *self.counter.borrow_mut() = Counter::default();
+            *self.counter.borrow_mut() = Counter::new(self.req.bounds.bytes);
             match self.walk() {
                 Ok(()) | Err(Stop::Skip | Stop::EndPass) => break,
                 Err(Stop::Fail(failure)) => return self.failed(*failure),
@@ -152,7 +167,9 @@ impl<'a> Run<'a> {
             }
         }
         if !self.pass.open.is_empty() {
-            return Outcome::Needs(std::mem::take(&mut self.pass.open));
+            let mut needs = std::mem::take(&mut self.pass.open);
+            needs.sort();
+            return Outcome::Needs(needs);
         }
         if let Some(failure) = self.bounds_exceeded() {
             return self.failed(failure);
@@ -190,7 +207,7 @@ impl<'a> Run<'a> {
             .restart
             .take()
             .expect("a restart carries the version that caused it");
-        let history = self.history.entry(name.clone()).or_default();
+        let history = self.history.entry(chosen.id.clone()).or_default();
         if let Some(start) = history.iter().position(|seen| *seen == chosen.resolved) {
             let steps = history[start..]
                 .iter()
@@ -206,7 +223,7 @@ impl<'a> Run<'a> {
             return Some(Failure::Oscillation { name, steps });
         }
         history.push(chosen.resolved.clone());
-        self.overrides.insert(name, chosen);
+        self.overrides.insert(chosen.id.clone(), chosen);
         None
     }
 
@@ -232,7 +249,7 @@ impl<'a> Run<'a> {
                 let skipped: Vec<_> = self
                     .exclusions
                     .iter()
-                    .filter(|((source, _), _)| source == name)
+                    .filter(|((source, _), _)| *source == node.id)
                     .rev()
                     .map(|((_, version), failures)| EngineFallbackSkipped {
                         version: version.to_string(),
@@ -249,7 +266,7 @@ impl<'a> Run<'a> {
     }
 
     pub(super) fn current_package(&self) -> String {
-        self.pass.current.clone()
+        self.counter.borrow().reading.clone()
     }
 
     pub(super) fn constraints_of(&self, name: &str) -> Vec<(String, Constraint)> {
@@ -290,7 +307,7 @@ impl<'a> Run<'a> {
     }
 
     fn unavailable<T>(&mut self, need: Need, reason: String) -> Flow<T> {
-        let package = self.pass.current.clone();
+        let package = self.current_package();
         self.fail(Failure::Unavailable {
             package,
             need,
@@ -298,25 +315,22 @@ impl<'a> Run<'a> {
         })
     }
 
+    /// The first limit crossed, named at the package that crossed it.
     fn bounds_exceeded(&self) -> Option<Failure> {
         let bounds = &self.req.bounds;
         if let Some(limit) = bounds.packages
-            && self.pass.registry.len() > limit
+            && let Some((at, _)) = self.pass.registry.get_index(limit)
         {
             return Some(Failure::Bounds {
                 limit: BoundsLimit::Packages,
-                at: self.pass.current.clone(),
+                at: at.clone(),
             });
         }
-        if let Some(limit) = bounds.bytes
-            && self.counter.borrow().bytes > limit
-        {
-            return Some(Failure::Bounds {
-                limit: BoundsLimit::Bytes,
-                at: self.pass.current.clone(),
-            });
-        }
-        None
+        let at = self.counter.borrow().over.clone()?;
+        Some(Failure::Bounds {
+            limit: BoundsLimit::Bytes,
+            at,
+        })
     }
 
     /// A restart ends the pass when an answer is still open.
@@ -337,7 +351,7 @@ impl<'a> Run<'a> {
             None => self.open(need),
             Some(Answer::Found(tags)) => Ok(sort_tags(tags)),
             Some(Answer::Missing) => self.unavailable(need, "does not exist".to_string()),
-            Some(Answer::Failed(reason)) => self.unavailable(need, reason),
+            Some(Answer::Failed(failed)) => self.unavailable(need, failed.to_string()),
         }
     }
 
@@ -350,7 +364,7 @@ impl<'a> Run<'a> {
             None => self.open(need),
             Some(Answer::Found(commit)) => Ok(commit),
             Some(Answer::Missing) => self.unavailable(need, "does not exist".to_string()),
-            Some(Answer::Failed(reason)) => self.unavailable(need, reason),
+            Some(Answer::Failed(failed)) => self.unavailable(need, failed.to_string()),
         }
     }
 
@@ -374,7 +388,15 @@ impl<'a> Run<'a> {
                 path,
             ))),
             Some(Answer::Missing) => Ok(None),
-            Some(Answer::Failed(reason)) => self.unavailable(need, reason),
+            Some(Answer::Failed(FailedFetch::Fetch(reason))) => self.unavailable(need, reason),
+            Some(Answer::Failed(FailedFetch::Subpath(detail))) => {
+                let failure = Failure::Subpath {
+                    name: self.current_package(),
+                    subpath: path.unwrap_or_default().to_string(),
+                    detail,
+                };
+                self.fail(failure)
+            }
         }
     }
 
@@ -396,7 +418,12 @@ impl<'a> Run<'a> {
                 let counted = self.counted(tree, (canonical.clone(), String::new()), subpath);
                 Ok((canonical, counted))
             }
-            Answer::Missing | Answer::Failed(_) => self.fail(Failure::Path {
+            Answer::Failed(FailedFetch::Subpath(detail)) => self.fail(Failure::Subpath {
+                name: dep.name.clone(),
+                subpath: subpath.unwrap_or_default().to_string(),
+                detail,
+            }),
+            Answer::Missing | Answer::Failed(FailedFetch::Fetch(_)) => self.fail(Failure::Path {
                 name: dep.name.clone(),
                 declared_in: dep.required_by.clone(),
             }),
@@ -506,7 +533,7 @@ impl<'a> Run<'a> {
     }
 
     fn resolve_package(&mut self, dep: &Dependency) -> Flow<()> {
-        self.pass.current.clone_from(&dep.name);
+        self.counter.borrow_mut().reading.clone_from(&dep.name);
         let (declared, id) = self.identities(dep)?;
         if let Some(existing) = self.pass.ids.get(&id)
             && existing != &dep.name
@@ -535,24 +562,20 @@ impl<'a> Run<'a> {
             .or_default()
             .push((dep.required_by.clone(), dep.constraint.clone()));
 
-        match self.pass.states.get(&dep.name) {
-            Some(State::Resolved) => return self.recheck(dep, &id),
-            // A cycle: the constraint it carries is already recorded.
-            Some(State::Resolving) => return Ok(()),
-            None => {}
+        // A package reached again, by a sibling or by a cycle back to one whose subtree is still
+        // being walked, is held to this constraint like any other request.
+        if self.pass.registry.contains_key(&dep.name) {
+            return self.recheck(dep, &id);
         }
-        self.pass.states.insert(dep.name.clone(), State::Resolving);
+        if !self.pass.started.insert(dep.name.clone()) {
+            // Waiting on an answer: the constraint is recorded, and the walk comes back to it.
+            return Ok(());
+        }
 
         let pending = Pending { dep, id: &id };
         let mark = self.pass.notes.len();
         let mut rejected: Vec<(String, Vec<EngineFailure>)> = Vec::new();
-        let mut override_candidate = self.overrides.get(&dep.name).cloned().filter(|chosen| {
-            chosen.resolved.version.as_ref().is_none_or(|version| {
-                !self
-                    .exclusions
-                    .contains_key(&(dep.name.clone(), version.clone()))
-            })
-        });
+        let mut override_candidate = self.reusable_choice(&id, &dep.name);
         let (resolved, rooted, plugin, prepared, normalized) = loop {
             let (resolved, rooted, plugin) = match override_candidate.take() {
                 Some(chosen) => {
@@ -567,7 +590,7 @@ impl<'a> Run<'a> {
                     Err(super::version::SingleError::Conflict(conflict))
                         if !rejected.is_empty() =>
                     {
-                        let failure = self.engine_unsatisfiable(&dep.name, *conflict);
+                        let failure = self.engine_unsatisfiable(&id, &dep.name, *conflict);
                         return self.fail(failure);
                     }
                     Err(error) => return Err(error.stop(self)),
@@ -607,7 +630,7 @@ impl<'a> Run<'a> {
                 return self.fail(failure);
             };
             self.exclusions
-                .insert((dep.name.clone(), version), failures.clone());
+                .insert((id.clone(), version), failures.clone());
             self.note(
                 Level::Advisory,
                 "requires-mars-fallback",
@@ -645,8 +668,9 @@ impl<'a> Run<'a> {
         if !rejected.is_empty() {
             let notes = self.pass.notes[mark..].to_vec();
             self.overrides.insert(
-                dep.name.clone(),
+                id.clone(),
                 Chosen {
+                    id: id.clone(),
                     resolved: resolved.clone(),
                     rooted: rooted.clone(),
                     plugin: plugin.clone(),
@@ -681,8 +705,45 @@ impl<'a> Run<'a> {
         for request in &requests {
             self.branch(request)?;
         }
-        self.pass.states.insert(dep.name.clone(), State::Resolved);
         Ok(())
+    }
+
+    /// The choice kept for this source, when it still holds: its version is not excluded by the
+    /// engine and it meets every constraint on the name now. A choice that does not is dropped,
+    /// and the version is selected again.
+    fn reusable_choice(&mut self, id: &SourceId, name: &str) -> Option<Chosen> {
+        let chosen = self.overrides.get(id)?;
+        let constraints = self.constraints_of(name);
+        let requests: Vec<(&str, &Constraint)> = constraints
+            .iter()
+            .map(|(requester, constraint)| (requester.as_str(), constraint))
+            .collect();
+        let excluded =
+            chosen.resolved.version.as_ref().is_some_and(|version| {
+                self.exclusions.contains_key(&(id.clone(), version.clone()))
+            });
+        let holds = !excluded
+            && match settle(&requests) {
+                Ok(Some(reference)) => {
+                    chosen.resolved.version.is_none()
+                        && chosen.resolved.tag.as_deref() == Some(reference)
+                }
+                Ok(None) => match &chosen.resolved.version {
+                    Some(version) => requests
+                        .iter()
+                        .all(|(_, constraint)| satisfies(constraint, version)),
+                    None => !requests
+                        .iter()
+                        .any(|(_, constraint)| matches!(constraint, Constraint::Semver(_))),
+                },
+                Err(_) => false,
+            };
+        if holds {
+            Some(chosen.clone())
+        } else {
+            self.overrides.remove(id);
+            None
+        }
     }
 
     /// A package already resolved is asked for again with another constraint. A git source may
@@ -704,16 +765,14 @@ impl<'a> Run<'a> {
         let resolved = match self.resolve_single_source(&pending) {
             Ok(resolved) => resolved,
             Err(super::version::SingleError::Conflict(conflict)) => {
-                let failure = self.engine_unsatisfiable(&dep.name, *conflict);
+                let failure = self.engine_unsatisfiable(id, &dep.name, *conflict);
                 return self.fail(failure);
             }
             Err(error) => return Err(error.stop(self)),
         };
-        // Maximizing can select a different commit at the same version.
-        if resolved.version == existing.version
-            && resolved.commit == existing.commit
-            && resolved.origin == existing.origin
-        {
+        // Maximizing can select a different commit at the same version, or the same commit under
+        // another selector, which the lock records and `--frozen` checks.
+        if resolved == existing {
             return Ok(());
         }
         let (rooted, plugin) = self.root_package(&pending, &resolved)?;
@@ -722,6 +781,7 @@ impl<'a> Run<'a> {
         Err(self.restart_with(
             dep.name.clone(),
             Chosen {
+                id: id.clone(),
                 resolved,
                 rooted,
                 plugin,
@@ -732,13 +792,13 @@ impl<'a> Run<'a> {
 
     /// A selection that found nothing, reported as the engine exclusions that emptied it when
     /// some excluded version meets every constraint, and as `conflict` itself otherwise.
-    fn engine_unsatisfiable(&self, name: &str, conflict: Failure) -> Failure {
+    fn engine_unsatisfiable(&self, id: &SourceId, name: &str, conflict: Failure) -> Failure {
         let constraints = self.pass.constraints.get(name);
         let mut excluded: Vec<_> = self
             .exclusions
             .iter()
             .filter(|((source, version), _)| {
-                source == name
+                source == id
                     && constraints.is_none_or(|constraints| {
                         constraints
                             .iter()

@@ -1,0 +1,53 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/mono\"\nversion = \"^1\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/mono"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tree",
+            "url": "https://example.test/mono",
+            "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+            "path": null
+          },
+          "failed": "over the fetch limit"
+        },
+        {
+          "url": "https://example.test/mono",
+          "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.0.0\"\n\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.0.0\n---\nbody a 1.0.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

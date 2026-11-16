@@ -24,18 +24,21 @@ stateDiagram-v2
   Locked --> Absent: cache dir missing
   Locked --> Cached: cache dir present
   Absent --> Cloned: git clone, no checkout, depth 1 unless a commit is wanted, no single branch for a tag
-  Cached --> Fetched: shallow fetch of tags, pruned to upstream
-  Fetched --> CommitAvailable: no sha wanted, or fetch of the wanted sha succeeds
+  Cached --> Fetched: shallow forced fetch of tags, pruned to upstream
+  Fetched --> CommitAvailable: no sha wanted, or the clone has it, or fetch of the wanted sha succeeds
   Fetched --> Unshallowed: that fetch failed, then a full unshallow
   Unshallowed --> CommitAvailable
   Unshallowed --> FullFetch: the unshallow failed, then a plain fetch
   FullFetch --> CommitAvailable
-  Cloned --> CommitAvailable
-  CommitAvailable --> Exporting: read-tree -u with a private index into <key>.tmp
+  Cloned --> Fetched: a sha is wanted and the clone lacks it: same fetch-by-hash path as a warm cache
+  Cloned --> CommitAvailable: no sha wanted, or the clone has it
+  CommitAvailable --> Exporting: a pinned commit the clone lacks is LockedCommitUnreachable (rev-parse --verify exits 1); else read-tree -u with a private index into <key>.tmp
   Exporting --> Published: rename into place if absent
-  Exporting --> CommitAvailable: export failed, scratch removed; a pinned commit that cannot be read is LockedCommitUnreachable, any other error is returned as it is
+  Exporting --> CommitAvailable: export failed, scratch removed; the error is returned as it is, never read as a missing commit
   Published --> [*]: the content directory is returned
 ```
+
+- **Cold and warm caches acquire a pinned commit the same way**: tags first, then, if the clone still lacks the sha, a fetch by hash (then unshallow, then full). Only a sha that survives that is `LockedCommitUnreachable`; an error from every attempt stays an error. The tag fetch is `--force`: the cache mirrors the remote, so a moved tag is taken, and the resolver keeps a lock's own id.
 
 An instance of [a lazy cache entry](../../../.context/state-machines/lazy-cache-entry.md) and of
 [a lease or lock](../../../.context/state-machines/lease-or-lock.md).

@@ -11,21 +11,26 @@ is in the [schema crate](../../../crates/mars-schema/.context/state-machines.md)
 
 ## Package resolution
 
-One source within one resolve pass, and the pass that restarts. `State` (core `package.rs`) is
-`Resolving` while the source's own subtree is walked and `Resolved` once it is in the registry;
-the absence of an entry is the third state, `Unstarted`. A restart builds a fresh `Pass`, so the
-states, the registry, the id index, the constraints and the notes all go; only `Run`'s `overrides`,
-`history` and `exclusions` survive into the next pass. A `Chosen` override carries the notes its
-choice reported (a stale lock row, an engine fallback), because the next pass reuses the choice
-without choosing again and a diagnostic belongs to the graph it describes.
+One source within one resolve pass, and the pass that restarts. A name is `Resolving` from the
+moment it starts (`Pass::started`) until it is in the registry, which happens before its own
+subtree is walked; a name in the registry is `Resolved` for every later request, a cycle's
+included. A restart builds a fresh `Pass`, so the registry, the id index, the constraints and the
+notes all go; only `Run`'s `overrides`, `history` and `exclusions` survive into the next pass.
+`overrides`, `history` and `exclusions` are keyed by `SourceId`: a choice, a ref fixed, or an engine
+exclusion made for one source says nothing about another source that a later pass gives the same name
+(a `Ref` has no subpath or plugin, so a name-keyed history read another folder's ref as a return). A `Chosen` override
+carries the notes its choice reported (a stale lock row, an engine fallback), because the next
+pass reuses the choice without choosing again and a diagnostic belongs to the graph it describes;
+it is reused only while it meets every constraint on the name (`reusable_choice`), else dropped.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Unstarted: a Dependency names the source
   Unstarted --> Resolving: not in the map, mark it before the engine loop
-  Resolving --> Resolving: reached again mid-flight, returns without re-checking
-  Resolved --> Resolved: reached again, resolved ref already satisfies the constraint
-  Resolved --> Restart: reached again with a latest/looser constraint and a different ref wins
+  Resolving --> Resolving: reached again while waiting on an answer, returns
+  Resolved --> Resolved: reached again, by a sibling or a cycle; the resolved ref already satisfies the constraint
+  Resolved --> Restart: reached again and a different ref wins
+  Resolved --> Failed: reached again and no version meets every constraint
   Resolving --> Resolved: registered, then its manifest dependencies are resolved
   Restart --> Unstarted: the pass is thrown away and rebuilt with the new override
   Restart --> Oscillation: the same ref comes back for this source
@@ -38,9 +43,11 @@ stateDiagram-v2
 
 - **Anything that must survive a restart goes through `overrides`, `history` or `exclusions`.**
   Everything else is rebuilt.
-- **`Resolving` is a cycle break, not an error.** A package re-reached while in flight returns
-  `Ok(())` with nothing registered yet; its constraint was already recorded. Making that branch
-  resolve again recurses forever on a dependency cycle.
+- **A cycle is a request like any other.** A package re-reached while its subtree is walked is
+  already registered, so `recheck` holds it to the new constraint: a version that does not meet it
+  restarts or fails as a conflict. Only a name still waiting on an answer returns without a check
+  (nothing is registered to check against). Resolving a registered name again recurses forever on
+  a dependency cycle.
 - **The restart is the only way a chosen version changes mid-run.** It is requested with
   `Stop::Restart` after the new `Chosen` is stored in `pass.restart`; the outer loop takes it
   out and fixes it in `overrides`. A restart wanted after an open need ends the pass instead
@@ -48,20 +55,20 @@ stateDiagram-v2
 - **Only work before the first open need may fail.** `fail` turns into `Stop::Skip` once an
   answer is open, so a failure on a branch a later restart would drop is never reported; a `Skip`
   ends only its own branch.
-- **Oscillation is checked per source by exact ref equality** (`version`, `commit`, `origin`). Only
+- **Oscillation is checked per source by exact ref equality** (`version`, `tag`, `commit`, `origin`). Only
   the source that restarted is checked, so two sources trading refs are not caught.
 - **Wrong edits**: removing the `Resolved` early return re-resolves every resolved source once per
   request, and `mars add` fetches the same repository N times. Removing its constraint check
   turns a needed restart into a silently stale version. Comparing refs by commit alone in
   `same_resolved_ref` misses a tag move at the same commit.
-- `Resolved` is consulted only for `SourceSpec::Git`; a path source re-entered after registration
-  goes through the `needs_check == false` path and returns `Ok(())` anyway.
+- **`recheck` compares the whole `Ref`.** The selector in `tag` is part of a lock row (`--frozen` checks it), so the same commit under a newly met ref selector restarts to carry the selector. A `--frozen` first walk replays the lock's commit when its selector is no version and no semver request has been met, because the ref request that wrote it may come later in a cycle.
+- `recheck` only judges a git source; a path source re-entered after registration returns `Ok(())`.
 
 ## Engine-requirement fallback
 
 `requires-mars` and `requires-meridian` in a candidate's `package` table: a candidate whose
 requirements the running binaries do not meet is refused and the next candidate is tried. The
-state is the exclusion map, keyed `(source, version)` and kept on `Run` across passes. `mars upgrade`'s scan uses the same mechanism with a local set
+state is the exclusion map, keyed `(SourceId, version)` and kept on `Run` across passes. `mars upgrade`'s scan uses the same mechanism with a local set
 (`upgrade.rs`).
 
 ```mermaid
@@ -133,8 +140,9 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   is an error. Codes: `locked-commit-unreachable`, `locked-ref-selector-mismatch`,
   `stale-lock-source-identity`, and `potential-version-drift` (settled graph only: the core adds it after the last pass).
 - **Only `Missing` drops a lock.** `CliAnswers` answers a tree `Missing` when the fetches succeeded
-  and the commit is not in the repository (`read-tree` of a pinned commit fails, or the archive is
-  a 404); every other error, a network or auth failure included, is `Failed` and stops the run.
+  and `git rev-parse --verify --quiet <commit>^{commit}` finds no such commit in the clone (the
+  one exit, 1 with no output, git gives for an absent object); an export that fails on a commit
+  that is there (a smudge filter, a full disk) is `Failed`, like every other error, a network or auth failure included, is `Failed` and stops the run.
   Mapping every git error to "unreachable" re-resolved to a new commit on a network blip, which is
   how a sync silently moved a package forward. A failure returns the `MarsError` the answer
   stored, so the text and exit code are the fetch's own.

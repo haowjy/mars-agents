@@ -1,0 +1,34 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/mono"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/mono",
+        "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+        "path": null
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "unavailable",
+      "need": {
+        "kind": "tree",
+        "url": "https://example.test/mono",
+        "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+        "path": null
+      },
+      "reason": "over the fetch limit",
+      "message": "a: files of https://example.test/mono at a4073b0ca977eb2cde07bedd1dc9f498c9b9210c: over the fetch limit"
+    },
+    "diagnostics": []
+  }
+]

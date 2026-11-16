@@ -60,7 +60,26 @@ pub struct TagVersion {
 pub enum Answer<T> {
     Found(T),
     Missing,
-    Failed(String),
+    Failed(FailedFetch),
+}
+
+/// Why a lookup failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailedFetch {
+    /// The fetch itself failed (network, auth, a limit, an unreadable file): its text.
+    Fetch(String),
+    /// A tree lookup below a repository's root found no folder there, or no folder that stays
+    /// inside it: the dependency's `subpath` is wrong. Only a tree (or path) lookup fails this way.
+    Subpath(SubpathDetail),
+}
+
+impl fmt::Display for FailedFetch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fetch(reason) => f.write_str(reason),
+            Self::Subpath(detail) => write!(f, "the folder {}", detail.reason()),
+        }
+    }
 }
 
 /// A path dependency asked for: `path` as written (relative to `declared_in`'s root, or absolute),

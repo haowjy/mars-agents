@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::platform::cache::{archive_cache_component, git_cache_component};
 use crate::platform::fs::{publish_cache_dir_if_absent, safe_remove};
-use crate::platform::process::{display_command, run_git, run_git_with_index, run_git_with_ref};
+use crate::platform::process::{display_command, git_has_commit, run_git, run_git_with_index};
 use crate::source::GlobalCache;
 use mars_schema::resolve::Tag;
 
@@ -23,27 +23,32 @@ fn not_an_option(what: &str, value: &str) -> Result<(), MarsError> {
     Ok(())
 }
 
+/// The commit a ref names: a ref to an annotated tag is peeled, as the tag listing does, so a new
+/// pin records the commit and not the tag object.
 pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
     not_an_option("URL", url)?;
     not_an_option("ref", reference)?;
-    let command_display = display_command(&["ls-remote", "--", url, reference]);
-    let output = run_git_with_ref(
-        &["ls-remote", "--", url],
-        reference,
-        Path::new("."),
-        "resolve remote git reference",
-    )?;
+    let peeled_pattern = format!("{reference}^{{}}");
+    let args = ["ls-remote", "--", url, reference, peeled_pattern.as_str()];
+    let output = run_git(&args, Path::new("."), "resolve remote git reference")?;
 
-    for line in output.lines() {
-        if let Some((sha, _)) = line.split_once('\t')
-            && !sha.trim().is_empty()
-        {
-            return Ok(sha.trim().to_string());
-        }
+    // The first ref listed is the answer; git lists an annotated tag's commit on its own
+    // `<ref>^{}` line.
+    let lines: Vec<(&str, &str)> = output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(sha, name)| (sha.trim(), name))
+        .filter(|(sha, _)| !sha.is_empty())
+        .collect();
+    if let Some((sha, name)) = lines.iter().find(|(_, name)| !name.ends_with("^{}")) {
+        let peeled = lines
+            .iter()
+            .find(|(_, other)| other.strip_suffix("^{}") == Some(name));
+        return Ok(peeled.map_or(*sha, |(commit, _)| *commit).to_string());
     }
 
     Err(MarsError::GitCli {
-        command: command_display,
+        command: display_command(&["ls-remote", "--", url, reference]),
         message: format!("reference `{reference}` not found"),
     })
 }
@@ -145,46 +150,70 @@ pub(crate) fn fetch_git_content(
 
         run_git(&args, &cache.git_dir(), "clone git source into cache")?;
     } else {
+        // `--force`: the cache is a mirror of what the remote says now, so a tag the remote moved
+        // is taken, not rejected. A lock that wants the old commit is kept by the resolver.
         run_git(
-            &["fetch", "--depth", "1", "--tags", "--prune-tags", "origin"],
+            &[
+                "fetch",
+                "--depth",
+                "1",
+                "--force",
+                "--tags",
+                "--prune-tags",
+                "origin",
+            ],
             &cache_path,
             "fetch cached git source",
         )?;
-        if let Some(sha) = sha {
-            match run_git(
-                &["fetch", "--depth", "1", "--", "origin", sha],
-                &cache_path,
-                "fetch cached git commit",
-            ) {
-                Ok(_) => {}
-                Err(_) => {
-                    run_git(
-                        &["fetch", "--unshallow", "origin"],
-                        &cache_path,
-                        "unshallow cached git source for locked commit",
-                    )
-                    .or_else(|_| {
-                        run_git(
-                            &["fetch", "origin"],
-                            &cache_path,
-                            "fetch cached git source for locked commit",
-                        )
-                    })?;
-                }
-            }
-        }
     }
 
-    // A pinned commit that survived the fetches above and still cannot be read is not in the
-    // repository; any other failure says nothing about the commit.
-    export_commit(&cache_path, commit, &content_path).map_err(|error| match error {
-        MarsError::GitCli { .. } if pinned => MarsError::LockedCommitUnreachable {
+    // Cold and warm caches reach a pinned commit the same way: a commit no advertised ref reaches
+    // is still asked of the remote by hash before it is called missing.
+    if let Some(sha) = sha
+        && !git_has_commit(&cache_path, sha)?
+    {
+        fetch_commit(&cache_path, sha)?;
+    }
+
+    // A pinned commit that survived the fetches above and is still not in the clone is gone from
+    // the repository. Whatever else fails exporting a commit that is there (a smudge filter, a
+    // full disk) says nothing about the commit and keeps its own error.
+    if pinned && !git_has_commit(&cache_path, commit)? {
+        return Err(MarsError::LockedCommitUnreachable {
             commit: commit.to_string(),
             url: url.to_string(),
-        },
-        other => other,
-    })?;
+        });
+    }
+    export_commit(&cache_path, commit, &content_path)?;
     Ok(content_path)
+}
+
+/// Fetch `sha` by hash; a server that won't serve a bare hash gets a full fetch instead. An error
+/// from every attempt is returned as it is: it says the remote could not be asked, not that the
+/// commit is gone.
+fn fetch_commit(cache_path: &Path, sha: &str) -> Result<(), MarsError> {
+    if run_git(
+        &["fetch", "--depth", "1", "--", "origin", sha],
+        cache_path,
+        "fetch cached git commit",
+    )
+    .is_ok()
+    {
+        return Ok(());
+    }
+    run_git(
+        &["fetch", "--unshallow", "origin"],
+        cache_path,
+        "unshallow cached git source for locked commit",
+    )
+    .or_else(|_| {
+        run_git(
+            &["fetch", "origin"],
+            cache_path,
+            "fetch cached git source for locked commit",
+        )
+    })
+    .map(|_| ())
 }
 
 /// Write the files of `commit` into `content_path`, whole or not at all. The lock held by the

@@ -1,0 +1,60 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "a": {
+          "url": "example.test/a",
+          "version": "v1.0.0",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+        }
+      },
+      "dependencies": {
+        "a": {
+          "url": "example.test/a",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+          "subpath": null,
+          "version": "v1.0.0",
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": null
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": [
+      {
+        "level": "warning",
+        "code": "locked-commit-unreachable",
+        "message": "locked commit a6dfdeaa3a44a4c52d44284847d7160892b4017e for https://example.test/a is unreachable; re-resolving from current tags"
+      }
+    ]
+  }
+]

@@ -128,14 +128,6 @@ pub fn validate_agent_filename(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn paths_equivalent(a: &str, b: &str) -> bool {
-    if cfg!(windows) {
-        a.replace('\\', "/") == b.replace('\\', "/")
-    } else {
-        a == b
-    }
-}
-
 pub fn dest_paths_equivalent(a: &str, b: &str) -> bool {
     a.replace('\\', "/") == b.replace('\\', "/")
 }

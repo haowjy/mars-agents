@@ -1,0 +1,53 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.x]\nurl = \"https://example.test/mono\"\nversion = \"^1\"\nsubpath = \"packages/x\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/mono"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/mono",
+          "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+          "path": "packages/x",
+          "files": {
+            "packages/x/mars.toml": "[package]\nschema = 1\nname = \"x\"\nversion = \"1.0.0\"\n\n",
+            "packages/x/skills/x-skill/SKILL.md": "---\nname: x-skill\ndescription: x 1.0.0\n---\nbody x 1.0.0\n"
+          }
+        },
+        {
+          "need": {
+            "kind": "tree",
+            "url": "https://example.test/mono",
+            "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+            "path": null
+          },
+          "failed": "over the fetch limit"
+        }
+      ]
+    }
+  ]
+}

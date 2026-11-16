@@ -806,6 +806,10 @@ export function renderHooks(
 /** One `[dependencies.<name>]` row of `mars.lock`, as `mars sync` writes it. Urls are the lock's canonical spelling (`github.com/owner/repo`). */
 export interface LockedDependency {
   url?: string;
+  /** A path dependency's canonical directory. `resolve` refuses paths and never returns it; `mars sync` writes it, so keep it if you store a CLI lock. */
+  path?: string;
+  /** The folder of the repository the package is in, for a dependency with a `subpath`. Part of the row's source identity: a row without it does not match the dependency. */
+  subpath?: string;
   version?: string;
   commit?: string;
   /** The marketplace plugin installed from this source; `url`, `version` and `commit` are then the marketplace's. */
@@ -829,7 +833,9 @@ export type Answer =
   /**
    * The files at `commit` under `path`, repository-relative (`path: null` is the whole repository).
    * It answers every tree need at the same `url` and `commit` whose `path` is inside its own, so one
-   * whole-repository answer serves every later need there. Files only, a symlink as its target's
+   * whole-repository answer serves every later need there. A need takes the answer for its own key
+   * `(url, commit, path)`, else the one for the nearest folder above it, else the whole repository's;
+   * of two answers with one key, the later in the list wins. Files only, a symlink as its target's
    * content; binary files may be left out.
    */
   | { url: string; commit: string; path: string | null; files: { [path: string]: Uint8Array } | Map<string, Uint8Array> }
@@ -847,14 +853,14 @@ export interface ResolveDiagnostic {
 }
 
 /** A requester (`"root"` for the root's own `mars.toml`) and the constraint it asked for (`null`: any version). */
-export interface Requester {
+export interface ResolveRequester {
   by: string;
   constraint: string | null;
 }
 
 export type ResolveFailure = { message: string } & (
   /** No version meets every constraint. */
-  | { kind: "conflict"; name: string; requesters: Requester[] }
+  | { kind: "conflict"; name: string; requesters: ResolveRequester[] }
   /** Two names for one source, or one name for two sources (`existing` is the one it had first). */
   | { kind: "identity"; detail: "one-source-two-names" | "one-name-two-sources"; names: string[]; source: string; existing?: string }
   /** A pinned or locked version needs a newer Mars or Meridian. `engine` is `"mars"` or `"meridian"`; the first unmet requirement. */
@@ -890,7 +896,7 @@ export interface ResolvedDependency {
   version: string | null;
   /** Set for a marketplace plugin: where its files are (another repository, or a folder of the marketplace's own tree). */
   content?: { url: string; subpath: string | null; commit: string };
-  required_by: Requester[];
+  required_by: ResolveRequester[];
 }
 
 /**
@@ -898,8 +904,8 @@ export interface ResolvedDependency {
  * the fetching. Stateless: each call replays the resolution from every answer so far, so keep the
  * list of answers and call again with it grown until the result is not `needs`.
  *
- * - `{ needs }`: every open need on the current frontier (one with no answer), sorted; fetch them in
- *   parallel. A later need can depend on an earlier answer, so a call can return needs more than
+ * - `{ needs }`: every open need on the current frontier (one with no answer), sorted (tags, then refs, then
+ *   trees, each by its fields); fetch them in parallel. A later need can depend on an earlier answer, so a call can return needs more than
  *   once. While any need is open the result is `needs`: a failure found after one waits.
  * - `{ resolved }`: `lock` is exactly mars.lock's `[dependencies.<name>]` rows, to store verbatim;
  *   `dependencies` is what to vendor and to hand to `check` and `selectItems`.

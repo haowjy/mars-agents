@@ -54,7 +54,7 @@ pub enum Failure {
         rooted: Rooted,
         diagnostics: Vec<SchemaDiagnostic>,
     },
-    /// A package declares a path dependency and the answerer refused it.
+    /// A package, or the root, declares a path dependency and the answerer refused it.
     Path {
         name: String,
         declared_in: String,
@@ -118,6 +118,17 @@ pub enum SubpathDetail {
     Traversal,
 }
 
+impl SubpathDetail {
+    /// What is wrong with the folder, as the end of a sentence about it.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Missing => "does not exist in the source",
+            Self::NotADirectory => "is not a directory in the source",
+            Self::Traversal => "escapes the source",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsLimit {
     Packages,
@@ -176,21 +187,10 @@ impl Failure {
                 name,
                 subpath,
                 detail,
-            } => match detail {
-                SubpathDetail::Missing => {
-                    format!(
-                        "source error: {name}: subpath `{subpath}` does not exist in the source"
-                    )
-                }
-                SubpathDetail::NotADirectory => {
-                    format!(
-                        "source error: {name}: subpath `{subpath}` is not a directory in the source"
-                    )
-                }
-                SubpathDetail::Traversal => {
-                    format!("source error: {name}: subpath `{subpath}` escapes the source")
-                }
-            },
+            } => format!(
+                "source error: {name}: subpath `{subpath}` {}",
+                detail.reason()
+            ),
             Self::Unreadable {
                 name, diagnostics, ..
             } => format!(
@@ -202,7 +202,7 @@ impl Failure {
                     .join("; ")
             ),
             Self::Path { name, declared_in } => format!(
-                "`{declared_in}` declares a path dependency `{name}`, which a fetched package cannot"
+                "`{declared_in}` declares a path dependency `{name}`, which this resolution cannot read: a path names a folder on one machine"
             ),
             Self::Unavailable {
                 package,

@@ -1,0 +1,46 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/mono"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/mono",
+        "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "a": {
+          "url": "example.test/mono",
+          "version": "v1.0.0",
+          "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c"
+        }
+      },
+      "dependencies": {
+        "a": {
+          "url": "example.test/mono",
+          "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+          "subpath": null,
+          "version": "v1.0.0",
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": "^1"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

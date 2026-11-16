@@ -16,7 +16,7 @@ pub trait SourceProvider {
     fn resolve_ref(&self, url: &SourceUrl, reference: &str) -> Result<String, MarsError>;
 
     /// The content directory of `commit`. `tag` is the tag it was listed under, if it was.
-    /// `LockedCommitUnreachable` is a commit the repository does not have; any other error says
+    /// `CommitUnreachable` is a commit the repository does not have; any other error says
     /// nothing about the commit.
     fn fetch_content(
         &self,

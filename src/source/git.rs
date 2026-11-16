@@ -62,7 +62,7 @@ fn with_alias_hint(url: &str, error: MarsError) -> MarsError {
 
 /// The content directory of `commit` (see `git_cli::fetch_git_content`). `tag` is the tag the
 /// commit was listed under, which git fetches by name; any other commit is fetched by hash. A
-/// commit the repository does not have is `LockedCommitUnreachable`; every other error says
+/// commit the repository does not have is `CommitUnreachable`; every other error says
 /// nothing about the commit.
 pub fn fetch_content(
     url: &str,
@@ -72,7 +72,7 @@ pub fn fetch_content(
 ) -> Result<PathBuf, MarsError> {
     if should_use_github_archive(url) {
         return match archive::fetch_archive(url, commit, cache) {
-            Err(MarsError::Http { status: 404, .. }) => Err(MarsError::LockedCommitUnreachable {
+            Err(MarsError::Http { status: 404, .. }) => Err(MarsError::CommitUnreachable {
                 commit: commit.to_string(),
                 url: url.to_string(),
             }),

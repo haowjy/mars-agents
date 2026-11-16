@@ -268,17 +268,26 @@ pub fn allows(
         })
 }
 
-/// Whether the lock is kept: `policy` prefers it and the locked version is allowed. A
+/// Whether the lock is kept: `policy` prefers it and the constraints allow what it recorded. A
+/// `locked` of `None` is a bare commit (the repository had no version tag when it was locked);
+/// no semver range can hold for it, so only [`Constraint::Latest`] allows it. A
 /// [`Constraint::Latest`] allows any version, so it keeps the lock like a range that holds; only
-/// `mars upgrade` (`LatestOnly`) moves it. It does not ask whether the tag is still in the repository, so the answer needs no tag list and a tag
-/// deleted upstream keeps the lock. `--frozen` is the binary's own rule and asks [`allows`].
+/// `mars upgrade` (`LatestOnly`) moves it. It does not ask whether the tag is still in the
+/// repository, so the answer needs no tag list and a tag deleted upstream keeps the lock.
+/// `--frozen` is the binary's own rule and asks [`allows`].
 pub fn keeps_lock(
     constraints: &[(&str, &Constraint)],
-    locked: &Version,
+    locked: Option<&Version>,
     policy: SelectionPolicy,
     excluded: &HashSet<Version>,
 ) -> bool {
-    policy == SelectionPolicy::PreferLockThenLatest && allows(constraints, locked, excluded)
+    policy == SelectionPolicy::PreferLockThenLatest
+        && match locked {
+            Some(version) => allows(constraints, version, excluded),
+            None => constraints
+                .iter()
+                .all(|(_, constraint)| !matches!(constraint, Constraint::Semver(_))),
+        }
 }
 
 /// Choose one of `available` that [`allows`] and return its index. The newest allowed wins
@@ -315,7 +324,7 @@ pub fn select(
     };
 
     let kept = locked
-        .filter(|locked| keeps_lock(constraints, locked, policy, excluded))
+        .filter(|locked| keeps_lock(constraints, Some(locked), policy, excluded))
         .and_then(|locked| allowed.iter().copied().find(|&i| available[i] == *locked));
     Ok(Some(kept.unwrap_or(newest)))
 }
@@ -371,7 +380,7 @@ pub fn choose<'a>(
         .iter()
         .filter_map(|tag| Some((tag.as_str(), parse_tag(tag)?)))
         .unzip();
-    if locked.is_some_and(|locked| keeps_lock(constraints, locked, policy, excluded)) {
+    if locked.is_some_and(|locked| keeps_lock(constraints, Some(locked), policy, excluded)) {
         return Ok(Chosen::Locked);
     }
     Ok(select(&versions, constraints, None, policy, excluded)?

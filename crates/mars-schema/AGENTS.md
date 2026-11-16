@@ -84,8 +84,9 @@ Target links (`targets.rs`) stay in the binary: they need its harness registry.
   requirement. Keep their parsers distinct.
 - `version::keeps_lock` keeps a lock under `PreferLockThenLatest` when every
   semver constraint allows it and it is not excluded (a `latest` request allows
-  any version, so an unversioned dependency keeps its lock; `mars upgrade` moves it),
-  without checking whether its tag still exists upstream. This lets a locked
+  any version, so an unversioned dependency keeps its lock; `mars upgrade` moves it).
+  A lock row that is a bare commit, with no version, is kept too when no constraint is
+  a semver range: no tag the repository gains later moves it. It does this without checking whether its tag still exists upstream. This lets a locked
   install replay without listing tags. Every constraint must hold at the chosen ref;
   incompatible pins and a pin beside a range fail.
 - Preserve the published read, edit, preparation, selection and hook output shapes,

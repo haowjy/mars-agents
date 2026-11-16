@@ -708,7 +708,7 @@ Mars uses [semver](https://semver.org/) for version resolution. Sources tag rele
 | `v1.2.3` | Exact version (v-prefix) | `version = "v1.2.3"` |
 | *(omitted)* | Any version: the newest (HEAD for untagged repos) when the dependency is first locked, then the locked version | |
 
-`mars.lock` is the truth: `mars sync` installs what it records for every dependency, with or without a `version`, and moves a locked version only when the constraint no longer allows it or the source changed. `mars outdated` and the sync summary report newer releases; `mars upgrade [names]` moves the lock to them.
+`mars.lock` is the truth: `mars sync` installs what it records for every dependency, with or without a `version`, and moves a locked version only when the constraint no longer allows it or the source changed. A dependency locked at a bare commit (its repository had no tag then) stays there when the repository gains its first tag, unless a `version` range now asks for a tag. `version = "latest"` means the same as no `version`. `mars outdated` and the sync summary report newer releases, for dependencies a package requires as well; `mars upgrade [names]` moves the lock to them. Two exceptions: `mars sync` also moves a locked version that the running Mars's `requires-*` check excludes, to the newest one the engines accept; and a marketplace plugin's selection is refreshed as a whole by `mars upgrade`, not versioned, so `mars outdated` and the sync hint do not list it.
 
 Branch or commit pins (non-semver strings) bypass version resolution entirely and fetch the specified ref directly.
 

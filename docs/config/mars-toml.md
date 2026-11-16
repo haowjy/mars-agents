@@ -259,7 +259,7 @@ url = "https://github.com/anthropics/skills"
 plugin = "example-skills"
 ```
 
-`mars add https://github.com/anthropics/skills --plugin document-skills` writes the first entry; the dependency is named `<repo>/<plugin>`. A marketplace dependency without `plugin` installs the marketplace's only plugin, wherever its files are; with several plugins it is an error that lists them. The lock records `plugin` and `content` only for a dependency that names its plugin (and `content` for a plugin in another repository), so a lock written before `plugin` existed still describes a dependency that names none. `version` constrains the marketplace's tags and commits like any git dependency; `mars outdated` reports them. With no `version`, the marketplace is taken at its latest semver tag, and a repository whose tags are product releases (`anthropics/claude-code`) gives that release's `marketplace.json`; the plugin's own files come from the entry's `sha` or `ref` in either case. Pin `version` or a commit to choose another.
+`mars add https://github.com/anthropics/skills --plugin document-skills` writes the first entry; the dependency is named `<repo>/<plugin>`. A marketplace dependency without `plugin` installs the marketplace's only plugin, wherever its files are; with several plugins it is an error that lists them. The lock records `plugin` and `content` only for a dependency that names its plugin (and `content` for a plugin in another repository), so a lock written before `plugin` existed still describes a dependency that names none. `version` constrains the marketplace's tags and commits like any git dependency; `mars outdated` reports them. With no `version`, the marketplace is first locked at its latest semver tag (`mars upgrade` moves it), and a repository whose tags are product releases (`anthropics/claude-code`) gives that release's `marketplace.json`; the plugin's own files come from the entry's `sha` or `ref` in either case. Pin `version` or a commit to choose another.
 
 The marketplace is read at the root of its source, and the plugin's entry says where its files are:
 
@@ -706,7 +706,9 @@ Mars uses [semver](https://semver.org/) for version resolution. Sources tag rele
 | `>=0.5.0` | At least this version | `version = ">=0.5.0"` |
 | `=1.2.3` | Exact version | `version = "=1.2.3"` |
 | `v1.2.3` | Exact version (v-prefix) | `version = "v1.2.3"` |
-| *(omitted)* | Latest available (HEAD for untagged repos) | |
+| *(omitted)* | Any version: the newest (HEAD for untagged repos) when the dependency is first locked, then the locked version | |
+
+`mars.lock` is the truth: `mars sync` installs what it records for every dependency, with or without a `version`, and moves a locked version only when the constraint no longer allows it or the source changed. `mars outdated` and the sync summary report newer releases; `mars upgrade [names]` moves the lock to them.
 
 Branch or commit pins (non-semver strings) bypass version resolution entirely and fetch the specified ref directly.
 

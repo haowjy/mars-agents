@@ -438,18 +438,6 @@ impl<'a> Run<'a> {
         let Some(selected) = selected else {
             return self.resolve_untagged(dep, url, locked_commit, locked_unreachable, policy);
         };
-        // A `Latest` request does not keep the lock, but the newest may be the locked version: the
-        // lock row stays as it is, so an existing lock keeps the id it holds (an older build
-        // recorded a tag object's id, a new pin records the peeled commit).
-        if let (Some(locked_version), Some(commit)) = (locked_version.as_ref(), locked_commit)
-            && !locked_unreachable
-            && *locked_version == selected.version
-        {
-            match self.replay(dep, url, commit, locked_version, locked_version_raw)? {
-                Some(resolved) => return Ok(resolved),
-                None => self.locked_unreachable(url, commit),
-            }
-        }
         let resolved = Ref {
             version: Some(selected.version.clone()),
             tag: Some(selected.tag.clone()),

@@ -119,7 +119,7 @@ Fetches sources, resolves concrete versions, and prepares each package.
 
 | Mode | Strategy | Used by |
 |---|---|---|
-| Normal | The locked version when it still satisfies every constraint (whether or not its tag still exists upstream), otherwise the newest compatible version | `mars sync`, `mars add` |
+| Normal | The locked version when it still satisfies every constraint, including a dependency with no `version` (whether or not its tag still exists upstream), otherwise the newest compatible version | `mars sync`, `mars add` |
 | Maximize | The newest compatible version, ignoring the lock | `mars upgrade` |
 | Frozen | The locked version, or an error | `--frozen` |
 

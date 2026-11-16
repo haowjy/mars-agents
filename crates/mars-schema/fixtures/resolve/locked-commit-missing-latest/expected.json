@@ -2,8 +2,10 @@
   {
     "needs": [
       {
-        "kind": "tags",
-        "url": "https://example.test/a"
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "a6dfdeaa3a44a4c52d44284847d7160892b4017e",
+        "path": null
       }
     ]
   },

@@ -219,10 +219,8 @@ pub enum MarsError {
         report: Box<crate::routing::report::RouteDecisionReport>,
     },
 
-    #[error(
-        "locked commit {commit} is no longer reachable in {url} — the tag may have been force-pushed"
-    )]
-    LockedCommitUnreachable { commit: String, url: String },
+    #[error("commit {commit} is not reachable in {url}")]
+    CommitUnreachable { commit: String, url: String },
 
     /// Internal control-flow signal: the resolver detected that an already-resolved
     /// package would select a different ref under the full accumulated constraint set.
@@ -289,7 +287,7 @@ impl MarsError {
             | MarsError::InvalidRequest { .. }
             | MarsError::FrozenViolation { .. }
             | MarsError::Selection { .. }
-            | MarsError::LockedCommitUnreachable { .. } => 2,
+            | MarsError::CommitUnreachable { .. } => 2,
             MarsError::Source { .. }
             | MarsError::SubpathTraversal { .. }
             | MarsError::SubpathMissing { .. }
@@ -386,7 +384,7 @@ mod tests {
                 2,
             ),
             (
-                MarsError::LockedCommitUnreachable {
+                MarsError::CommitUnreachable {
                     commit: "abc123".to_string(),
                     url: "https://example.com/repo.git".to_string(),
                 },

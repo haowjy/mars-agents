@@ -32,13 +32,13 @@ stateDiagram-v2
   FullFetch --> CommitAvailable
   Cloned --> Fetched: a sha is wanted and the clone lacks it: same fetch-by-hash path as a warm cache
   Cloned --> CommitAvailable: no sha wanted, or the clone has it
-  CommitAvailable --> Exporting: a pinned commit the clone lacks is LockedCommitUnreachable (rev-parse --verify exits 1); else read-tree -u with a private index into <key>.tmp
+  CommitAvailable --> Exporting: a pinned commit the clone lacks is CommitUnreachable (rev-parse --verify exits 1); else read-tree -u with a private index into <key>.tmp
   Exporting --> Published: rename into place if absent
   Exporting --> CommitAvailable: export failed, scratch removed; the error is returned as it is, never read as a missing commit
   Published --> [*]: the content directory is returned
 ```
 
-- **Cold and warm caches acquire a pinned commit the same way**: tags first, then, if the clone still lacks the sha, a fetch by hash (then unshallow, then full). Only a sha that survives that is `LockedCommitUnreachable`; an error from every attempt stays an error. The tag fetch is `--force`: the cache mirrors the remote, so a moved tag is taken, and the resolver keeps a lock's own id.
+- **Cold and warm caches acquire a pinned commit the same way**: tags first, then, if the clone still lacks the sha, a fetch by hash (then unshallow, then full). Only a sha that survives that is `CommitUnreachable`; an error from every attempt stays an error. The tag fetch is `--force`: the cache mirrors the remote, so a moved tag is taken, and the resolver keeps a lock's own id.
 
 An instance of [a lazy cache entry](../../../.context/state-machines/lazy-cache-entry.md) and of
 [a lease or lock](../../../.context/state-machines/lease-or-lock.md).
@@ -68,7 +68,7 @@ An instance of [a lazy cache entry](../../../.context/state-machines/lazy-cache-
 A GitHub tarball in the global cache: absent, half-extracted or published (`archive.rs`). Used for
 `https://github.com/...` sources, so one source can reach either this machine or the git one,
 depending on the URL form. The bytes come from `https://github.com/<owner>/<repo>/archive/<sha>.tar.gz`;
-a 404 becomes `LockedCommitUnreachable` in `git.rs::fetch_content` (a commit the repository does not have), which `CliAnswers` answers `Missing` and feeds the
+a 404 becomes `CommitUnreachable` in `git.rs::fetch_content` (a commit the repository does not have), which `CliAnswers` answers `Missing` and feeds the
 [source version ladder](../../resolve/.context/state-machines.md).
 
 ```mermaid

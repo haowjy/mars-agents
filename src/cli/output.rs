@@ -203,7 +203,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
     }
 
     #[derive(Serialize)]
-    struct JsonReport {
+    struct JsonReport<'a> {
         ok: bool,
         dry_run: bool,
         installed: usize,
@@ -216,6 +216,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         hook_files_rewritten: usize,
         mcp_files_changed: usize,
         upgrades_available: usize,
+        upgrades: &'a [crate::sync::upgrades::VersionStep],
+        dependencies_moved: &'a [crate::sync::upgrades::VersionStep],
         targets: Vec<JsonTargetOutcome>,
         diagnostics: Vec<Diagnostic>,
         engine_fallbacks: Vec<crate::resolve::EngineFallback>,
@@ -262,7 +264,9 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
         mcp_files_changed: report.mcp_files_changed.len(),
-        upgrades_available: report.upgrades_available,
+        upgrades_available: report.upgrades.len(),
+        upgrades: &report.upgrades,
+        dependencies_moved: &report.dependency_moves,
         targets,
         diagnostics: report.diagnostics.clone(),
         engine_fallbacks: report.engine_fallbacks.clone(),
@@ -402,6 +406,10 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
         }
     }
+    for step in &report.dependency_moves {
+        let verb = if dry { "would move" } else { "moved     " };
+        let _ = writeln!(stdout, "  {verb} {}", step.describe());
+    }
     if kept > 0 {
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
@@ -414,6 +422,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && native_removed == 0
         && hook_files == 0
         && mcp_files == 0
+        && report.dependency_moves.is_empty()
         && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
         // `--diff` compares the items and the config entries it previews, not every file a
@@ -432,8 +441,8 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
     print_diagnostics(&report.diagnostics, detail);
     let mut stderr = stderr_stream();
 
-    if report.upgrades_available > 0 && !report.dry_run && !no_upgrade_hint {
-        let noun = if report.upgrades_available == 1 {
+    if !report.upgrades.is_empty() && !report.dry_run && !no_upgrade_hint {
+        let noun = if report.upgrades.len() == 1 {
             "upgrade"
         } else {
             "upgrades"
@@ -442,9 +451,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(
             stderr,
             "  ℹ {} {noun} available — run `{cmd}` to update",
-            report.upgrades_available,
+            report.upgrades.len(),
             cmd = managed_cmd("mars upgrade"),
         );
+        for step in &report.upgrades {
+            let _ = writeln!(stderr, "      {}", step.describe());
+        }
         let _ = stderr.reset();
     }
 }
@@ -665,7 +677,8 @@ mod tests {
             },
             diagnostics: Vec::new(),
             dependency_changes: Vec::new(),
-            upgrades_available: 0,
+            upgrades: Vec::new(),
+            dependency_moves: Vec::new(),
             target_outcomes: Vec::new(),
             dry_run: false,
             native_emitted: Vec::new(),

@@ -98,7 +98,7 @@ impl<'a> CliAnswers<'a> {
                 .fetch_content(&SourceUrl::from(url), commit, tag.as_deref())
             {
                 Ok(dir) => Answer::Found(dir),
-                Err(error @ MarsError::LockedCommitUnreachable { .. }) => {
+                Err(error @ MarsError::CommitUnreachable { .. }) => {
                     self.errors
                         .borrow_mut()
                         .insert(Lookup::Content(key.0.clone(), key.1.clone()), error);

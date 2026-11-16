@@ -182,7 +182,7 @@ impl SourceProvider for MockProvider {
             .borrow_mut()
             .push(replay.then(|| commit.to_string()));
         if self.unreachable_commits.contains(commit) {
-            return Err(MarsError::LockedCommitUnreachable {
+            return Err(MarsError::CommitUnreachable {
                 commit: commit.to_string(),
                 url: url.to_string(),
             });

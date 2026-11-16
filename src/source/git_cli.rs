@@ -179,7 +179,7 @@ pub(crate) fn fetch_git_content(
     // the repository. Whatever else fails exporting a commit that is there (a smudge filter, a
     // full disk) says nothing about the commit and keeps its own error.
     if pinned && !git_has_commit(&cache_path, commit)? {
-        return Err(MarsError::LockedCommitUnreachable {
+        return Err(MarsError::CommitUnreachable {
             commit: commit.to_string(),
             url: url.to_string(),
         });

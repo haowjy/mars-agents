@@ -464,7 +464,27 @@ impl<'a> Run<'a> {
         let declared = if dep.declared == dep.spec {
             id.clone()
         } else {
-            self.source_id(dep, &dep.declared)?
+            match &dep.declared {
+                // The override replaces a path nobody fetches, which need not exist: when it cannot
+                // be canonicalized it is compared as written, as v0.34.5 did.
+                Spec::Path(path) => {
+                    let answered = self.answers.path(&PathRequest {
+                        name: &dep.name,
+                        path,
+                        subpath: None,
+                        declared_in: dep.declared_in.as_ref(),
+                    });
+                    SourceId::Path {
+                        canonical: match answered {
+                            Answer::Found(found) => found.canonical,
+                            Answer::Missing | Answer::Failed(_) => path.clone(),
+                        },
+                        subpath: dep.subpath.clone(),
+                        plugin: dep.plugin.clone(),
+                    }
+                }
+                git => self.source_id(dep, git)?,
+            }
         };
         Ok((declared, id))
     }

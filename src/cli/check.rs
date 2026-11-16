@@ -248,28 +248,42 @@ pub(crate) fn package_floor(
         let Some(agent) = &reading.fields else {
             continue;
         };
-        // The Agent's own `effort` as its author wrote it: the reading holds only the parsed
-        // request, and a floor message quotes the file.
-        let written = reading
+        // Each `effort` as its author wrote it: the reading holds only the parsed request, and a
+        // floor message quotes the file.
+        let written = |value: &OrderedValue| match value {
+            OrderedValue::Null => Some(None),
+            OrderedValue::String(text) => Some(Some(text.clone())),
+            _ => None,
+        };
+        let own = reading
             .frontmatter
             .iter()
             .find(|(key, _)| key == "effort")
+            .and_then(|(_, value)| written(value))
+            .filter(|_| agent.effort.is_some())
+            .map(|text| ("effort", text));
+        let overrides = reading
+            .frontmatter
+            .iter()
+            .find(|(key, _)| key == "model-policies")
             .and_then(|(_, value)| match value {
-                OrderedValue::Null => Some(None),
-                OrderedValue::String(text) => Some(Some(text.as_str())),
+                OrderedValue::Array(rules) if !agent.model_policies.is_empty() => Some(rules),
                 _ => None,
             })
-            .filter(|_| agent.effort.is_some());
-        let policy_efforts = agent
-            .model_policies
-            .iter()
-            .filter_map(|rule| rule.overrides.effort.as_deref());
-        uses.extend(
-            written
-                .into_iter()
-                .chain(policy_efforts.map(Some))
-                .map(|written| keys::Used::profile_effort(&definition.slug, written)),
-        );
+            .into_iter()
+            .flatten()
+            .filter_map(|rule| match rule {
+                OrderedValue::Object(rule) => match rule.get("override")? {
+                    OrderedValue::Object(overrides) => overrides.get("effort"),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .filter_map(written)
+            .map(|text| ("model-policies override `effort`", text));
+        uses.extend(own.into_iter().chain(overrides).map(|(label, text)| {
+            keys::Used::profile_effort(&definition.slug, label, text.as_deref())
+        }));
     }
     // Only a schema 1 package states its tool rules in a form an older Mars can misread.
     if uses.iter().any(|used| used.key == "schema") {

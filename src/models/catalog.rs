@@ -22,10 +22,23 @@ impl Provider {
     fn rows(&self) -> &[CachedModel] {
         self.rows.get_or_init(|| {
             let raw = self.raw.as_ref().expect("a provider without rows is raw");
-            // The snapshot is written from typed rows and replaced atomically, so a row that
-            // does not decode is a file another build wrote: its provider is empty.
+            // Reached for a provider [`Catalog::undecodable`] did not vouch for; the cache
+            // load vets every provider a command reads, so this is the rest, read as empty.
             serde_json::from_str(raw.get()).unwrap_or_default()
         })
+    }
+
+    fn decodes(&self) -> bool {
+        match (&self.raw, self.rows.get()) {
+            (_, Some(_)) | (None, _) => true,
+            (Some(raw), None) => match serde_json::from_str::<Vec<CachedModel>>(raw.get()) {
+                Ok(rows) => {
+                    let _ = self.rows.set(rows);
+                    true
+                }
+                Err(_) => false,
+            },
+        }
     }
 }
 
@@ -60,6 +73,16 @@ impl Catalog {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// The key of the first provider `needed` accepts whose rows do not decode. The snapshot is
+    /// written from typed rows, so this is a file another build wrote under the same name.
+    pub fn undecodable(&self, needed: impl Fn(&str) -> bool) -> Option<&str> {
+        self.0
+            .iter()
+            .filter(|provider| needed(&provider.key))
+            .find(|provider| !provider.decodes())
+            .map(|provider| provider.key.as_str())
     }
 
     /// The rows of every provider whose key `allowed` accepts.

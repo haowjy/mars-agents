@@ -47,6 +47,9 @@ struct Snapshot {
     fetched_at: Option<String>,
     #[serde(default)]
     revision: u64,
+    /// Set by a load that set the file aside: the provider whose rows did not decode.
+    #[serde(skip)]
+    unreadable: Option<String>,
 }
 
 /// What builds before the shared snapshot wrote into each project's `.mars/`: one flat list.
@@ -95,6 +98,9 @@ pub enum RefreshOutcome {
     PeerRefreshed,
     Refreshed {
         models_count: usize,
+        /// The provider whose rows did not decode in the snapshot this one replaces.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        replaced_unreadable: Option<String>,
     },
     Stale {
         refresh: BackgroundRefresh,
@@ -132,6 +138,12 @@ pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
         }
         RefreshOutcome::StaleFallback { reason } => Some(format!(
             "models cache refresh failed: {reason}; using stale cache"
+        )),
+        RefreshOutcome::Refreshed {
+            replaced_unreadable: Some(provider),
+            ..
+        } => Some(format!(
+            "models cache had unreadable rows for `{provider}`; refetched it"
         )),
         _ => None,
     }
@@ -257,6 +269,9 @@ struct CatalogCache {
     /// The project's `.mars/`, read only to seed a machine with no snapshot.
     seed_dir: Option<PathBuf>,
     ttl_hours: u32,
+    /// Providers a load must be able to decode: the project's, and the two Claude and Codex
+    /// read a model's reasoning from, which `catalog_providers` need not include.
+    needed: Vec<String>,
 }
 
 fn refresh_claim_is_owned(dir: &Path, token: &str) -> Result<bool, MarsError> {
@@ -294,7 +309,8 @@ pub fn ensure_fresh_with_catalog_providers(
     mode: RefreshMode,
     providers: &[String],
 ) -> Result<(ModelsCache, RefreshOutcome), MarsError> {
-    let (cache, outcome) = CatalogCache::new(Some(project_mars_dir), ttl_hours)?.ensure(mode)?;
+    let (cache, outcome) =
+        CatalogCache::new(Some(project_mars_dir), ttl_hours, providers)?.ensure(mode)?;
     Ok((view(cache, providers), outcome))
 }
 
@@ -304,12 +320,12 @@ pub fn run_background_refresh(
     expected_revision: u64,
     claim_token: &str,
 ) -> Result<(), MarsError> {
-    CatalogCache::new(None, ttl_hours)?.run_worker(expected_revision, claim_token)
+    CatalogCache::new(None, ttl_hours, &[])?.run_worker(expected_revision, claim_token)
 }
 
 /// The snapshot as it is on disk, filtered to `providers`, with no refresh.
 pub fn read_cache(project_mars_dir: &Path, providers: &[String]) -> Result<ModelsCache, MarsError> {
-    let snapshot = CatalogCache::new(Some(project_mars_dir), 0)?.load()?;
+    let snapshot = CatalogCache::new(Some(project_mars_dir), 0, providers)?.load()?;
     Ok(view(snapshot, providers))
 }
 
@@ -323,8 +339,15 @@ fn view(snapshot: Snapshot, providers: &[String]) -> ModelsCache {
 }
 
 impl CatalogCache {
-    fn new(seed_dir: Option<&Path>, ttl_hours: u32) -> Result<Self, MarsError> {
+    fn new(
+        seed_dir: Option<&Path>,
+        ttl_hours: u32,
+        providers: &[String],
+    ) -> Result<Self, MarsError> {
+        let mut needed = providers.to_vec();
+        needed.extend(["anthropic".to_string(), "openai".to_string()]);
         Ok(Self {
+            needed,
             dir: crate::platform::cache::global_cache_root()?,
             seed_dir: seed_dir.map(Path::to_path_buf),
             ttl_hours,
@@ -338,7 +361,19 @@ impl CatalogCache {
     /// The shared snapshot; a missing or unreadable one falls back to the seed, then to empty.
     fn load(&self) -> Result<Snapshot, MarsError> {
         match read_snapshot(&self.snapshot_path()) {
-            Ok(Some(snapshot)) => Ok(snapshot),
+            Ok(Some(snapshot)) => {
+                let needed = provider_filter(&self.needed);
+                match snapshot.catalog.undecodable(needed) {
+                    None => Ok(snapshot),
+                    Some(provider) => {
+                        tracing::debug!("models cache rows for {provider} do not decode");
+                        Ok(Snapshot {
+                            unreadable: Some(provider.to_string()),
+                            ..self.seed()
+                        })
+                    }
+                }
+            }
             Ok(None) => Ok(self.seed()),
             Err(err) => {
                 tracing::debug!("models cache read failed, treating as empty: {err}");
@@ -625,10 +660,17 @@ impl CatalogCache {
                     catalog: Catalog::from_rows(models),
                     fetched_at: Some(now_unix_secs()),
                     revision,
+                    unreadable: None,
                 };
                 write_snapshot(dir, &snapshot)?;
                 clear_fetch_fail_marker(dir);
-                Ok((snapshot, RefreshOutcome::Refreshed { models_count }))
+                Ok((
+                    snapshot,
+                    RefreshOutcome::Refreshed {
+                        models_count,
+                        replaced_unreadable: under_lock.unreadable,
+                    },
+                ))
             }
             Ok(_) => fallback_to_stale_or_error(
                 dir,

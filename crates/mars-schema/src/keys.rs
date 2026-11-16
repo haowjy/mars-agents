@@ -168,9 +168,9 @@ impl Used {
         }
     }
 
-    /// An effort an Agent's frontmatter writes, in `effort` or in a model policy's override,
-    /// as written: `null` is YAML null, anything else the text of a string.
-    pub fn profile_effort(agent: &str, written: Option<&str>) -> Self {
+    /// An effort an Agent's frontmatter writes, as written, named by `label` (`effort`, or a
+    /// model policy's override): `null` is YAML null, anything else the text of a string.
+    pub fn profile_effort(agent: &str, label: &str, written: Option<&str>) -> Self {
         let (value, shown) = match written {
             Some(text) => (text, format!("\"{text}\"")),
             None => ("null", "null".to_string()),
@@ -179,7 +179,7 @@ impl Used {
             surface: AgentProfile,
             key: "effort".into(),
             value: Some(value.into()),
-            at: format!("agent `{agent}` `effort` = {shown}"),
+            at: format!("agent `{agent}` {label} = {shown}"),
         }
     }
 

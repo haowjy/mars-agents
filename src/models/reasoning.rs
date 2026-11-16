@@ -4,7 +4,7 @@
 //! `openrouter/openai/o3` is toggle only. Each harness has one join, here, and every reader of
 //! a model's reasoning (launch, sync, the listing) goes through it.
 
-use mars_schema::agent::EffortRequest;
+use mars_schema::agent::{EffortLevel, EffortRequest};
 use mars_schema::effort::{
     EffortResolution, Levels, ModelReasoning, Move, MoveReason, harness_levels, resolve_effort,
 };
@@ -182,6 +182,14 @@ fn move_warning(
             ),
         };
     };
+    // Asking for `none` of a model that cannot switch reasoning off: its ladder is no more
+    // use to the reader than that.
+    if moved.from == EffortLevel::None && !model_levels.contains(EffortLevel::None) {
+        return format!(
+            "effort `none` → `{}`: `{model}` can't switch reasoning off",
+            to.as_str()
+        );
+    }
     // Name each side that limits the request: it lacks the level, or it is narrower than the
     // other side and so shaped where the level landed.
     let lacks = |levels: &Levels| !levels.contains(moved.from);

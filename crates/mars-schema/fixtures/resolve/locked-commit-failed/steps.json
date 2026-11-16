@@ -1,0 +1,35 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n"
+    },
+    "locked": {
+      "a": {
+        "url": "https://example.test/a",
+        "version": "v1.0.0",
+        "commit": "a6dfdeaa3a44a4c52d44284847d7160892b4017e"
+      }
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tree",
+            "url": "https://example.test/a",
+            "commit": "a6dfdeaa3a44a4c52d44284847d7160892b4017e",
+            "path": null
+          },
+          "failed": "503 from the host"
+        }
+      ]
+    }
+  ]
+}

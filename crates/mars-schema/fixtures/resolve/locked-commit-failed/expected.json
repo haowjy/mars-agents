@@ -1,0 +1,26 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "a6dfdeaa3a44a4c52d44284847d7160892b4017e",
+        "path": null
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "unavailable",
+      "need": {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "a6dfdeaa3a44a4c52d44284847d7160892b4017e",
+        "path": null
+      },
+      "reason": "503 from the host",
+      "message": "a: files of https://example.test/a at a6dfdeaa3a44a4c52d44284847d7160892b4017e: 503 from the host"
+    },
+    "diagnostics": []
+  }
+]

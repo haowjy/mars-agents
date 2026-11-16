@@ -9,16 +9,13 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
-use crate::types::{
-    CommitHash, ContentHash, DestPath, SourceId, SourceName, SourceOrigin, SourceUrl,
-};
-use mars_schema::names::SourceSubpath;
+use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {
     pub version: u32,
     #[serde(default)]
-    pub dependencies: IndexMap<SourceName, LockedSource>,
+    pub dependencies: IndexMap<SourceName, LockedDependency>,
     #[serde(default)]
     pub items: IndexMap<String, LockedItemV2>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -247,39 +244,7 @@ fn normalize_dest_path(s: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LockedSource {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<SourceUrl>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subpath: Option<SourceSubpath>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<CommitHash>,
-    /// The marketplace plugin installed from this source. `url`, `version` and `commit` above
-    /// are then the marketplace's own.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<String>,
-    /// Where `plugin`'s files came from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<LockedContent>,
-}
-
-/// The tree a marketplace plugin was read from. A plugin in the marketplace's own repository
-/// repeats the marketplace's `url` and `commit` with its path as `subpath`; with a marketplace
-/// at a local path, a local plugin has only its `subpath`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LockedContent {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<SourceUrl>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subpath: Option<SourceSubpath>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<CommitHash>,
-}
+pub use mars_schema::resolve::{LockedContent, LockedDependency};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockedItemV2 {
@@ -421,7 +386,7 @@ pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 struct LockFileWire {
     version: u32,
     #[serde(default)]
-    dependencies: IndexMap<SourceName, LockedSource>,
+    dependencies: IndexMap<SourceName, LockedDependency>,
     #[serde(default)]
     items: IndexMap<String, LockedItemV2>,
     #[serde(default)]
@@ -435,7 +400,7 @@ struct LockFileWire {
 #[derive(Deserialize)]
 struct LockFileV2Wire {
     #[serde(default)]
-    dependencies: IndexMap<SourceName, LockedSource>,
+    dependencies: IndexMap<SourceName, LockedDependency>,
     #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
 }
@@ -840,7 +805,7 @@ pub fn build(
     if has_self_items {
         dependencies.insert(
             local_source_name,
-            LockedSource {
+            LockedDependency {
                 url: None,
                 path: Some(".".into()),
                 subpath: None,
@@ -1320,35 +1285,13 @@ fn checksum_is_empty(checksum: &ContentHash) -> bool {
     checksum.as_ref().trim().is_empty()
 }
 
-fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedSource {
-    let (url, path, subpath) = match &node.source_id {
-        SourceId::Git { url, subpath, .. } => (Some(url.clone()), None, subpath.clone()),
-        SourceId::Path {
-            canonical, subpath, ..
-        } => (
-            None,
-            Some(canonical.to_string_lossy().to_string()),
-            subpath.clone(),
-        ),
-    };
-
-    LockedSource {
-        url,
-        path,
-        subpath,
-        version: node.resolved_ref.version_tag.clone(),
-        commit: node.resolved_ref.commit.clone(),
-        plugin: node
-            .rooted_ref
-            .plugin
-            .as_ref()
-            .and_then(|plugin| plugin.locked_name().map(str::to_owned)),
-        content: node
-            .rooted_ref
-            .plugin
-            .as_ref()
-            .and_then(|plugin| plugin.locked_content().cloned()),
-    }
+fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedDependency {
+    mars_schema::resolve::locked_dependency(
+        &(&node.source_id).into(),
+        node.resolved_ref.version_tag.as_deref(),
+        node.resolved_ref.commit.as_ref().map(AsRef::as_ref),
+        node.rooted_ref.plugin.as_ref(),
+    )
 }
 
 pub fn item_key(id: &ItemId) -> String {
@@ -1371,7 +1314,7 @@ mod tests {
         let mut dependencies = IndexMap::new();
         dependencies.insert(
             "base".into(),
-            LockedSource {
+            LockedDependency {
                 url: Some("https://github.com/org/base.git".into()),
                 path: None,
                 subpath: None,
@@ -2181,7 +2124,7 @@ installed_checksum = "sha256:bbb"
         let mut old_sources = IndexMap::new();
         old_sources.insert(
             git_name.clone(),
-            LockedSource {
+            LockedDependency {
                 url: Some("https://example.com/old.git".into()),
                 path: None,
                 subpath: None,
@@ -2208,7 +2151,7 @@ installed_checksum = "sha256:bbb"
         .unwrap();
 
         let base = &new_lock.dependencies["base"];
-        assert_eq!(base.url.as_ref(), Some(&git_url));
+        assert_eq!(base.url.as_ref(), Some(&git_url.to_string()));
         assert_eq!(
             base.subpath
                 .as_ref()
@@ -2296,7 +2239,7 @@ installed_checksum = "sha256:bbb"
             version: LOCK_VERSION,
             dependencies: IndexMap::from([(
                 local_source_name.clone(),
-                LockedSource {
+                LockedDependency {
                     url: None,
                     path: Some(".".into()),
                     subpath: None,

@@ -1,0 +1,7 @@
+{
+  "requested": "none",
+  "model": {
+    "reasoning": true
+  },
+  "host": "pi"
+}

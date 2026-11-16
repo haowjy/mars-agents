@@ -513,12 +513,23 @@ fn lower_agent(
             .unwrap_or(token),
         alias,
     });
-    effective = crate::build::policy::profile_for_model(
+    // A package build has no catalog: only the harness's own levels apply, which is also right
+    // for a plugin other people install.
+    let resolved = crate::build::policy::profile_for_model(
         &effective,
         overlay,
         input.settings_policies,
         model_ref,
+        &crate::build::policy::EffortRoute {
+            harness: tree_profile.harness,
+            catalog: &crate::models::catalog::Catalog::default(),
+            cursor_probe: None,
+        },
     );
+    effective = resolved.profile;
+    if let Some(moved) = resolved.effort_moved {
+        diag.record_effort_move(item.id.name.as_str(), tree_profile.harness.as_str(), &moved);
+    }
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
     diag.record_lossy_fields("agent", item.id.name.as_str(), &lowered.lossy_fields);

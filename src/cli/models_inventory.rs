@@ -5,11 +5,16 @@ use crate::curation::{CuratedRow, CuratedRules, Decision};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, NativeAuthCache};
 use crate::harness::registry;
+use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::possible::{ListingIssue, Provenance, SessionPossibleSource};
+use crate::models::probes::cursor::cursor_tiers;
+use crate::models::reasoning;
 use crate::models::{self, ModelsCache};
 use crate::routing::{self, RoutingInput, slug};
 use crate::types::MarsContext;
+use mars_schema::HarnessId;
+use mars_schema::effort::Levels;
 
 use super::models::{CatalogViewArgs, ListArgs, SessionProbeResolver};
 use super::models_common::{
@@ -52,6 +57,7 @@ pub(super) fn run_catalog(
                 serde_json::json!({
                     "id": model.id,
                     "provider": model.provider,
+                    "provider_key": model.provider_key,
                     "release_date": model.release_date,
                     "description": model.description,
                     "context_window": model.context_window,
@@ -61,6 +67,7 @@ pub(super) fn run_catalog(
                     "cost_cache_read": model.cost_cache_read,
                     "cost_cache_write": model.cost_cache_write,
                     "cost_reasoning": model.cost_reasoning,
+                    "reasoning": reasoning::listing(Some(model), &Levels::Any),
                 })
             })
             .collect::<Vec<_>>();
@@ -270,7 +277,14 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     let resolved = models::resolve_all_static(&aliases, &cache);
     let native_auth = NativeAuthCache::default();
     let catalog_slugs = models::catalog_model_slugs(&cache);
+    let cursor_slugs: Vec<String> = view
+        .rows
+        .iter()
+        .filter(|row| row.key.harness == HarnessId::Cursor)
+        .map(|row| row.key.harness_model_id.clone())
+        .collect();
     let mut rows = Vec::new();
+    let mut effort_texts = Vec::new();
     for row in &view.rows {
         if !args.all && !matches!(row.decision, Decision::Shown { .. }) {
             continue;
@@ -321,6 +335,13 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             Decision::Hidden { tier } => ("hidden", tier),
             Decision::Unmatched => ("unmatched", None),
         };
+        let reasoning = reasoning_of(row, &cache.catalog, &cursor_slugs);
+        effort_texts.push(
+            reasoning
+                .as_ref()
+                .map(|listing| listing.text())
+                .unwrap_or_default(),
+        );
         let entry = serde_json::json!({
             "harness": row.key.harness,
             "harness_model_id": row.key.harness_model_id,
@@ -333,6 +354,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             "curated": {"decision": decision, "tier": tier},
             "eligibility": eligibility,
             "reason": reason,
+            "reasoning": reasoning,
         });
         rows.push(entry);
     }
@@ -360,12 +382,12 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             .unwrap_or(0)
             .max(18);
         println!(
-            "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} ALIASES",
-            "HARNESS", "MODEL", "PROVIDER", "ORIGIN", "VIA", "CURATION", "ELIGIBILITY"
+            "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} {:<32} ALIASES",
+            "HARNESS", "MODEL", "PROVIDER", "ORIGIN", "VIA", "CURATION", "ELIGIBILITY", "EFFORT"
         );
-        for row in &rows {
+        for (row, effort) in rows.iter().zip(&effort_texts) {
             println!(
-                "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} {}",
+                "{:<10} {:<36} {:<16} {:<10} {:<via_width$} {:<18} {:<12} {:<32} {}",
                 row["harness"].as_str().unwrap_or(""),
                 row["harness_model_id"].as_str().unwrap_or(""),
                 row["provider"].as_str().unwrap_or("—"),
@@ -373,6 +395,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
                 row["via"].as_str().unwrap_or(""),
                 curated_text(row),
                 row["eligibility"].as_str().unwrap_or("—"),
+                effort,
                 row["aliases"]
                     .as_array()
                     .map(|a| a
@@ -385,6 +408,28 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         }
     }
     Ok(0)
+}
+
+/// The levels a row can send. Cursor's depend on its probe slugs, which the listing already
+/// holds as rows; every other harness has one table.
+fn reasoning_of(
+    row: &CuratedRow,
+    catalog: &Catalog,
+    cursor_slugs: &[String],
+) -> Option<reasoning::ReasoningListing> {
+    let harness = row.key.harness;
+    let identity = reasoning::catalog_identity(
+        catalog,
+        harness,
+        &row.key.model_id,
+        &row.key.harness_model_id,
+    )?;
+    let harness_set = if harness == HarnessId::Cursor {
+        cursor_tiers(&identity.model, cursor_slugs).map_or(Levels::Any, |tiers| tiers.levels())
+    } else {
+        reasoning::harness_set(harness)
+    };
+    reasoning::listing(reasoning::catalog_row(catalog, &identity), &harness_set)
 }
 
 fn assess(

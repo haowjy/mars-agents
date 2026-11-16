@@ -1,6 +1,6 @@
 //! Model-policy definition and validation shared by profiles and consumer config.
 
-use crate::agent::{ApprovalMode, EffortLevel, SandboxMode};
+use crate::agent::{ApprovalMode, EffortRequest, SandboxMode};
 use crate::network::NetworkPolicy;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
@@ -329,12 +329,18 @@ fn read_overrides(
             found,
             allowed: allowed_override_values(key),
         };
-        let Some(raw) = value.as_str() else {
+        // YAML `effort: null` is `auto`: the harness's own default, overriding lower layers.
+        let raw = if key == "effort" && value.is_null() {
+            Some("auto")
+        } else {
+            value.as_str()
+        };
+        let Some(raw) = raw else {
             errors.push(invalid(crate::ordered::plain(value)));
             continue;
         };
         let parsed = match key {
-            "effort" => EffortLevel::parse(raw).map(|value| value.as_str().to_string()),
+            "effort" => EffortRequest::parse(raw).map(|value| value.as_str().to_string()),
             "sandbox" => SandboxMode::parse(raw).map(|value| value.as_str().to_string()),
             "approval" => ApprovalMode::parse(raw).map(|value| value.as_str().to_string()),
             _ => NetworkPolicy::parse(raw).map(|value| value.as_str().to_string()),
@@ -355,7 +361,7 @@ fn read_overrides(
 
 fn allowed_override_values(key: &str) -> &'static str {
     match key {
-        "effort" => EffortLevel::ALLOWED,
+        "effort" => EffortRequest::ALLOWED,
         "sandbox" => SandboxMode::ALLOWED,
         "approval" => ApprovalMode::ALLOWED,
         "network" => NetworkPolicy::ALLOWED,

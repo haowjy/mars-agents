@@ -64,12 +64,61 @@ visibility = "exported"
     source_dir.to_path_buf()
 }
 
-/// The mars binary with no user `config.toml`: the developer's own settings must not reach a
-/// fixture. Helpers that test the user layer set `MARS_CONFIG_DIR` again.
+/// The mars binary with no user `config.toml` and its own cache root: the developer's own settings
+/// must not reach a fixture. Helpers that test the user layer set `MARS_CONFIG_DIR` again.
 pub fn mars() -> Command {
     let mut cmd = Command::cargo_bin("mars").unwrap();
-    cmd.env("MARS_CONFIG_DIR", no_user_config_dir());
+    cmd.env("MARS_CONFIG_DIR", no_user_config_dir())
+        .env("MARS_CACHE_DIR", fresh_cache_dir())
+        .env(
+            "MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS",
+            FIXTURE_AUTH_TIMEOUT_SECS,
+        );
     cmd
+}
+
+/// A fake harness answers its auth probe in milliseconds. Mars' own 2 s default would turn a
+/// loaded runner's slow spawn into an `unknown` auth state; a test of the timeout sets its own.
+const FIXTURE_AUTH_TIMEOUT_SECS: &str = "30";
+
+/// `mars()` with the cache root of a project whose test root is its parent directory: the one
+/// [`write_cache`] fills and [`configure_assert_cmd`] gives its command.
+pub fn mars_for(project_root: impl AsRef<Path>) -> Command {
+    let mut cmd = mars();
+    cmd.env("MARS_CACHE_DIR", cache_dir(project_root.as_ref()));
+    cmd
+}
+
+/// A cache root no other command sees: the models snapshot is per user, so a fixture that shared
+/// the developer's, or another test's, would read its catalog. The directories are removed when
+/// the test process exits.
+fn fresh_cache_dir() -> PathBuf {
+    use std::sync::{Mutex, Once, PoisonError, atomic::AtomicU32, atomic::Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    static DIRS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    static REMOVE_AT_EXIT: Once = Once::new();
+    extern "C" fn remove_all() {
+        for dir in DIRS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    REMOVE_AT_EXIT.call_once(|| {
+        // SAFETY: `remove_all` is a plain function that touches only the statics above.
+        unsafe { libc::atexit(remove_all) };
+    });
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "test-cache-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    DIRS.lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(dir.clone());
+    dir
 }
 
 /// A config directory that is never created.
@@ -182,8 +231,18 @@ pub fn sample_cached_models() -> Vec<Value> {
     ]
 }
 
+/// The shared models cache directory of a project whose test root is its parent directory.
+pub fn cache_dir(project_root: &Path) -> PathBuf {
+    project_root
+        .parent()
+        .expect("project root has a test root")
+        .join("mars-cache")
+}
+
+/// The shared models snapshot of a project whose test root is its parent directory, as
+/// `configure_assert_cmd` lays out `MARS_CACHE_DIR`.
 pub fn cache_path(project_root: &Path) -> PathBuf {
-    project_root.join(".mars").join("models-cache.json")
+    cache_dir(project_root).join("models-catalog-v2.json")
 }
 
 pub fn write_local_source_with_model_alias(
@@ -229,18 +288,50 @@ pub fn model_ids_from_catalog_json(stdout: &[u8]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Writes the shared snapshot: `models` are flat rows, grouped here by provider key the way
+/// the snapshot stores them (a row without `provider_key` is keyed by its lowercased display name).
 pub fn write_cache(project_root: &Path, models: Vec<Value>, fetched_at: &str) {
-    let mars_dir = project_root.join(".mars");
-    fs::create_dir_all(&mars_dir).expect("failed to create .mars directory");
+    let path = cache_path(project_root);
+    fs::create_dir_all(path.parent().unwrap()).expect("failed to create cache directory");
+    let mut providers: Vec<(String, Vec<Value>)> = Vec::new();
+    for mut model in models {
+        let key = model["provider_key"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                model["provider"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+            });
+        model["provider_key"] = json!(key);
+        match providers.iter_mut().find(|(existing, _)| *existing == key) {
+            Some((_, rows)) => rows.push(model),
+            None => providers.push((key, vec![model])),
+        }
+    }
     let cache = json!({
-        "models": models,
+        "providers": providers
+            .into_iter()
+            .map(|(key, models)| json!({ "key": key, "models": models }))
+            .collect::<Vec<_>>(),
         "fetched_at": fetched_at,
     });
     fs::write(
-        cache_path(project_root),
+        path,
         serde_json::to_vec_pretty(&cache).expect("failed to serialize cache fixture"),
     )
     .expect("failed to write cache fixture");
+}
+
+/// How many model rows a snapshot read by [`read_cache_json`] holds, across its providers.
+pub fn cached_model_count(cache: &Value) -> usize {
+    cache["providers"]
+        .as_array()
+        .expect("snapshot.providers should be an array")
+        .iter()
+        .map(|provider| provider["models"].as_array().map_or(0, Vec::len))
+        .sum()
 }
 
 pub fn read_cache_json(project_root: &Path) -> Value {
@@ -288,18 +379,22 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
-    cmd.env("MARS_MODELS_API_URL", api_url)
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
-        .env("APPDATA", &xdg_config)
-        .env("LOCALAPPDATA", &xdg_data)
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .env("XDG_DATA_HOME", &xdg_data)
-        .env("MARS_CONFIG_DIR", &mars_config)
-        .env("MARS_CACHE_DIR", &mars_cache)
-        .env("NO_COLOR", "1")
-        .env_remove("MARS_OFFLINE")
-        .env_remove("MERIDIAN_MANAGED");
+    cmd.env(
+        "MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS",
+        FIXTURE_AUTH_TIMEOUT_SECS,
+    )
+    .env("MARS_MODELS_API_URL", api_url)
+    .env("HOME", &home)
+    .env("USERPROFILE", &home)
+    .env("APPDATA", &xdg_config)
+    .env("LOCALAPPDATA", &xdg_data)
+    .env("XDG_CONFIG_HOME", &xdg_config)
+    .env("XDG_DATA_HOME", &xdg_data)
+    .env("MARS_CONFIG_DIR", &mars_config)
+    .env("MARS_CACHE_DIR", &mars_cache)
+    .env("NO_COLOR", "1")
+    .env_remove("MARS_OFFLINE")
+    .env_remove("MERIDIAN_MANAGED");
 }
 
 pub fn mars_cmd(project_root: &Path, temp_root: &Path, api_url: &str) -> Command {

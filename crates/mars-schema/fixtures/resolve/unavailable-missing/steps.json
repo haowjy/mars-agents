@@ -1,0 +1,44 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/a"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tree",
+            "url": "https://example.test/a",
+            "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+            "path": null
+          },
+          "missing": true
+        }
+      ]
+    }
+  ]
+}

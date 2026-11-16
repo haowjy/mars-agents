@@ -1,75 +1,17 @@
-//! Git source adapter — strategy and public API.
+//! Git source adapter: the repository's tags and refs, and a commit's content directory.
 //!
-//! Delegates to `git_cli` for git CLI operations and `archive` for
-//! GitHub archive download/extraction.
+//! Delegates to `git_cli` for git CLI operations and `archive` for GitHub archive
+//! download/extraction.
 
-use crate::diagnostic::DiagnosticCollector;
+use mars_schema::resolve::Tag;
+
 use crate::error::MarsError;
+use crate::source::GlobalCache;
 use crate::source::parse::extract_hostname;
-use crate::source::{AvailableVersion, GlobalCache, ResolvedRef};
-use crate::types::CommitHash;
+use std::path::PathBuf;
 
 use super::archive;
 use super::git_cli;
-
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedVersion {
-    pub tag: Option<String>,
-    pub version: Option<semver::Version>,
-    pub sha: String,
-}
-
-fn resolve_version(
-    url: &str,
-    version_req: Option<&str>,
-    diag: &mut DiagnosticCollector,
-) -> Result<ResolvedVersion, MarsError> {
-    if let Some(version_req) = version_req {
-        if let Some(requested_version) = mars_schema::version::parse_tag(version_req) {
-            let tags = ls_remote_tags(url)?;
-            let selected = tags
-                .into_iter()
-                .find(|tag| tag.tag == version_req || tag.version == requested_version)
-                .ok_or_else(|| MarsError::Source {
-                    source_name: url.to_string(),
-                    message: format!("version tag `{version_req}` not found"),
-                })?;
-
-            return Ok(ResolvedVersion {
-                tag: Some(selected.tag),
-                version: Some(selected.version),
-                sha: selected.commit_id,
-            });
-        }
-
-        let sha = ls_remote_ref(url, version_req)?;
-        return Ok(ResolvedVersion {
-            tag: None,
-            version: None,
-            sha,
-        });
-    }
-
-    let tags = ls_remote_tags(url)?;
-    if let Some(selected) = tags.last() {
-        return Ok(ResolvedVersion {
-            tag: Some(selected.tag.clone()),
-            version: Some(selected.version.clone()),
-            sha: selected.commit_id.clone(),
-        });
-    }
-
-    diag.warn_advisory(
-        "no-releases",
-        format!("no releases found for {url}, using latest commit from default branch"),
-    );
-    let sha = ls_remote_head(url)?;
-    Ok(ResolvedVersion {
-        tag: None,
-        version: None,
-        sha,
-    })
-}
 
 pub fn is_github_host(url: &str) -> bool {
     extract_hostname(url)
@@ -86,11 +28,7 @@ fn should_use_github_archive(url: &str) -> bool {
     trimmed.starts_with("https://") && is_github_host(trimmed)
 }
 
-pub fn list_versions(url: &str, _cache: &GlobalCache) -> Result<Vec<AvailableVersion>, MarsError> {
-    ls_remote_tags(url)
-}
-
-fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
+pub fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
     git_cli::ls_remote_ref(url, reference)
 }
 
@@ -98,7 +36,7 @@ pub(crate) fn ls_remote_head(url: &str) -> Result<String, MarsError> {
     git_cli::ls_remote_head(url)
 }
 
-pub fn ls_remote_tags(url: &str) -> Result<Vec<AvailableVersion>, MarsError> {
+pub fn ls_remote_tags(url: &str) -> Result<Vec<Tag>, MarsError> {
     git_cli::ls_remote_tags(url).map_err(|error| with_alias_hint(url, error))
 }
 
@@ -122,75 +60,24 @@ fn with_alias_hint(url: &str, error: MarsError) -> MarsError {
     MarsError::GitCli { command, message }
 }
 
-pub fn fetch(
-    url: &str,
-    version_req: Option<&str>,
-    source_name: &str,
-    cache: &GlobalCache,
-    diag: &mut DiagnosticCollector,
-) -> Result<ResolvedRef, MarsError> {
-    let remote_url = url.to_string();
-    let resolved = resolve_version(&remote_url, version_req, diag)?;
-
-    let tree_path = if should_use_github_archive(&remote_url) {
-        archive::fetch_archive(&remote_url, &resolved.sha, cache)?
-    } else {
-        // A tag is fetched by name; a ref that is not a tag is fetched by its hash.
-        git_cli::fetch_git_content(
-            &remote_url,
-            resolved.tag.as_deref(),
-            resolved.tag.is_none(),
-            &resolved.sha,
-            cache,
-        )?
-    };
-
-    Ok(ResolvedRef {
-        source_name: source_name.into(),
-        version: resolved.version,
-        version_tag: resolved.tag,
-        commit: Some(CommitHash::from(resolved.sha)),
-        tree_path,
-    })
-}
-
-pub fn fetch_commit(
+/// The content directory of `commit` (see `git_cli::fetch_git_content`). `tag` is the tag the
+/// commit was listed under, which git fetches by name; any other commit is fetched by hash. A
+/// commit the repository does not have is `LockedCommitUnreachable`; every other error says
+/// nothing about the commit.
+pub fn fetch_content(
     url: &str,
     commit: &str,
-    source_name: &str,
+    tag: Option<&str>,
     cache: &GlobalCache,
-    _diag: &mut DiagnosticCollector,
-) -> Result<ResolvedRef, MarsError> {
-    let remote_url = url.to_string();
-    let tree_path = if should_use_github_archive(&remote_url) {
-        match archive::fetch_archive(&remote_url, commit, cache) {
-            Ok(path) => path,
-            Err(MarsError::Http { status: 404, .. }) => {
-                return Err(MarsError::LockedCommitUnreachable {
-                    commit: commit.to_string(),
-                    url: remote_url,
-                });
-            }
-            Err(err) => return Err(err),
-        }
-    } else {
-        match git_cli::fetch_git_content(&remote_url, None, true, commit, cache) {
-            Ok(path) => path,
-            Err(MarsError::GitCli { .. }) => {
-                return Err(MarsError::LockedCommitUnreachable {
-                    commit: commit.to_string(),
-                    url: remote_url,
-                });
-            }
-            Err(err) => return Err(err),
-        }
-    };
-
-    Ok(ResolvedRef {
-        source_name: source_name.into(),
-        version: None,
-        version_tag: None,
-        commit: Some(CommitHash::from(commit)),
-        tree_path,
-    })
+) -> Result<PathBuf, MarsError> {
+    if should_use_github_archive(url) {
+        return match archive::fetch_archive(url, commit, cache) {
+            Err(MarsError::Http { status: 404, .. }) => Err(MarsError::LockedCommitUnreachable {
+                commit: commit.to_string(),
+                url: url.to_string(),
+            }),
+            other => other,
+        };
+    }
+    git_cli::fetch_git_content(url, tag, tag.is_none(), commit, cache)
 }

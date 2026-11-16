@@ -41,7 +41,34 @@ pub struct Routing {
     /// Diagnostic only: probe/catalog slug candidates for the selected harness.
     /// Consumers should run `harness_model` verbatim and ignore this unless debugging.
     pub candidate_slugs: Vec<String>,
+    /// The models.dev row of the model the harness runs, or `null` when there is none. Mars
+    /// joins the row once, per harness, for effort; consumers price from it instead of
+    /// re-joining.
+    pub catalog_row: Option<CatalogRow>,
     pub route_trace: crate::routing::report::RouteDecisionReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CatalogRow {
+    pub provider_key: String,
+    pub id: String,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
+    pub cost_cache_write: Option<f64>,
+}
+
+impl From<&mars_schema::models::CachedModel> for CatalogRow {
+    fn from(row: &mars_schema::models::CachedModel) -> Self {
+        Self {
+            provider_key: row.provider_key.clone(),
+            id: row.id.clone(),
+            cost_input: row.cost_input,
+            cost_output: row.cost_output,
+            cost_cache_read: row.cost_cache_read,
+            cost_cache_write: row.cost_cache_write,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

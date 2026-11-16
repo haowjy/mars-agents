@@ -145,11 +145,15 @@ impl SandboxMode {
     }
 }
 
-/// Effort level field.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// A reasoning level, in ladder order: `none < minimal < low < medium < high < xhigh < max`.
+/// These are every effort value models.dev lists for any model.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum EffortLevel {
     None,
+    Minimal,
     Low,
     Medium,
     High,
@@ -159,24 +163,26 @@ pub enum EffortLevel {
 }
 
 impl EffortLevel {
-    /// The values `parse` accepts, as the invalid-value errors list them.
-    pub const ALLOWED: &'static str = "none, low, medium, high, xhigh, max";
+    /// The ladder, lowest first.
+    pub const LADDER: [EffortLevel; 7] = [
+        Self::None,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
 
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_ascii_lowercase().as_str() {
-            "none" => Some(Self::None),
-            "low" => Some(Self::Low),
-            "medium" => Some(Self::Medium),
-            "high" => Some(Self::High),
-            "xhigh" => Some(Self::XHigh),
-            "max" => Some(Self::Max),
-            _ => None,
-        }
+        let s = s.to_ascii_lowercase();
+        Self::LADDER.into_iter().find(|level| level.as_str() == s)
     }
 
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::Minimal => "minimal",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
@@ -186,9 +192,44 @@ impl EffortLevel {
     }
 }
 
-/// Reads the same spellings `parse` does, so a config field typed `EffortLevel` holds the
-/// canonical level and no later reader re-parses a string.
-impl<'de> serde::Deserialize<'de> for EffortLevel {
+/// What a layer asks for: a level, or the harness's own default (`auto`, or YAML `null`).
+/// A separate type so `auto` never meets ladder order. A layer field is `Option<EffortRequest>`:
+/// `None` is a key left out, which falls through to the next layer, and `Some(Default)` overrides
+/// the lower layers and sends no effort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EffortRequest {
+    Default,
+    Level(EffortLevel),
+}
+
+impl EffortRequest {
+    /// The values `parse` accepts, as the invalid-value errors list them.
+    pub const ALLOWED: &'static str = "auto, none, minimal, low, medium, high, xhigh, max";
+
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("auto") {
+            return Some(Self::Default);
+        }
+        EffortLevel::parse(s).map(Self::Level)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "auto",
+            Self::Level(level) => level.as_str(),
+        }
+    }
+}
+
+impl serde::Serialize for EffortRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Reads the same spellings `parse` does, so a config field typed `EffortRequest` holds the
+/// canonical request and no later reader re-parses a string.
+impl<'de> serde::Deserialize<'de> for EffortRequest {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
         Self::parse(&text).ok_or_else(|| {
@@ -236,7 +277,7 @@ pub struct AgentProfile {
     pub network: Option<NetworkPolicy>,
     pub network_allow: PermissionSet<NetworkHost>,
     pub network_deny: PermissionSet<NetworkHost>,
-    pub effort: Option<EffortLevel>,
+    pub effort: Option<EffortRequest>,
 
     // --- Tool fields ---
     pub skills: SkillsSpec,
@@ -713,10 +754,16 @@ pub(crate) fn read_fields(
             "network-deny" => {
                 profile.network_deny = read_host_set("network-deny", value, false, diags);
             }
+            "effort" if value.is_null() => profile.effort = Some(EffortRequest::Default),
             "effort" => {
                 profile.effort = read_string(value, "effort", false, diags).and_then(|effort| {
-                    EffortLevel::parse(&effort).or_else(|| {
-                        push_agent_invalid(diags, key_path("effort"), effort, EffortLevel::ALLOWED);
+                    EffortRequest::parse(&effort).or_else(|| {
+                        push_agent_invalid(
+                            diags,
+                            key_path("effort"),
+                            effort,
+                            EffortRequest::ALLOWED,
+                        );
                         None
                     })
                 });

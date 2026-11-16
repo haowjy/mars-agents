@@ -15,7 +15,7 @@
         "path": [
           "effort"
         ],
-        "message": "agent `g`: `effort: 2` ignored (not a string); use none, low, medium, high, xhigh or max"
+        "message": "agent `g`: `effort: 2` ignored (not a string); use auto, none, minimal, low, medium, high, xhigh or max"
       },
       {
         "code": "field.execution-ignored",

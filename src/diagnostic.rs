@@ -136,6 +136,8 @@ pub struct DiagnosticCollector {
     rerun_verbose: &'static str,
     /// Every lossy field recorded so far; `drain` renders them for `lossiness_mode`.
     lossy_records: Vec<LossRecord>,
+    /// Agents whose effort moved to a level the model takes; `drain` renders them.
+    effort_moves: Vec<crate::compiler::lossiness::EffortMoveRecord>,
     /// Files that carry each repeated `field.unknown` note, by the warning's own text.
     unknown_field_sites: std::collections::HashMap<String, Vec<String>>,
 }
@@ -159,6 +161,7 @@ impl DiagnosticCollector {
             lossiness_mode,
             rerun_verbose: "mars sync --verbose",
             lossy_records: Vec::new(),
+            effort_moves: Vec::new(),
             unknown_field_sites: std::collections::HashMap::new(),
         }
     }
@@ -214,46 +217,7 @@ impl DiagnosticCollector {
     }
 
     pub(crate) fn record_engine_fallback(&mut self, fallback: crate::resolve::EngineFallback) {
-        if let Some(existing) = self
-            .engine_fallbacks
-            .iter_mut()
-            .find(|existing| existing.source == fallback.source)
-        {
-            for skipped in fallback.skipped {
-                if let Some(recorded) = existing
-                    .skipped
-                    .iter_mut()
-                    .find(|recorded| recorded.version == skipped.version)
-                {
-                    *recorded = skipped;
-                } else {
-                    existing.skipped.push(skipped);
-                }
-            }
-            for engine in fallback.engines {
-                if !existing.engines.contains(&engine) {
-                    existing.engines.push(engine);
-                }
-            }
-        } else {
-            self.engine_fallbacks.push(fallback);
-        }
-    }
-
-    pub(crate) fn reconcile_engine_fallbacks(&mut self, graph: &crate::resolve::ResolvedGraph) {
-        self.engine_fallbacks.retain_mut(|fallback| {
-            let Some(node) = graph.nodes.get(fallback.source.as_str()) else {
-                return false;
-            };
-            fallback.selected_version = node
-                .resolved_ref
-                .version
-                .as_ref()
-                .map(ToString::to_string)
-                .or_else(|| node.resolved_ref.version_tag.clone())
-                .unwrap_or_else(|| "HEAD/path".to_string());
-            true
-        });
+        self.engine_fallbacks.push(fallback);
     }
 
     pub(crate) fn take_engine_fallbacks(&mut self) -> Vec<crate::resolve::EngineFallback> {
@@ -276,6 +240,25 @@ impl DiagnosticCollector {
                 item_name: item_name.to_string(),
                 field: field.clone(),
             }));
+    }
+
+    /// Buffer an Agent's effort move for `harness`; `drain` renders it by mode.
+    pub(crate) fn record_effort_move(
+        &mut self,
+        agent: &str,
+        harness: &str,
+        warning: &crate::models::reasoning::EffortWarning,
+    ) {
+        if !self.lossiness_mode.surfaces_lossiness() {
+            return;
+        }
+        self.effort_moves
+            .push(crate::compiler::lossiness::EffortMoveRecord {
+                agent: agent.to_string(),
+                harness: harness.to_string(),
+                message: warning.message.clone(),
+                not_sent: warning.not_sent,
+            });
     }
 
     pub fn error(&mut self, code: impl Into<Cow<'static, str>>, message: impl Into<String>) {
@@ -324,9 +307,14 @@ impl DiagnosticCollector {
         self.warn_with_category(code, message, DiagnosticCategory::Advisory);
     }
 
-    pub(crate) fn warn_once(&mut self, code: &'static str, message: impl Into<String>) {
+    pub(crate) fn warn_once(
+        &mut self,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        let code = code.into();
         let message = message.into();
-        if !self.has(code, &message) {
+        if !self.has(&code, &message) {
             self.warn(code, message);
         }
     }
@@ -418,6 +406,13 @@ impl DiagnosticCollector {
             self.lossiness_mode,
             self.rerun_verbose,
         ));
+        let moves = std::mem::take(&mut self.effort_moves);
+        crate::compiler::lossiness::render_effort_moves(
+            &moves,
+            self.lossiness_mode,
+            self.rerun_verbose,
+            &mut self.diagnostics,
+        );
         std::mem::take(&mut self.diagnostics)
     }
 }
@@ -491,61 +486,6 @@ pub fn compatibility_preflight(min_required: Option<&str>) -> Result<Option<Diag
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn collector_merges_engine_fallbacks_by_source_and_deduplicates_details() {
-        use crate::resolve::{
-            EngineFallback, EngineFallbackRequirement, EngineFallbackSkippedVersion,
-        };
-
-        let mut coll = DiagnosticCollector::new();
-        coll.record_engine_fallback(EngineFallback {
-            source: "pkg".to_string(),
-            skipped: vec![EngineFallbackSkippedVersion {
-                version: "3.0.0".to_string(),
-                requirements: vec![EngineFallbackRequirement {
-                    engine: "mars".to_string(),
-                    requirement: ">=3".to_string(),
-                }],
-            }],
-            selected_version: "2.0.0".to_string(),
-            engines: vec!["mars".to_string()],
-        });
-        coll.record_engine_fallback(EngineFallback {
-            source: "pkg".to_string(),
-            skipped: vec![
-                EngineFallbackSkippedVersion {
-                    version: "3.0.0".to_string(),
-                    requirements: vec![EngineFallbackRequirement {
-                        engine: "mars".to_string(),
-                        requirement: ">=4".to_string(),
-                    }],
-                },
-                EngineFallbackSkippedVersion {
-                    version: "2.0.0".to_string(),
-                    requirements: vec![EngineFallbackRequirement {
-                        engine: "meridian".to_string(),
-                        requirement: ">=2".to_string(),
-                    }],
-                },
-            ],
-            selected_version: "1.0.0".to_string(),
-            engines: vec!["mars".to_string(), "meridian".to_string()],
-        });
-
-        let fallbacks = coll.take_engine_fallbacks();
-        assert_eq!(fallbacks.len(), 1);
-        assert_eq!(
-            fallbacks[0]
-                .skipped
-                .iter()
-                .map(|skipped| skipped.version.as_str())
-                .collect::<Vec<_>>(),
-            vec!["3.0.0", "2.0.0"]
-        );
-        assert_eq!(fallbacks[0].skipped[0].requirements[0].requirement, ">=4");
-        assert_eq!(fallbacks[0].engines, vec!["mars", "meridian"]);
-    }
 
     fn meridian_only(field: &str) -> LossyField {
         LossyField {

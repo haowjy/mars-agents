@@ -1,0 +1,75 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/mk"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/mk",
+        "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+        "path": null
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "ref",
+        "url": "https://example.test/pl",
+        "ref": "HEAD"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/pl",
+        "commit": "8e3ba1fbef5e8f408a9df0a9e60268d153dc7319",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "remote": {
+          "url": "example.test/mk",
+          "version": "v1.0.0",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "plugin": "remote",
+          "content": {
+            "url": "example.test/pl",
+            "commit": "8e3ba1fbef5e8f408a9df0a9e60268d153dc7319"
+          }
+        }
+      },
+      "dependencies": {
+        "remote": {
+          "url": "example.test/mk",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "subpath": null,
+          "version": "v1.0.0",
+          "content": {
+            "url": "example.test/pl",
+            "subpath": null,
+            "commit": "8e3ba1fbef5e8f408a9df0a9e60268d153dc7319"
+          },
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": "^1"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/mk"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/mk",
+        "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "foo": {
+          "url": "example.test/mk",
+          "version": "v1.0.0",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "plugin": "foo",
+          "content": {
+            "url": "example.test/mk",
+            "subpath": "plugins/foo",
+            "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe"
+          }
+        }
+      },
+      "dependencies": {
+        "foo": {
+          "url": "example.test/mk",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "subpath": null,
+          "version": "v1.0.0",
+          "content": {
+            "url": "example.test/mk",
+            "subpath": "plugins/foo",
+            "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe"
+          },
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": "^1"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

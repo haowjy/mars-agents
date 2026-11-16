@@ -236,7 +236,7 @@ pub enum MarsError {
     Link { target: String, message: String },
 
     #[error(
-        "models cache is empty and cannot be refreshed: {reason}. Run `{cmd}` to populate it.",
+        "models cache is unavailable: {reason}. Run `{cmd}` to populate it.",
         cmd = managed_cmd("mars models refresh"),
     )]
     ModelCacheUnavailable { reason: String },

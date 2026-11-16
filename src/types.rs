@@ -295,6 +295,56 @@ impl SourceId {
     }
 }
 
+impl From<&mars_schema::resolve::SourceId> for SourceId {
+    fn from(id: &mars_schema::resolve::SourceId) -> Self {
+        match id {
+            mars_schema::resolve::SourceId::Git {
+                url,
+                subpath,
+                plugin,
+            } => Self::Git {
+                url: SourceUrl::from(url.as_str()),
+                subpath: subpath.clone(),
+                plugin: plugin.clone(),
+            },
+            mars_schema::resolve::SourceId::Path {
+                canonical,
+                subpath,
+                plugin,
+            } => Self::Path {
+                canonical: PathBuf::from(canonical),
+                subpath: subpath.clone(),
+                plugin: plugin.clone(),
+            },
+        }
+    }
+}
+
+impl From<&SourceId> for mars_schema::resolve::SourceId {
+    fn from(id: &SourceId) -> Self {
+        match id {
+            SourceId::Git {
+                url,
+                subpath,
+                plugin,
+            } => Self::Git {
+                url: url.to_string(),
+                subpath: subpath.clone(),
+                plugin: plugin.clone(),
+            },
+            SourceId::Path {
+                canonical,
+                subpath,
+                plugin,
+            } => Self::Path {
+                canonical: canonical.to_string_lossy().into_owned(),
+                subpath: subpath.clone(),
+                plugin: plugin.clone(),
+            },
+        }
+    }
+}
+
 impl fmt::Display for SourceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (subpath, plugin) = match self {

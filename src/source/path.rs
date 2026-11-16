@@ -1,19 +1,17 @@
 //! Path source adapter — resolves local filesystem paths.
 //!
 //! Path sources are always "live" — no caching, no copying.
-//! Returns the resolved path directly.
 
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::source::ResolvedRef;
-use crate::types::SourceName;
 
+/// The canonical directory `path` names (a relative one is relative to `project_root`).
 pub fn fetch_path(
     path: &Path,
     project_root: &Path,
     source_name: &str,
-) -> Result<ResolvedRef, MarsError> {
+) -> Result<PathBuf, MarsError> {
     let resolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -36,13 +34,7 @@ pub fn fetch_path(
         });
     }
 
-    Ok(ResolvedRef {
-        source_name: SourceName::from(source_name),
-        version: None,
-        version_tag: None,
-        commit: None,
-        tree_path: resolved,
-    })
+    Ok(resolved)
 }
 
 fn canonicalize_path(path: &Path, source_name: &str) -> Result<PathBuf, MarsError> {

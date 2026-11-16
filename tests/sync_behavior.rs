@@ -789,7 +789,7 @@ path = "{}"
         ))
         .unwrap();
 
-    mars()
+    mars_for(project.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
@@ -1295,6 +1295,7 @@ path = "{}"
         &fresh_fetched_at(),
     );
     let output = mars()
+        .env("MARS_CACHE_DIR", cache_dir(project.path()))
         .args([
             "--json",
             "models",

@@ -1,0 +1,19 @@
+{
+  "requested": "minimal",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    ]
+  },
+  "host": "pi"
+}

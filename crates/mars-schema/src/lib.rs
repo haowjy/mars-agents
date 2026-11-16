@@ -18,6 +18,7 @@ pub mod inspect;
 pub mod manifest;
 pub mod normalize;
 pub mod read;
+pub mod resolve;
 pub mod selection;
 pub mod skill;
 pub mod tree;
@@ -46,6 +47,7 @@ pub mod tool_project;
 pub mod tool_rule_map;
 
 pub mod model_policy;
+pub mod models;
 pub mod names;
 pub mod network;
 pub mod ordered;
@@ -53,6 +55,7 @@ pub mod permission_set;
 
 pub mod diagnostic;
 pub mod edit;
+pub mod effort;
 pub mod package;
 pub mod package_tools;
 pub mod plugin_metadata;

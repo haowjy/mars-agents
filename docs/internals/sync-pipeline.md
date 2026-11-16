@@ -106,7 +106,7 @@ Then folds the layers into `EffectiveConfig`, lowest first: user `config.toml`, 
 
 Fetches sources, resolves concrete versions, and prepares each package.
 
-**Preparation (dependency packages).** After selecting a concrete version and applying `subpath` (or fetching a marketplace plugin's files), the resolver hands the authored tree to `package_prepare::prepare_rooted`, which calls `mars_schema::normalize` and keeps the result, a `Prepared`, on the graph node. The authored tree is never modified. See [Preparation and the gate](#preparation-and-the-gate).
+**Preparation (dependency packages).** After selecting a concrete version and applying `subpath` (or fetching a marketplace plugin's files), the resolver core (`mars_schema::resolve`) reads the tree through the answerer, calls `mars_schema::normalize` and keeps the result, a `Prepared`, on the graph node. The authored tree is never modified. See [Preparation and the gate](#preparation-and-the-gate).
 
 **Algorithm (src/resolve/mod.rs):**
 1. Fetch dependencies from EffectiveConfig

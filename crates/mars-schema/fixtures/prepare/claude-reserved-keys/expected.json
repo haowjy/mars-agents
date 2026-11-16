@@ -150,7 +150,7 @@
         "path": [
           "effort"
         ],
-        "message": "`effort` is not valid in schema v1 (agent field `effort` has invalid value `ultra`; allowed: none, low, medium, high, xhigh, max); it was dropped, because Mars lowers `effort` itself and an override would not carry it"
+        "message": "`effort` is not valid in schema v1 (agent field `effort` has invalid value `ultra`; allowed: auto, none, minimal, low, medium, high, xhigh, max); it was dropped, because Mars lowers `effort` itself and an override would not carry it"
       },
       {
         "code": "field.restriction-lost",

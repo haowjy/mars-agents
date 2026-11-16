@@ -314,4 +314,60 @@ for (const lone of ["\ud800x", "x\udfff"]) {
 }
 assert.equal(wasm.emitValue("\ud83d\ude00", 0), '"😀"', "a valid surrogate pair is fine");
 
+// resolve: a case is a base input and the answers each call adds to the ones before it; every
+// call's output equals expected.json. Fixtures hold file text, the package takes bytes.
+const encoder = new TextEncoder();
+for (const name of cases("resolve")) {
+  const { input, steps } = json("resolve", name, "steps.json");
+  const expected = json("resolve", name, "expected.json");
+  assert.equal(steps.length, expected.length, `resolve/${name} steps`);
+  const answers = [];
+  steps.forEach((step, index) => {
+    for (const answer of step.answers) {
+      answers.push(answer.files
+        ? { ...answer, files: Object.fromEntries(Object.entries(answer.files).map(([file, body]) => [file, encoder.encode(body)])) }
+        : answer);
+    }
+    check(wasm.resolve({ ...input, answers }), expected[index], `resolve/${name}/${index}`);
+  });
+}
+{
+  const input = { root: { manifest: "" }, engine: { mars: "0.35.0" }, answers: [] };
+  const invalid = (change, label) => assert.throws(() => wasm.resolve({ ...input, ...change }),
+    (e) => e.code === "input.invalid", `resolve ${label} throws input.invalid`);
+  assert.deepStrictEqual(wasm.resolve(input), { resolved: { lock: {}, dependencies: {} }, diagnostics: [] });
+  invalid({ stray: 1 }, "an unknown field");
+  invalid({ root: {} }, "a root without a manifest");
+  invalid({ root: { manifest: "[dependencies" } }, "a manifest that is not TOML");
+  invalid({ root: { manifest: "[dependencies.a]\nurl = \"u\"\npath = \"p\"\n" } }, "an entry with url and path");
+  invalid({ engine: undefined }, "no engine");
+  invalid({ answers: [{ commit: "c" }] }, "an answer with no need");
+  invalid({ answers: [{ need: { kind: "tags", url: "u" } }] }, "an answer that says nothing");
+  invalid({ answers: [{ need: { kind: "tags", url: "u" }, commit: "c" }] }, "a commit for a tags need");
+  invalid({ answers: [{ need: { kind: "tags", url: "u" }, missing: false }] }, "missing: false");
+  invalid({ answers: [{ url: "u", commit: "c", files: {} }] }, "a tree answer without a path");
+  invalid({ answers: [{ url: "u", commit: "c", path: null, files: { "../x": new Uint8Array() } }] }, "a file path that escapes");
+  invalid({ locked: { a: { subpath: "../x" } } }, "a locked subpath that escapes");
+  invalid({ refresh: "some" }, "a refresh that is not `all` or names");
+  invalid({ supplied: { a: { manifest: "" } } }, "a supplied manifest");
+  // A running version that is not semver is a failure of the resolution, with Mars's message.
+  const bad = wasm.resolve({ ...input, engine: { mars: "latest" } });
+  assert.equal(bad.failed.kind, "engine-version-invalid");
+  assert.equal(bad.failed.engine, "mars");
+  checked++;
+}
+
+// effort, aliases and the ladder: the pure parts of `mars models`
+for (const name of cases("effort")) {
+  const { requested, model, host } = json("effort", name, "request.json");
+  check(wasm.resolveEffort(requested, model, host), json("effort", name, "expected.json"), `effort/${name}`);
+}
+for (const name of cases("alias")) {
+  const { rows, options } = json("alias", name, "request.json");
+  check(wasm.resolveAlias(rows, options), json("alias", name, "expected.json"), `alias/${name}`);
+}
+check(wasm.effortLevels(), json("effort-levels", "expected.json"), "effortLevels");
+assert.equal(attempt(() => wasm.resolveEffort("loud", null, "claude")).error?.code, "input.invalid", "unknown effort");
+assert.equal(attempt(() => wasm.resolveEffort("high", null, "gemini")).error?.code, "input.invalid", "unknown host");
+
 console.log(`mars-schema-wasm fixtures passed (${checked} checks)`);

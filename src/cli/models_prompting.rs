@@ -251,6 +251,7 @@ fn prompt_target_for_agent(
             harness_override: None,
             excluded_harnesses: &[],
             effort_override: None,
+            config_effort: None,
             approval_override: None,
             sandbox_override: None,
             network_override: None,
@@ -353,11 +354,8 @@ fn prompt_model_cache(
     let providers = catalog_providers(project_config);
     models::ensure_fresh_with_catalog_providers(&mars_dir, ttl, refresh.catalog_mode, &providers)
         .map(|(cache, _)| cache)
-        .or_else(|_| models::read_cache(&mars_dir))
-        .unwrap_or(models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        })
+        .or_else(|_| models::read_cache(&mars_dir, &providers))
+        .unwrap_or_default()
 }
 
 fn model_name_for_alias(

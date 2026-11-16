@@ -1,0 +1,82 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n\n[dependencies.c]\nurl = \"https://example.test/c\"\nversion = \"^2\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/a"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+            }
+          ]
+        },
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/c"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "3788b5d98379f3c96a765facb583a37813871401"
+            },
+            {
+              "tag": "v2.0.0",
+              "commit": "43ed37988661bc39cefe262572d1eba61dc4ad88"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/a",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies.c]\nurl = \"https://example.test/c\"\nversion = \"^1\"\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.0.0\n---\nbody a 1.0.0\n"
+          }
+        },
+        {
+          "url": "https://example.test/c",
+          "commit": "43ed37988661bc39cefe262572d1eba61dc4ad88",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"c\"\nversion = \"2.0.0\"\n\n",
+            "skills/c-skill/SKILL.md": "---\nname: c-skill\ndescription: c 2.0.0\n---\nbody c 2.0.0\n"
+          }
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/c",
+          "commit": "3788b5d98379f3c96a765facb583a37813871401",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"c\"\nversion = \"1.0.0\"\n\n",
+            "skills/c-skill/SKILL.md": "---\nname: c-skill\ndescription: c 1.0.0\n---\nbody c 1.0.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

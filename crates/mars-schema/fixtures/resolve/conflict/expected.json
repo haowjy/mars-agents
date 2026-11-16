@@ -1,0 +1,58 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      },
+      {
+        "kind": "tags",
+        "url": "https://example.test/c"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      },
+      {
+        "kind": "tree",
+        "url": "https://example.test/c",
+        "commit": "43ed37988661bc39cefe262572d1eba61dc4ad88",
+        "path": null
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/c",
+        "commit": "3788b5d98379f3c96a765facb583a37813871401",
+        "path": null
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "conflict",
+      "name": "c",
+      "requesters": [
+        {
+          "by": "a",
+          "constraint": "^1"
+        },
+        {
+          "by": "root",
+          "constraint": "^2"
+        }
+      ],
+      "message": "version conflict for `c`: no version satisfies all constraints:\n  `a` requires ^1\n  `mars.toml` requires ^2\navailable versions: [1.0.0, 2.0.0]"
+    },
+    "diagnostics": []
+  }
+]

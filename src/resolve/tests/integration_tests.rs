@@ -305,7 +305,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,
@@ -624,7 +624,7 @@ fn restart_fresh_context_selects_new_transitive_dependency_items() {
 }
 
 #[test]
-fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
+fn latest_keeps_the_locked_commit_when_the_newest_version_is_the_locked_one() {
     let dir = TempDir::new().unwrap();
     let tree_shared = dir.path().join("shared");
     let tree_b = dir.path().join("b");
@@ -655,7 +655,7 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "shared".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/shared.git".into()),
             path: None,
             subpath: None,
@@ -673,8 +673,8 @@ fn latest_revisit_ignores_locked_commit_even_when_version_matches() {
     );
     assert_eq!(
         graph.nodes["shared"].resolved_ref.commit.as_deref(),
-        Some("mock-commit"),
-        "`latest` must force current resolution instead of replaying the locked commit"
+        Some(locked_commit),
+        "an existing lock keeps the id it holds when `latest` selects the locked version"
     );
 }
 
@@ -697,7 +697,7 @@ fn frozen_rejects_engine_incompatible_lock() {
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
         "a".into(),
-        crate::lock::LockedSource {
+        crate::lock::LockedDependency {
             url: Some("https://example.com/a.git".into()),
             path: None,
             subpath: None,

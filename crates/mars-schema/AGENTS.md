@@ -32,9 +32,30 @@ and rules, so never add a binary-side copy.
 - Report wrong-transport MCP server fields as ignored rather than failing the parse,
   so a usable server can still install.
 
+## Resolution
+
+`resolve::resolve` is one pure function over an `Answers` lookup: it decides versions and never fetches, so `mars sync` (answering each lookup as it is asked) and Flow (answering from a map) cannot choose differently. Keep it free of I/O and of any map whose iteration order reaches the result: `BTreeMap` or sorted, so the same answers give the same outcome, restarts included. A tree answer is a `TreeSource` read on demand, never a copy of the files, and `bounds.bytes` counts what is read through it. `Failure::message` is the one formatter of a failure's text; the CLI maps a failure to its own error type and keeps the text. `Answer::Failed(FailedFetch)` says why a lookup failed: a fetch's text, or a wrong `subpath`, which the core reports as `Failure::Subpath` itself, so no answerer rebuilds a failure from a side map. A version chosen before a restart (`Chosen`) and an engine exclusion belong to the `SourceId` they were made for; a kept choice is reused only while it meets every current constraint, and an edge back to a package still being walked is held to its constraint like any other. A new failure kind needs its message there and its mapping in the CLI's `answers.rs`.
+
+`resolve::wire` is Flow's JSON surface (the `resolve` export): its `MapAnswers` answers a lookup from the input's list, and an answer with no match leaves the need open. Every kind of answer keeps one per key and the later one in the list wins; a tree need takes the answer for its own `(url, commit, path)`, else the nearest folder above it, else the whole repository's, so the result never depends on the order of `answers`. A new failure kind also needs a `FailureBody` variant there, its type in `npm/@meridian-flow/mars-schema/index.d.ts`, and a `fixtures/resolve/` case: `steps.json` holds a base input and the answers each call adds (file contents as text), `expected.json` the output of every call, rewritten by `MARS_UPDATE_FIXTURES=1`. Flow stores `resolved.lock` verbatim as mars.lock's dependency rows, so a field added to `LockedDependency` reaches its stored data.
+
 ## Tool projection for Meridian Flow
 
 Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the one list of the connection tools that `mcp(...)` rules and MCP wire tokens lower onto, and a new connection tool joins by being listed there. Flow cannot scope them to one server, so `project_flow_connection_tools` errs toward fewer connections: a deny or ask of any `mcp(...)` lands on every one of them (the `note` says it covers every server, which can be broader than written), and an allow or ask under an allow-list (`*` that is not `allow`) gives none and stays `known` with a note, which the consumer shows as a warning (`unscopable` is refused, so it must not be used here). An allow with no allow-list changes nothing, since the tools are already available. Other hosts' MCP lowering must not change when Flow's does.
+
+## Models catalog
+
+`models.rs` is the models.dev row (`CachedModel`) and the pure alias resolver over rows
+(`auto_resolve_all`, `glob_match`): the binary's snapshot and Flow's rows go through the same code.
+Providers compare by `catalog_provider_canonical` of the raw models.dev key (`provider_key`), never
+by display name: `meta` and `meta-llama` both display as "Meta". Fetching, the snapshot file and the
+per-project provider filter are the binary's.
+
+`effort.rs` is the one effort rule (`resolve_effort`, `harness_levels`): a request moves to the nearest level on the ladder (a tie goes up, set by `TIES_GO_UP`)
+the model's row and the host both take, and the move is reported. Both the CLI and the WASM
+`resolveEffort` call it; a host's accepted levels are recorded there, not in an adapter. A model's
+reasoning is `ModelReasoning`: unknown, does not reason, or reasons with whether it can be switched off
+and the levels its row names, if any. A model that reasons with no named levels takes the whole ladder,
+less `none` when it cannot be switched off; the listing shows the shape, never that set.
 
 ## Checking
 

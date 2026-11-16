@@ -1,32 +1,31 @@
-//! Dependency resolution with semver constraints.
+//! Dependency resolution: which version of which source, for the whole graph.
 //!
-//! Algorithm:
-//! 1. Resolve package refs/versions (lock-preferred latest-compatible for git sources)
-//! 2. Resolve package manifests bottom-up, recording each package's manifest entries
-//! 3. Once the graph settles, select the items it installs (`select`, a pure pass, once; the
-//!    package being checked is its root when `ResolveOptions::root` names one)
-//! 4. Order the packages alphabetically for sync (`selection` orders its own registry)
-//!
-//! Uses `semver` crate for all version parsing. No custom version logic.
+//! The rules live in `mars_schema::resolve`, which Meridian Flow drives too. This module builds
+//! its request from the configuration, answers its lookups with git and the disk
+//! ([`CliAnswers`]), and then does what the core leaves to the binary on the graph it returns:
+//! reports each package's files, finds its hooks and items, and selects what the graph installs.
 
-mod context;
-mod package;
-mod path;
-mod plugin;
+mod answers;
 mod provider;
 mod publish;
 mod requires;
 mod select;
 mod types;
 mod upgrade;
-mod version;
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
-pub use context::ResolverContext;
-pub(crate) use plugin::plugin_list;
+use indexmap::IndexMap;
+use mars_schema::resolve::{
+    Bounds, Dependency, Diagnostic as Note, Level, Mode, Outcome, Request, Resolved, Spec,
+};
+
+#[cfg(test)]
+pub(crate) use answers::apply_subpath;
+use answers::{CliAnswers, mars_error};
 pub(crate) use provider::RealSourceProvider;
+pub use provider::SourceProvider;
 pub use publish::PublishLens;
 pub(crate) use publish::resolve_publish_graph_from_config;
 pub(crate) use requires::check_consumer_package_requirements;
@@ -36,82 +35,30 @@ pub(crate) use select::select_for_test;
 pub use types::*;
 pub(crate) use upgrade::upgrade_candidate;
 
-pub(crate) use package::{PackageResolutionState, PendingSource, RegisteredPackage};
-#[cfg(test)]
-pub(crate) use path::apply_subpath;
-
-use crate::config::EffectiveConfig;
+use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
+use crate::discover;
 use crate::error::{MarsError, ResolutionError};
 use crate::lock::LockFile;
-use crate::source::{AvailableVersion, ResolvedRef};
-use crate::types::SourceName;
-use crate::types::SourceUrl;
-use package::resolve_package_bottom_up;
-use version::warn_version_drift;
+use crate::types::{CommitHash, SourceId, SourceName, SourceUrl};
+use mars_schema::item::ItemKind;
+use mars_schema::names::ItemName;
 
-type EngineExclusions =
-    HashMap<(SourceName, semver::Version), Vec<requires::EngineRequirementFailure>>;
-
-fn same_resolved_ref(a: &ResolvedRef, b: &ResolvedRef) -> bool {
-    a.version == b.version
-        && a.version_tag == b.version_tag
-        && a.commit == b.commit
-        && a.tree_path == b.tree_path
+/// A resolved package with the items discovery found in its files.
+#[derive(Debug, Clone)]
+pub(crate) struct RegisteredPackage {
+    pub(crate) node: ResolvedNode,
+    pub(crate) items: IndexMap<(ItemKind, ItemName), discover::DiscoveredItem>,
 }
 
-fn describe_resolved_ref(resolved: &ResolvedRef) -> String {
-    let version = resolved
-        .version_tag
-        .clone()
-        .or_else(|| resolved.version.as_ref().map(ToString::to_string))
-        .unwrap_or_else(|| "no-version".to_string());
-    let commit = resolved.commit.as_deref().unwrap_or("no-commit");
-    format!("{version}@{commit}")
+impl RegisteredPackage {
+    pub(crate) fn items(&self) -> impl Iterator<Item = &discover::DiscoveredItem> {
+        self.items.values()
+    }
 }
 
-pub trait VersionLister {
-    fn list_versions(&self, url: &SourceUrl) -> Result<Vec<AvailableVersion>, MarsError>;
-}
-
-pub trait SourceFetcher {
-    fn fetch_git_version(
-        &self,
-        url: &SourceUrl,
-        version: &AvailableVersion,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError>;
-
-    fn fetch_git_ref(
-        &self,
-        url: &SourceUrl,
-        ref_name: &str,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError>;
-
-    fn fetch_git_commit(
-        &self,
-        url: &SourceUrl,
-        commit: &str,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError>;
-
-    fn fetch_path(
-        &self,
-        path: &Path,
-        source_name: &str,
-        diag: &mut DiagnosticCollector,
-    ) -> Result<ResolvedRef, MarsError>;
-}
-
-pub trait SourceProvider: VersionLister + SourceFetcher {}
-impl<T> SourceProvider for T where T: VersionLister + SourceFetcher {}
-
-/// Restart with a fresh context when accumulated constraints change a resolved ref,
-/// so stale manifest constraints and dependencies cannot survive.
+/// Resolve `config`'s dependencies: the core walks the graph, asking `provider` through
+/// [`CliAnswers`] for tags, refs and trees as it needs them.
 pub fn resolve(
     config: &EffectiveConfig,
     provider: &dyn SourceProvider,
@@ -119,117 +66,280 @@ pub fn resolve(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedGraph, MarsError> {
-    let direct_requests: Vec<PendingSource> = config
+    let request = request(config, locked, options);
+    let answers = CliAnswers::new(provider);
+    match mars_schema::resolve::resolve(&request, &answers) {
+        Outcome::Needs(needs) => Err(MarsError::Internal(format!(
+            "resolution asked for answers the CLI does not leave open: {needs:?}"
+        ))),
+        Outcome::Failed(failed) => {
+            for note in &failed.diagnostics {
+                replay(note, diag);
+            }
+            Err(mars_error(failed.failure, &answers))
+        }
+        Outcome::Resolved(resolved) => finish(config, options, resolved, &answers, diag),
+    }
+}
+
+fn request(
+    config: &EffectiveConfig,
+    locked: Option<&LockFile>,
+    options: &ResolveOptions,
+) -> Request {
+    let root = config
         .dependencies
         .iter()
-        .map(|(name, source)| PendingSource {
-            name: name.clone(),
-            declared_source_id: source.declared_source_id.clone(),
-            source_id: source.source_id.clone(),
-            constraint: options.direct_constraint_for(name, source.spec.constraint()),
-            spec: source.spec.clone(),
-            subpath: source.subpath.clone(),
-            required_by: "mars.toml".to_string(),
+        .map(|(name, dependency)| {
+            let spec = match &dependency.spec {
+                SourceSpec::Git(git) => Spec::Git {
+                    url: git.url.to_string(),
+                    version: git.version.clone(),
+                },
+                SourceSpec::Path(path) => Spec::Path(path.to_string_lossy().into_owned()),
+            };
+            // A local override replaces the source; the declared one only names the identity.
+            let declared = match (&dependency.declared_source_id, &dependency.source_id) {
+                (declared, actual) if declared == actual => spec.clone(),
+                (SourceId::Git { url, .. }, _) => Spec::Git {
+                    url: url.to_string(),
+                    version: None,
+                },
+                (SourceId::Path { canonical, .. }, _) => {
+                    Spec::Path(canonical.to_string_lossy().into_owned())
+                }
+            };
+            Dependency {
+                name: name.to_string(),
+                constraint: options.direct_constraint_for(name, spec.constraint()),
+                declared,
+                spec,
+                subpath: dependency.subpath.clone(),
+                plugin: dependency.source_id.plugin().map(str::to_owned),
+                required_by: "mars.toml".to_string(),
+                declared_in: None,
+                dialect: dependency.dialect,
+            }
         })
         .collect();
-
-    let mut version_overrides: HashMap<
-        SourceName,
-        (
-            ResolvedRef,
-            RootedSourceRef,
-            crate::staging::HookSurfaceState,
-        ),
-    > = HashMap::new();
-    let mut restart_history: HashMap<SourceName, Vec<ResolvedRef>> = HashMap::new();
-    let mut exclusions = EngineExclusions::new();
-
-    let ctx = loop {
-        let mut ctx = ResolverContext::new();
-        ctx.set_version_overrides(version_overrides.clone());
-
-        let bottom_up_result = (|| -> Result<(), MarsError> {
-            for request in &direct_requests {
-                resolve_package_bottom_up(
-                    request,
-                    provider,
-                    locked,
-                    options,
-                    config,
-                    diag,
-                    &mut ctx,
-                    &mut exclusions,
-                )?;
-            }
-            Ok(())
-        })();
-
-        match bottom_up_result {
-            Err(MarsError::ResolutionRestartNeeded { package }) => {
-                version_overrides = ctx.version_overrides().clone();
-                let Some((pkg_name, new_ref, new_rooted, hook_surface)) =
-                    ctx.take_pending_restart()
-                else {
-                    return Err(MarsError::Internal(format!(
-                        "missing pending restart payload for `{package}`"
-                    )));
-                };
-                let history = restart_history.entry(pkg_name.clone()).or_default();
-                if let Some(cycle_start) = history
+    Request {
+        root,
+        supplied: options
+            .prepared_sources
+            .iter()
+            .map(|(name, prepared)| (name.to_string(), Arc::clone(prepared)))
+            .collect(),
+        overrides: options
+            .source_overrides
+            .iter()
+            .map(|(name, path)| (name.to_string(), path.to_string_lossy().into_owned()))
+            .collect(),
+        locked: locked
+            .map(|lock| {
+                lock.dependencies
                     .iter()
-                    .position(|seen| same_resolved_ref(seen, &new_ref))
-                {
-                    let mut cycle: Vec<String> = history[cycle_start..]
-                        .iter()
-                        .map(describe_resolved_ref)
-                        .collect();
-                    cycle.push(describe_resolved_ref(&new_ref));
-                    return Err(MarsError::Resolution(ResolutionError::VersionConflict {
-                        name: pkg_name.to_string(),
-                        message: format!(
-                            "resolution oscillation detected for `{pkg_name}`: {}",
-                            cycle.join(" -> ")
-                        ),
-                    }));
-                }
-                history.push(new_ref.clone());
-                version_overrides.insert(pkg_name, (new_ref, new_rooted, hook_surface));
-                continue;
-            }
-            Err(other) => return Err(other),
-            Ok(()) => break ctx,
-        }
-    };
+                    .map(|(name, source)| (name.to_string(), source.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        mode: match &options.mode {
+            ResolveMode::Sync => Mode::Sync,
+            ResolveMode::Frozen => Mode::Frozen,
+            ResolveMode::Upgrade { targets, .. } => Mode::Upgrade {
+                targets: targets.iter().map(ToString::to_string).collect(),
+            },
+        },
+        engine: requires::engine(options),
+        bounds: Bounds::default(),
+    }
+}
 
-    let selection = select::select_registry(config, ctx.registry(), options.root.as_deref());
+fn replay(note: &Note, diag: &mut DiagnosticCollector) {
+    let Note::Note {
+        level,
+        code,
+        message,
+        once,
+    } = note
+    else {
+        return;
+    };
+    match (level, once) {
+        (Level::Warning, true) => diag.warn_once(code.clone(), message.clone()),
+        (Level::Warning, false) => diag.warn(code.clone(), message.clone()),
+        (Level::Advisory, _) => diag.warn_advisory(code.clone(), message.clone()),
+        (Level::Info, _) => diag.info(code.clone(), message.clone()),
+    }
+}
+
+/// What the core leaves to the binary, package by package in the order the core registered them:
+/// report what preparing the files found, read the manifest the way the rest of the binary does,
+/// and find the hooks and items beside the schema's.
+fn finish(
+    config: &EffectiveConfig,
+    options: &ResolveOptions,
+    resolved: Resolved,
+    answers: &CliAnswers<'_>,
+    diag: &mut DiagnosticCollector,
+) -> Result<ResolvedGraph, MarsError> {
+    let mut registry: IndexMap<SourceName, RegisteredPackage> = IndexMap::new();
+    let mut unreadable_hook_surfaces = BTreeMap::new();
+    for note in &resolved.diagnostics {
+        let Note::Registered { package } = note else {
+            replay(note, diag);
+            continue;
+        };
+        let core = &resolved.nodes[package];
+        let node = node(core, answers)?;
+        if !options.prepared_sources.contains_key(&node.source_name) {
+            crate::package_prepare::report_dependency(
+                config,
+                &node.source_name,
+                node.resolved_ref.version.as_ref(),
+                options.is_upgrade_target(&node.source_name),
+                &node.prepared,
+                &core.normalized,
+                diag,
+            );
+        }
+        if let crate::staging::HookSurfaceState::Unreadable { hook_names } =
+            crate::staging::detect_unreadable_hook_surface(&node.rooted_ref.authored_root, diag)?
+        {
+            unreadable_hook_surfaces.insert(node.source_name.clone(), hook_names);
+        }
+        let items = discover::package_items(
+            &node.rooted_ref.authored_root,
+            Some(node.source_name.as_ref()),
+            &node.prepared,
+            None,
+            diag,
+        )?
+        .into_iter()
+        .map(|item| ((item.id.kind, item.id.name.clone()), item))
+        .collect();
+        registry.insert(node.source_name.clone(), RegisteredPackage { node, items });
+    }
+
+    let selection = select::select_registry(config, &registry, options.root.as_deref());
     // With a root, the caller judges what the selection found: refs it could not resolve and
     // slugs two packages install (`mars check`, through `mars_schema::check`).
     if options.root.is_none() {
         for diagnostic in &selection.diagnostics {
             diag.schema(diagnostic, "selection", false);
         }
-    }
-    if options.root.is_none()
-        && let Some(missing) = selection.missing_skills.first()
-    {
-        return Err(ResolutionError::SkillNotFound {
-            skill: missing.skill.clone(),
-            required_by: match &missing.package {
-                Some(package) => format!("{package}/{}", missing.agent),
-                None => missing.agent.clone(),
-            },
-            searched: missing.searched.clone(),
-            hint: missing.hint.clone(),
+        if let Some(missing) = selection.missing_skills.first() {
+            return Err(ResolutionError::SkillNotFound {
+                skill: missing.skill.clone(),
+                required_by: match &missing.package {
+                    Some(package) => format!("{package}/{}", missing.agent),
+                    None => missing.agent.clone(),
+                },
+                searched: missing.searched.clone(),
+                hint: missing.hint.clone(),
+            }
+            .into());
         }
-        .into());
     }
-    let version_constraints = ctx.version_constraints().clone();
-    let graph = ctx.into_graph(selection);
 
-    warn_version_drift(&graph.nodes, &version_constraints, diag);
-    diag.reconcile_engine_fallbacks(&graph);
+    let nodes: IndexMap<SourceName, ResolvedNode> = registry
+        .into_iter()
+        .map(|(name, package)| (name, package.node))
+        .collect();
+    let mut order: Vec<SourceName> = nodes.keys().cloned().collect();
+    order.sort();
+    for fallback in &resolved.engine_fallbacks {
+        diag.record_engine_fallback(engine_fallback(fallback));
+    }
+    Ok(ResolvedGraph {
+        nodes,
+        order,
+        selection,
+        version_constraints: resolved
+            .constraints
+            .into_iter()
+            .map(|(name, constraints)| (SourceName::from(name), constraints))
+            .collect(),
+        unreadable_hook_surfaces,
+    })
+}
 
-    Ok(graph)
+fn engine_fallback(fallback: &mars_schema::resolve::EngineFallback) -> EngineFallback {
+    let mut engines: Vec<String> = Vec::new();
+    let skipped = fallback
+        .skipped
+        .iter()
+        .map(|skipped| EngineFallbackSkippedVersion {
+            version: skipped.version.clone(),
+            requirements: skipped
+                .failures
+                .iter()
+                .map(|failure| {
+                    let engine = failure.engine.to_string();
+                    if !engines.contains(&engine) {
+                        engines.push(engine.clone());
+                    }
+                    EngineFallbackRequirement {
+                        engine,
+                        requirement: failure.requirement.clone(),
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    EngineFallback {
+        source: fallback.source.clone(),
+        skipped,
+        selected_version: fallback.selected_version.clone(),
+        engines,
+    }
+}
+
+/// The graph node for a package the core resolved: the directories its files are in, and the
+/// manifest read as the rest of the binary reads one.
+fn node(
+    core: &mars_schema::resolve::Node,
+    answers: &CliAnswers<'_>,
+) -> Result<ResolvedNode, MarsError> {
+    let authored_root = answers.rooted_dir(&core.rooted);
+    let manifest = core
+        .prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| {
+            std::str::from_utf8(&manifest.normalized_bytes)
+                .ok()
+                .map(|content| (manifest, content))
+        })
+        .map(|(manifest, content)| {
+            crate::config::parse_prepared_manifest(
+                content,
+                &authored_root.join("mars.toml"),
+                &manifest.reading,
+            )
+        })
+        .transpose()?
+        .flatten();
+    let name = SourceName::from(core.name.as_str());
+    Ok(ResolvedNode {
+        source_name: name.clone(),
+        source_id: SourceId::from(&core.id),
+        fetch_url: core.fetch_url.as_deref().map(SourceUrl::from),
+        rooted_ref: RootedSourceRef {
+            checkout_root: answers.checkout_dir(&core.rooted.checkout),
+            authored_root: authored_root.clone(),
+            package_root: authored_root,
+            plugin: core.plugin.clone(),
+        },
+        prepared: Arc::clone(&core.prepared),
+        resolved_ref: crate::source::ResolvedRef {
+            source_name: name,
+            version: core.resolved.version.clone(),
+            version_tag: core.resolved.tag.clone(),
+            commit: core.resolved.commit.as_deref().map(CommitHash::from),
+            tree_path: answers.checkout_dir(&core.resolved.origin),
+        },
+        manifest,
+    })
 }
 
 #[cfg(test)]

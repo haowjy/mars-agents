@@ -1,0 +1,34 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "unavailable",
+      "need": {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      },
+      "reason": "the commit does not exist",
+      "message": "a: files of https://example.test/a at d4f7c82123a8d693b05e11e1d0dfa614fd049acc: the commit does not exist"
+    },
+    "diagnostics": []
+  }
+]

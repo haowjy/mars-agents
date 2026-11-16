@@ -35,11 +35,7 @@ fn scenario_a_cold_cache_refreshes_on_models_catalog() {
 
     let cache = read_cache_json(&project_root);
     assert!(
-        cache["models"]
-            .as_array()
-            .expect("cache.models should be an array")
-            .len()
-            >= 2,
+        cached_model_count(&cache) >= 2,
         "expected non-empty models cache"
     );
     assert!(
@@ -103,7 +99,9 @@ fn scenario_c_stale_cache_background_failure_retains_last_good_and_backs_off() {
     );
 
     wait_until(Duration::from_secs(5), || {
-        project_root.join(".mars/.models-cache.last-fail").exists()
+        cache_dir(&project_root)
+            .join(".models-cache.last-fail")
+            .exists()
     });
     let after = read_cache_raw(&project_root);
     assert_eq!(before, after, "stale fallback must not rewrite cache");

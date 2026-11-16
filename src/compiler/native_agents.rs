@@ -58,6 +58,8 @@ struct NativeAgentEmit<'a> {
     agent_name: &'a str,
     canonical_dest_path: &'a str,
     model: &'a crate::compiler::agents::lower::NativeModel,
+    /// The warning for an effort that moved to a level the model takes.
+    effort_moved: Option<&'a crate::models::reasoning::EffortWarning>,
 }
 
 struct NativeAgentEmitCtx<'a> {
@@ -87,6 +89,12 @@ pub(crate) struct ToolConfig<'a> {
 pub(crate) struct MarsAgentScan {
     agents: Vec<MarsCanonicalAgent>,
     failed_canonical_paths: HashSet<String>,
+}
+
+impl MarsAgentScan {
+    pub(crate) fn has_agents(&self) -> bool {
+        !self.agents.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,15 +294,19 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         }
     }
 
-    /// The profile as it launches on the model `token` routes to, or with no model at all
-    /// (`None`); see [`crate::build::policy::profile_for_model`].
+    /// The profile as it launches on the model `token` routes to for `harness`, or with no model
+    /// at all (`None`); see [`crate::build::policy::profile_for_model`].
     pub(crate) fn profile_for_token(
-        &self,
+        &mut self,
         profile: &mars_schema::agent::AgentProfile,
         overlay: Option<&crate::config::AgentOverlay>,
         token: Option<&str>,
-    ) -> mars_schema::agent::AgentProfile {
+        harness: mars_schema::HarnessId,
+    ) -> crate::build::policy::ModelProfile {
         let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
+        let cursor_probe = (harness == mars_schema::HarnessId::Cursor)
+            .then(|| self.session.cursor_probe_result())
+            .flatten();
         crate::build::policy::profile_for_model(
             profile,
             overlay,
@@ -306,6 +318,11 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                     canonical_id: &resolved.model_id,
                     alias: resolved.alias,
                 }),
+            &crate::build::policy::EffortRoute {
+                harness,
+                catalog: &self.cache.catalog,
+                cursor_probe: cursor_probe.as_ref(),
+            },
         )
     }
 
@@ -317,7 +334,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
         let memo_effort = if *target_harness == mars_schema::HarnessId::Cursor {
-            self.profile_for_token(profile, overlay, Some(token))
+            self.profile_for_token(profile, overlay, Some(token), *target_harness)
+                .profile
                 .effort
                 .map(|effort| effort.as_str().to_string())
         } else {
@@ -412,7 +430,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     ) -> Vec<String> {
         let mut ids = vec![model_id.to_string()];
         if *target_harness == mars_schema::HarnessId::Cursor
-            && let Some(shimmed) = cursor_probe_model_id_shim(model_id)
+            && let Some(shimmed) =
+                crate::models::probes::cursor::cursor_probe_model_id_shim(model_id)
             && !ids.iter().any(|id| id == &shimmed)
         {
             ids.push(shimmed);
@@ -453,24 +472,13 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             return Some(resolved.model_id.clone());
         }
 
-        let effort = self
-            .profile_for_token(agent.profile, agent.overlay, Some(token))
-            .effort
-            .map_or_else(
-                || "medium".to_string(),
-                |effort| effort.as_str().to_string(),
-            );
-        let Some(cursor_probe) = self.session.cursor_probe_result() else {
-            return Some(routed_model_id.to_string());
-        };
-        crate::models::probes::cursor::resolve_cursor_effort_slug(
-            routed_model_id,
-            &effort,
-            &cursor_probe.slugs,
+        // Cursor folds the resolved effort into the model slug; with none to send, the routed id
+        // stands.
+        Some(
+            self.profile_for_token(agent.profile, agent.overlay, Some(token), *target_harness)
+                .cursor_slug
+                .unwrap_or_else(|| routed_model_id.to_string()),
         )
-        .map(|resolution| resolution.slug)
-        .unwrap_or_else(|_| routed_model_id.to_string())
-        .into()
     }
 
     fn resolve_candidate(&self, token: &str) -> Option<NativeResolvedModel<'a>> {
@@ -803,6 +811,7 @@ pub(crate) fn compile_native_agents<'a>(
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
                     model: &emission.model,
+                    effort_moved: emission.effort_moved.as_ref(),
                 },
                 &emit_ctx,
                 diag,
@@ -898,6 +907,23 @@ pub(crate) struct NativeEmission {
     pub harness: mars_schema::HarnessId,
     pub model: crate::compiler::agents::lower::NativeModel,
     pub profile: mars_schema::agent::AgentProfile,
+    /// The warning for an effort that moved to a level the model takes.
+    pub effort_moved: Option<crate::models::reasoning::EffortWarning>,
+}
+
+impl NativeEmission {
+    fn new(
+        harness: mars_schema::HarnessId,
+        model: crate::compiler::agents::lower::NativeModel,
+        resolved: crate::build::policy::ModelProfile,
+    ) -> Self {
+        Self {
+            harness,
+            model,
+            profile: resolved.profile,
+            effort_moved: resolved.effort_moved,
+        }
+    }
 }
 
 /// Harnesses and native model fields that would receive lowered agent artifacts.
@@ -923,20 +949,19 @@ pub(crate) fn qualifying_agent_emissions(
                 if !in_scope(harness) {
                     continue;
                 }
-                emissions.push(
-                    match model_router.decision_for_profile(profile, overlay, harness, true, true) {
-                        NativeModelDecision::Set { model_id, token } => NativeEmission {
-                            harness: *harness,
-                            model: crate::compiler::agents::lower::NativeModel::Set(model_id),
-                            profile: model_router.profile_for_token(profile, overlay, Some(&token)),
-                        },
-                        NativeModelDecision::Clear | NativeModelDecision::Skip => NativeEmission {
-                            harness: *harness,
-                            model: crate::compiler::agents::lower::NativeModel::Clear,
-                            profile: model_router.profile_for_token(profile, overlay, None),
-                        },
-                    },
-                );
+                let (model, resolved) = match model_router
+                    .decision_for_profile(profile, overlay, harness, true, true)
+                {
+                    NativeModelDecision::Set { model_id, token } => (
+                        crate::compiler::agents::lower::NativeModel::Set(model_id),
+                        model_router.profile_for_token(profile, overlay, Some(&token), *harness),
+                    ),
+                    NativeModelDecision::Clear | NativeModelDecision::Skip => (
+                        crate::compiler::agents::lower::NativeModel::Clear,
+                        model_router.profile_for_token(profile, overlay, None, *harness),
+                    ),
+                };
+                emissions.push(NativeEmission::new(*harness, model, resolved));
             }
             emissions
         }
@@ -953,11 +978,11 @@ pub(crate) fn qualifying_agent_emissions(
                 if let NativeModelDecision::Set { model_id, token } = model_router
                     .decision_for_profile(profile, overlay, harness, effective_fanout, false)
                 {
-                    emissions.push(NativeEmission {
-                        harness: *harness,
-                        model: crate::compiler::agents::lower::NativeModel::Set(model_id),
-                        profile: model_router.profile_for_token(profile, overlay, Some(&token)),
-                    });
+                    emissions.push(NativeEmission::new(
+                        *harness,
+                        crate::compiler::agents::lower::NativeModel::Set(model_id),
+                        model_router.profile_for_token(profile, overlay, Some(&token), *harness),
+                    ));
                 }
             }
             emissions
@@ -1059,6 +1084,9 @@ fn emit_lowered_native_agent(
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report.
     diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
+    if let Some(moved) = agent.effort_moved {
+        diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved);
+    }
     for loss in lowered.project_losses {
         project_losses.add(loss);
     }
@@ -1167,14 +1195,6 @@ fn native_acceptance_policy(
         | mars_schema::HarnessId::Pi => {
             crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }
-    }
-}
-
-fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
-    match model_id.to_ascii_lowercase().as_str() {
-        "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
-        "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
-        _ => None,
     }
 }
 
@@ -1309,11 +1329,14 @@ pub(crate) fn materialize_native_agents_after_link(
     );
     let mars_dir = input.mars_ctx.project_root.join(".mars");
     let mars_agent_scan = scan_mars_agents(&mars_dir, diag);
-    let models_cache =
-        crate::models::read_cache(&mars_dir).unwrap_or_else(|_| crate::models::ModelsCache {
-            models: Vec::new(),
-            fetched_at: None,
-        });
+    let catalog_providers = input
+        .effective
+        .settings
+        .catalog_providers
+        .clone()
+        .unwrap_or_else(crate::models::default_catalog_providers);
+    let models_cache = crate::models::read_cache(&mars_dir, &catalog_providers)
+        .unwrap_or_else(|_| crate::models::ModelsCache::default());
     let model_aliases = crate::models::merged_model_aliases(input.graph, input.effective, diag);
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
     let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {

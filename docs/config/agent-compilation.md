@@ -141,7 +141,7 @@ YAML frontmatter + markdown body. Claude Code reads this directly.
 | `tools` allowlist (`'*': deny`) | `tools:` (+ projected `mcp__…` MCP tokens) | Claude's `tools:` restricts the agent to what it lists, so only an allowlist lowers to it. Map-form grants write no `tools:` (an omitted `tools:` inherits every tool, so nothing is lost) |
 | `tools` denials | `disallowedTools:` (+ projected `mcp__…` MCP tokens) | deny rules projected to Claude's tool names. Claude reads `disallowedTools` in an agent file and ignores `disallowed-tools` (a skill's key); a scoped entry such as `Bash(git push *)` would remove the whole tool there, so only whole-tool denies are written and each scoped deny is a lost shell or tool restriction, shown by default (one line for the project, one per agent with `--verbose`) |
 | `tools` `ask` rules, an allowlist with nothing allowed | dropped | Claude agent files have no field for them (a `tools:` list would also strip every tool the map does not name); Mars records each as dropped lossiness |
-| `effort` | `effort:` | exact: `xhigh` and `max` are Claude's own levels. `none` is omitted with a lossiness warning: Claude Code has no reasoning-off value |
+| `effort` | `effort:` | exact: the level the model and Claude Code both take (`low` to `max`). A level outside that, `none` included, moves to the nearest one with an `agent.effort-moved` warning |
 | `approval` | dropped | dropped |
 | `sandbox` | dropped | dropped |
 | `network` | dropped | meridian-only |
@@ -283,7 +283,7 @@ TOML format. Codex reads this for native agent invocation.
 | `name` | `name` | exact |
 | `description` | `description` | exact |
 | `model` | `model` | exact |
-| `effort` | `model_reasoning_effort` | exact. Codex accepts every level, `max` included. `none` is written as `"none"`; some Codex models refuse it |
+| `effort` | `model_reasoning_effort` | exact: the level the model takes. Codex passes any level through, so the model's models.dev row decides; a level it lacks moves to the nearest with an `agent.effort-moved` warning |
 | `sandbox` | `sandbox_mode` | exact |
 | `network` | dropped | dropped |
 | `network-allow`, `network-deny` | dropped | dropped |
@@ -676,7 +676,7 @@ Compact per-field, per-target classification:
 | `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped |
 | `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped |
 | `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate |
-| `effort` | preserved | exact (`none` omitted with a warning) | exact | approximate | approximate | approximate |
+| `effort` | preserved | exact (moved to a level the model takes, with a warning) | exact (same) | approximate | approximate | approximate |
 | `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate |
 | `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate |
 | `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |

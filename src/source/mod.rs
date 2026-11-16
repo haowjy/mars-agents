@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use crate::error::MarsError;
 use crate::platform::cache::global_cache_root;
-use crate::types::{CommitHash, SourceName, SourceUrl};
+use crate::types::{CommitHash, SourceName};
 
 #[derive(Debug, Clone)]
 pub struct GlobalCache {
@@ -46,16 +46,10 @@ pub struct ResolvedRef {
     pub tree_path: PathBuf,
 }
 
+/// A tag that is a version, as the upgrade scan reads a listing.
 #[derive(Debug, Clone)]
 pub struct AvailableVersion {
     pub tag: String,
     pub version: semver::Version,
     pub commit_id: String,
-}
-
-pub fn list_versions(
-    url: &SourceUrl,
-    cache: &GlobalCache,
-) -> Result<Vec<AvailableVersion>, MarsError> {
-    git::list_versions(url.as_ref(), cache)
 }

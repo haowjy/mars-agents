@@ -1,0 +1,47 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    },
+    "bounds": {
+      "bytes": 100
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/a"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/a",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies.b]\nurl = \"https://example.test/b\"\nversion = \"^1\"\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.0.0\n---\nbody a 1.0.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

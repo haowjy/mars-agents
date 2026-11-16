@@ -16,6 +16,7 @@ mod lock;
 mod package;
 mod plugin;
 mod version;
+pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -25,6 +26,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use semver::Version;
 
+use crate::dependency::{Entry, Source};
 use crate::diagnostic::SchemaDiagnostic;
 use crate::dialect::Dialect;
 use crate::names::SourceSubpath;
@@ -205,6 +207,17 @@ pub enum Spec {
 }
 
 impl Spec {
+    /// The source an entry spells.
+    pub fn of(entry: &Entry) -> Self {
+        match &entry.source {
+            Source::Git { url } => Self::Git {
+                url: url.clone(),
+                version: entry.version.clone(),
+            },
+            Source::Path { path } => Self::Path(path.to_string_lossy().into_owned()),
+        }
+    }
+
     pub fn constraint(&self) -> Constraint {
         match self {
             Self::Git { version, .. } => crate::version::parse_constraint(version.as_deref()),

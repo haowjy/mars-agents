@@ -39,6 +39,7 @@ await init();
 | `selectVersion({available, constraints, locked?})` | Which ref a package ends at, from every `[requester, version \| null]` on it and the repository's tags: `{pin}` (a branch or commit), `{locked: true}` (the locked version still meets every semver range, whether or not the repository still has its tag), `{tag}` (the newest that meets every semver range) or `{untagged: true}` (no version tags). Throws when none qualifies. |
 | `renderHooks(hookToml, targets, tokens?)` | A `hook.toml`'s `[hooks]` table as each target (`.claude`, `.codex`, …) takes it: finished entries or generated files, what the target leaves out, and the reader's diagnostics. |
 | `selectItems({packages, root?, requests?})` | Which Agents, skills and bootstrap documents an install of `root` and its dependencies yields, and why. Takes each package's `prepare` result. |
+| `resolve({root, locked?, refresh?, engine, bounds?, answers})` | Which version of which source, for a whole dependency graph: the rules of `mars sync` without the fetching. Returns the fetches it still needs, or the resolved lock rows, or the first failure. See [`resolve`](#resolve). |
 | `version()` | The version of the schema crate this build was made from. |
 
 A tree is a `Map<string, Uint8Array>` from `/`-separated relative paths to bytes. `prepare`, `inspect` and `normalize` read manifests, definitions and directory listings, never the bytes of a skill's other files.
@@ -133,6 +134,44 @@ Per path, `diagnostics` lists what `prepare` returns for the file and then the c
 
 `mars check` can fail a package this accepts: it also reports the `requires-mars` floor, hooks, plugin output, model aliases against `mars.lock`, what a harness target loses from an Agent, and an empty package, none of which depends on the files alone. See [`mars check`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-check).
 
+### `resolve`
+
+`resolve` is the part of `mars sync` that decides: one version per name, every requester's constraint combined, restarts, `requires-*` exclusion, source identity, conflicts. It never fetches. It asks for what it needs, and you answer from wherever you fetch. It is stateless: keep the list of answers, and each call replays the resolution from all of them.
+
+```ts
+const answers: Answer[] = [];
+for (;;) {
+  const out = resolve({ root: { manifest }, locked, engine: { mars: version() }, answers });
+  if (!("needs" in out)) return out;          // { resolved } or { failed }
+  answers.push(...(await Promise.all(out.needs.map(fetchAnswer))));
+}
+```
+
+| `Need` | You | Answer |
+|---|---|---|
+| `{kind: "tags", url}` | list the tags | `{need, tags: [{tag, commit}]}` |
+| `{kind: "ref", url, ref}` | resolve a branch, `HEAD` or a commit to a commit | `{need, commit}` |
+| `{kind: "tree", url, commit, path}` | fetch the files under `path` at `commit` (`null`: the whole repository) | `{url, commit, path, files}` |
+
+- **Needs** are every open need on the frontier (one with no answer yet), so fetch them in parallel. A later need can depend on an earlier answer, so a call can return needs more than once. While one is open the result is `needs`, even if a failure is already certain: it waits for the needs before it.
+- **Commits are peeled.** A tag's `commit` is the commit an annotated tag points at, never the tag object. Tags need no order, and tags that are not versions are ignored.
+- **A tree need's `commit` can be a tag object's id.** Locks written by Mars 0.34 and earlier name annotated tags that way. Peel it (`GET /git/tags/{sha}`), or fetch through `tarball`, and answer with the id from the need.
+- **Tree answers** are keyed `(url, commit, path)` and answer every need at the same `url` and `commit` whose `path` is inside their own, so a whole-repository answer cached by commit serves every later need. `files` paths are repository-relative. A package with a `subpath` asks for that folder; a package with none, and every marketplace plugin, asks for the root, because the marketplace reader needs its root `mars.toml`, the marketplace file and the local plugins' folders. Send files only (a symlink as its target's content; one that points outside the repository is an error to report as `failed`). Binary files may be left out.
+- **`{need, missing: true}`** says the commit or ref does not exist. For a commit from `locked` it drops that row with the `locked-commit-unreachable` warning, and resolution picks again from the tags, as `mars sync` does; anywhere else it is an `unavailable` failure. **`{need, failed: reason}`** is any other error, always `unavailable`, and never drops a lock, so a transient error cannot move one.
+- **Path dependencies** (`path = …`) are never a need: a fetched package's path names its author's disk, so it is the `path` failure. `[local-dependencies]` are never followed.
+
+`locked` is mars.lock's `[dependencies.*]` rows. A row is kept while it meets every constraint and its source matches the declared one. `refresh` ignores it for the names listed (`mars upgrade <name>`) or for all (`"all"`). `engine.mars` judges `requires-mars`; `engine.meridian`, when given, judges `requires-meridian`; a version whose requirement is unmet is skipped for an older one, with a `requires-mars-fallback` advisory. `bounds.packages` caps the dependencies in the closure. `bounds.bytes` caps the bytes of the files Mars reads: it counts afresh at each restart and is checked at the end of each pass, so a whole-repository answer costs only the files Mars opens.
+
+The result is one of:
+
+- `{ needs }`
+- `{ resolved: { lock, dependencies }, diagnostics }`: `lock` is exactly the `[dependencies.<name>]` rows of `mars.lock`, to store verbatim (urls in the lock's canonical spelling). `dependencies` has, per name, what to vendor and to give `check` and `selectItems`: `url`, `commit`, `subpath`, the `version` tag (`null` when untagged or pinned to a ref), `content` for a marketplace plugin (where its files are, in another repository or in the marketplace's own tree) and `required_by`, each requester (`"root"` for the root) with the constraint it asked for.
+- `{ failed, diagnostics }`: the first failure, with `kind`, `message` (the text `mars sync` prints for it) and the fields of its kind (see `ResolveFailure` in `index.d.ts`). A failure of the resolution is data; only an argument that is not the shape above throws `input.invalid`.
+
+`diagnostics` are the notes of the final pass, plus the notes of choices kept across restarts (an engine fallback, a stale lock row).
+
+A package cycle resolves, as in `mars sync`; each package is in the other's `required_by`. `supplied` (an edited manifest over a fetched tree) is reserved and throws for now.
+
 ### Effort and aliases
 
 `resolveEffort(requested, model, host)` is the effort rule `mars build launch-bundle` and `mars sync` apply, so a gateway and Mars agree on what is sent. The ladder is `none < minimal < low < medium < high < xhigh < max` (`effortLevels()`); `"auto"` and `null` both mean "send no effort". `model` is the models.dev row's `reasoning` and `reasoning_options`, or `null` for an unknown model; `host` is a harness or `meridian-flow`. A level that is on neither the model's list nor the host's moves to the nearest level below it that both take, else the nearest above, and never lands on `none` unless `none` was asked (off is not less thinking); the result is `{ level, moved }`, with `moved.why` one of `model_does_not_reason`, `model_levels`, `harness_levels`, `no_common_level`. A model with no effort values (toggle only, budget only, unknown) takes any level; a model that does not reason gets none. Each host's levels are recorded, with the version they were checked against, on `harness_levels` in the crate.
@@ -173,6 +212,7 @@ Each package's edges and `uses-providers` are read from `prepared.selection`, so
 | `version` | `input.json`, `expected.json` | `satisfies`, `satisfiesRequirement` and `selectVersion`, with the `code` of each refusal (the Rust leg also pins `parse-constraint` and `parse-tag`, which are not exported) |
 | `check` | `input/`, `request.json`, optional `deps/<name>/`, `expected.json` | `check` over a root and its dependencies (each prepared first), the order of the paths included |
 | `selection` | `request.json`, `packages/` (or `packages_from`: a sibling case's), `expected.json` | `selectItems` over packages prepared from `packages/` |
+| `resolve` | `steps.json` (a base input and the answers each call adds, file contents as text), `expected.json` | the output of `resolve` at every call of a loop |
 
 `node crates/mars-schema-wasm/run-fixtures.mjs` in the Mars repository runs every case against this package and compares results deeply, key order included. Run the same cases against the version you pin; a change to a pinned reader that changes a result is a change to the contract.
 

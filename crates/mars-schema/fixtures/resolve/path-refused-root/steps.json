@@ -1,0 +1,15 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.local]\npath = \"../local\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    }
+  ]
+}

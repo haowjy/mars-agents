@@ -1,0 +1,30 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/mono"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/mono",
+        "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+        "path": "packages/x"
+      }
+    ]
+  },
+  {
+    "failed": {
+      "kind": "subpath",
+      "name": "x",
+      "subpath": "packages/x",
+      "detail": "missing",
+      "message": "source error: x: subpath `packages/x` does not exist in the source"
+    },
+    "diagnostics": []
+  }
+]

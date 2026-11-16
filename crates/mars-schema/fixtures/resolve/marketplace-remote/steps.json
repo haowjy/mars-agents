@@ -1,0 +1,68 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.remote]\nurl = \"https://example.test/mk\"\nversion = \"^1\"\nplugin = \"remote\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/mk"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/mk",
+          "commit": "01f02fafc0a2ea63ca8b196d0e7388cb828d7dbe",
+          "path": null,
+          "files": {
+            ".claude-plugin/marketplace.json": "{\"name\":\"mk\",\"owner\":{\"name\":\"o\"},\"plugins\":[{\"name\":\"remote\",\"source\":{\"source\":\"url\",\"url\":\"https://example.test/pl\"}}]}"
+          }
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "ref",
+            "url": "https://example.test/pl",
+            "ref": "HEAD"
+          },
+          "commit": "8e3ba1fbef5e8f408a9df0a9e60268d153dc7319"
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/pl",
+          "commit": "8e3ba1fbef5e8f408a9df0a9e60268d153dc7319",
+          "path": null,
+          "files": {
+            ".claude-plugin/plugin.json": "{\"name\":\"remote\",\"version\":\"1.0.0\"}",
+            "skills/remote-skill/SKILL.md": "---\nname: remote-skill\ndescription: remote\n---\nbody\n"
+          }
+        }
+      ]
+    }
+  ]
+}

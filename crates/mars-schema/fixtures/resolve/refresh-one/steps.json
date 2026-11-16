@@ -1,0 +1,72 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.a]\nurl = \"https://example.test/a\"\nversion = \"^1\"\n\n[dependencies.b]\nurl = \"https://example.test/b\"\nversion = \"^1\"\n"
+    },
+    "locked": {
+      "a": {
+        "url": "https://example.test/a",
+        "version": "v1.0.0",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+      },
+      "b": {
+        "url": "https://example.test/b",
+        "version": "v1.0.0",
+        "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9"
+      }
+    },
+    "refresh": [
+      "a"
+    ],
+    "engine": {
+      "mars": "0.35.0"
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/a"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+            },
+            {
+              "tag": "v1.1.0",
+              "commit": "205f3b426ab51966b7166c696ee9d812a4232a0e"
+            }
+          ]
+        },
+        {
+          "url": "https://example.test/b",
+          "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"b\"\nversion = \"1.0.0\"\n\n",
+            "skills/b-skill/SKILL.md": "---\nname: b-skill\ndescription: b 1.0.0\n---\nbody b 1.0.0\n"
+          }
+        }
+      ]
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/a",
+          "commit": "205f3b426ab51966b7166c696ee9d812a4232a0e",
+          "path": null,
+          "files": {
+            "mars.toml": "[package]\nschema = 1\nname = \"a\"\nversion = \"1.1.0\"\n\n",
+            "skills/a-skill/SKILL.md": "---\nname: a-skill\ndescription: a 1.1.0\n---\nbody a 1.1.0\n"
+          }
+        }
+      ]
+    }
+  ]
+}

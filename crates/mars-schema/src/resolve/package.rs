@@ -17,7 +17,6 @@ use super::{
     PluginRoot, Ref, Request, Resolved, Rooted, SourceId, Spec, Step as Oscillation, Tag,
     TagVersion,
 };
-use crate::dependency::Source;
 use crate::diagnostic::SchemaDiagnostic;
 use crate::inspect::{Hint, Kind, inspect};
 use crate::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
@@ -598,6 +597,7 @@ impl<'a> Run<'a> {
             let Some(version) = resolved.version.clone() else {
                 let failure = Failure::EngineIncompatible {
                     name: dep.name.clone(),
+                    failures: failures.clone(),
                     message: format!(
                         "version {version_label} requires {}; required by {}",
                         describe(&failures),
@@ -872,13 +872,7 @@ impl<'a> Run<'a> {
             .dependencies
             .iter()
             .map(|(name, entry)| {
-                let declared = match &entry.source {
-                    Source::Git { url } => Spec::Git {
-                        url: url.clone(),
-                        version: entry.version.clone(),
-                    },
-                    Source::Path { path } => Spec::Path(path.to_string_lossy().into_owned()),
-                };
+                let declared = Spec::of(entry);
                 let spec = self
                     .req
                     .overrides

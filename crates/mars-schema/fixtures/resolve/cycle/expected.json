@@ -1,0 +1,85 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/a"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+        "path": null
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tags",
+        "url": "https://example.test/b"
+      }
+    ]
+  },
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/b",
+        "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "a": {
+          "url": "example.test/a",
+          "version": "v1.0.0",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc"
+        },
+        "b": {
+          "url": "example.test/b",
+          "version": "v1.0.0",
+          "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9"
+        }
+      },
+      "dependencies": {
+        "a": {
+          "url": "example.test/a",
+          "commit": "d4f7c82123a8d693b05e11e1d0dfa614fd049acc",
+          "subpath": null,
+          "version": "v1.0.0",
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": "^1"
+            },
+            {
+              "by": "b",
+              "constraint": "^1"
+            }
+          ]
+        },
+        "b": {
+          "url": "example.test/b",
+          "commit": "c48ba15919af8b17fa5825731959a1f6d53320d9",
+          "subpath": null,
+          "version": "v1.0.0",
+          "required_by": [
+            {
+              "by": "a",
+              "constraint": "^1"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

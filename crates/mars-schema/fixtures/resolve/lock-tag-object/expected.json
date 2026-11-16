@@ -1,0 +1,38 @@
+[
+  {
+    "needs": [
+      {
+        "kind": "tree",
+        "url": "https://example.test/a",
+        "commit": "cdf8150ed6e545ef6c65ec61f63b8c40433b84d7",
+        "path": null
+      }
+    ]
+  },
+  {
+    "resolved": {
+      "lock": {
+        "a": {
+          "url": "example.test/a",
+          "version": "v1.0.0",
+          "commit": "cdf8150ed6e545ef6c65ec61f63b8c40433b84d7"
+        }
+      },
+      "dependencies": {
+        "a": {
+          "url": "example.test/a",
+          "commit": "cdf8150ed6e545ef6c65ec61f63b8c40433b84d7",
+          "subpath": null,
+          "version": "v1.0.0",
+          "required_by": [
+            {
+              "by": "root",
+              "constraint": "^1"
+            }
+          ]
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

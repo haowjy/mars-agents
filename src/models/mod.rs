@@ -24,15 +24,16 @@ pub mod possible;
 pub mod probes;
 
 pub use availability::ModelAvailability;
-pub use catalog_api::{
-    CachedModel, default_catalog_providers, fetch_models, fetch_models_with_providers,
-};
+pub use catalog_api::default_catalog_providers;
 pub use catalog_cache::{
-    BackgroundRefresh, ModelsCache, RefreshMode, RefreshOutcome, ensure_fresh,
+    BackgroundRefresh, ModelsCache, RefreshMode, RefreshOutcome,
     ensure_fresh_with_catalog_providers, is_mars_offline, now_unix_secs, now_unix_secs_value,
     read_cache, refresh_warning, run_background_refresh,
 };
 pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
+pub use mars_schema::models::{
+    CachedModel, auto_resolve_all, catalog_provider_canonical, glob_match, sort_best_first,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ModelAlias {
@@ -399,54 +400,13 @@ pub fn merged_runtime_aliases(
     merged
 }
 
-pub fn auto_resolve_all<'a>(
-    provider: Option<&str>,
-    match_patterns: &[String],
-    exclude_patterns: &[String],
-    cache: &'a ModelsCache,
-) -> Vec<&'a CachedModel> {
-    let mut candidates: Vec<&CachedModel> = cache
-        .models
-        .iter()
-        .filter(|m| {
-            // Provider match (case-insensitive) — skip filter when provider is None
-            provider.is_none_or(|p| m.provider.eq_ignore_ascii_case(p))
-        })
-        .filter(|m| {
-            // Skip -latest suffix (synthetic aliases)
-            !m.id.ends_with("-latest")
-        })
-        .filter(|m| {
-            // All match patterns must hit (AND)
-            match_patterns.iter().all(|p| glob_match(p, &m.id))
-        })
-        .filter(|m| {
-            // No exclude patterns may hit (OR)
-            !exclude_patterns.iter().any(|p| glob_match(p, &m.id))
-        })
-        .collect();
-
-    candidates.sort_by(|a, b| {
-        let date_cmp = b
-            .release_date
-            .as_deref()
-            .unwrap_or("")
-            .cmp(a.release_date.as_deref().unwrap_or(""));
-        date_cmp
-            .then_with(|| a.id.len().cmp(&b.id.len()))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-
-    candidates
-}
-
 pub fn auto_resolve(
     provider: Option<&str>,
     match_patterns: &[String],
     exclude_patterns: &[String],
     cache: &ModelsCache,
 ) -> Option<String> {
-    auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
+    auto_resolve_all(provider, match_patterns, exclude_patterns, &cache.models)
         .first()
         .map(|model| model.id.clone())
 }
@@ -480,7 +440,8 @@ pub fn resolve_with_alias_prefix_static(
                 continue;
             }
             if let Some(provider_filter) = provider_filter
-                && !candidate.provider.eq_ignore_ascii_case(provider_filter)
+                && catalog_provider_canonical(&candidate.provider_key)
+                    != catalog_provider_canonical(provider_filter)
             {
                 continue;
             }
@@ -497,9 +458,12 @@ pub fn resolve_with_alias_prefix_static(
                 match_patterns,
                 exclude_patterns,
             } => {
-                for candidate in
-                    auto_resolve_all(provider.as_deref(), match_patterns, exclude_patterns, cache)
-                {
+                for candidate in auto_resolve_all(
+                    provider.as_deref(),
+                    match_patterns,
+                    exclude_patterns,
+                    &cache.models,
+                ) {
                     if glob_match(&pattern, &candidate.id) {
                         deduped
                             .entry(candidate.id.clone())
@@ -516,7 +480,8 @@ pub fn resolve_with_alias_prefix_static(
                 let provider = provider
                     .as_deref()
                     .or_else(|| infer_provider_from_model_id(model));
-                for candidate in auto_resolve_all(provider, match_patterns, exclude_patterns, cache)
+                for candidate in
+                    auto_resolve_all(provider, match_patterns, exclude_patterns, &cache.models)
                 {
                     if glob_match(&pattern, &candidate.id) {
                         deduped
@@ -529,17 +494,8 @@ pub fn resolve_with_alias_prefix_static(
         }
     }
 
-    let mut candidates: Vec<CachedModel> = deduped.into_values().collect();
-    candidates.sort_by(|a, b| {
-        let date_cmp = b
-            .release_date
-            .as_deref()
-            .unwrap_or("")
-            .cmp(a.release_date.as_deref().unwrap_or(""));
-        date_cmp
-            .then_with(|| a.id.len().cmp(&b.id.len()))
-            .then_with(|| a.id.cmp(&b.id))
-    });
+    let mut candidates: Vec<&CachedModel> = deduped.values().collect();
+    sort_best_first(&mut candidates);
 
     let winner = candidates.into_iter().next()?;
     let provider = winner.provider.to_ascii_lowercase();
@@ -555,12 +511,12 @@ pub fn resolve_with_alias_prefix_static(
     };
     Some(ResolvedAlias {
         name: input.to_string(),
-        model_id: winner.id,
+        model_id: winner.id.clone(),
         provider: provider.clone(),
         harness: None,
         harness_source: HarnessSource::Unavailable,
         harness_candidates: harness::harness_candidates_for_provider(&provider),
-        description: winner.description,
+        description: winner.description.clone(),
         prompting: base_alias.and_then(|a| a.prompting.clone()),
         default_effort,
         autocompact,
@@ -583,55 +539,6 @@ pub(crate) fn alias_prefix_base<'a>(
         })
         .max_by_key(|(name, _)| name.len())
         .map(|(_, alias)| alias)
-}
-
-pub fn glob_match(pattern: &str, text: &str) -> bool {
-    let segments: Vec<&str> = pattern.split('*').collect();
-
-    if segments.len() == 1 {
-        return pattern == text;
-    }
-
-    let mut pos = 0;
-
-    if let Some(first) = segments.first()
-        && !first.is_empty()
-    {
-        if !text.starts_with(first) {
-            return false;
-        }
-        pos = first.len();
-    }
-
-    if let Some(last) = segments.last()
-        && !last.is_empty()
-        && !text[pos..].ends_with(last)
-    {
-        return false;
-    }
-
-    let end = if let Some(last) = segments.last() {
-        if !last.is_empty() {
-            text.len() - last.len()
-        } else {
-            text.len()
-        }
-    } else {
-        text.len()
-    };
-
-    for segment in &segments[1..segments.len().saturating_sub(1)] {
-        if segment.is_empty() {
-            continue;
-        }
-        if let Some(idx) = text[pos..end].find(segment) {
-            pos += idx + segment.len();
-        } else {
-            return false;
-        }
-    }
-
-    pos <= end
 }
 
 pub fn builtin_aliases() -> IndexMap<String, ModelAlias> {

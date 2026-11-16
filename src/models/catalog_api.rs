@@ -1,35 +1,13 @@
 //! models.dev transport, provider allowlist and catalog decoding.
 
 use crate::error::MarsError;
-use serde::{Deserialize, Serialize};
+use mars_schema::models::{
+    CachedModel, ModelReasoningRow, catalog_provider_canonical, normalize_provider,
+};
 use std::time::Duration;
 
 // DNS, redirects and body reads fit inside the 120-second refresh claim lease.
 pub(super) const CATALOG_HTTP_DEADLINE_SECS: u64 = 60;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CachedModel {
-    pub id: String,
-    pub provider: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub release_date: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_window: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_output: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_input: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_output: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_cache_read: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_cache_write: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_reasoning: Option<f64>,
-}
 
 pub fn default_catalog_providers() -> Vec<String> {
     DEFAULT_CATALOG_PROVIDERS
@@ -48,15 +26,9 @@ const DEFAULT_CATALOG_PROVIDERS: &[&str] = &[
     "openrouter",
 ];
 
-/// Fetch models from the models.dev API.
-///
-/// Returns a list of cached model entries. On network failure, returns an error
-/// (callers should fall back to existing cache or explicit pinned IDs).
+/// Fetch every provider's models from the models.dev API. Which providers a project sees is
+/// decided when the snapshot is read ([`retain_providers`]), not here: the snapshot is shared.
 pub fn fetch_models() -> Result<Vec<CachedModel>, MarsError> {
-    fetch_models_with_providers(&default_catalog_providers())
-}
-
-pub fn fetch_models_with_providers(providers: &[String]) -> Result<Vec<CachedModel>, MarsError> {
     let url = models_api_url();
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(CATALOG_HTTP_DEADLINE_SECS)))
@@ -91,17 +63,14 @@ pub fn fetch_models_with_providers(providers: &[String]) -> Result<Vec<CachedMod
             message: format!("failed to parse models API response: {e}"),
         })?;
 
-    parse_models_dev_catalog_with_providers(&raw, providers)
+    parse_models_dev_catalog(&raw)
 }
 
 fn models_api_url() -> String {
     std::env::var("MARS_MODELS_API_URL").unwrap_or_else(|_| "https://models.dev/api.json".into())
 }
 
-fn parse_models_dev_catalog_with_providers(
-    raw: &serde_json::Value,
-    allowlist: &[String],
-) -> Result<Vec<CachedModel>, MarsError> {
+fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>, MarsError> {
     let providers = raw
         .as_object()
         .ok_or_else(|| crate::error::ConfigError::Invalid {
@@ -111,10 +80,6 @@ fn parse_models_dev_catalog_with_providers(
     let mut models = Vec::new();
 
     for (provider_key, provider_obj) in providers {
-        if !is_catalog_provider_allowed(provider_key, allowlist) {
-            continue;
-        }
-
         let Some(provider_models) = provider_obj.get("models").and_then(|m| m.as_object()) else {
             continue;
         };
@@ -155,6 +120,7 @@ fn parse_models_dev_catalog_with_providers(
             models.push(CachedModel {
                 id: model_id.to_string(),
                 provider: normalize_provider(provider_key),
+                provider_key: provider_key.to_string(),
                 release_date,
                 description,
                 context_window,
@@ -164,6 +130,7 @@ fn parse_models_dev_catalog_with_providers(
                 cost_cache_read,
                 cost_cache_write,
                 cost_reasoning,
+                reasoning: ModelReasoningRow::from_models_dev(model_obj),
             });
         }
     }
@@ -171,39 +138,14 @@ fn parse_models_dev_catalog_with_providers(
     Ok(models)
 }
 
-fn is_catalog_provider_allowed(provider_key: &str, allowlist: &[String]) -> bool {
+/// The rows a project's `catalog_providers` allows; `*` allows every provider.
+pub fn retain_providers(models: &mut Vec<CachedModel>, allowlist: &[String]) {
     if allowlist.iter().any(|provider| provider.trim() == "*") {
-        return true;
+        return;
     }
-    allowlist
+    let allowed: Vec<String> = allowlist
         .iter()
-        .any(|allowed| catalog_providers_match(allowed, provider_key))
-}
-
-fn catalog_providers_match(allowed: &str, provider_key: &str) -> bool {
-    catalog_provider_canonical(allowed) == catalog_provider_canonical(provider_key)
-}
-
-fn catalog_provider_canonical(key: &str) -> String {
-    match key.trim().to_ascii_lowercase().as_str() {
-        "meta-llama" => "meta".to_string(),
-        "mistralai" => "mistral".to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Normalize models.dev provider keys to canonical names.
-fn normalize_provider(slug: &str) -> String {
-    match slug {
-        "anthropic" => "Anthropic".to_string(),
-        "openai" => "OpenAI".to_string(),
-        "google" => "Google".to_string(),
-        "meta-llama" | "meta" => "Meta".to_string(),
-        "mistralai" | "mistral" => "Mistral".to_string(),
-        "deepseek" => "DeepSeek".to_string(),
-        "cohere" => "Cohere".to_string(),
-        "xai" => "xAI".to_string(),
-        "openrouter" => "OpenRouter".to_string(),
-        _ => slug.to_string(),
-    }
+        .map(|provider| catalog_provider_canonical(provider))
+        .collect();
+    models.retain(|model| allowed.contains(&catalog_provider_canonical(&model.provider_key)));
 }

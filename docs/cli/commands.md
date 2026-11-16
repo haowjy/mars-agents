@@ -393,8 +393,12 @@ mars models aliases [--refresh-models|--no-refresh-models]
 mars models catalog [--refresh-models|--no-refresh-models]
 ```
 
-`mars models refresh` fetches models.dev metadata synchronously into
-`.mars/models-cache.json`. The catalog is indefinite last-known-good data:
+`mars models refresh` fetches models.dev metadata synchronously into the per-user
+catalog snapshot (`models-catalog-v2.json` in the Mars cache root, `MARS_CACHE_DIR`), shared by every
+project on the machine. The snapshot holds every models.dev provider; a project's
+`catalog_providers` filters what it reads, and its `models_cache_ttl_hours` decides when it asks for
+a refresh. A machine with no snapshot is seeded, stale, from the project's old
+`.mars/models-cache.json`, which is never written again. The catalog is indefinite last-known-good data:
 the default 24-hour interval controls when to *refresh*, not when reads expire.
 Fresh cache returns without network work. Stale usable cache returns immediately
 and claims one detached background refresh across concurrent readers; cold/empty/corrupt cache fetches

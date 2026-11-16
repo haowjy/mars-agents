@@ -153,7 +153,7 @@ model = "gpt-5.4-mini"
 
     // The common catalog contains gpt-5, but not the colliding alias's model.
     std::fs::write(
-        project_root.join(".mars/models-cache.json"),
+        crate::test_common::cache_path(&project_root),
         serde_json::json!({
             "models": [
                 {"id": "claude-opus-4-6", "provider": "anthropic"},

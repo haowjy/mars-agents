@@ -251,7 +251,7 @@ fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
     let project = temp.child("plain-project");
     project.create_dir_all().unwrap();
     write_cache(project.path(), sample_cached_models(), &stale_fetched_at());
-    let before = fs::read(project.child(".mars/models-cache.json")).unwrap();
+    let before = fs::read(crate::test_common::cache_path(project.path())).unwrap();
 
     let mut cmd = mars();
     configure_assert_cmd(&mut cmd, temp.path(), &server.url(API_PATH));
@@ -274,7 +274,7 @@ fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
     );
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while fs::read(project.child(".mars/models-cache.json")).unwrap() == before {
+    while fs::read(crate::test_common::cache_path(project.path())).unwrap() == before {
         assert!(
             Instant::now() < deadline,
             "project-less worker did not update cache"

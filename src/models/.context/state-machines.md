@@ -7,17 +7,28 @@ are in [CONTEXT.md](CONTEXT.md).
 ## Model catalog snapshot and refresh claim
 
 The on-disk catalog, its freshness and who may refresh it. It is the most stateful thing in the
-resolve and models area, and it lives in **the project's `.mars/`**, not the global cache: every
-caller passes `project_root.join(".mars")`, and the detached worker gets it back through
-`--mars-dir`. So the claim, the cooldown and the revision are per project.
+resolve and models area. **One snapshot per user**, in the Mars cache root (`MARS_CACHE_DIR`), next
+to the git cache: every project and every Mars build on the machine shares it, so the claim, the
+cooldown and the revision are per machine. Each project still decides *when it asks* for a refresh
+(`models_cache_ttl_hours`) and *what it reads* (`catalog_providers`, applied when the snapshot is
+read; the snapshot itself holds every provider and the raw models.dev provider key).
 
-| File | Holds | Written by |
+| File (in the Mars cache root) | Holds | Written by |
 |---|---|---|
-| `models-cache.json` | the catalog, `fetched_at`, and a monotonic `revision` | `write_snapshot`, atomic |
+| `models-catalog-v{SNAPSHOT_SCHEMA}.json` | the catalog, `fetched_at`, and a monotonic `revision` | `write_snapshot`, atomic |
 | `.models-cache.lock` | nothing; the flock for read-modify-write | `refresh_with_fetcher` |
 | `.models-cache.refresh-claim` | `{token, at}`: who is fetching, since when | `claim_refresh`, atomic |
 | `.models-cache.refresh-claim.lock` | nothing; the flock for claim read, compare and delete | `refresh_claim_is_owned`, `release_refresh_claim` |
 | `.models-cache.last-fail` | `{at, reason}`: the last failure, for the cooldown | `write_fetch_fail_marker`, atomic |
+
+- **The schema version is in the file name.** A build that reads another version finds no file, as
+  the probe cache does, so builds sharing a machine never rewrite each other's format. Bump
+  `SNAPSHOT_SCHEMA` only when an older build could not read the new file.
+- **A machine with no snapshot is seeded** from the project's old `.mars/models-cache.json`,
+  marked stale (no `fetched_at`, revision 0) and never written back: it serves an offline first run
+  and is replaced by the first successful refresh. Nothing writes the per-project file.
+- **The worker is rootless** (`models __refresh-catalog` takes the TTL, revision and claim token
+  only) and fetches every provider.
 
 ```mermaid
 stateDiagram-v2

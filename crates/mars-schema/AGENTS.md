@@ -40,6 +40,14 @@ and rules, so never add a binary-side copy.
 
 Flow has no per-server MCP tools; `tool_natives::FLOW_CONNECTION_TOOLS` is the one list of the connection tools that `mcp(...)` rules and MCP wire tokens lower onto, and a new connection tool joins by being listed there. Flow cannot scope them to one server, so `project_flow_connection_tools` errs toward fewer connections: a deny or ask of any `mcp(...)` lands on every one of them (the `note` says it covers every server, which can be broader than written), and an allow or ask under an allow-list (`*` that is not `allow`) gives none and stays `known` with a note, which the consumer shows as a warning (`unscopable` is refused, so it must not be used here). An allow with no allow-list changes nothing, since the tools are already available. Other hosts' MCP lowering must not change when Flow's does.
 
+## Models catalog
+
+`models.rs` is the models.dev row (`CachedModel`) and the pure alias resolver over rows
+(`auto_resolve_all`, `glob_match`): the binary's snapshot and Flow's rows go through the same code.
+Providers compare by `catalog_provider_canonical` of the raw models.dev key (`provider_key`), never
+by display name: `meta` and `meta-llama` both display as "Meta". Fetching, the snapshot file and the
+per-project provider filter are the binary's.
+
 ## Checking
 
 `check.rs` is what `mars check` and the WASM `check` report about a package's own files. A rule about an Agent, a skill or `mars.toml` goes there, never in `src/cli/check.rs`. It reports what is true of the package wherever it runs: what a harness target can't express, or an older Mars can't read (the `requires-mars` floor, hooks, lost-in-lowering fields), stays in the binary. Grade a finding by what the author loses: `Error` it won't load or install, `Warning` something written won't take effect, `Info` nothing written is lost. For each path the result is `prepare`'s findings plus the check's own, so dropping the check's codes must leave what `prepare` returns for the path; both runners hold that. A new code is a fixture under `fixtures/check/` and a row in the code lists of both runners.

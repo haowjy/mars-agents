@@ -47,6 +47,7 @@ pub mod tool_project;
 pub mod tool_rule_map;
 
 pub mod model_policy;
+pub mod models;
 pub mod names;
 pub mod network;
 pub mod ordered;

@@ -7,6 +7,44 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-16
+
+### Upgrade notes
+- A package that writes `effort: minimal`, `auto` or `null` (on an Agent or a model policy), or a model alias `default_effort` of `none`, `minimal`, or any value not in lowercase (`HIGH`, `Auto`), needs `requires-mars >= 0.35.0`. An older Mars refuses those values and fails the whole sync. `mars check` errors until `requires-mars` covers them, and `mars version` writes it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#effort).
+- The models.dev catalog is now one snapshot per user in the Mars cache root, and Mars no longer writes a project's `.mars/models-cache.json`. A tool that reads that file (Meridian's cost estimate before its next release) finds it frozen at its last contents. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-models).
+
+### Added
+- Effort resolves to a level both the chosen model and harness take, read from models.dev. A level that isn't on both lists moves to the nearest one that is, and Mars warns. A tie goes up, and a move never lands on `none` unless `none` was asked. For example: "effort `max` → `high`: `o3` takes low, medium, high". A model that doesn't reason gets no effort. The warning is `launch.warning` in a launch bundle, and `agent.effort-moved` at sync (one line, or one per Agent and harness with `--verbose`).
+- `minimal` joins the effort ladder: `none < minimal < low < medium < high < xhigh < max`. `auto` (or YAML `null`) sends no effort and overrides lower layers, while `none` turns reasoning off. `[models] default_effort` takes every value an Agent's `effort` does, and `--effort`, `[agents.<name>] effort` and model policies take `auto`.
+- `mars models list` shows each model's reasoning levels: an `EFFORT` column, and `reasoning` in the JSON. `mars models catalog --json` adds `provider_key` and `reasoning`.
+- `mars build launch-bundle --config-effort <level>` carries the caller's own configured effort above the alias's `default_effort`. `routing.catalog_row` in the bundle is the models.dev row of the model the harness runs, or `null`.
+- `@meridian-flow/mars-schema` exports `resolve(input)`: the version resolution `mars sync` does, for a caller that fetches for itself.
+  - It returns the fetches it still needs: tags, refs, and the files of a commit.
+  - Once those are answered, it returns the lock rows to store verbatim, or the first failure with the text `mars sync` prints.
+  - Answers can come in any order, and the later answer to the same fetch wins.
+
+  The types and the loop are in the package README under `resolve`.
+- `@meridian-flow/mars-schema` exports `resolveEffort`, `resolveAlias` and `effortLevels`, so a gateway resolves effort and `auto` aliases with Mars's own code. `Effort` gains `minimal`.
+
+### Changed
+- When a resolution restarts, a warning the discarded pass also printed is no longer repeated: warnings describe the final graph, once.
+- When two things are wrong, an error found during resolution (a conflict, an engine mismatch, an unreachable repository) is reported before an error reading a dependency's hook folder or `[models]` table.
+- A new pin or `mars upgrade` of an annotated tag records in `mars.lock` the commit the tag points at, not the tag object's id, whether chosen by version or by ref (`version = "stable"`). So `mars sync` and Meridian Flow write the same lock. An existing lock keeps its id through `mars sync`. The first `mars upgrade` on a lock that holds a tag object's id rewrites that id to the commit, even when no version changes, so expect a one-time `mars.lock` diff.
+- Fetching a version takes one `git ls-remote` instead of two.
+- A wrong `subpath` is reported as "`<name>`: subpath `<path>` does not exist in the source" (or "is not a directory"), with the same exit code. The message no longer prints the cache folder.
+- The models.dev catalog is shared by every project and Mars build on the machine. A project's `catalog_providers` filters what it reads, and `models_cache_ttl_hours` still decides when that project asks for a refresh. A machine with no snapshot is seeded once from an old `.mars/models-cache.json`. Each command reads only the providers it needs.
+- An alias's `provider` compares models.dev's canonical provider keys, so `mistralai` selects `mistral` models and `meta-llama` selects `meta` models. Before, those spellings matched nothing. Every alias in `meridian-base` resolves to the same model as before.
+- `mars models refresh` says how many models it fetched and how many the project's `catalog_providers` let through. `--json` adds `fetched_models_count` next to `models_count`.
+- Claude Code: `effort: none` becomes `low` with a warning, since Claude Code can't turn reasoning off. Before, it was left out of the native file.
+- Cursor: a level the model has no slug for moves to the nearest slug and warns. Before, only `max` fell back, to `xhigh` then `high`, and every other missing level failed the launch. The bare slug counts as `medium`. A launch that sends no effort no longer needs Cursor's model list.
+
+### Fixed
+- A git network or authentication error while fetching a locked commit stops the sync with git's own error and keeps the lock. So does a commit that exists but fails to export (a smudge filter that errors, a full disk). Each used to be read as a missing commit, which dropped the lock and chose a newer version. A commit the remote really doesn't have still drops the lock with a warning.
+- A locked commit that no tag or branch reaches any more, but the remote still serves, is now kept on a fresh cache too. Before, only an existing cache fetched it by hash.
+- `mars sync` and `mars upgrade` no longer fail with "would clobber existing tag" when a tag was moved upstream. A lock keeps its commit until `mars upgrade` moves it.
+- A version chosen before a resolution restart is reused only for the source it was chosen for, and only while it meets the current constraints. Before, a restart that changed where a dependency came from could install the old source's files under the new URL, and one that changed the constraint could keep a version outside it.
+- A dependency cycle holds each edge to its constraint. `a ^1`, whose dependency `b` needs `a ^2`, is now a version conflict instead of a lock that breaks both constraints. Cycles whose constraints agree resolve as before.
+
 ## [0.34.6-rc.1] - 2026-11-16
 
 None. CI-only change: workflow actions move to majors that run on Node 24; nothing a user or developer notices changes.

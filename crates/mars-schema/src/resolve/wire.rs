@@ -14,9 +14,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_bytes::ByteBuf;
 
 use super::{
-    Answer, Answers, Bounds, BoundsLimit, Dependency, Diagnostic, Engine, EngineFailure, Failure,
-    Identity, Level, LockedDependency, Mode, Need, Outcome, PathRequest, PathSource, PluginDetail,
-    Request, Spec, SubpathDetail, Tag, locked_dependency,
+    Answer, Answers, Bounds, BoundsLimit, Dependency, Diagnostic, Engine, EngineFailure,
+    FailedFetch, Failure, Identity, Level, LockedDependency, Mode, Need, Outcome, PathRequest,
+    PathSource, PluginDetail, Request, Spec, SubpathDetail, Tag, locked_dependency,
 };
 use crate::dependency::Dependencies;
 use crate::diagnostic::SchemaDiagnostic;
@@ -307,26 +307,21 @@ enum Reply<T> {
     Failed(String),
 }
 
-struct TreeReply {
-    url: String,
-    commit: String,
-    /// The folder the answer covers, `None` for the whole repository.
-    path: Option<String>,
-    reply: Reply<Rc<FileTree>>,
-}
+/// A tree answer's key: the repository, the commit and the folder it covers (`None`: everything).
+type TreeKey = (String, String, Option<String>);
 
 /// The tree below a folder of an answer, or why the folder is not one.
 type View = Result<Rc<FileTree>, SubpathDetail>;
 
-/// The answers of an input as a map, which the resolver looks its lookups up in.
+/// The answers of an input as a map, which the resolver looks its lookups up in. Every kind keeps
+/// one answer per key, and the later one in the list replaces the earlier: the lookup never
+/// depends on the order the answers arrive in, only on which one is last for its key.
 struct MapAnswers {
     tags: BTreeMap<String, Reply<Vec<Tag>>>,
     refs: BTreeMap<(String, String), Reply<String>>,
-    trees: Vec<TreeReply>,
+    trees: BTreeMap<TreeKey, Reply<Rc<FileTree>>>,
     /// Trees rooted below a repository's root, built once per lookup.
-    views: RefCell<BTreeMap<(usize, String), View>>,
-    /// Why a subtree lookup failed, so the failure it ends in says `subpath`, not `unavailable`.
-    subpath_errors: RefCell<BTreeMap<(String, String, String), SubpathDetail>>,
+    views: RefCell<BTreeMap<(TreeKey, String), View>>,
 }
 
 fn invalid(message: impl Into<String>) -> InputError {
@@ -338,9 +333,8 @@ impl MapAnswers {
         let mut map = Self {
             tags: BTreeMap::new(),
             refs: BTreeMap::new(),
-            trees: Vec::new(),
+            trees: BTreeMap::new(),
             views: RefCell::default(),
-            subpath_errors: RefCell::default(),
         };
         for (index, answer) in answers.into_iter().enumerate() {
             map.add(answer)
@@ -370,12 +364,8 @@ impl MapAnswers {
                     .map(|(path, bytes)| (path, bytes.into_vec())),
             )
             .map_err(|error| invalid(error.to_string()))?;
-            self.trees.push(TreeReply {
-                url,
-                commit,
-                path,
-                reply: Reply::Found(Rc::new(tree)),
-            });
+            self.trees
+                .insert((url, commit, path), Reply::Found(Rc::new(tree)));
             return Ok(());
         }
         let Some(need) = answer.need else {
@@ -434,21 +424,35 @@ impl MapAnswers {
                         ));
                     }
                 };
-                self.trees.push(TreeReply {
-                    url,
-                    commit,
-                    path,
-                    reply,
-                });
+                self.trees.insert((url, commit, path), reply);
             }
         }
         Ok(())
     }
 
-    /// The files of `answer` under `path`, as a tree rooted there.
-    fn view(&self, index: usize, tree: &FileTree, path: &str) -> View {
-        let key = (index, path.to_string());
-        if let Some(view) = self.views.borrow().get(&key) {
+    /// The answer for a tree need: the one for its own key, else the one for the nearest folder
+    /// above it, else the whole repository's. A narrower answer, found or not, is about the need
+    /// itself, so it outranks a broader one that failed.
+    fn covering(
+        &self,
+        url: &str,
+        commit: &str,
+        path: Option<&str>,
+    ) -> Option<(&TreeKey, &Reply<Rc<FileTree>>)> {
+        let mut at = path.map(str::to_string);
+        loop {
+            let key = (url.to_string(), commit.to_string(), at.clone());
+            if let Some(found) = self.trees.get_key_value(&key) {
+                return Some(found);
+            }
+            at = at?.rsplit_once('/').map(|(parent, _)| parent.to_string());
+        }
+    }
+
+    /// The files of the answer `key` under `path`, as a tree rooted there.
+    fn view(&self, key: &TreeKey, tree: &FileTree, path: &str) -> View {
+        let cached = (key.clone(), path.to_string());
+        if let Some(view) = self.views.borrow().get(&cached) {
             return view.clone();
         }
         let prefix = format!("{path}/");
@@ -465,22 +469,8 @@ impl MapAnswers {
                 FileTree::from_files(files).expect("paths of a tree stay valid below a folder"),
             ))
         };
-        self.views.borrow_mut().insert(key, view.clone());
+        self.views.borrow_mut().insert(cached, view.clone());
         view
-    }
-}
-
-/// Whether the folder an answer covers (`None`: everything) holds `path`.
-fn covers(answer: Option<&str>, path: Option<&str>) -> bool {
-    match (answer, path) {
-        (None, _) => true,
-        (Some(_), None) => false,
-        (Some(answer), Some(path)) => {
-            path == answer
-                || path
-                    .strip_prefix(answer)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        }
     }
 }
 
@@ -489,7 +479,7 @@ impl<T: Clone> Reply<T> {
         match self {
             Self::Found(value) => Answer::Found(value.clone()),
             Self::Missing => Answer::Missing,
-            Self::Failed(reason) => Answer::Failed(reason.clone()),
+            Self::Failed(reason) => Answer::Failed(FailedFetch::Fetch(reason.clone())),
         }
     }
 }
@@ -511,34 +501,21 @@ impl Answers for MapAnswers {
         commit: &str,
         path: Option<&str>,
     ) -> Option<Answer<Rc<dyn TreeSource>>> {
-        let (index, covering) = self.trees.iter().enumerate().find(|(_, tree)| {
-            tree.url == url && tree.commit == commit && covers(tree.path.as_deref(), path)
-        })?;
-        let tree = match (&covering.reply, path) {
-            (Reply::Found(tree), None) => Rc::clone(tree) as Rc<dyn TreeSource>,
-            (Reply::Found(tree), Some(path)) => match self.view(index, tree, path) {
-                Ok(view) => view as Rc<dyn TreeSource>,
-                Err(detail) => {
-                    let reason = match detail {
-                        SubpathDetail::NotADirectory => format!("`{path}` is not a directory"),
-                        _ => format!("`{path}` does not exist"),
-                    };
-                    self.subpath_errors.borrow_mut().insert(
-                        (url.to_string(), commit.to_string(), path.to_string()),
-                        detail,
-                    );
-                    return Some(Answer::Failed(reason));
-                }
+        let (key, reply) = self.covering(url, commit, path)?;
+        Some(match (reply, path) {
+            (Reply::Found(tree), None) => Answer::Found(Rc::clone(tree) as Rc<dyn TreeSource>),
+            (Reply::Found(tree), Some(path)) => match self.view(key, tree, path) {
+                Ok(view) => Answer::Found(view as Rc<dyn TreeSource>),
+                Err(detail) => Answer::Failed(FailedFetch::Subpath(detail)),
             },
-            (Reply::Missing, _) => return Some(Answer::Missing),
-            (Reply::Failed(reason), _) => return Some(Answer::Failed(reason.clone())),
-        };
-        Some(Answer::Found(tree))
+            (Reply::Missing, _) => Answer::Missing,
+            (Reply::Failed(reason), _) => Answer::Failed(FailedFetch::Fetch(reason.clone())),
+        })
     }
 
     /// A fetched package's path names its author's disk.
     fn path(&self, _request: &PathRequest<'_>) -> Answer<PathSource> {
-        Answer::Failed("path refused".to_string())
+        Answer::Failed(FailedFetch::Fetch("path refused".to_string()))
     }
 }
 
@@ -588,7 +565,7 @@ pub fn run(input: Input) -> Result<Output, InputError> {
                 version: input.engine.mars,
                 message: error.to_string(),
             };
-            return Ok(failed(failure, &answers, &[]));
+            return Ok(failed(failure, &[]));
         }
     };
     let request = Request {
@@ -626,7 +603,7 @@ pub fn run(input: Input) -> Result<Output, InputError> {
         Outcome::Needs(needs) => Output::Needs {
             needs: needs.into_iter().map(NeedWire::from).collect(),
         },
-        Outcome::Failed(error) => failed(error.failure, &answers, &error.diagnostics),
+        Outcome::Failed(error) => failed(error.failure, &error.diagnostics),
         Outcome::Resolved(resolved) => Output::Resolved {
             resolved: ResolvedOutput {
                 lock: resolved
@@ -736,7 +713,7 @@ fn diagnostics(notes: &[Diagnostic]) -> Vec<DiagnosticOutput> {
         .collect()
 }
 
-fn failed(failure: Failure, answers: &MapAnswers, notes: &[Diagnostic]) -> Output {
+fn failed(failure: Failure, notes: &[Diagnostic]) -> Output {
     let message = failure.message();
     let body = match failure {
         Failure::Conflict {
@@ -844,37 +821,10 @@ fn failed(failure: Failure, answers: &MapAnswers, notes: &[Diagnostic]) -> Outpu
             name,
             declared_in: requester(&declared_in),
         },
-        Failure::Unavailable {
-            package,
-            need,
+        Failure::Unavailable { need, reason, .. } => FailureBody::Unavailable {
+            need: need.into(),
             reason,
-        } => {
-            // A folder the answer has no files in is the package's `subpath`.
-            let subpath = match &need {
-                Need::Tree {
-                    url,
-                    commit,
-                    path: Some(path),
-                } => answers
-                    .subpath_errors
-                    .borrow()
-                    .get(&(url.clone(), commit.clone(), path.clone()))
-                    .map(|detail| (path.clone(), *detail)),
-                _ => None,
-            };
-            if let Some((subpath, detail)) = subpath {
-                let failure = Failure::Subpath {
-                    name: package,
-                    subpath,
-                    detail,
-                };
-                return failed(failure, answers, notes);
-            }
-            FailureBody::Unavailable {
-                need: need.into(),
-                reason,
-            }
-        }
+        },
         Failure::Bounds { limit, at } => FailureBody::Bounds {
             limit: match limit {
                 BoundsLimit::Packages => "packages",

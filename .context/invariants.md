@@ -33,7 +33,7 @@ interrupted write there has no recovery. Three ownership predicates exist on pur
 **How.** Config comes from exactly three files: `mars.toml`, `mars.local.toml` and the
 user `config.toml` (`src/config/user.rs`). A package entry outside the package root is
 an error (`src/package_prepare/mod.rs`, `DiskTreeSource::confined`); a subpath can't
-leave its checkout (`src/resolve/path.rs`); a symlink is materialized only when its
+leave its checkout (`apply_subpath` in `src/resolve/answers.rs`); a symlink is materialized only when its
 target stays inside the package (`src/fs/mod.rs`). Destinations are `DestPath`s, which
 reject absolute and `..` paths (`src/types.rs`). Archive extraction rejects traversal
 and skips symlinks (`src/source/archive.rs`). Per-mechanism docs:

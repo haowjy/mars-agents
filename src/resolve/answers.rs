@@ -1,9 +1,10 @@
 //! The CLI's answers to `mars_schema::resolve`: each lookup is fetched when it is asked and
 //! memoized, so no need is ever open and the order of work is the order the core asks in.
 //!
-//! The core knows an answer failed, not why; the error that failed it stays here, per lookup, and
-//! [`CliAnswers::error_for`] hands it back when the core reports that lookup, so a failure prints
-//! what it printed before the resolver moved.
+//! The core knows an answer failed and its reason's text; the error that failed it stays here, per
+//! lookup, and [`CliAnswers::error_for`] hands it back when the core reports that lookup, so a
+//! failure prints what it printed before the resolver moved. A wrong `subpath` is the exception:
+//! the answer says so, and the core reports it as the failure it is.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -12,7 +13,8 @@ use std::rc::Rc;
 
 use mars_schema::names::SourceSubpath;
 use mars_schema::resolve::{
-    Answer, Answers, Failure, Identity, Need, Origin, PathRequest, PathSource, Rooted, Tag,
+    Answer, Answers, FailedFetch, Failure, Identity, Need, Origin, PathRequest, PathSource, Rooted,
+    SubpathDetail, Tag,
 };
 use mars_schema::tree::TreeSource;
 
@@ -68,7 +70,19 @@ impl<'a> CliAnswers<'a> {
     fn failed<T>(&self, lookup: Lookup, error: MarsError) -> Answer<T> {
         let reason = error.to_string();
         self.errors.borrow_mut().insert(lookup, error);
-        Answer::Failed(reason)
+        Answer::Failed(FailedFetch::Fetch(reason))
+    }
+
+    /// A folder that is not there, not a directory or outside the checkout is a wrong `subpath`,
+    /// which the answer says; any other error stays here.
+    fn subpath_failed<T>(&self, lookup: Lookup, error: MarsError) -> Answer<T> {
+        let detail = match error {
+            MarsError::SubpathMissing { .. } => SubpathDetail::Missing,
+            MarsError::SubpathNotDirectory { .. } => SubpathDetail::NotADirectory,
+            MarsError::SubpathTraversal { .. } => SubpathDetail::Traversal,
+            other => return self.failed(lookup, other),
+        };
+        Answer::Failed(FailedFetch::Subpath(detail))
     }
 
     /// The content directory of a commit, fetched once.
@@ -132,9 +146,9 @@ impl<'a> CliAnswers<'a> {
     /// core decided itself.
     pub(crate) fn error_for(&self, failure: &Failure) -> Option<MarsError> {
         let mut errors = self.errors.borrow_mut();
-        let (package, error) = match failure {
-            Failure::Path { name, .. } => (name, errors.remove(&Lookup::Path(name.clone()))),
-            Failure::Unavailable { package, need, .. } => {
+        match failure {
+            Failure::Path { name, .. } => errors.remove(&Lookup::Path(name.clone())),
+            Failure::Unavailable { need, .. } => {
                 let read = self.read_error.borrow_mut().take();
                 let stored = match need {
                     Need::Tags { url } => errors.remove(&Lookup::Tags(url.clone())),
@@ -145,46 +159,10 @@ impl<'a> CliAnswers<'a> {
                         .remove(&Lookup::Tree(url.clone(), commit.clone(), path.clone()))
                         .or_else(|| errors.remove(&Lookup::Content(url.clone(), commit.clone()))),
                 };
-                (package, read.or(stored))
+                read.or(stored)
             }
-            _ => return None,
-        };
-        error.map(|error| named(error, package))
-    }
-}
-
-/// The subpath errors are raised where no package name is known: the core says which package was
-/// being resolved.
-fn named(error: MarsError, package: &str) -> MarsError {
-    match error {
-        MarsError::SubpathMissing {
-            subpath,
-            checkout_root,
-            ..
-        } => MarsError::SubpathMissing {
-            source_name: package.to_string(),
-            subpath,
-            checkout_root,
-        },
-        MarsError::SubpathNotDirectory {
-            subpath,
-            checkout_root,
-            ..
-        } => MarsError::SubpathNotDirectory {
-            source_name: package.to_string(),
-            subpath,
-            checkout_root,
-        },
-        MarsError::SubpathTraversal {
-            subpath,
-            checkout_root,
-            ..
-        } => MarsError::SubpathTraversal {
-            source_name: package.to_string(),
-            subpath,
-            checkout_root,
-        },
-        other => other,
+            _ => None,
+        }
     }
 }
 
@@ -245,7 +223,7 @@ impl Answers for CliAnswers<'_> {
                     let subpath = SourceSubpath::new(subpath).expect("a subpath the core read");
                     match apply_subpath("", &dir, Some(&subpath)) {
                         Ok(root) => self.disk_tree(&root, lookup),
-                        Err(error) => self.failed(lookup, error),
+                        Err(error) => self.subpath_failed(lookup, error),
                     }
                 }
             },
@@ -283,7 +261,7 @@ impl Answers for CliAnswers<'_> {
                     None => Ok(canonical.clone()),
                 };
                 match root {
-                    Err(error) => self.failed(lookup, error),
+                    Err(error) => self.subpath_failed(lookup, error),
                     Ok(root) => match self.disk_tree(&root, lookup) {
                         Answer::Found(tree) => Answer::Found(PathSource {
                             canonical: canonical.to_string_lossy().into_owned(),
@@ -499,9 +477,13 @@ pub(crate) fn mars_error(failure: Failure, answers: &CliAnswers<'_>) -> MarsErro
             ),
         }
         .into(),
-        Failure::Subpath { name, .. } => MarsError::Source {
+        Failure::Subpath {
+            name,
+            subpath,
+            detail,
+        } => MarsError::Source {
             source_name: name,
-            message,
+            message: format!("subpath `{subpath}` {}", detail.reason()),
         },
         // Answers that failed carry their own error above; a bound is the caller's to set.
         Failure::Path { .. } | Failure::Unavailable { .. } | Failure::Bounds { .. } => {

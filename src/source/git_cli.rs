@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::platform::cache::{archive_cache_component, git_cache_component};
 use crate::platform::fs::{publish_cache_dir_if_absent, safe_remove};
-use crate::platform::process::{display_command, run_git, run_git_with_index, run_git_with_ref};
+use crate::platform::process::{display_command, git_has_commit, run_git, run_git_with_index};
 use crate::source::GlobalCache;
 use mars_schema::resolve::Tag;
 
@@ -23,27 +23,32 @@ fn not_an_option(what: &str, value: &str) -> Result<(), MarsError> {
     Ok(())
 }
 
+/// The commit a ref names: a ref to an annotated tag is peeled, as the tag listing does, so a new
+/// pin records the commit and not the tag object.
 pub(crate) fn ls_remote_ref(url: &str, reference: &str) -> Result<String, MarsError> {
     not_an_option("URL", url)?;
     not_an_option("ref", reference)?;
-    let command_display = display_command(&["ls-remote", "--", url, reference]);
-    let output = run_git_with_ref(
-        &["ls-remote", "--", url],
-        reference,
-        Path::new("."),
-        "resolve remote git reference",
-    )?;
+    let peeled_pattern = format!("{reference}^{{}}");
+    let args = ["ls-remote", "--", url, reference, peeled_pattern.as_str()];
+    let output = run_git(&args, Path::new("."), "resolve remote git reference")?;
 
-    for line in output.lines() {
-        if let Some((sha, _)) = line.split_once('\t')
-            && !sha.trim().is_empty()
-        {
-            return Ok(sha.trim().to_string());
-        }
+    // The first ref listed is the answer; git lists an annotated tag's commit on its own
+    // `<ref>^{}` line.
+    let lines: Vec<(&str, &str)> = output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(sha, name)| (sha.trim(), name))
+        .filter(|(sha, _)| !sha.is_empty())
+        .collect();
+    if let Some((sha, name)) = lines.iter().find(|(_, name)| !name.ends_with("^{}")) {
+        let peeled = lines
+            .iter()
+            .find(|(_, other)| other.strip_suffix("^{}") == Some(name));
+        return Ok(peeled.map_or(*sha, |(commit, _)| *commit).to_string());
     }
 
     Err(MarsError::GitCli {
-        command: command_display,
+        command: display_command(&["ls-remote", "--", url, reference]),
         message: format!("reference `{reference}` not found"),
     })
 }
@@ -175,15 +180,16 @@ pub(crate) fn fetch_git_content(
         }
     }
 
-    // A pinned commit that survived the fetches above and still cannot be read is not in the
-    // repository; any other failure says nothing about the commit.
-    export_commit(&cache_path, commit, &content_path).map_err(|error| match error {
-        MarsError::GitCli { .. } if pinned => MarsError::LockedCommitUnreachable {
+    // A pinned commit that survived the fetches above and is still not in the clone is gone from
+    // the repository. Whatever else fails exporting a commit that is there (a smudge filter, a
+    // full disk) says nothing about the commit and keeps its own error.
+    if pinned && !git_has_commit(&cache_path, commit)? {
+        return Err(MarsError::LockedCommitUnreachable {
             commit: commit.to_string(),
             url: url.to_string(),
-        },
-        other => other,
-    })?;
+        });
+    }
+    export_commit(&cache_path, commit, &content_path)?;
     Ok(content_path)
 }
 

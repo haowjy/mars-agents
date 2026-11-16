@@ -343,7 +343,7 @@ impl<'a> Run<'a> {
         let excluded: HashSet<Version> = self
             .exclusions
             .keys()
-            .filter(|(source, _)| source == name)
+            .filter(|(source, _)| source == pending.id)
             .map(|(_, version)| version.clone())
             .collect();
 

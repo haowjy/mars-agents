@@ -86,13 +86,7 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             continue;
         }
 
-        let checked = crate::sync::upgrades::check_upgrade(
-            node,
-            &graph,
-            &provider,
-            &options,
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        );
+        let checked = crate::sync::upgrades::check_upgrade(node, &graph, &provider, &options);
         let (versions, candidate) = match checked {
             Ok(Some(checked)) => (checked.available, checked.candidate),
             Ok(None) => continue,

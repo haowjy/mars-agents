@@ -1,0 +1,52 @@
+{
+  "input": {
+    "root": {
+      "manifest": "[dependencies.x]\nurl = \"https://example.test/mono\"\nversion = \"^1\"\nsubpath = \"packages/x\"\n"
+    },
+    "engine": {
+      "mars": "0.35.0"
+    },
+    "locked": {
+      "x": {
+        "url": "example.test/mono",
+        "subpath": "packages/x",
+        "version": "v1.0.0",
+        "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c"
+      }
+    }
+  },
+  "steps": [
+    {
+      "answers": []
+    },
+    {
+      "answers": [
+        {
+          "url": "https://example.test/mono",
+          "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c",
+          "path": "packages/x",
+          "files": {
+            "packages/x/mars.toml": "[package]\nschema = 1\nname = \"x\"\nversion = \"1.0.0\"\n\n",
+            "packages/x/skills/x-skill/SKILL.md": "---\nname: x-skill\ndescription: x 1.0.0\n---\nbody x 1.0.0\n"
+          }
+        },
+        {
+          "need": {
+            "kind": "tags",
+            "url": "https://example.test/mono"
+          },
+          "tags": [
+            {
+              "tag": "v1.0.0",
+              "commit": "a4073b0ca977eb2cde07bedd1dc9f498c9b9210c"
+            },
+            {
+              "tag": "v1.1.0",
+              "commit": "7e9f31d0bfa8c2e5d1b4aa90c3c6e8f2b1d05a44"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

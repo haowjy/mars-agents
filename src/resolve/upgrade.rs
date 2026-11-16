@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use mars_schema::version::{Constraint, SelectionPolicy, select, settle};
 use semver::Version;
 
-use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::source::AvailableVersion;
 use crate::types::{SourceName, SourceUrl};
@@ -32,7 +31,6 @@ pub(crate) fn upgrade_candidate<'a>(
     constraints: &[(&str, &Constraint)],
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
-    diag: &mut DiagnosticCollector,
 ) -> Result<Option<&'a AvailableVersion>, MarsError> {
     if !matches!(settle(constraints), Ok(None)) {
         return Ok(None);
@@ -53,7 +51,7 @@ pub(crate) fn upgrade_candidate<'a>(
         if floor.is_some_and(|floor| candidate.version <= *floor) {
             return Ok(None);
         }
-        if engines_accept(name, url, subpath, candidate, provider, options, diag)? {
+        if engines_accept(name, url, subpath, candidate, provider, options)? {
             return Ok(Some(candidate));
         }
         excluded.insert(candidate.version.clone());
@@ -68,7 +66,6 @@ fn engines_accept(
     candidate: &AvailableVersion,
     provider: &dyn SourceProvider,
     options: &ResolveOptions,
-    _diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
     let checkout = provider.fetch_content(url, &candidate.commit_id, Some(&candidate.tag))?;
     let root = super::answers::apply_subpath(name.as_ref(), &checkout, subpath)?;

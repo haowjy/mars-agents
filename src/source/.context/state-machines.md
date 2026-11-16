@@ -31,9 +31,9 @@ stateDiagram-v2
   Unshallowed --> FullFetch: the unshallow failed, then a plain fetch
   FullFetch --> CommitAvailable
   Cloned --> CommitAvailable
-  CommitAvailable --> Exporting: read-tree -u with a private index into <key>.tmp
+  CommitAvailable --> Exporting: a pinned commit the clone lacks is LockedCommitUnreachable (rev-parse --verify exits 1); else read-tree -u with a private index into <key>.tmp
   Exporting --> Published: rename into place if absent
-  Exporting --> CommitAvailable: export failed, scratch removed; a pinned commit that cannot be read is LockedCommitUnreachable, any other error is returned as it is
+  Exporting --> CommitAvailable: export failed, scratch removed; the error is returned as it is, never read as a missing commit
   Published --> [*]: the content directory is returned
 ```
 

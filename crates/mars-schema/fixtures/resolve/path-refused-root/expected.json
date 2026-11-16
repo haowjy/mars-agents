@@ -4,7 +4,7 @@
       "kind": "path",
       "name": "local",
       "declared_in": "root",
-      "message": "`mars.toml` declares a path dependency `local`, which a fetched package cannot"
+      "message": "`mars.toml` declares a path dependency `local`, which this resolution cannot read: a path names a folder on one machine"
     },
     "diagnostics": []
   }

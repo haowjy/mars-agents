@@ -22,7 +22,7 @@
       "kind": "path",
       "name": "local",
       "declared_in": "a",
-      "message": "`a` declares a path dependency `local`, which a fetched package cannot"
+      "message": "`a` declares a path dependency `local`, which this resolution cannot read: a path names a folder on one machine"
     },
     "diagnostics": []
   }

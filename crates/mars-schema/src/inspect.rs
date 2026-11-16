@@ -138,7 +138,10 @@ pub fn list_marketplace(source: &impl TreeSource) -> Listing {
 }
 
 /// One listed plugin, as [`inspect`] reports it.
-pub fn inspect_listed_plugin(source: &impl TreeSource, entry: &MarketplaceEntry) -> InspectedPlugin {
+pub fn inspect_listed_plugin(
+    source: &impl TreeSource,
+    entry: &MarketplaceEntry,
+) -> InspectedPlugin {
     inspect_plugin(source, None, entry)
 }
 

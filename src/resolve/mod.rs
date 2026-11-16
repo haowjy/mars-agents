@@ -24,8 +24,8 @@ use mars_schema::resolve::{
 #[cfg(test)]
 pub(crate) use answers::apply_subpath;
 use answers::{CliAnswers, mars_error};
-pub use provider::SourceProvider;
 pub(crate) use provider::RealSourceProvider;
+pub use provider::SourceProvider;
 pub use publish::PublishLens;
 pub(crate) use publish::resolve_publish_graph_from_config;
 pub(crate) use requires::check_consumer_package_requirements;

@@ -1,7 +1,7 @@
 use semver::Version;
 
-use super::{Need, Rooted};
 use super::engine::{EngineFailure, describe};
+use super::{Need, Rooted};
 use crate::diagnostic::SchemaDiagnostic;
 
 /// Why resolution stopped. Each kind carries what its message needs, and [`Failure::message`]
@@ -177,10 +177,14 @@ impl Failure {
                 detail,
             } => match detail {
                 SubpathDetail::Missing => {
-                    format!("source error: {name}: subpath `{subpath}` does not exist in the source")
+                    format!(
+                        "source error: {name}: subpath `{subpath}` does not exist in the source"
+                    )
                 }
                 SubpathDetail::NotADirectory => {
-                    format!("source error: {name}: subpath `{subpath}` is not a directory in the source")
+                    format!(
+                        "source error: {name}: subpath `{subpath}` is not a directory in the source"
+                    )
                 }
                 SubpathDetail::Traversal => {
                     format!("source error: {name}: subpath `{subpath}` escapes the source")
@@ -205,8 +209,12 @@ impl Failure {
                 reason,
             } => format!("{package}: {need}: {reason}"),
             Self::Bounds { limit, at } => match limit {
-                BoundsLimit::Packages => format!("the dependency graph is over its package limit at `{at}`"),
-                BoundsLimit::Bytes => format!("the dependency graph is over its size limit at `{at}`"),
+                BoundsLimit::Packages => {
+                    format!("the dependency graph is over its package limit at `{at}`")
+                }
+                BoundsLimit::Bytes => {
+                    format!("the dependency graph is over its size limit at `{at}`")
+                }
             },
             Self::Oscillation { name, steps } => format!(
                 "version conflict for `{name}`: {}",

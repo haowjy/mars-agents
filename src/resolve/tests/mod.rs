@@ -8,17 +8,17 @@ use super::*;
 use crate::config::{
     EffectiveConfig, EffectiveDependency, GitSpec, Manifest, PackageInfo, Settings, SourceSpec,
 };
+use crate::source::AvailableVersion;
 use crate::types::{SourceId, SourceName, SourceUrl};
 use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
 use mars_schema::filter::{FilterConfig, FilterMode};
 use mars_schema::names::{RenameMap, SourceSubpath};
+use mars_schema::resolve::Tag;
 use semver::Version;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use crate::source::AvailableVersion;
-use mars_schema::resolve::Tag;
 use tempfile::TempDir;
 
 /// A provider over temp-dir trees, keyed by source name. A url is bound to a name when the config

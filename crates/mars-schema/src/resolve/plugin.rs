@@ -124,9 +124,11 @@ impl<'a> Run<'a> {
         self.read_error(&root)?;
         let plugin_name = entry.name.as_str();
         if let Some(reason) = &inspected.refused {
-            return self.plugin_failure(dep, PluginDetail::Refused, format!(
-                "plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"
-            ));
+            return self.plugin_failure(
+                dep,
+                PluginDetail::Refused,
+                format!("plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"),
+            );
         }
 
         let marketplace_url = match pending.id {
@@ -166,7 +168,8 @@ impl<'a> Run<'a> {
                     None => None,
                 };
                 let url = canonicalize_git_url(repository);
-                let replay = self.replayable_commit(pending, marketplace, &url, subpath.as_ref())?;
+                let replay =
+                    self.replayable_commit(pending, marketplace, &url, subpath.as_ref())?;
                 let commit =
                     self.fetch_content(dep, repository, checkout, replay, subpath.as_ref())?;
                 let rooted = Rooted {
@@ -185,9 +188,11 @@ impl<'a> Run<'a> {
                 (rooted, content, false)
             }
             PluginSource::Unsupported { reason } => {
-                return self.plugin_failure(dep, PluginDetail::Refused, format!(
-                    "plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"
-                ));
+                return self.plugin_failure(
+                    dep,
+                    PluginDetail::Refused,
+                    format!("plugin `{plugin_name}` of `{name}` cannot be installed: {reason}"),
+                );
             }
         };
 
@@ -248,11 +253,9 @@ impl<'a> Run<'a> {
             .filter(|row| row.commit == marketplace.commit)
             .and_then(|row| row.content.as_ref())
             .filter(|content| {
-                content
-                    .url
-                    .as_ref()
-                    .is_some_and(|locked_url| canonicalize_git_url(locked_url) == canonicalize_git_url(url))
-                    && content.subpath.as_ref() == subpath
+                content.url.as_ref().is_some_and(|locked_url| {
+                    canonicalize_git_url(locked_url) == canonicalize_git_url(url)
+                }) && content.subpath.as_ref() == subpath
             })
             .and_then(|content| content.commit.clone());
         if replay.is_none() && mode == VersionMode::Frozen {

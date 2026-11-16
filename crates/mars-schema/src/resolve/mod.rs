@@ -25,19 +25,17 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use semver::Version;
 
-use crate::dialect::Dialect;
 use crate::diagnostic::SchemaDiagnostic;
+use crate::dialect::Dialect;
 use crate::names::SourceSubpath;
 use crate::prepare::Prepared;
 use crate::tree::TreeSource;
 use crate::version::Constraint;
 
 pub use engine::{BadVersion, Engine, EngineFailure};
-pub use failure::{
-    BoundsLimit, Failure, Identity, PluginDetail, Requester, Step, SubpathDetail,
-};
-pub use package::sort_tags;
+pub use failure::{BoundsLimit, Failure, Identity, PluginDetail, Requester, Step, SubpathDetail};
 pub use lock::{LockedContent, LockedDependency, PluginRoot};
+pub use package::sort_tags;
 
 /// A tag of a repository and the commit it points at, peeled for an annotated tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,7 +197,10 @@ impl fmt::Display for SourceId {
 /// Where a dependency's package comes from, as an entry spells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Spec {
-    Git { url: String, version: Option<String> },
+    Git {
+        url: String,
+        version: Option<String>,
+    },
     Path(String),
 }
 
@@ -373,3 +374,6 @@ pub enum Outcome {
 pub fn resolve(request: &Request, answers: &dyn Answers) -> Outcome {
     package::Run::new(request, answers).run()
 }
+
+#[cfg(test)]
+mod tests;

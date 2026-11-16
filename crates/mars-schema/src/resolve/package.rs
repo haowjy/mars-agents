@@ -14,12 +14,13 @@ use super::engine::{EngineFailure, describe};
 use super::{
     Answer, Answers, BoundsLimit, Dependency, Diagnostic, EngineFallback, EngineFallbackSkipped,
     Failed, Failure, Identity, Level, Need, Node, Origin, Outcome, PathRequest, PathSource,
-    PluginRoot, Ref, Request, Resolved, Rooted, SourceId, Spec, Step as Oscillation, Tag, TagVersion,
+    PluginRoot, Ref, Request, Resolved, Rooted, SourceId, Spec, Step as Oscillation, Tag,
+    TagVersion,
 };
 use crate::dependency::Source;
 use crate::diagnostic::SchemaDiagnostic;
 use crate::inspect::{Hint, Kind, inspect};
-use crate::normalize::{NormalizeRequest, SourceInfo, Selection, normalize};
+use crate::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
 use crate::prepare::Prepared;
 use crate::tree::TreeSource;
 use crate::version::Constraint;
@@ -27,7 +28,7 @@ use crate::version::Constraint;
 /// Why the walk left a branch.
 pub(super) enum Stop {
     /// The run is over.
-    Fail(Failure),
+    Fail(Box<Failure>),
     /// A constraint changed a chosen version: walk again with it fixed.
     Restart,
     /// A restart wanted after an open need: the pass ends and the frontier is returned.
@@ -44,6 +45,9 @@ pub(super) struct Chosen {
     pub resolved: Ref,
     pub rooted: Rooted,
     pub plugin: Option<PluginRoot>,
+    /// What choosing it reported (a stale lock row, an engine fallback): reused with the choice,
+    /// so a restart that keeps the choice keeps what it said.
+    pub notes: Vec<Diagnostic>,
 }
 
 enum State {
@@ -121,7 +125,6 @@ impl TreeSource for Counted {
     }
 }
 
-
 impl<'a> Run<'a> {
     pub(super) fn new(req: &'a Request, answers: &'a dyn Answers) -> Self {
         Self {
@@ -141,7 +144,7 @@ impl<'a> Run<'a> {
             *self.counter.borrow_mut() = Counter::default();
             match self.walk() {
                 Ok(()) | Err(Stop::Skip | Stop::EndPass) => break,
-                Err(Stop::Fail(failure)) => return self.failed(failure),
+                Err(Stop::Fail(failure)) => return self.failed(*failure),
                 Err(Stop::Restart) => {
                     if let Some(failure) = self.restart() {
                         return self.failed(failure);
@@ -269,7 +272,7 @@ impl<'a> Run<'a> {
     /// restart drops, so it waits for the needs before it.
     pub(super) fn fail<T>(&mut self, failure: Failure) -> Flow<T> {
         if self.pass.open.is_empty() {
-            Err(Stop::Fail(failure))
+            Err(Stop::Fail(Box::new(failure)))
         } else {
             Err(Stop::Skip)
         }
@@ -279,7 +282,7 @@ impl<'a> Run<'a> {
         if self.pass.open.is_empty()
             && let Some(failure) = self.bounds_exceeded()
         {
-            return Err(Stop::Fail(failure));
+            return Err(Stop::Fail(Box::new(failure)));
         }
         if !self.pass.open.contains(&need) {
             self.pass.open.push(need);
@@ -416,11 +419,7 @@ impl<'a> Run<'a> {
     }
 
     /// The tree of a package root, read through the same lookups a fetch would use.
-    pub(super) fn rooted_tree(
-        &mut self,
-        dep: &Dependency,
-        rooted: &Rooted,
-    ) -> Flow<Rc<Counted>> {
+    pub(super) fn rooted_tree(&mut self, dep: &Dependency, rooted: &Rooted) -> Flow<Rc<Counted>> {
         let subpath = rooted.subpath.as_deref();
         match &rooted.checkout {
             Origin::Git { url, commit } => match self.tree(url, commit, subpath)? {
@@ -534,6 +533,7 @@ impl<'a> Run<'a> {
         self.pass.states.insert(dep.name.clone(), State::Resolving);
 
         let pending = Pending { dep, id: &id };
+        let mark = self.pass.notes.len();
         let mut rejected: Vec<(String, Vec<EngineFailure>)> = Vec::new();
         let mut override_candidate = self.overrides.get(&dep.name).cloned().filter(|chosen| {
             chosen.resolved.version.as_ref().is_none_or(|version| {
@@ -544,7 +544,10 @@ impl<'a> Run<'a> {
         });
         let (resolved, rooted, plugin, prepared, normalized) = loop {
             let (resolved, rooted, plugin) = match override_candidate.take() {
-                Some(chosen) => (chosen.resolved, chosen.rooted, chosen.plugin),
+                Some(chosen) => {
+                    self.pass.notes.extend(chosen.notes);
+                    (chosen.resolved, chosen.rooted, chosen.plugin)
+                }
                 None => match self.resolve_single_source(&pending) {
                     Ok(resolved) => {
                         let (rooted, plugin) = self.root_package(&pending, &resolved)?;
@@ -553,7 +556,7 @@ impl<'a> Run<'a> {
                     Err(super::version::SingleError::Conflict(conflict))
                         if !rejected.is_empty() =>
                     {
-                        let failure = self.engine_unsatisfiable(&dep.name, conflict);
+                        let failure = self.engine_unsatisfiable(&dep.name, *conflict);
                         return self.fail(failure);
                     }
                     Err(error) => return Err(error.stop(self)),
@@ -606,16 +609,6 @@ impl<'a> Run<'a> {
             );
             rejected.push((version_label, failures));
         };
-        if !rejected.is_empty() {
-            self.overrides.insert(
-                dep.name.clone(),
-                Chosen {
-                    resolved: resolved.clone(),
-                    rooted: rooted.clone(),
-                    plugin: plugin.clone(),
-                },
-            );
-        }
         if let Some((locked_version, failures)) = rejected.first()
             && self
                 .req
@@ -630,7 +623,24 @@ impl<'a> Run<'a> {
                 describe(failures),
                 label(&resolved)
             );
-            self.note(Level::Advisory, "requires-mars-lock-fallback", message, false);
+            self.note(
+                Level::Advisory,
+                "requires-mars-lock-fallback",
+                message,
+                false,
+            );
+        }
+        if !rejected.is_empty() {
+            let notes = self.pass.notes[mark..].to_vec();
+            self.overrides.insert(
+                dep.name.clone(),
+                Chosen {
+                    resolved: resolved.clone(),
+                    rooted: rooted.clone(),
+                    plugin: plugin.clone(),
+                    notes,
+                },
+            );
         }
 
         let requests = self.manifest_requests(dep, &rooted, &prepared);
@@ -659,9 +669,7 @@ impl<'a> Run<'a> {
         for request in &requests {
             self.branch(request)?;
         }
-        self.pass
-            .states
-            .insert(dep.name.clone(), State::Resolved);
+        self.pass.states.insert(dep.name.clone(), State::Resolved);
         Ok(())
     }
 
@@ -680,10 +688,11 @@ impl<'a> Run<'a> {
             return Ok(());
         }
         let pending = Pending { dep, id };
+        let mark = self.pass.notes.len();
         let resolved = match self.resolve_single_source(&pending) {
             Ok(resolved) => resolved,
             Err(super::version::SingleError::Conflict(conflict)) => {
-                let failure = self.engine_unsatisfiable(&dep.name, conflict);
+                let failure = self.engine_unsatisfiable(&dep.name, *conflict);
                 return self.fail(failure);
             }
             Err(error) => return Err(error.stop(self)),
@@ -697,12 +706,14 @@ impl<'a> Run<'a> {
         }
         let (rooted, plugin) = self.root_package(&pending, &resolved)?;
         self.prepare(dep, &rooted, plugin.as_ref())?;
+        let notes = self.pass.notes[mark..].to_vec();
         Err(self.restart_with(
             dep.name.clone(),
             Chosen {
                 resolved,
                 rooted,
                 plugin,
+                notes,
             },
         ))
     }
@@ -740,7 +751,7 @@ impl<'a> Run<'a> {
         dep: &Dependency,
         rooted: &Rooted,
         plugin: Option<&PluginRoot>,
-    ) -> Flow<(Arc<Prepared>, BTreeMap<String, Vec<SchemaDiagnostic>>)> {
+    ) -> Flow<Preparation> {
         if let Some(supplied) = self.req.supplied.get(&dep.name) {
             return Ok((Arc::clone(supplied), BTreeMap::new()));
         }
@@ -876,6 +887,9 @@ impl<'a> Run<'a> {
             .collect()
     }
 }
+
+/// A package's preparation, and what normalizing its tree reported by file.
+type Preparation = (Arc<Prepared>, BTreeMap<String, Vec<SchemaDiagnostic>>);
 
 /// A dependency being resolved, with the identity its source has.
 pub(super) struct Pending<'d> {

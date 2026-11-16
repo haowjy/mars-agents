@@ -445,7 +445,10 @@ fn authored_package_name(prepared: &Prepared, root: &Path) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn prepare_tree_for_test(name: &str, root: &std::path::Path) -> std::sync::Arc<Prepared> {
+pub(crate) fn prepare_tree_for_test(
+    name: &str,
+    root: &std::path::Path,
+) -> std::sync::Arc<Prepared> {
     use mars_schema::inspect::Hint;
     use mars_schema::normalize::{NormalizeRequest, Selection, SourceInfo, normalize};
     let source = DiskTreeSource::new(root).unwrap();

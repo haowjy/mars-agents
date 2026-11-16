@@ -41,7 +41,7 @@ impl Mode {
 /// A selection can fail as a conflict, which the caller may report as the engine exclusions that
 /// caused it.
 pub(super) enum SingleError {
-    Conflict(Failure),
+    Conflict(Box<Failure>),
     Stop(Stop),
 }
 
@@ -55,7 +55,7 @@ impl SingleError {
     pub(super) fn stop(self, run: &mut Run<'_>) -> Stop {
         match self {
             Self::Stop(stop) => stop,
-            Self::Conflict(failure) => match run.fail::<()>(failure) {
+            Self::Conflict(failure) => match run.fail::<()>(*failure) {
                 Err(stop) => stop,
                 Ok(()) => unreachable!("a failure always leaves the branch"),
             },
@@ -81,8 +81,7 @@ impl<'a> Run<'a> {
         let mode = self.req.mode.version_mode(&dep.name);
         match &dep.spec {
             Spec::Path(path) => {
-                let (canonical, _) =
-                    self.path_source(dep, path, None, dep.declared_in.as_ref())?;
+                let (canonical, _) = self.path_source(dep, path, None, dep.declared_in.as_ref())?;
                 Ok(Ref {
                     version: None,
                     tag: None,
@@ -147,12 +146,7 @@ impl<'a> Run<'a> {
     }
 
     /// The commit's files, or `None` when the repository does not have it.
-    fn fetch_commit(
-        &mut self,
-        dep: &Dependency,
-        url: &str,
-        commit: &str,
-    ) -> Flow<Option<()>> {
+    fn fetch_commit(&mut self, dep: &Dependency, url: &str, commit: &str) -> Flow<Option<()>> {
         Ok(self.tree(url, commit, read_path(dep))?.map(|_| ()))
     }
 
@@ -327,7 +321,7 @@ impl<'a> Run<'a> {
             .map(|(requester, constraint)| (requester.as_str(), constraint))
             .collect();
         let conflict = |detail: String| {
-            SingleError::Conflict(Failure::Conflict {
+            SingleError::Conflict(Box::new(Failure::Conflict {
                 name: name.clone(),
                 requesters: constraints
                     .iter()
@@ -337,7 +331,7 @@ impl<'a> Run<'a> {
                     })
                     .collect(),
                 detail,
-            })
+            }))
         };
         if let Some(reference) = settle(&requests).map_err(|error| conflict(error.to_string()))? {
             return self.resolve_ref_pin(pending, url, reference, locked, mode);
@@ -421,8 +415,13 @@ impl<'a> Run<'a> {
 
         let available = self.tags(url)?;
         let versions: Vec<Version> = available.iter().map(|tag| tag.version.clone()).collect();
-        let selected = match select(&versions, &requests, locked_version.as_ref(), policy, &excluded)
-        {
+        let selected = match select(
+            &versions,
+            &requests,
+            locked_version.as_ref(),
+            policy,
+            &excluded,
+        ) {
             Ok(index) => index.map(|index| &available[index]),
             Err(error @ SelectError::NoSatisfying { .. }) => {
                 return Err(conflict(error.to_string()));
@@ -465,10 +464,9 @@ pub(super) fn locked_matches(locked: &LockedDependency, id: &SourceId) -> bool {
         } => {
             locked.path.is_none()
                 && locked.plugin.as_ref() == plugin.as_ref()
-                && locked
-                    .url
-                    .as_ref()
-                    .is_some_and(|locked_url| canonicalize_git_url(locked_url) == canonicalize_git_url(url))
+                && locked.url.as_ref().is_some_and(|locked_url| {
+                    canonicalize_git_url(locked_url) == canonicalize_git_url(url)
+                })
                 && locked.subpath.as_ref() == subpath.as_ref()
         }
         SourceId::Path {

@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
-use crate::types::{
-    ContentHash, DestPath, SourceName, SourceOrigin,
-};
+use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {

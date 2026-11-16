@@ -31,6 +31,9 @@ enum Lookup {
     Path(String),
 }
 
+type TreeKey = (String, String, Option<String>);
+type PathKey = (String, String, Option<String>, Option<Rooted>);
+
 pub(crate) struct CliAnswers<'a> {
     provider: &'a dyn SourceProvider,
     tags: RefCell<BTreeMap<String, Answer<Vec<Tag>>>>,
@@ -38,8 +41,8 @@ pub(crate) struct CliAnswers<'a> {
     content: RefCell<BTreeMap<(String, String), Answer<PathBuf>>>,
     /// The tag a commit was listed under: git fetches it by name.
     tag_of: RefCell<BTreeMap<(String, String), String>>,
-    trees: RefCell<BTreeMap<(String, String, Option<String>), Answer<Rc<dyn TreeSource>>>>,
-    paths: RefCell<BTreeMap<(String, String, Option<String>, Option<Rooted>), Answer<PathSource>>>,
+    trees: RefCell<BTreeMap<TreeKey, Answer<Rc<dyn TreeSource>>>>,
+    paths: RefCell<BTreeMap<PathKey, Answer<PathSource>>>,
     /// Every tree handed out, for the error one of them latched reading a file.
     disk: RefCell<Vec<Rc<DiskTreeSource>>>,
     errors: RefCell<BTreeMap<Lookup, MarsError>>,
@@ -75,19 +78,20 @@ impl<'a> CliAnswers<'a> {
             return answer.clone();
         }
         let tag = self.tag_of.borrow().get(&key).cloned();
-        let answer = match self
-            .provider
-            .fetch_content(&SourceUrl::from(url), commit, tag.as_deref())
-        {
-            Ok(dir) => Answer::Found(dir),
-            Err(error @ MarsError::LockedCommitUnreachable { .. }) => {
-                self.errors
-                    .borrow_mut()
-                    .insert(Lookup::Content(key.0.clone(), key.1.clone()), error);
-                Answer::Missing
-            }
-            Err(error) => self.failed(Lookup::Content(key.0.clone(), key.1.clone()), error),
-        };
+        let answer =
+            match self
+                .provider
+                .fetch_content(&SourceUrl::from(url), commit, tag.as_deref())
+            {
+                Ok(dir) => Answer::Found(dir),
+                Err(error @ MarsError::LockedCommitUnreachable { .. }) => {
+                    self.errors
+                        .borrow_mut()
+                        .insert(Lookup::Content(key.0.clone(), key.1.clone()), error);
+                    Answer::Missing
+                }
+                Err(error) => self.failed(Lookup::Content(key.0.clone(), key.1.clone()), error),
+            };
         self.content.borrow_mut().insert(key, answer.clone());
         answer
     }
@@ -95,14 +99,12 @@ impl<'a> CliAnswers<'a> {
     /// The directory a checkout is in.
     pub(crate) fn checkout_dir(&self, origin: &Origin) -> PathBuf {
         match origin {
-            Origin::Git { url, commit } => match self
-                .content
-                .borrow()
-                .get(&(url.clone(), commit.clone()))
-            {
-                Some(Answer::Found(dir)) => dir.clone(),
-                _ => PathBuf::new(),
-            },
+            Origin::Git { url, commit } => {
+                match self.content.borrow().get(&(url.clone(), commit.clone())) {
+                    Some(Answer::Found(dir)) => dir.clone(),
+                    _ => PathBuf::new(),
+                }
+            }
             Origin::Path { dir } => PathBuf::from(dir),
         }
     }
@@ -201,7 +203,9 @@ impl Answers for CliAnswers<'_> {
             }
             Err(error) => self.failed(Lookup::Tags(url.to_string()), error),
         };
-        self.tags.borrow_mut().insert(url.to_string(), answer.clone());
+        self.tags
+            .borrow_mut()
+            .insert(url.to_string(), answer.clone());
         Some(answer)
     }
 
@@ -403,13 +407,11 @@ pub(crate) fn mars_error(failure: Failure, answers: &CliAnswers<'_>) -> MarsErro
     }
     let message = failure.message();
     match failure {
-        Failure::Conflict { name, detail, .. } => {
-            ResolutionError::VersionConflict {
-                name,
-                message: detail,
-            }
-            .into()
+        Failure::Conflict { name, detail, .. } => ResolutionError::VersionConflict {
+            name,
+            message: detail,
         }
+        .into(),
         Failure::Oscillation { name, steps } => {
             let detail = Failure::Oscillation {
                 name: name.clone(),
@@ -484,7 +486,9 @@ pub(crate) fn mars_error(failure: Failure, answers: &CliAnswers<'_>) -> MarsErro
         Failure::Plugin { text, .. } => MarsError::InvalidRequest { message: text },
         Failure::Frozen { message } => MarsError::FrozenViolation { message },
         Failure::Unreadable {
-            rooted, diagnostics, ..
+            rooted,
+            diagnostics,
+            ..
         } => ConfigError::Invalid {
             message: format!(
                 "failed to parse {}: {}",

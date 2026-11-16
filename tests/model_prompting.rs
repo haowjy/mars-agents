@@ -47,7 +47,7 @@ prompting = "This model alias should lose to the agent ref."
     );
     project.child("mars.toml").write_str(&toml).unwrap();
 
-    mars()
+    mars_for(&project)
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
@@ -126,7 +126,7 @@ fn models_prompting_json_resolves_agent_first_and_uses_agent_model_guidance() {
     let project = setup_model_prompting_project(&dir);
     let bin_dir = install_fake_harnesses(dir.path(), &["codex"]);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -162,7 +162,7 @@ fn models_prompting_at_agent_ref_resolves_agent() {
     let project = setup_model_prompting_project(&dir);
     let bin_dir = install_fake_harnesses(dir.path(), &["codex"]);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -196,7 +196,7 @@ fn models_prompting_json_resolves_direct_model_alias() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -243,7 +243,7 @@ prompting = "Use refreshed GPT guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
+    mars_for(&project)
         .args([
             "sync",
             "--no-refresh-models",
@@ -259,7 +259,7 @@ prompting = "Use refreshed GPT guidance."
         then.status(200).json_body(sample_catalog_json());
     });
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -326,14 +326,14 @@ prompting = "Use Claude-specific review guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
+    mars_for(&project)
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
     let bin_dir = install_fake_harnesses(dir.path(), &["claude"]);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -369,7 +369,7 @@ harness = "opencode"
     let cache_root = dir.path().join("mars-cache");
     write_opencode_probe_cache(&cache_root, &["openai/not-gpt-5"]);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -450,14 +450,14 @@ prompting = "Wrong profile-name collision guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
+    mars_for(&project)
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
     write_cache(project.path(), sample_cached_models(), &fresh_fetched_at());
     let bin_dir = install_fake_harnesses(dir.path(), &["codex", "claude"]);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -520,7 +520,7 @@ prompting = "Use the profile-name overlay guidance."
         source.display().to_string().replace('\\', "/")
     );
     project.child("mars.toml").write_str(&toml).unwrap();
-    mars()
+    mars_for(&project)
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();
@@ -528,7 +528,7 @@ prompting = "Use the profile-name overlay guidance."
     let bin_dir = install_fake_harnesses(dir.path(), &["codex", "claude"]);
 
     for reference in ["stemmed-explorer", "explorer"] {
-        let output = mars()
+        let output = mars_for(&project)
             .args([
                 "--json",
                 "models",
@@ -560,7 +560,7 @@ fn models_prompting_known_model_without_guidance_exits_zero_and_shows_examples()
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    mars()
+    mars_for(&project)
         .args([
             "models",
             "prompting",
@@ -582,7 +582,7 @@ fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     let dir = TempDir::new().unwrap();
     let project = setup_model_prompting_project(&dir);
 
-    let output = mars()
+    let output = mars_for(&project)
         .args([
             "--json",
             "models",
@@ -604,7 +604,7 @@ fn models_prompting_unknown_ref_json_exits_nonzero_with_found_false() {
     assert_eq!(json["found"], false);
     assert_eq!(json["prompting"], Value::Null);
 
-    let text = mars()
+    let text = mars_for(&project)
         .args([
             "models",
             "prompting",

@@ -49,7 +49,9 @@ An instance of [an ordered fallback walk](../../../../.context/state-machines/fa
 
 Whether a requested effort level reached the Cursor model slug, in `runnable.rs`. Cursor's levels
 are an input to the effort rule: the suffixes its probe slugs list for the model (the bare slug is
-`medium`), so the rule picks the level and `cursor_tiers` only finds its slug.
+`medium`), so the rule picks the level and `cursor_tiers` only finds its slug. Tiers are read for the base model
+(`reasoning::catalog_identity` takes the tier off a slug that carries one) and only when the model
+could take an effort: a model that does not reason needs no slug and never fails the launch.
 
 ```mermaid
 stateDiagram-v2
@@ -76,7 +78,7 @@ stateDiagram-v2
 ## Effort resolution
 
 `runnable::resolve_routing` resolves the layers' effort request once the harness model is known:
-the catalog row of the provider the harness calls (`models::reasoning::catalog_row`; one join per
-harness), then `mars_schema::effort::resolve_effort` over the model's levels and the harness's. A
+the catalog row of the provider the harness calls (`models::reasoning::catalog_identity` and
+`catalog_row`; one join per harness), then `mars_schema::effort::resolve_effort` over the model's levels and the harness's. A
 move is a `launch.warning`. The same row goes into the bundle as `routing.catalog_row`, so
 consumers price from it and never re-join. Sync does the same in `profile_for_model`, per harness.

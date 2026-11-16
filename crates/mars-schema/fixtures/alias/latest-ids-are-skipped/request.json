@@ -1,0 +1,19 @@
+{
+  "rows": [
+    {
+      "id": "m-latest",
+      "provider": "openai",
+      "release_date": "2030-01-01"
+    },
+    {
+      "id": "m-1",
+      "provider": "openai",
+      "release_date": "2026-01-01"
+    }
+  ],
+  "options": {
+    "match": [
+      "m-*"
+    ]
+  }
+}

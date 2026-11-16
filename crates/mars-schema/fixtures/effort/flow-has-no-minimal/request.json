@@ -1,0 +1,17 @@
+{
+  "requested": "minimal",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "minimal",
+          "low",
+          "high"
+        ]
+      }
+    ]
+  },
+  "host": "meridian-flow"
+}

@@ -1,0 +1,12 @@
+{
+  "requested": "none",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "toggle"
+      }
+    ]
+  },
+  "host": "pi"
+}

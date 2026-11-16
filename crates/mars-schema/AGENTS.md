@@ -52,7 +52,10 @@ per-project provider filter are the binary's.
 
 `effort.rs` is the one effort rule (`resolve_effort`, `harness_levels`): a request moves to the nearest level
 the model's row and the host both take, and the move is reported. Both the CLI and the WASM
-`resolveEffort` call it; a host's accepted levels are recorded there, not in an adapter.
+`resolveEffort` call it; a host's accepted levels are recorded there, not in an adapter. A model's
+reasoning is `ModelReasoning`: unknown, does not reason, or reasons with whether it can be switched off
+and the levels its row names, if any. A model that reasons with no named levels takes the whole ladder,
+less `none` when it cannot be switched off; the listing shows the shape, never that set.
 
 ## Checking
 

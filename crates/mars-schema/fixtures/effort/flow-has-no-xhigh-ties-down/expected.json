@@ -1,0 +1,8 @@
+{
+  "level": "high",
+  "moved": {
+    "from": "xhigh",
+    "to": "high",
+    "why": "harness_levels"
+  }
+}

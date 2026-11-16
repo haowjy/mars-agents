@@ -18,8 +18,8 @@ mod execution;
 mod harness;
 mod model;
 mod runnable;
+use crate::models::probes::cursor::CursorEffortFailure;
 use crate::models::reasoning;
-use runnable::CursorEffortFailure;
 
 struct SessionProbeResolver<'a> {
     session: &'a mut CapabilitySession,
@@ -635,10 +635,9 @@ pub(crate) struct ModelRef<'a> {
 pub(crate) struct EffortRoute<'a> {
     pub harness: mars_schema::HarnessId,
     /// Every provider's rows; empty when there is no catalog (a package build).
-    pub catalog: &'a [mars_schema::models::CachedModel],
-    /// The levels the harness takes for this model when its own set depends on the model
-    /// (Cursor's probe slugs); `None` uses the harness's table.
-    pub harness_levels: Option<mars_schema::effort::Levels>,
+    pub catalog: &'a crate::models::catalog::Catalog,
+    /// Cursor's probe, whose slugs are its levels for the model.
+    pub cursor_probe: Option<&'a crate::models::probes::CursorProbeResult>,
 }
 
 /// A profile resolved for one model and harness, and the warning its effort earned.
@@ -646,6 +645,8 @@ pub(crate) struct ModelProfile {
     pub profile: AgentProfile,
     /// Names the model, both levels and why, when the requested effort moved.
     pub effort_moved: Option<String>,
+    /// The Cursor slug that carries the resolved effort.
+    pub cursor_slug: Option<String>,
 }
 
 /// The profile as it launches on one model: effort, approval, sandbox and network resolved
@@ -681,22 +682,20 @@ pub(crate) fn profile_for_model(
     let alias = model.as_ref().and_then(|model| model.alias);
     let mut resolved = profile.clone();
     let mut effort_moved = None;
+    let mut cursor_slug = None;
     resolved.effort =
         execution::effort_layer(None, None, profile, alias, overlay, matched.as_ref())
             .value
             .and_then(|request| {
-                let harness_set = route
-                    .harness_levels
-                    .clone()
-                    .unwrap_or_else(|| reasoning::harness_set(route.harness));
                 let effort = reasoning::resolve_for_route(
                     request,
                     route.catalog,
                     route.harness,
                     model.as_ref().map_or("", |model| model.canonical_id),
                     "",
-                    &harness_set,
+                    route.cursor_probe,
                 );
+                cursor_slug = effort.cursor_slug().map(str::to_string);
                 effort_moved = effort.warning;
                 effort.resolution.level.map(EffortRequest::Level)
             });
@@ -726,6 +725,7 @@ pub(crate) fn profile_for_model(
     ModelProfile {
         profile: resolved,
         effort_moved,
+        cursor_slug,
     }
 }
 

@@ -1,0 +1,15 @@
+{
+  "rows": [
+    {
+      "id": "llama-4",
+      "provider": "meta",
+      "release_date": "2026-01-01"
+    }
+  ],
+  "options": {
+    "match": [
+      "*"
+    ],
+    "provider": "meta-llama"
+  }
+}

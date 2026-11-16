@@ -138,12 +138,12 @@ fn parse_models_dev_catalog(raw: &serde_json::Value) -> Result<Vec<CachedModel>,
     Ok(models)
 }
 
-/// The rows a project's `catalog_providers` allows; `*` allows every provider.
-pub fn provider_filter(allowlist: &[String]) -> impl Fn(&CachedModel) -> bool {
+/// The provider keys a project's `catalog_providers` allows; `*` allows every provider.
+pub fn provider_filter(allowlist: &[String]) -> impl Fn(&str) -> bool {
     let all = allowlist.iter().any(|provider| provider.trim() == "*");
     let allowed: Vec<String> = allowlist
         .iter()
         .map(|provider| catalog_provider_canonical(provider))
         .collect();
-    move |model| all || allowed.contains(&catalog_provider_canonical(&model.provider_key))
+    move |key| all || allowed.contains(&catalog_provider_canonical(key))
 }

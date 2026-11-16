@@ -969,7 +969,8 @@ export interface EffortResolution {
  * `null` (both send no effort). `model` is the models.dev row's `reasoning` and
  * `reasoning_options`, or `null` when the model is unknown. A level the model or host does not
  * take moves to the nearest one they share (the nearest below, else the nearest above; never to
- * `none` unless `none` was asked), and `moved` says from what, to what and why.
+ * `none` unless `none` was asked), and `moved` says from what, to what and why. A model that
+ * reasons but lists no effort values takes every level, less `none` unless it has a toggle.
  */
 export function resolveEffort(
   requested: Effort | "auto" | null,

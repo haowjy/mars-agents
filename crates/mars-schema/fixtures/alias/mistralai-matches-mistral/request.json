@@ -1,0 +1,20 @@
+{
+  "rows": [
+    {
+      "id": "mistral-large",
+      "provider": "mistral",
+      "release_date": "2026-01-01"
+    },
+    {
+      "id": "other",
+      "provider": "openai",
+      "release_date": "2026-02-01"
+    }
+  ],
+  "options": {
+    "match": [
+      "*"
+    ],
+    "provider": "mistralai"
+  }
+}

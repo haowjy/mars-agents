@@ -1,0 +1,8 @@
+{
+  "level": "low",
+  "moved": {
+    "from": "minimal",
+    "to": "low",
+    "why": "harness_levels"
+  }
+}

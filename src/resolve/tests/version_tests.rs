@@ -74,7 +74,7 @@ fn frozen_ref_pin_replays_locked_commit_exactly() {
         Some("main")
     );
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(locked_commit.to_string())]
     );
 }
@@ -146,7 +146,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
     )]);
 
     let unreachable_commit = "frozen-refpin-missing";
-    provider.mark_unreachable_preferred_commit(unreachable_commit);
+    provider.mark_unreachable_commit(unreachable_commit);
 
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
@@ -169,7 +169,7 @@ fn frozen_ref_pin_errors_when_locked_commit_unreachable() {
         Err(MarsError::LockedCommitUnreachable { .. })
     ));
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]
     );
 }
@@ -214,7 +214,7 @@ fn ref_pin_selector_mismatch_ignores_locked_commit_in_normal_sync() {
         graph.nodes["a"].resolved_ref.version_tag.as_deref(),
         Some("release")
     );
-    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    assert_eq!(provider.commit_fetches(), vec![None]);
     assert!(diagnostics.iter().any(|diag| {
         diag.code == "locked-ref-selector-mismatch" && diag.message.contains("release")
     }));
@@ -259,7 +259,7 @@ fn ref_pin_selector_missing_ignores_locked_commit_in_normal_sync() {
         graph.nodes["a"].resolved_ref.version_tag.as_deref(),
         Some("main")
     );
-    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    assert_eq!(provider.commit_fetches(), vec![None]);
     assert!(
         diagnostics
             .iter()
@@ -433,7 +433,7 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
     let config = make_config(vec![("a", git_spec("https://example.com/a.git", None))]);
 
     let unreachable_commit = "missing-locked-sha";
-    provider.mark_unreachable_preferred_commit(unreachable_commit);
+    provider.mark_unreachable_commit(unreachable_commit);
 
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
@@ -456,7 +456,7 @@ fn frozen_mode_errors_for_untagged_locked_commit_unreachable() {
         Err(MarsError::LockedCommitUnreachable { .. })
     ));
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]
     );
 }
@@ -497,7 +497,7 @@ fn frozen_mode_replays_unversioned_locked_commit_even_when_tags_now_exist() {
     );
     assert!(graph.nodes["a"].resolved_ref.version.is_none());
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(locked_commit.to_string())]
     );
     assert_eq!(
@@ -615,7 +615,7 @@ fn frozen_semver_replays_locked_commit_even_when_tag_missing_from_remote() {
         Some(locked_commit)
     );
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(locked_commit.to_string())]
     );
     assert_eq!(provider.list_versions_count(url), 0);
@@ -687,7 +687,7 @@ fn r2_frozen_transitive_locked_commit_unreachable_errors() {
     provider.add_versions("https://example.com/shared.git", vec![(1, 0, 0), (1, 1, 0)]);
     provider.add_source("a", tree_a, Some(manifest_a));
     provider.add_source("shared", tree_shared, None);
-    provider.mark_unreachable_preferred_commit(unreachable);
+    provider.mark_unreachable_commit(unreachable);
 
     let config = make_config(vec![(
         "a",
@@ -913,5 +913,5 @@ fn stale_lock_entry_with_mismatched_url_is_ignored_in_normal_sync() {
         Some(Version::new(1, 2, 0)),
         "stale lock identity should be ignored; resolver should pick newest compatible"
     );
-    assert_eq!(provider.seen_preferred_commits(), vec![None]);
+    assert_eq!(provider.commit_fetches(), vec![None]);
 }

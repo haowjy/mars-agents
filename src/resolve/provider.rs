@@ -11,7 +11,6 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::resolve::{SourceFetcher, VersionLister};
 use crate::source::{self, AvailableVersion, GlobalCache, ResolvedRef};
-use crate::types::CommitHash;
 use crate::types::SourceUrl;
 
 /// Real source provider that delegates to the source module.
@@ -56,18 +55,13 @@ impl SourceFetcher for RealSourceProvider<'_> {
         url: &crate::types::SourceUrl,
         version: &AvailableVersion,
         source_name: &str,
-        preferred_commit: Option<&str>,
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
-        let fetch_options = source::git::FetchOptions {
-            preferred_commit: preferred_commit.map(CommitHash::from),
-        };
         source::git::fetch(
             url.as_ref(),
             Some(&version.tag),
             source_name,
             self.cache,
-            &fetch_options,
             diag,
         )
     }
@@ -77,20 +71,9 @@ impl SourceFetcher for RealSourceProvider<'_> {
         url: &crate::types::SourceUrl,
         ref_name: &str,
         source_name: &str,
-        preferred_commit: Option<&str>,
         diag: &mut DiagnosticCollector,
     ) -> Result<ResolvedRef, MarsError> {
-        let fetch_options = source::git::FetchOptions {
-            preferred_commit: preferred_commit.map(CommitHash::from),
-        };
-        source::git::fetch(
-            url.as_ref(),
-            Some(ref_name),
-            source_name,
-            self.cache,
-            &fetch_options,
-            diag,
-        )
+        source::git::fetch(url.as_ref(), Some(ref_name), source_name, self.cache, diag)
     }
 
     fn fetch_git_commit(

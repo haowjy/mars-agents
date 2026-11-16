@@ -70,7 +70,7 @@ fn engines_accept(
     options: &ResolveOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
-    let fetched = provider.fetch_git_version(url, candidate, name.as_ref(), None, diag)?;
+    let fetched = provider.fetch_git_version(url, candidate, name.as_ref(), diag)?;
     let root = super::path::apply_subpath(name, &fetched.tree_path, subpath)?;
     let text = match std::fs::read_to_string(root.package_root.join("mars.toml")) {
         Ok(text) => text,

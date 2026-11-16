@@ -93,9 +93,22 @@ pub(crate) fn remove_git_local_env(command: &mut Command) {
 }
 
 pub fn run_git(args: &[&str], cwd: &Path, context: &str) -> Result<String, MarsError> {
+    run_git_with_index(args, cwd, context, None)
+}
+
+/// `run_git` with `GIT_INDEX_FILE` set after the inherited repository environment is cleared.
+pub(crate) fn run_git_with_index(
+    args: &[&str],
+    cwd: &Path,
+    context: &str,
+    index_file: Option<&Path>,
+) -> Result<String, MarsError> {
     let command_display = display_command(args);
     let mut command = Command::new("git");
     remove_git_local_env(&mut command);
+    if let Some(index_file) = index_file {
+        command.env("GIT_INDEX_FILE", index_file);
+    }
     let output = command
         .current_dir(cwd)
         .args(args)

@@ -24,6 +24,8 @@ impl GlobalCache {
         Ok(Self { root })
     }
 
+    /// One directory per `(url, commit)`: a GitHub tarball extracted, or any other git source
+    /// exported from its clone. Content directories are written whole and never changed.
     pub fn archives_dir(&self) -> PathBuf {
         self.root.join("archives")
     }
@@ -39,6 +41,8 @@ pub struct ResolvedRef {
     pub version: Option<semver::Version>,
     pub version_tag: Option<String>,
     pub commit: Option<CommitHash>,
+    /// Where the files are: for a git source, its content directory in the cache, which holds
+    /// exactly this commit (see `git_cli::fetch_git_content`).
     pub tree_path: PathBuf,
 }
 

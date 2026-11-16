@@ -3,8 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
-use crate::platform::cache::git_cache_component;
-use crate::platform::process::{display_command, run_git, run_git_with_ref};
+use crate::platform::cache::{archive_cache_component, git_cache_component};
+use crate::platform::fs::{publish_cache_dir_if_absent, safe_remove};
+use crate::platform::process::{display_command, run_git, run_git_with_index, run_git_with_ref};
 use crate::source::{AvailableVersion, GlobalCache};
 
 /// Dependency data (a URL, a tag or branch, a locked commit) reaches git as an argument, and one
@@ -87,30 +88,50 @@ pub fn ls_remote_head(url: &str) -> Result<String, MarsError> {
     ls_remote_ref(url, "HEAD")
 }
 
-pub(crate) fn fetch_git_clone(
+/// Bring `commit` of `url` into the cache and return its content directory, `archives/<url>@<commit>`:
+/// the commit's files and nothing else, shared by every dependency on that commit and never
+/// rewritten once published.
+///
+/// The clone under `git/` is one per URL and only holds objects; no one reads its working tree,
+/// because the next fetch of another commit would change it under a reader. `tag` and `pinned`
+/// shape the git commands: a tag is cloned or fetched by name, and a pinned commit (a lock replay,
+/// or a ref with no tag) is also fetched by hash. `commit` is the hash the lock records.
+pub(crate) fn fetch_git_content(
     url: &str,
     tag: Option<&str>,
-    sha: Option<&str>,
+    pinned: bool,
+    commit: &str,
     cache: &GlobalCache,
 ) -> Result<PathBuf, MarsError> {
     not_an_option("URL", url)?;
     tag.map(|tag| not_an_option("tag", tag)).transpose()?;
-    sha.map(|sha| not_an_option("commit", sha)).transpose()?;
+    not_an_option("commit", commit)?;
+    let content_path = cache
+        .archives_dir()
+        .join(archive_cache_component(url, commit)?);
+    if content_path.exists() {
+        return Ok(content_path);
+    }
+    let sha = pinned.then_some(commit);
     let cache_name = git_cache_component(url)?;
     let cache_path = cache.git_dir().join(cache_name);
     std::fs::create_dir_all(cache.git_dir())?;
 
     // Serialize fetches into a cache entry. `with_extension` swaps the text after the last `.` in
     // the entry name, so entries on one host (`github.com_...`) can share one lock file.
-    // Held through fetch + checkout, released when _lock drops at function return.
+    // Held through fetch + export, released when _lock drops at function return.
     let lock_path = cache_path.with_extension("lock");
     let _lock = crate::fs::FileLock::acquire(&lock_path)?;
+    if content_path.exists() {
+        return Ok(content_path);
+    }
 
     let cache_path_display = cache_path.to_string_lossy().to_string();
     let was_cached = cache_path.exists();
 
     if !was_cached {
-        let mut args = vec!["clone"];
+        // No checkout: the files come from `export_commit`.
+        let mut args = vec!["clone", "--no-checkout"];
         if sha.is_none() {
             args.push("--depth");
             args.push("1");
@@ -133,9 +154,6 @@ pub(crate) fn fetch_git_clone(
             &cache_path,
             "fetch cached git source",
         )?;
-    }
-
-    if was_cached {
         if let Some(sha) = sha {
             match run_git(
                 &["fetch", "--depth", "1", "--", "origin", sha],
@@ -159,35 +177,51 @@ pub(crate) fn fetch_git_clone(
                 }
             }
         }
-
-        if let Some(tag_name) = tag {
-            run_git(
-                &["checkout", tag_name, "--"],
-                &cache_path,
-                "checkout cached git tag",
-            )?;
-        }
-
-        if let Some(sha) = sha {
-            run_git(
-                &["checkout", sha, "--"],
-                &cache_path,
-                "checkout cached git commit",
-            )?;
-        } else if tag.is_none() {
-            run_git(
-                &["checkout", "origin/HEAD"],
-                &cache_path,
-                "checkout cached git default head",
-            )?;
-        }
-    } else if let Some(sha) = sha {
-        run_git(
-            &["checkout", sha, "--"],
-            &cache_path,
-            "checkout cloned git commit",
-        )?;
     }
 
-    Ok(cache_path)
+    export_commit(&cache_path, commit, &content_path)?;
+    Ok(content_path)
+}
+
+/// Write the files of `commit` into `content_path`, whole or not at all. The lock held by the
+/// caller makes the scratch name safe to reuse: a killed run leaves one directory that the next
+/// run clears, not one per process id.
+fn export_commit(clone: &Path, commit: &str, content_path: &Path) -> Result<(), MarsError> {
+    let scratch = content_path.with_file_name(format!(
+        "{}.tmp",
+        content_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+    ));
+    // A directory, so that the `index.lock` git leaves when it is killed is cleared with it.
+    let index_dir = scratch.with_extension("index");
+    safe_remove(&scratch)?;
+    safe_remove(&index_dir)?;
+    std::fs::create_dir_all(&scratch)?;
+    std::fs::create_dir_all(&index_dir)?;
+    // A private index and the scratch directory as the work tree: git then takes `.gitattributes`
+    // and filters from `commit` alone. `checkout-index` in the clone would also read the clone's
+    // working tree, which a clone made by an older mars still has, at some other commit.
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    let exported = run_git_with_index(
+        &[
+            "--work-tree",
+            &scratch_arg,
+            "read-tree",
+            "-u",
+            "--reset",
+            commit,
+        ],
+        clone,
+        "export cached git commit",
+        Some(&index_dir.join("index")),
+    );
+    let _ = safe_remove(&index_dir);
+    if let Err(error) = exported {
+        let _ = safe_remove(&scratch);
+        return Err(error);
+    }
+    publish_cache_dir_if_absent(&scratch, content_path)?;
+    Ok(())
 }

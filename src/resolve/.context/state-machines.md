@@ -114,8 +114,7 @@ stateDiagram-v2
   LockedReplay --> TagScan: unreachable, warned, not frozen
   TagScan --> TagSelected: select() picks an allowed version
   TagScan --> Untagged: no selectable tag
-  TagSelected --> Resolved: fetch_git_version, replaying the lock's commit when it keeps the lock
-  TagSelected --> Resolved: retried with no preferred commit when the commit is unreachable
+  TagSelected --> Resolved: fetch_git_version by the tag
   Untagged --> Resolved: HEAD, or the locked commit when policy keeps it
   FrozenReplay --> Resolved
   FrozenReplay --> Failed: any lock mismatch is a FrozenViolation
@@ -129,11 +128,11 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   is an error. Codes: `locked-commit-unreachable`, `locked-ref-selector-mismatch`,
   `stale-lock-source-identity`, and `potential-version-drift` (settled graph only).
 - **`LockedCommitUnreachable` means "git or HTTP said no", not "the commit is gone".** In
-  `source/git.rs` any `GitCli` error maps to it when a commit was preferred, and a 404 on the
-  archive does too. A network outage therefore reads as an unreachable lock and re-resolves to a
+  `source/git.rs`, `fetch_commit` maps any `GitCli` error to it, and a 404 on the archive does
+  too. A network outage therefore reads as an unreachable lock and re-resolves to a
   new commit, which is how a sync silently moves a package forward.
 - **`locked_commit_unreachable` is in memory only.** It stops the second replay attempt in the same
   call; nothing remembers it across runs.
 - Four blocks do "try the locked thing, fall back, warn" with the same shape and the same warning
-  text (two in `version.rs`'s ladder, one for the untagged case, one in `plugin.rs`). They differ
+  text (the ref pin, the tag ladder and the untagged case in `version.rs`, and one in `plugin.rs`). They differ
   in whether the warning is advisory (`warn` or `warn_advisory`).

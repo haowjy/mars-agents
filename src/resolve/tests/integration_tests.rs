@@ -300,7 +300,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
     )]);
 
     let unreachable_commit = "missing-locked-sha";
-    provider.mark_unreachable_preferred_commit(unreachable_commit);
+    provider.mark_unreachable_commit(unreachable_commit);
 
     let mut lock = LockFile::empty();
     lock.dependencies.insert(
@@ -323,7 +323,7 @@ fn frozen_mode_errors_when_locked_commit_unreachable() {
         Err(MarsError::LockedCommitUnreachable { .. })
     ));
     assert_eq!(
-        provider.seen_preferred_commits(),
+        provider.commit_fetches(),
         vec![Some(unreachable_commit.to_string())]
     );
 }

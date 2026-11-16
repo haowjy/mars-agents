@@ -267,7 +267,7 @@ fn resolve_ref_pin_source(
                     ),
                 );
                 provider
-                    .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
+                    .fetch_git_ref(url, ref_name, name.as_ref(), diag)
                     .map(|resolved_ref| annotate_refpin_resolution(resolved_ref, ref_name))
             }
             Err(err) => Err(err),
@@ -275,7 +275,7 @@ fn resolve_ref_pin_source(
     }
 
     provider
-        .fetch_git_ref(url, ref_name, name.as_ref(), None, diag)
+        .fetch_git_ref(url, ref_name, name.as_ref(), diag)
         .map(|resolved_ref| annotate_refpin_resolution(resolved_ref, ref_name))
 }
 
@@ -311,13 +311,13 @@ fn resolve_untagged_source(
                         "locked commit {commit} for {source_url} is unreachable; re-resolving from HEAD"
                     ),
                 );
-                return provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag);
+                return provider.fetch_git_ref(url, "HEAD", name.as_ref(), diag);
             }
             Err(err) => return Err(err),
         }
     }
 
-    let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), None, diag)?;
+    let resolved = provider.fetch_git_ref(url, "HEAD", name.as_ref(), diag)?;
     Ok(resolved)
 }
 
@@ -459,34 +459,7 @@ pub(crate) fn resolve_git_source(
         );
     };
 
-    let should_try_locked_commit = !locked_commit_unreachable
-        && locked_commit.is_some()
-        && locked_version.as_ref().is_some_and(|version| {
-            selected.version == *version && keeps_lock(&requests, version, policy, &excluded)
-        });
-
-    let preferred_commit = if should_try_locked_commit {
-        locked_commit
-    } else {
-        None
-    };
-
-    match provider.fetch_git_version(url, selected, name.as_ref(), preferred_commit, diag) {
-        Ok(resolved) => Ok(resolved),
-        Err(MarsError::LockedCommitUnreachable {
-            commit,
-            url: source_url,
-        }) => {
-            diag.warn(
-                "locked-commit-unreachable",
-                format!(
-                    "locked commit {commit} for {source_url} is unreachable; re-resolving from tag"
-                ),
-            );
-            provider.fetch_git_version(url, selected, name.as_ref(), None, diag)
-        }
-        Err(err) => Err(err),
-    }
+    provider.fetch_git_version(url, selected, name.as_ref(), diag)
 }
 
 /// Select a concrete version from available versions, respecting constraints and the sources'

@@ -12,12 +12,6 @@ use crate::types::CommitHash;
 use super::archive;
 use super::git_cli;
 
-#[derive(Debug, Clone, Default)]
-pub struct FetchOptions {
-    /// Preferred commit SHA to checkout before resolving tags/versions.
-    /// Used for lock replay to guarantee reproducible content.
-    pub preferred_commit: Option<CommitHash>,
-}
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedVersion {
     pub tag: Option<String>,
@@ -133,45 +127,22 @@ pub fn fetch(
     version_req: Option<&str>,
     source_name: &str,
     cache: &GlobalCache,
-    options: &FetchOptions,
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedRef, MarsError> {
     let remote_url = url.to_string();
-    let mut resolved = resolve_version(&remote_url, version_req, diag)?;
-    if let Some(preferred_commit) = options.preferred_commit.as_ref() {
-        resolved.sha = preferred_commit.to_string();
-    }
+    let resolved = resolve_version(&remote_url, version_req, diag)?;
 
     let tree_path = if should_use_github_archive(&remote_url) {
-        match archive::fetch_archive(&remote_url, &resolved.sha, cache) {
-            Ok(path) => path,
-            Err(MarsError::Http { status: 404, .. }) if options.preferred_commit.is_some() => {
-                return Err(MarsError::LockedCommitUnreachable {
-                    commit: resolved.sha.clone(),
-                    url: remote_url,
-                });
-            }
-            Err(err) => return Err(err),
-        }
+        archive::fetch_archive(&remote_url, &resolved.sha, cache)?
     } else {
-        // For git clone path, prefer exact SHA checkout when replaying a locked commit,
-        // or when resolving branch/default-HEAD refs (non-tag fetches).
-        let checkout_sha = if options.preferred_commit.is_some() || resolved.tag.is_none() {
-            Some(resolved.sha.as_str())
-        } else {
-            None
-        };
-
-        match git_cli::fetch_git_clone(&remote_url, resolved.tag.as_deref(), checkout_sha, cache) {
-            Ok(path) => path,
-            Err(MarsError::GitCli { .. }) if options.preferred_commit.is_some() => {
-                return Err(MarsError::LockedCommitUnreachable {
-                    commit: resolved.sha.clone(),
-                    url: remote_url,
-                });
-            }
-            Err(err) => return Err(err),
-        }
+        // A tag is fetched by name; a ref that is not a tag is fetched by its hash.
+        git_cli::fetch_git_content(
+            &remote_url,
+            resolved.tag.as_deref(),
+            resolved.tag.is_none(),
+            &resolved.sha,
+            cache,
+        )?
     };
 
     Ok(ResolvedRef {
@@ -203,7 +174,7 @@ pub fn fetch_commit(
             Err(err) => return Err(err),
         }
     } else {
-        match git_cli::fetch_git_clone(&remote_url, None, Some(commit), cache) {
+        match git_cli::fetch_git_content(&remote_url, None, true, commit, cache) {
             Ok(path) => path,
             Err(MarsError::GitCli { .. }) => {
                 return Err(MarsError::LockedCommitUnreachable {

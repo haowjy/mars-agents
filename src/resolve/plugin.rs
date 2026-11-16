@@ -271,7 +271,7 @@ fn fetch_content(
         Checkout::Ref { name } => name.as_str(),
         _ => "HEAD",
     };
-    provider.fetch_git_ref(&url, reference, name, None, diag)
+    provider.fetch_git_ref(&url, reference, name, diag)
 }
 
 /// A plugin whose source changed since the lock names its old and new place.

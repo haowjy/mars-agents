@@ -94,7 +94,7 @@ it:
 | Package resolution | One source within one resolve pass, and the pass that restarts | [resolve](../../src/resolve/.context/state-machines.md) |
 | Engine-requirement fallback | The candidate versions a run has refused for `requires-*` | [resolve](../../src/resolve/.context/state-machines.md) |
 | Source version and commit | Which rung of the lock-or-tag ladder answered | [resolve](../../src/resolve/.context/state-machines.md) |
-| Git cache entry | A repository in the global cache | [source](../../src/source/.context/state-machines.md) |
+| Git cache entry | A repository in the global cache, and one commit exported from it | [source](../../src/source/.context/state-machines.md) |
 | Archive cache entry | A GitHub tarball in the global cache | [source](../../src/source/.context/state-machines.md) |
 | Model catalog snapshot and refresh claim | The catalog in `.mars/`, its freshness and who may refresh it | [models](../../src/models/.context/state-machines.md) |
 | Probe cache | One harness's cached model listing | [models/probes](../../src/models/probes/.context/state-machines.md) |

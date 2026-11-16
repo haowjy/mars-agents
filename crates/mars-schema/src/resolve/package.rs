@@ -400,6 +400,28 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Asks for a path dependency, unless it is the path a fetched package declared: that names
+    /// its author's disk, so the answerer is never asked. An override's path is the user's own.
+    fn path_answer(
+        &self,
+        dep: &Dependency,
+        path: &str,
+        subpath: Option<&str>,
+        declared_in: Option<&Rooted>,
+    ) -> Answer<PathSource> {
+        let fetched =
+            declared_in.is_some_and(|rooted| matches!(rooted.checkout, Origin::Git { .. }));
+        if fetched && dep.declared == Spec::Path(path.to_string()) {
+            return Answer::Missing;
+        }
+        self.answers.path(&PathRequest {
+            name: &dep.name,
+            path,
+            subpath,
+            declared_in,
+        })
+    }
+
     pub(super) fn path_source(
         &mut self,
         dep: &Dependency,
@@ -407,13 +429,7 @@ impl<'a> Run<'a> {
         subpath: Option<&str>,
         declared_in: Option<&Rooted>,
     ) -> Flow<(String, Rc<Counted>)> {
-        let answered = self.answers.path(&PathRequest {
-            name: &dep.name,
-            path,
-            subpath,
-            declared_in,
-        });
-        match answered {
+        match self.path_answer(dep, path, subpath, declared_in) {
             Answer::Found(PathSource { canonical, tree }) => {
                 let counted = self.counted(tree, (canonical.clone(), String::new()), subpath);
                 Ok((canonical, counted))
@@ -494,12 +510,7 @@ impl<'a> Run<'a> {
                 // The override replaces a path nobody fetches, which need not exist: when it cannot
                 // be canonicalized it is compared as written, as v0.34.5 did.
                 Spec::Path(path) => {
-                    let answered = self.answers.path(&PathRequest {
-                        name: &dep.name,
-                        path,
-                        subpath: None,
-                        declared_in: dep.declared_in.as_ref(),
-                    });
+                    let answered = self.path_answer(dep, path, None, dep.declared_in.as_ref());
                     SourceId::Path {
                         canonical: match answered {
                             Answer::Found(found) => found.canonical,

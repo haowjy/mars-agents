@@ -270,8 +270,9 @@ export interface ProjectedRule {
    * for `*`, which names no tool.
    *
    * On `meridian-flow`, `mcp(...)` rules and MCP wire tokens lower onto the connection tools
-   * `mcp_describe`, `mcp_call` and `mcp_run`: a deny or ask of any server or tool covers all of
-   * them (broader than written), and an allow with no allow-list loses nothing.
+   * `mcp_describe`, `mcp_call` and `mcp_run`: a deny of any server or tool covers all of them
+   * (which can be broader than written), as does an ask with no allow-list; an allow with no
+   * allow-list loses nothing, and an allow or ask under an allow-list is `unscopable`.
    */
   status: "known" | "absent" | "unknown" | "unscopable" | null;
   /** The permission names the rule keeps. Empty for a gap, and when a stricter rule won every name. */
@@ -301,8 +302,11 @@ export interface ToolProjection {
 /**
  * Lower tool rules (an Agent's `tools` as `prepare` reports it) onto a host, the way `mars sync`
  * does for a harness. Throws `input.invalid` for an unknown host or a rule that does not parse.
- * A consumer must refuse a rule whose `status` is `unscopable` or `unknown` rather than read only
- * `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves `allow: ["read"]` granting every read.
+ * A consumer must refuse a rule whose `status` is `unknown`, and an `unscopable` one with a
+ * pattern, rather than read only `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves
+ * `allow: ["read"]` granting every read. An `unscopable` mcp grant on `meridian-flow` (an `allow`
+ * or `ask` under an allow-list) already leaves the connection tools out of `allow` and `ask`, so
+ * the consumer only warns the Agent's author. When a tool is in both `available` and `deny`, `deny` wins.
  */
 export function project(rules: { /** A capability, or a whole key such as `bash(git *)` or `Bash(git push:*)` when `pattern` is absent. */ capability: string; pattern?: string | null; action: "allow" | "deny" | "ask"; origin?: ToolRule["origin"] }[], host: Host): ToolProjection;
 

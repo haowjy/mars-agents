@@ -444,17 +444,17 @@ const CURSOR: Table = &[
     ("plan_mode", Tools(&["SwitchMode"])),
 ];
 
+/// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
+/// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
+/// adds joins by being listed here.
+pub const FLOW_CONNECTION_TOOLS: &[&str] = &["mcp_describe", "mcp_call", "mcp_run"];
+
 /// Meridian Flow's own tools (mars-agents#207). Flow is a consumer, not a `HarnessId`, so
 /// its table lowers a policy for Flow to read but never a native file. Flow's
 /// tool keeps the capability's name, `ask_user`; `ask` is only a tool-policy action word. Flow
 /// ships no `glob` tool yet, so `glob` is absent. Flow's tool set is closed: every canonical
 /// capability has a row, `Absent` where Flow lacks the tool, so `unknown` on Flow only ever
 /// means a name Mars does not recognize.
-/// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
-/// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
-/// adds joins by being listed here.
-pub const FLOW_CONNECTION_TOOLS: &[&str] = &["mcp_describe", "mcp_call", "mcp_run"];
-
 const FLOW: Table = &[
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),

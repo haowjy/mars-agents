@@ -93,8 +93,8 @@ impl NativeStatus {
 }
 
 const UNSCOPABLE_NOTE: &str = "this host's tool takes no pattern, so the rule cannot be scoped";
-const FLOW_MCP_DENY_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them (broader than written, the safe direction)";
-const FLOW_MCP_ASK_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool (broader than written, the safe direction)";
+const FLOW_MCP_DENY_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them, for every server";
+const FLOW_MCP_ASK_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool, for every server";
 const FLOW_MCP_GRANT_NOTE: &str = "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given";
 const NO_NATIVE_NAME: &str = "no native name known for this tool on this harness; left out";
 
@@ -257,10 +257,7 @@ fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule 
             note: None,
             covered_by: None,
         },
-        Capability::Mcp(_) if host == Host::MeridianFlow => {
-            project_flow_connection_tools(rule.action, restricted)
-        }
-        Capability::Unknown(name) if is_mcp_wire_token(name) && host == Host::MeridianFlow => {
+        capability if host == Host::MeridianFlow && capability.names_mcp() => {
             project_flow_connection_tools(rule.action, restricted)
         }
         Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {

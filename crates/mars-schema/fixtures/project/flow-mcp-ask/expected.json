@@ -20,7 +20,7 @@
         "mcp_call",
         "mcp_run"
       ],
-      "note": "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool (broader than written, the safe direction)",
+      "note": "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool, for every server",
       "covered_by": null
     }
   ],

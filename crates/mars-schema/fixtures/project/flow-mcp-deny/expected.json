@@ -5,7 +5,7 @@
     {
       "rule": {
         "capability": "mcp",
-        "pattern": "*/*",
+        "pattern": "github/*",
         "action": "deny",
         "origin": "profile"
       },
@@ -20,7 +20,7 @@
         "mcp_call",
         "mcp_run"
       ],
-      "note": "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them (broader than written, the safe direction)",
+      "note": "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them, for every server",
       "covered_by": null
     },
     {
@@ -36,7 +36,7 @@
       "note": "a stricter rule controls the same native tool and wins (deny, then ask, then allow); this rule is left out",
       "covered_by": {
         "action": "deny",
-        "key": "mcp(*/*)"
+        "key": "mcp(github/*)"
       }
     },
     {

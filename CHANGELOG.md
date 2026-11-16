@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.4] - 2026-11-16
+
+### Changed
+- `project` for `meridian-flow` lowers `mcp(...)` rules and MCP wire tokens onto Flow's connection tools (`mcp_describe`, `mcp_call`, `mcp_run`). Any `mcp(...)` deny or ask lands on all of them, whatever it names. An `allow` or `ask` under an allow-list gives none and stays `known` with a `note` saying so, because Flow cannot scope a connection tool to one server; Flow shows the note as a warning. Other hosts are unchanged. See [what changed](https://github.com/haowjy/mars-agents/blob/main/npm/@meridian-flow/mars-schema/README.md#project).
+
 ## [0.34.3] - 2026-11-15
 
 ### Added

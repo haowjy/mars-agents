@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::error::MarsError;
 use crate::platform::cache::{archive_cache_component, git_cache_component};
 use crate::platform::fs::{publish_cache_dir_if_absent, safe_remove};
-use crate::platform::process::{display_command, run_git, run_git_with_ref};
+use crate::platform::process::{display_command, run_git, run_git_with_index, run_git_with_ref};
 use crate::source::{AvailableVersion, GlobalCache};
 
 /// Dependency data (a URL, a tag or branch, a locked commit) reaches git as an argument, and one
@@ -194,20 +194,30 @@ fn export_commit(clone: &Path, commit: &str, content_path: &Path) -> Result<(), 
             .unwrap_or_default()
             .to_string_lossy()
     ));
+    // A directory, so that the `index.lock` git leaves when it is killed is cleared with it.
+    let index_dir = scratch.with_extension("index");
     safe_remove(&scratch)?;
+    safe_remove(&index_dir)?;
     std::fs::create_dir_all(&scratch)?;
-    let exported =
-        run_git(&["read-tree", commit], clone, "read cached git commit").and_then(|_| {
-            // checkout-index applies the same filters as a checkout and, unlike archive, ignores
-            // `export-ignore`; the prefix must end in a separator.
-            let mut prefix = scratch.to_string_lossy().into_owned();
-            prefix.push(std::path::MAIN_SEPARATOR);
-            run_git(
-                &["checkout-index", "--all", "--prefix", &prefix],
-                clone,
-                "export cached git commit",
-            )
-        });
+    std::fs::create_dir_all(&index_dir)?;
+    // A private index and the scratch directory as the work tree: git then takes `.gitattributes`
+    // and filters from `commit` alone. `checkout-index` in the clone would also read the clone's
+    // working tree, which a clone made by an older mars still has, at some other commit.
+    let scratch_arg = scratch.to_string_lossy().into_owned();
+    let exported = run_git_with_index(
+        &[
+            "--work-tree",
+            &scratch_arg,
+            "read-tree",
+            "-u",
+            "--reset",
+            commit,
+        ],
+        clone,
+        "export cached git commit",
+        Some(&index_dir.join("index")),
+    );
+    let _ = safe_remove(&index_dir);
     if let Err(error) = exported {
         let _ = safe_remove(&scratch);
         return Err(error);

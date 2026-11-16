@@ -31,7 +31,7 @@ stateDiagram-v2
   Unshallowed --> FullFetch: the unshallow failed, then a plain fetch
   FullFetch --> CommitAvailable
   Cloned --> CommitAvailable
-  CommitAvailable --> Exporting: read-tree and checkout-index into <key>.tmp
+  CommitAvailable --> Exporting: read-tree -u with a private index into <key>.tmp
   Exporting --> Published: rename into place if absent
   Exporting --> CommitAvailable: export failed, scratch removed, the error returned
   Published --> [*]: the content directory is returned
@@ -48,9 +48,15 @@ An instance of [a lazy cache entry](../../../.context/state-machines/lazy-cache-
 - **The scratch directory is named by the entry, not the process.** `<key>.tmp` is safe to reuse
   because the lock is held for the whole export; a run killed mid-export leaves one directory that
   the next run for that commit clears.
-- **Nothing reads the clone's working tree or its index.** `read-tree` rewrites the index on every
-  export. Reading files out of `git/<entry>` instead of the content directory brings back the bug
-  where two dependencies on one repository at different versions installed one version's files.
+- **The export reads the commit and nothing else in the clone.** It runs `read-tree -u --reset`
+  with `GIT_INDEX_FILE=<key>.index/index` and the scratch directory as the work tree, so `.gitattributes`
+  and filters come from the exported commit. A clone made by an older mars still has a working
+  tree at some other commit; `checkout-index` in the clone read its attributes and wrote CRLF or
+  LFS pointers into a commit that has neither, and the directory is permanent. Reading files out
+  of `git/<entry>` instead of the content directory brings back the bug where two dependencies on
+  one repository at different versions installed one version's files.
+- **The content directory's name shows in paths and errors.** Its readable part comes from the
+  credential-free canonical URL; the hash covers the URL as written, so a token never appears in it.
 - **`not_an_option` guards every URL, tag and sha.** Removing a call lets a dependency run a
   command through `--upload-pack`.
 

@@ -7,6 +7,15 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.34.5] - 2026-11-16
+
+### Changed
+- After upgrading, each GitHub dependency is downloaded once more, because its cache directory has a new name. The old copies stay in the cache until `mars cache clean`.
+
+### Fixed
+- A git dependency outside GitHub installed the files of whichever commit of that repository Mars had fetched last, not the one `mars.lock` names. It showed with two dependencies on one repository at different versions, with an engine fallback, and with `mars sync` after `mars outdated`. Each commit now has its own directory in the cache.
+- A dependency URL with a user or token in it (`https://user:token@host/repo`) no longer puts the credential into cache directory names, or into error messages that print those paths.
+
 ## [0.34.4] - 2026-11-16
 
 ### Changed

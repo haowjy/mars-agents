@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use mars_schema::agent::EffortLevel;
+use mars_schema::effort::Levels;
 use serde::{Deserialize, Serialize};
 use wait_timeout::ChildExt;
 
@@ -180,162 +183,77 @@ pub fn find_cursor_prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Ve
         .collect()
 }
 
+/// The effort tiers Cursor lists for one model: each slug folds one reasoning level into the
+/// model name (`gpt-5.5-high`), and the bare slug (`gpt-5.5`) stands for `medium`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CursorEffortResolution {
-    pub slug: String,
+pub struct CursorTiers {
+    /// The slug for each level the model lists. A level with several slugs keeps the first, or a
+    /// Claude `-thinking-` one.
+    pub slug_by_level: BTreeMap<EffortLevel, String>,
+    /// Every slug of the model, for diagnostics.
     pub candidate_slugs: Vec<String>,
-    /// The tier whose variant was used when the model has none for `max`: `xhigh`, else `high`.
-    pub max_approximated_by: Option<&'static str>,
+}
+
+impl CursorTiers {
+    /// The levels the model lists, as the harness's own set for this model.
+    pub fn levels(&self) -> Levels {
+        Levels::only(self.slug_by_level.keys().copied())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CursorEffortResolutionError {
+pub enum CursorTiersError {
     NoProbeSlugs,
     NoModelPrefixMatch,
-    NoEffortMatch { model_id: String, effort: String },
 }
 
-/// Resolve a Cursor catalog slug from base model id + effort tier.
-pub fn resolve_cursor_effort_slug(
-    model_id: &str,
-    effort: &str,
-    slugs: &[String],
-) -> Result<CursorEffortResolution, CursorEffortResolutionError> {
+/// The tiers `slugs` list for `model_id`.
+pub fn cursor_tiers(model_id: &str, slugs: &[String]) -> Result<CursorTiers, CursorTiersError> {
     if slugs.is_empty() {
-        return Err(CursorEffortResolutionError::NoProbeSlugs);
+        return Err(CursorTiersError::NoProbeSlugs);
     }
-
     let prefix_matches = find_cursor_prefix_matches(model_id, slugs);
     if prefix_matches.is_empty() {
-        return Err(CursorEffortResolutionError::NoModelPrefixMatch);
+        return Err(CursorTiersError::NoModelPrefixMatch);
     }
-
     let normalized_model = normalize_slug(model_id);
-    let normalized_effort = normalize_slug(effort);
-    let candidate_slugs: Vec<String> = slugs
-        .iter()
-        .filter(|slug| {
-            let normalized_slug = normalize_slug(slug);
-            normalized_slug == normalized_model
-                || normalized_slug.starts_with(&format!("{normalized_model}-"))
-        })
-        .cloned()
-        .collect();
-
-    if cursor_effort_is_default_tier(&normalized_effort) {
-        if let Some(bare_slug) = prefix_matches
-            .iter()
-            .find(|slug| normalize_slug(slug) == normalized_model)
-        {
-            return Ok(CursorEffortResolution {
-                slug: (*bare_slug).to_string(),
-                candidate_slugs,
-                max_approximated_by: None,
-            });
-        }
-
-        return Err(CursorEffortResolutionError::NoEffortMatch {
-            model_id: model_id.to_string(),
-            effort: effort.to_string(),
-        });
-    }
-
-    let matching = |tier: &str| -> Vec<&str> {
-        prefix_matches
+    let mut slug_by_level = BTreeMap::new();
+    for level in EffortLevel::LADDER {
+        let matches: Vec<&str> = prefix_matches
             .iter()
             .copied()
-            .filter(|slug| slug_matches_effort(&normalized_model, &normalize_slug(slug), tier))
-            .collect()
-    };
-    let mut effort_matches = matching(&normalized_effort);
-    let mut max_approximated_by = None;
-    if effort_matches.is_empty() && normalized_effort == "max" {
-        // Few Cursor models have a `-max` variant; `max` then means the model's highest one.
-        for tier in ["xhigh", "high"] {
-            let tier_matches = matching(tier);
-            if !tier_matches.is_empty() {
-                effort_matches = tier_matches;
-                max_approximated_by = Some(tier);
-                break;
-            }
+            .filter(|slug| slug_matches_level(&normalized_model, &normalize_slug(slug), level))
+            .collect();
+        if !matches.is_empty() {
+            slug_by_level.insert(
+                level,
+                choose_cursor_slug(&normalized_model, matches).to_string(),
+            );
         }
     }
-
-    if effort_matches.is_empty() {
-        // Fall back to the bare slug in two cases:
-        // 1. The model has no effort-suffixed variants at all in the probe list — it simply
-        //    doesn't support effort tiers (e.g. bare "composer").
-        // 2. The model is composer-prefixed with partial variant support — compositor models
-        //    expose some tiers but not all, so we accept any effort and fall back gracefully.
-        let has_effort_variants = prefix_matches
-            .iter()
-            .any(|slug| normalize_slug(slug) != normalized_model);
-
-        let allow_bare =
-            !has_effort_variants || cursor_effort_allows_bare_fallback(&normalized_model);
-
-        if allow_bare
-            && let Some(bare_slug) = prefix_matches
-                .iter()
-                .find(|slug| normalize_slug(slug) == normalized_model)
-        {
-            return Ok(CursorEffortResolution {
-                slug: (*bare_slug).to_string(),
-                candidate_slugs,
-                max_approximated_by: None,
-            });
-        }
-
-        return Err(CursorEffortResolutionError::NoEffortMatch {
-            model_id: model_id.to_string(),
-            effort: effort.to_string(),
-        });
-    }
-
-    let chosen = choose_cursor_effort_slug(&normalized_model, effort_matches);
-
-    Ok(CursorEffortResolution {
-        slug: chosen.to_string(),
-        candidate_slugs,
-        max_approximated_by,
+    Ok(CursorTiers {
+        slug_by_level,
+        candidate_slugs: prefix_matches.iter().map(|slug| slug.to_string()).collect(),
     })
 }
 
-/// Cursor often exposes the default effort tier as an unsuffixed slug (e.g. `gpt-5.5`),
-/// not `gpt-5.5-medium`. Treat medium/none/auto as that default tier.
-fn cursor_effort_is_default_tier(normalized_effort: &str) -> bool {
-    matches!(normalized_effort, "auto" | "default" | "medium" | "none")
-}
-
-/// Composer-prefixed models (e.g. `composer-2.5`) expose some effort tiers but not all.
-/// Allow bare-slug fallback when the exact requested tier is missing, rather than erroring.
-/// Models with *no* effort variants at all are handled by the `has_effort_variants` check above.
-fn cursor_effort_allows_bare_fallback(normalized_model: &str) -> bool {
-    normalized_model.starts_with("composer-")
-}
-
-fn slug_matches_effort(
-    normalized_model: &str,
-    normalized_slug: &str,
-    normalized_effort: &str,
-) -> bool {
+fn slug_matches_level(normalized_model: &str, normalized_slug: &str, level: EffortLevel) -> bool {
     if normalized_slug == normalized_model {
-        return cursor_effort_is_default_tier(normalized_effort);
+        return level == EffortLevel::Medium;
     }
-
+    let level = level.as_str();
     let Some(suffix) = normalized_slug
         .strip_prefix(normalized_model)
         .and_then(|rest| rest.strip_prefix('-'))
     else {
         return false;
     };
-
-    suffix == normalized_effort
-        || suffix.ends_with(&format!("-{normalized_effort}"))
-        || suffix.contains(&format!("-{normalized_effort}-"))
+    suffix == level
+        || suffix.ends_with(&format!("-{level}"))
+        || suffix.contains(&format!("-{level}-"))
 }
 
-fn choose_cursor_effort_slug<'a>(normalized_model: &str, matches: Vec<&'a str>) -> &'a str {
+fn choose_cursor_slug<'a>(normalized_model: &str, matches: Vec<&'a str>) -> &'a str {
     if matches.len() == 1 {
         return matches[0];
     }

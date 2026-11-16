@@ -5,12 +5,13 @@
 //! what it reads. The file name carries [`SNAPSHOT_SCHEMA`], so a build that reads another
 //! format finds no file instead of rewriting the other build's.
 
-use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models, retain_providers};
+use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models, provider_filter};
 use crate::error::MarsError;
 use mars_schema::models::{CachedModel, provider_key_from_display};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod tracing {
@@ -18,12 +19,18 @@ mod tracing {
     pub(super) use debug;
 }
 
-/// Cached model catalog from external API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A project's view of the shared catalog snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelsCache {
+    /// The rows the project's `catalog_providers` allows: what aliases resolve over and what
+    /// is routable and listed.
     pub models: Vec<CachedModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fetched_at: Option<String>,
+    /// Every provider's rows. A model's reasoning is read from the row of the provider its
+    /// harness calls, which `catalog_providers` need not include (`opencode-go`).
+    #[serde(skip)]
+    pub catalog: Arc<Vec<CachedModel>>,
 }
 
 /// One durable, atomically replaced catalog record. Legacy snapshots without
@@ -39,10 +46,7 @@ struct Snapshot {
 impl Snapshot {
     fn empty() -> Self {
         Self {
-            cache: ModelsCache {
-                models: Vec::new(),
-                fetched_at: None,
-            },
+            cache: ModelsCache::default(),
             revision: 0,
         }
     }
@@ -307,7 +311,10 @@ pub fn read_cache(project_mars_dir: &Path, providers: &[String]) -> Result<Model
 }
 
 fn filtered(mut cache: ModelsCache, providers: &[String]) -> ModelsCache {
-    retain_providers(&mut cache.models, providers);
+    let all = std::mem::take(&mut cache.models);
+    let allowed = provider_filter(providers);
+    cache.models = all.iter().filter(|model| allowed(model)).cloned().collect();
+    cache.catalog = Arc::new(all);
     cache
 }
 
@@ -614,6 +621,7 @@ impl CatalogCache {
                 let cache = ModelsCache {
                     models,
                     fetched_at: Some(now_unix_secs()),
+                    ..ModelsCache::default()
                 };
                 write_snapshot(
                     dir,

@@ -57,7 +57,7 @@ An installed `.mars/` tree is read by the same readers, with one exception: an A
 | `network` | `allow`, `deny`, `allowlist` | Shell network access; see [Network](#network). |
 | `network-allow` | list of hosts, or `{replace: [...]}` | Hosts an `allowlist` permits. |
 | `network-deny` | list of hosts | Hosts that stay denied. A package's Agent cannot replace this set. |
-| `effort` | `none`, `low`, `medium`, `high`, `xhigh`, `max` | See [Effort](#effort). |
+| `effort` | `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | See [Effort](#effort). |
 | `skills` | list, or `{load: [...], available: [...]}` | A bare list means `load`. |
 | `subagents` | list of names | The Agents this one may spawn. |
 | `tools` | map of capability to `allow`, `deny` or `ask` | See [Tool capabilities](#tool-capabilities). |
@@ -108,20 +108,37 @@ Removed: `package.visibility`, with nothing to replace it.
 
 ## Effort
 
-`effort` is the reasoning effort for the Agent's model: `none`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order; values are case-insensitive. `xhigh` and `max` are two levels. Claude Code and Codex have both. On Cursor the model's slug carries the effort: `max` selects the model's `-max` variant, else its `-xhigh`, else its `-high`, and warns when it used a lower one.
+`effort` is the reasoning effort for the Agent's model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, in rising order (every effort value models.dev lists); values are case-insensitive. `auto`, or YAML `null`, means "send no effort": the harness's own default, then the model's. Claude Code's `effortLevel` setting, for example, comes before the model's default. In `mars.toml`, which has no null, write `auto`. A key left out is different: it falls through to the next layer, while `auto` overrides the lower layers. `none` turns reasoning off.
 
-**`none` means reasoning off.** It is a value of its own: an absent `effort` means "the model's default", and `none` asks for no reasoning. Mars keeps the distinction end to end. The launch bundle carries `"effort": "none"`, and each harness's native file spells it as that harness does:
+**The level a launch sends is one both the model and the harness take.** Mars reads what the model takes from its models.dev row, and what the harness takes from one table in the code (`harness_levels`, which records the version each set was checked against):
 
-| Harness | `effort: none` in the native agent file |
+| Harness | Levels |
 |---|---|
-| Claude Code | `effort` is omitted, with a lossiness warning: Claude Code accepts `low` to `max` and has no off value |
-| Codex | `model_reasoning_effort = "none"`. Some Codex models refuse `none`; that is for the author to fix |
-| OpenCode, Pi | no effort field is written for any value |
-| Cursor | no effort field is written; the model slug is chosen by effort, and `none` selects Cursor's default tier |
+| Claude Code | `low`, `medium`, `high`, `xhigh`, `max`; no off |
+| Codex | every level |
+| Pi | every level (`none` is `--thinking off`) |
+| OpenCode | any: it reads models.dev's `reasoning_options` itself |
+| Cursor | the effort suffixes the model's probe slugs list; the bare slug is `medium` |
+| Meridian Flow (WASM only) | `none`, `low`, `medium`, `high`, `max` |
 
-The launcher reads the bundle's `effort` and maps it for its harness. The bundle carries the Agent's effort for every harness but Cursor, which gets none because the effort is already in `harness_model`. `mars build launch-bundle --effort none` overrides the Agent from the command line.
+A requested level in both sets is kept. Otherwise it moves to the nearest level below it that both take, or the nearest above when there is none below, and Mars warns: "`max` → `high`: `o3` takes low, medium, high". A move never lands on `none` unless `none` was asked, because off is not less thinking. A model with no effort values in its row (toggle only, budget only, or unknown) takes any level; a model that does not reason gets none, with a warning when a level other than `none` was asked. The row is the one for the provider the harness calls: `openai/o3` takes `low`, `medium` and `high`, while `openrouter/openai/o3` is toggle only. `mars models list` shows each model's levels.
 
-`adaptive` and `disabled` are not values; the values they stood for are `medium` and `none`.
+The warning is `launch.warning` in a launch bundle. At sync it is `agent.effort-moved`: one line for all Agents, and with `--verbose` one per Agent and harness.
+
+What each harness's native file or launch carries for the resolved level:
+
+| Harness | Resolved effort |
+|---|---|
+| Claude Code | `effort: <level>` in the native file |
+| Codex | `model_reasoning_effort = "<level>"` in the native file |
+| OpenCode, Pi | no effort field is written; the bundle carries the level for the launcher |
+| Cursor | the level is folded into the model slug (`gpt-5.5-high`) and the bundle carries none; if Cursor's list is unavailable, or has no slug for the model, a launch with an effort fails with `invalid_execution_policy` |
+
+The launcher reads the bundle's `effort` and passes it through; it never interprets it. `mars build launch-bundle --effort none` overrides the Agent from the command line, and `--config-effort` carries the caller's own configuration (Meridian's `primary.effort`), which sits above the model alias's `default_effort` and below the Agent and model policies.
+
+**Older Mars.** A Mars before 0.35.0 refuses `minimal`, `auto` and `null` and fails the whole sync, so a file that uses one needs `requires-mars >= 0.35.0`: `mars check` errors until it is set and `mars version` writes it. The same goes for a model alias's `default_effort` of `none` or `minimal`.
+
+`adaptive` and `disabled` are not values; the values they stood for are `auto` and `none`.
 
 ## Network
 
@@ -166,6 +183,8 @@ model-policies:
 7. the consumer's `[settings] default-network` (`network` only), then the user config's
 8. the model alias's `default_effort` (`effort` only)
 9. unset: the harness decides
+
+For `effort`, layer 7 is `--config-effort`. Whatever layer wins, the model and harness then resolve it as above.
 
 So the Agent's own policy wins over its top-level field: top-level `effort` is the default for any model without a rule, and a rule is the exception for one model. Native agent files and plugin builds resolve the same chain, without the command-line layer, so a native file and a launch bundle agree.
 

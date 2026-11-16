@@ -1730,7 +1730,7 @@ fn build_launch_bundle_cursor_composer_effort_falls_back_to_bare_slug() {
 }
 
 #[test]
-fn build_launch_bundle_cursor_non_composer_missing_effort_variant_errors() {
+fn build_launch_bundle_cursor_missing_effort_variant_moves_to_nearest_and_warns() {
     let temp = TempDir::new().unwrap();
     let bin_dir = install_fake_harnesses_with_custom_cursor_models(
         &temp,
@@ -1759,13 +1759,17 @@ Review code changes."#;
     ]);
     cmd.env("PATH", replace_path_with(&bin_dir));
 
-    let output = cmd.assert().failure().code(2).get_output().clone();
-    let stderr = String::from_utf8(output.stderr).unwrap();
+    let output = cmd.assert().success().get_output().clone();
+    let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // The model lists the bare slug (medium) and `-low`: `high` moves down to medium.
+    assert_eq!(bundle["routing"]["harness_model"], "gpt-5.5");
+    assert!(bundle["execution_policy"]["effort"].is_null());
     assert!(
-        stderr.contains(
-            "agent reviewer selected effort high; Cursor model gpt-5.5 has no high variant; try --effort medium/none."
-        ),
-        "expected missing-variant message, got:\n{stderr}"
+        bundle["warnings"]
+            .to_string()
+            .contains("effort `high` → `medium`"),
+        "expected a move warning, got:\n{}",
+        bundle["warnings"]
     );
 }
 

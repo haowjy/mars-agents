@@ -140,6 +140,53 @@ pub(crate) struct LossRecord {
     pub field: LossyField,
 }
 
+/// An Agent whose effort moved to a level the model and harness take, found at sync.
+#[derive(Debug, Clone)]
+pub(crate) struct EffortMoveRecord {
+    pub agent: String,
+    pub harness: String,
+    /// Names the model, both levels and why: see `models::reasoning`.
+    pub message: String,
+}
+
+/// `Surface` prints one line for all Agents; `Verbose` one line per Agent and harness.
+pub(crate) fn render_effort_moves(
+    moves: &[EffortMoveRecord],
+    mode: LossinessMode,
+    rerun: &str,
+    out: &mut Vec<Diagnostic>,
+) {
+    if moves.is_empty() {
+        return;
+    }
+    if mode.verbose() {
+        out.extend(moves.iter().map(|moved| {
+            diagnostic(
+                DiagnosticLevel::Warning,
+                "agent.effort-moved",
+                format!(
+                    "agent `{}` on {}: {}",
+                    moved.agent,
+                    target_label(&moved.harness),
+                    moved.message
+                ),
+            )
+        }));
+        return;
+    }
+    let agents: BTreeSet<&str> = moves.iter().map(|moved| moved.agent.as_str()).collect();
+    let plural = if agents.len() == 1 { "" } else { "s" };
+    out.push(diagnostic(
+        DiagnosticLevel::Warning,
+        "agent.effort-moved",
+        format!(
+            "effort moved to a level the model takes for {} agent{plural} ({}); run `{rerun}` for each Agent and harness",
+            agents.len(),
+            name_list(&agents)
+        ),
+    ));
+}
+
 /// How many item names the default line lists before it counts the rest.
 const ROLLUP_NAME_CAP: usize = 3;
 

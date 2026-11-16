@@ -48,7 +48,7 @@
         "override",
         "effort"
       ],
-      "message": "agent field `model-policies[0].override.effort` has invalid value `impossible`; allowed: none, low, medium, high, xhigh, max"
+      "message": "agent field `model-policies[0].override.effort` has invalid value `impossible`; allowed: auto, none, minimal, low, medium, high, xhigh, max"
     }
   ]
 }

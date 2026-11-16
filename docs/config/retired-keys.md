@@ -94,7 +94,7 @@ A skill carries no tool policy of Mars's own, so `tools` and `allowed_tools` hav
 
 ## Values that changed
 
-A value of a key Mars reads is checked against the keys it allows, so these are ordinary errors that list the allowed values: `approval: yolo` is now `approval: never`, and `effort: adaptive` and `effort: disabled` are now `effort: medium` and `effort: none`, in a profile and in a model policy's `override`.
+A value of a key Mars reads is checked against the keys it allows, so these are ordinary errors that list the allowed values: `approval: yolo` is now `approval: never`, and `effort: adaptive` and `effort: disabled` are now `effort: auto` and `effort: none`, in a profile and in a model policy's `override`.
 
 ## An Agent with no frontmatter
 

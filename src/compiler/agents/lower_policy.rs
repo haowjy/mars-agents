@@ -46,8 +46,12 @@ impl<'a> Effective<'a> {
         }
     }
 
-    fn effort(&self) -> Option<&mars_schema::agent::EffortLevel> {
-        self.profile.effort.as_ref()
+    /// The level to write. `auto` and no effort both write nothing.
+    fn effort(&self) -> Option<mars_schema::agent::EffortLevel> {
+        match self.profile.effort {
+            Some(mars_schema::agent::EffortRequest::Level(level)) => Some(level),
+            Some(mars_schema::agent::EffortRequest::Default) | None => None,
+        }
     }
 
     fn approval(&self) -> Option<&mars_schema::agent::ApprovalMode> {
@@ -467,19 +471,8 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_claude_effort(&mut self) {
-        match self.eff.effort() {
-            // Claude Code accepts low|medium|high|xhigh|max and has no off value.
-            Some(mars_schema::agent::EffortLevel::None) => self.lossy.push(LossyField {
-                field: "effort".into(),
-                target: self.target_name().into(),
-                classification: Lossiness::Approximate {
-                    note: "Claude Code has no reasoning-off effort; omitted",
-                },
-            }),
-            Some(effort) => {
-                self.yaml.insert(yk("effort"), yv(effort.as_str()));
-            }
-            None => {}
+        if let Some(effort) = self.eff.effort() {
+            self.yaml.insert(yk("effort"), yv(effort.as_str()));
         }
     }
 
@@ -509,12 +502,7 @@ impl<'a> AgentLoweringCtx<'a> {
             }
             AgentLossinessStep::PermissionMap => self.writes_permission_map = true,
             AgentLossinessStep::EffortApproximate(note) => {
-                // `none` writes nothing for these harnesses, so there is nothing to approximate.
-                if self
-                    .eff
-                    .effort()
-                    .is_some_and(|effort| *effort != mars_schema::agent::EffortLevel::None)
-                {
+                if self.eff.effort().is_some() {
                     self.lossy.push(LossyField {
                         field: "effort".into(),
                         target: self.target_name().into(),
@@ -812,7 +800,7 @@ pub fn lower_to_codex(
     let lowered_skills = lower_agent_skills(eff.skills(), AgentSkillsPolicy::BodyGuidance, body);
     let mut lossy = Vec::new();
 
-    // Effort — exact (lowered to model_reasoning_effort); Codex has every level, `max` included.
+    // Effort — exact (lowered to model_reasoning_effort); Codex takes every level.
     let effort_str = eff.effort().map(|effort| effort.as_str());
 
     // Sandbox — exact

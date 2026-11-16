@@ -20,6 +20,8 @@ pub enum Surface {
     Settings,
     /// `[agents.<name>]` in the consumer config files.
     AgentOverlay,
+    /// `[models.<alias>]` in `mars.toml`.
+    ModelAlias,
 }
 
 /// A Mars release.
@@ -46,6 +48,9 @@ pub enum Gate {
     /// The key holds tool rules, and the rule's action decides: an older Mars drops the rule,
     /// so a restricting one (`deny`, `ask`) must not meet one, and an `allow` loses only a grant.
     Rules(fn(&str) -> bool),
+    /// The key's value decides: an older Mars refuses a value it doesn't know and fails the
+    /// whole sync, so a file that writes a new value needs the row's `since`.
+    Value(fn(&str) -> bool),
 }
 
 /// A key a Mars release gates: a file that uses it needs a floor at or above `since`.
@@ -63,6 +68,19 @@ use Surface::*;
 
 fn denies_or_asks(action: &str) -> bool {
     matches!(action, "deny" | "ask")
+}
+
+/// Effort requests Mars before 0.35.0 refuses. `null` is YAML's spelling of `auto`.
+fn new_effort_request(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "minimal" | "auto" | "null"
+    )
+}
+
+/// `default_effort` values Mars before 0.35.0 refuses (it took `auto` already).
+fn new_default_effort(value: &str) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "none" | "minimal")
 }
 
 /// The first Mars that honours `min_mars_version`. A floor at or below it protects nothing a
@@ -109,6 +127,21 @@ pub static GATED: &[Gated] = &[
         since: Release(0, 30, 0),
         gate: Gate::Rules(denies_or_asks),
     },
+    // An Agent's `effort`, an overlay's `effort` and a model policy's `override.effort`. Mars
+    // before 0.35.0 refuses `minimal`, `auto` and `null` and fails the whole sync.
+    Gated {
+        key: "effort",
+        surfaces: &[AgentProfile, AgentOverlay, Settings],
+        since: Release(0, 35, 0),
+        gate: Gate::Value(new_effort_request),
+    },
+    // A model alias's `default_effort`. Mars before 0.35.0 refuses `none` and `minimal`.
+    Gated {
+        key: "default_effort",
+        surfaces: &[ModelAlias],
+        since: Release(0, 35, 0),
+        gate: Gate::Value(new_default_effort),
+    },
 ];
 
 /// A key a file uses, as [`floor`] reads it.
@@ -129,6 +162,16 @@ impl Used {
             key: "hooks".into(),
             value: None,
             at: format!("hook `{name}` using `[hooks]`"),
+        }
+    }
+
+    /// An effort an Agent's frontmatter writes, in `effort` or in a model policy's override.
+    pub fn profile_effort(agent: &str, value: &str) -> Self {
+        Self {
+            surface: AgentProfile,
+            key: "effort".into(),
+            value: Some(value.into()),
+            at: format!("agent `{agent}` `effort` = \"{value}\""),
         }
     }
 
@@ -181,6 +224,17 @@ pub fn used(document: &toml::Table, kind: Document) -> Vec<Used> {
                     }
                 }
                 (Gate::Rules(_), _) => {}
+                (Gate::Value(_), toml::Value::String(text)) => used.push(Used {
+                    surface,
+                    key: row.key.into(),
+                    value: Some(text.clone()),
+                    at: if label.is_empty() {
+                        format!("`{} = \"{text}\"`", row.key)
+                    } else {
+                        format!("`[{label}]` `{} = \"{text}\"`", row.key)
+                    },
+                }),
+                (Gate::Value(_), _) => {}
                 (Gate::Present, value) => used.push(Used {
                     surface,
                     key: row.key.into(),
@@ -202,6 +256,7 @@ pub fn used(document: &toml::Table, kind: Document) -> Vec<Used> {
             if let Some(package) = document.get("package").and_then(toml::Value::as_table) {
                 scan(Package, "package".into(), package);
             }
+            scan_aliases(document, &mut scan);
         }
         Document::Consumer => {
             if let Some(settings) = document.get("settings").and_then(toml::Value::as_table) {
@@ -211,8 +266,13 @@ pub fn used(document: &toml::Table, kind: Document) -> Vec<Used> {
             for (name, agent) in agents.into_iter().flatten() {
                 if let Some(agent) = agent.as_table() {
                     scan(AgentOverlay, format!("agents.{name}"), agent);
+                    scan_policies(AgentOverlay, &format!("agents.{name}"), agent, &mut scan);
                 }
             }
+            if let Some(settings) = document.get("settings").and_then(toml::Value::as_table) {
+                scan_policies(Settings, "settings", settings, &mut scan);
+            }
+            scan_aliases(document, &mut scan);
         }
     }
     used
@@ -245,7 +305,7 @@ pub fn floor(used: impl IntoIterator<Item = Used>) -> Option<Floor> {
         };
         let holds = match row.gate {
             Gate::Present => true,
-            Gate::Rules(restricts) => used.value.as_deref().is_some_and(restricts),
+            Gate::Rules(holds) | Gate::Value(holds) => used.value.as_deref().is_some_and(holds),
         };
         if holds && floor.as_ref().is_none_or(|floor| row.since > floor.since) {
             floor = Some(Floor {
@@ -255,6 +315,35 @@ pub fn floor(used: impl IntoIterator<Item = Used>) -> Option<Floor> {
         }
     }
     floor
+}
+
+/// Each `[models.<alias>]` table.
+fn scan_aliases(document: &toml::Table, scan: &mut impl FnMut(Surface, String, &toml::Table)) {
+    let aliases = document.get("models").and_then(toml::Value::as_table);
+    for (name, alias) in aliases.into_iter().flatten() {
+        if let Some(alias) = alias.as_table() {
+            scan(ModelAlias, format!("models.{name}"), alias);
+        }
+    }
+}
+
+/// The `override` table of each `model-policies` rule in `table`.
+fn scan_policies(
+    surface: Surface,
+    label: &str,
+    table: &toml::Table,
+    scan: &mut impl FnMut(Surface, String, &toml::Table),
+) {
+    let rules = table.get("model-policies").and_then(toml::Value::as_array);
+    for (index, rule) in rules.into_iter().flatten().enumerate() {
+        if let Some(overrides) = rule.get("override").and_then(toml::Value::as_table) {
+            scan(
+                surface,
+                format!("{label}.model-policies[{index}].override"),
+                overrides,
+            );
+        }
+    }
 }
 
 fn on(surfaces: &[Surface], surface: Surface) -> bool {

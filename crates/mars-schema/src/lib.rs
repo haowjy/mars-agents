@@ -54,6 +54,7 @@ pub mod permission_set;
 
 pub mod diagnostic;
 pub mod edit;
+pub mod effort;
 pub mod package;
 pub mod package_tools;
 pub mod plugin_metadata;

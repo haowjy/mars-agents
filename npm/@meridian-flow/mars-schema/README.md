@@ -8,7 +8,7 @@ Types are in `index.d.ts`; the shapes are pinned by the shipped `fixtures/`.
 import { read } from "@meridian-flow/mars-schema";
 
 const reading = read("agents/coder.md", text);
-reading.fields?.effort;            // "high" | ... | null
+reading.fields?.effort;            // "high" | ... | "auto" | null
 reading.diagnostics;               // [{ code, severity, path, message }]
 ```
 
@@ -132,6 +132,12 @@ Per path, `diagnostics` lists what `prepare` returns for the file and then the c
 **`missing_dependencies` and `unreadable_dependencies` are not a verdict.** `missing_dependencies` lists the dependencies the call left out, with `declared_in` naming the package whose `mars.toml` declares each (`null` for the root). `unreadable_dependencies` has the same shape and lists the dependencies you passed that could not be read (their `prepared.selection.unreadable` is `true`: an invalid or newer-schema manifest); their own errors are in `prepare`'s result for them. While either is not empty no skill ref was judged, so a clean `diagnostics` does not mean the package passes: a missing dependency may be the one that ships the skill, and so may an unreadable one. Fetch or fix them and call again. A `prepare` result stored before 0.34.0 has no `unreadable` flag, so re-prepare stored dependencies.
 
 `mars check` can fail a package this accepts: it also reports the `requires-mars` floor, hooks, plugin output, model aliases against `mars.lock`, what a harness target loses from an Agent, and an empty package, none of which depends on the files alone. See [`mars check`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-check).
+
+### Effort and aliases
+
+`resolveEffort(requested, model, host)` is the effort rule `mars build launch-bundle` and `mars sync` apply, so a gateway and Mars agree on what is sent. The ladder is `none < minimal < low < medium < high < xhigh < max` (`effortLevels()`); `"auto"` and `null` both mean "send no effort". `model` is the models.dev row's `reasoning` and `reasoning_options`, or `null` for an unknown model; `host` is a harness or `meridian-flow`. A level that is on neither the model's list nor the host's moves to the nearest level below it that both take, else the nearest above, and never lands on `none` unless `none` was asked (off is not less thinking); the result is `{ level, moved }`, with `moved.why` one of `model_does_not_reason`, `model_levels`, `harness_levels`, `no_common_level`. A model with no effort values (toggle only, budget only, unknown) takes any level; a model that does not reason gets none. Each host's levels are recorded, with the version they were checked against, on `harness_levels` in the crate.
+
+`resolveAlias(rows, { match, exclude, provider })` is the rule `mars models resolve` applies to an `auto` alias: it returns the selected `id`, or `null`. Rows are models.dev rows, with `provider` the models.dev key.
 
 ### Versions and selection
 

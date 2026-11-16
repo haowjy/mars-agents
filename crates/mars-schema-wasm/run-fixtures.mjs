@@ -357,4 +357,17 @@ for (const name of cases("resolve")) {
   checked++;
 }
 
+// effort, aliases and the ladder: the pure parts of `mars models`
+for (const name of cases("effort")) {
+  const { requested, model, host } = json("effort", name, "request.json");
+  check(wasm.resolveEffort(requested, model, host), json("effort", name, "expected.json"), `effort/${name}`);
+}
+for (const name of cases("alias")) {
+  const { rows, options } = json("alias", name, "request.json");
+  check(wasm.resolveAlias(rows, options), json("alias", name, "expected.json"), `alias/${name}`);
+}
+check(wasm.effortLevels(), json("effort-levels", "expected.json"), "effortLevels");
+assert.equal(attempt(() => wasm.resolveEffort("loud", null, "claude")).error?.code, "input.invalid", "unknown effort");
+assert.equal(attempt(() => wasm.resolveEffort("high", null, "gemini")).error?.code, "input.invalid", "unknown host");
+
 console.log(`mars-schema-wasm fixtures passed (${checked} checks)`);

@@ -1,0 +1,16 @@
+{
+  "requested": "auto",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "low",
+          "high"
+        ]
+      }
+    ]
+  },
+  "host": "claude"
+}

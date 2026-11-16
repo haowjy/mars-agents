@@ -31,6 +31,15 @@ impl Levels {
         }
     }
 
+    /// Every level of `other` is in this set.
+    pub fn covers(&self, other: &Levels) -> bool {
+        match (self, other) {
+            (Self::Any, _) => true,
+            (Self::Only(_), Self::Any) => false,
+            (Self::Only(a), Self::Only(b)) => b.is_subset(a),
+        }
+    }
+
     pub fn intersect(&self, other: &Levels) -> Levels {
         match (self, other) {
             (Self::Any, other) | (other, Self::Any) => other.clone(),
@@ -54,30 +63,30 @@ impl Levels {
 
 /// What a model's models.dev row says about reasoning.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelReasoning {
-    /// `None` when there is no row: the model is unknown.
-    pub reasons: Option<bool>,
-    /// The levels the model takes. `Any` when its row lists no effort values (unknown,
-    /// toggle only, budget only, or reasoning with no control). `none` is in an `Only` set only
-    /// if the model can switch reasoning off.
-    pub levels: Levels,
-    /// The model can switch reasoning off: it has a toggle, or `none` among its values. An
-    /// unknown model is assumed able to.
-    pub can_disable: bool,
-    /// The smallest `budget_tokens` option, when the model takes one.
-    pub budget_tokens: Option<u64>,
+pub enum ModelReasoning {
+    /// No row, or a row from before models.dev reasoning data was snapshotted.
+    Unknown,
+    /// The model does not reason, so no effort applies.
+    DoesNotReason,
+    Reasons {
+        /// The levels the row names, `none` among them when the model has a toggle. `None` when
+        /// it names none: toggle only, budget only, or reasoning with no control.
+        levels: Option<BTreeSet<EffortLevel>>,
+        /// The model can switch reasoning off: it has a toggle, or `none` among its values.
+        can_disable: bool,
+        /// The smallest `budget_tokens` option, when the model takes one.
+        budget_tokens: Option<u64>,
+    },
 }
 
 impl ModelReasoning {
     pub fn from_row(row: Option<&ModelReasoningRow>) -> Self {
         let Some(row) = row else {
-            return Self {
-                reasons: None,
-                levels: Levels::Any,
-                can_disable: true,
-                budget_tokens: None,
-            };
+            return Self::Unknown;
         };
+        if !row.reasoning {
+            return Self::DoesNotReason;
+        }
         let mut efforts = BTreeSet::new();
         let mut toggle = false;
         let mut budget_tokens = None;
@@ -92,19 +101,38 @@ impl ModelReasoning {
             }
         }
         let can_disable = toggle || efforts.contains(&EffortLevel::None);
-        let levels = if efforts.is_empty() {
-            Levels::Any
-        } else {
+        let levels = (!efforts.is_empty()).then(|| {
             if toggle {
                 efforts.insert(EffortLevel::None);
             }
-            Levels::Only(efforts)
-        };
-        Self {
-            reasons: Some(row.reasoning),
+            efforts
+        });
+        Self::Reasons {
             levels,
             can_disable,
             budget_tokens,
+        }
+    }
+
+    /// The levels a request may be sent as. A model that reasons without naming levels takes
+    /// the whole ladder, less `none` unless it can be switched off.
+    pub fn levels(&self) -> Levels {
+        match self {
+            Self::Unknown => Levels::Any,
+            Self::DoesNotReason => Levels::Only(BTreeSet::new()),
+            Self::Reasons {
+                levels: Some(levels),
+                ..
+            } => Levels::Only(levels.clone()),
+            Self::Reasons {
+                levels: None,
+                can_disable,
+                ..
+            } => Levels::only(
+                EffortLevel::LADDER
+                    .into_iter()
+                    .filter(|level| *can_disable || *level != EffortLevel::None),
+            ),
         }
     }
 }
@@ -170,11 +198,6 @@ pub fn harness_levels(host: Host) -> Levels {
     }
 }
 
-/// The levels both sets take.
-pub fn allowed_levels(model: &ModelReasoning, harness: &Levels) -> Levels {
-    model.levels.intersect(harness)
-}
-
 /// Resolves `requested` for a model on a harness.
 ///
 /// A request in both sets stays. Otherwise it moves to the nearest level below it, or the
@@ -192,7 +215,7 @@ pub fn resolve_effort(
             moved: None,
         };
     };
-    if model.reasons == Some(false) {
+    if *model == ModelReasoning::DoesNotReason {
         return EffortResolution {
             level: None,
             moved: (from != EffortLevel::None).then_some(Move {
@@ -202,14 +225,15 @@ pub fn resolve_effort(
             }),
         };
     }
-    let allowed = allowed_levels(model, harness);
+    let model_levels = model.levels();
+    let allowed = model_levels.intersect(harness);
     if allowed.contains(from) {
         return EffortResolution {
             level: Some(from),
             moved: None,
         };
     }
-    let why = if model.levels.contains(from) {
+    let why = if model_levels.contains(from) {
         MoveReason::HarnessLevels
     } else {
         MoveReason::ModelLevels
@@ -345,8 +369,7 @@ mod tests {
             r#"{"reasoning":true,"options":[{"type":"toggle"},{"type":"effort","values":["low","high"]}]}"#,
         );
         let model = ModelReasoning::from_row(Some(&row));
-        assert!(model.can_disable);
-        assert_eq!(model.levels, Levels::only([OFF, Low, High]));
+        assert_eq!(model.levels(), Levels::only([OFF, Low, High]));
     }
 
     #[test]
@@ -354,7 +377,7 @@ mod tests {
         let row =
             row(r#"{"reasoning":true,"options":[{"type":"effort","values":["default","low"]}]}"#);
         assert_eq!(
-            ModelReasoning::from_row(Some(&row)).levels,
+            ModelReasoning::from_row(Some(&row)).levels(),
             Levels::only([Low])
         );
     }

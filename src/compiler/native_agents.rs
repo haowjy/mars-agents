@@ -91,6 +91,12 @@ pub(crate) struct MarsAgentScan {
     failed_canonical_paths: HashSet<String>,
 }
 
+impl MarsAgentScan {
+    pub(crate) fn has_agents(&self) -> bool {
+        !self.agents.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NativeModelDecision {
     /// `token` is the profile's model token (alias or model id) that routed to `model_id`.
@@ -298,14 +304,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         harness: mars_schema::HarnessId,
     ) -> crate::build::policy::ModelProfile {
         let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
-        let harness_levels = if harness == mars_schema::HarnessId::Cursor {
-            resolved
-                .as_ref()
-                .and_then(|(_, resolved)| self.cursor_tiers(&resolved.model_id))
-                .map(|tiers| tiers.levels())
-        } else {
-            None
-        };
+        let cursor_probe = (harness == mars_schema::HarnessId::Cursor)
+            .then(|| self.session.cursor_probe_result())
+            .flatten();
         crate::build::policy::profile_for_model(
             profile,
             overlay,
@@ -320,20 +321,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             &crate::build::policy::EffortRoute {
                 harness,
                 catalog: &self.cache.catalog,
-                harness_levels,
+                cursor_probe: cursor_probe.as_ref(),
             },
         )
-    }
-
-    /// What Cursor's probe lists for `model_id`, tried under every id routing tries.
-    fn cursor_tiers(
-        &mut self,
-        model_id: &str,
-    ) -> Option<crate::models::probes::cursor::CursorTiers> {
-        let probe = self.session.cursor_probe_result()?;
-        self.route_model_ids(&mars_schema::HarnessId::Cursor, model_id)
-            .iter()
-            .find_map(|id| crate::models::probes::cursor::cursor_tiers(id, &probe.slugs).ok())
     }
 
     fn route_candidate(
@@ -440,7 +430,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     ) -> Vec<String> {
         let mut ids = vec![model_id.to_string()];
         if *target_harness == mars_schema::HarnessId::Cursor
-            && let Some(shimmed) = cursor_probe_model_id_shim(model_id)
+            && let Some(shimmed) =
+                crate::models::probes::cursor::cursor_probe_model_id_shim(model_id)
             && !ids.iter().any(|id| id == &shimmed)
         {
             ids.push(shimmed);
@@ -483,16 +474,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
         // Cursor folds the resolved effort into the model slug; with none to send, the routed id
         // stands.
-        let effort = self
-            .profile_for_token(agent.profile, agent.overlay, Some(token), *target_harness)
-            .profile
-            .effort;
-        let Some(mars_schema::agent::EffortRequest::Level(level)) = effort else {
-            return Some(routed_model_id.to_string());
-        };
         Some(
-            self.cursor_tiers(routed_model_id)
-                .and_then(|tiers| tiers.slug_by_level.get(&level).cloned())
+            self.profile_for_token(agent.profile, agent.overlay, Some(token), *target_harness)
+                .cursor_slug
                 .unwrap_or_else(|| routed_model_id.to_string()),
         )
     }
@@ -1211,14 +1195,6 @@ fn native_acceptance_policy(
         | mars_schema::HarnessId::Pi => {
             crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }
-    }
-}
-
-fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
-    match model_id.to_ascii_lowercase().as_str() {
-        "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
-        "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
-        _ => None,
     }
 }
 

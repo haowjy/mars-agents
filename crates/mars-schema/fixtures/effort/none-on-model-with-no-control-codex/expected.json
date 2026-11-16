@@ -1,0 +1,8 @@
+{
+  "level": "minimal",
+  "moved": {
+    "from": "none",
+    "to": "minimal",
+    "why": "model_levels"
+  }
+}

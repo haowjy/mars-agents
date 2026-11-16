@@ -59,7 +59,7 @@ struct NativeAgentEmit<'a> {
     canonical_dest_path: &'a str,
     model: &'a crate::compiler::agents::lower::NativeModel,
     /// The warning for an effort that moved to a level the model takes.
-    effort_moved: Option<&'a str>,
+    effort_moved: Option<&'a crate::models::reasoning::EffortWarning>,
 }
 
 struct NativeAgentEmitCtx<'a> {
@@ -811,7 +811,7 @@ pub(crate) fn compile_native_agents<'a>(
                     agent_name: &agent.agent_name,
                     canonical_dest_path: &agent.canonical_dest_path,
                     model: &emission.model,
-                    effort_moved: emission.effort_moved.as_deref(),
+                    effort_moved: emission.effort_moved.as_ref(),
                 },
                 &emit_ctx,
                 diag,
@@ -908,7 +908,7 @@ pub(crate) struct NativeEmission {
     pub model: crate::compiler::agents::lower::NativeModel,
     pub profile: mars_schema::agent::AgentProfile,
     /// The warning for an effort that moved to a level the model takes.
-    pub effort_moved: Option<String>,
+    pub effort_moved: Option<crate::models::reasoning::EffortWarning>,
 }
 
 impl NativeEmission {
@@ -1085,7 +1085,7 @@ fn emit_lowered_native_agent(
     // Reported only for a file Mars writes: a preserved user file has no loss to report.
     diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
     if let Some(moved) = agent.effort_moved {
-        diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved.to_string());
+        diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved);
     }
     for loss in lowered.project_losses {
         project_losses.add(loss);

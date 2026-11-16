@@ -8,6 +8,7 @@
 use super::catalog::Catalog;
 use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models, provider_filter};
 use crate::error::MarsError;
+use crate::types::managed_cmd;
 use mars_schema::models::{CachedModel, provider_key_from_display};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -47,7 +48,8 @@ struct Snapshot {
     fetched_at: Option<String>,
     #[serde(default)]
     revision: u64,
-    /// Set by a load that set the file aside: the provider whose rows did not decode.
+    /// Set by a load that set the file aside, saying what was unreadable: "snapshot file", or
+    /// the rows of the provider that did not decode.
     #[serde(skip)]
     unreadable: Option<String>,
 }
@@ -98,7 +100,7 @@ pub enum RefreshOutcome {
     PeerRefreshed,
     Refreshed {
         models_count: usize,
-        /// The provider whose rows did not decode in the snapshot this one replaces.
+        /// What was unreadable in the snapshot this one replaces.
         #[serde(skip_serializing_if = "Option::is_none")]
         replaced_unreadable: Option<String>,
     },
@@ -134,16 +136,20 @@ pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
                 .as_ref()
                 .map(|reason| format!("; previous refresh failed: {reason}"))
                 .unwrap_or_default();
-            Some(format!("using stale models cache; {status}{previous}"))
+            Some(format!(
+                "using stale models cache; {status}{previous} (`{}` retries now)",
+                managed_cmd("mars models refresh")
+            ))
         }
         RefreshOutcome::StaleFallback { reason } => Some(format!(
-            "models cache refresh failed: {reason}; using stale cache"
+            "models cache refresh failed: {reason}; using stale cache (`{}` retries now)",
+            managed_cmd("mars models refresh")
         )),
         RefreshOutcome::Refreshed {
-            replaced_unreadable: Some(provider),
+            replaced_unreadable: Some(what),
             ..
         } => Some(format!(
-            "models cache had unreadable rows for `{provider}`; refetched it"
+            "models cache had an unreadable {what}; refetched it"
         )),
         _ => None,
     }
@@ -368,7 +374,7 @@ impl CatalogCache {
                     Some(provider) => {
                         tracing::debug!("models cache rows for {provider} do not decode");
                         Ok(Snapshot {
-                            unreadable: Some(provider.to_string()),
+                            unreadable: Some(format!("rows for `{provider}`")),
                             ..self.seed()
                         })
                     }
@@ -377,7 +383,10 @@ impl CatalogCache {
             Ok(None) => Ok(self.seed()),
             Err(err) => {
                 tracing::debug!("models cache read failed, treating as empty: {err}");
-                Ok(self.seed())
+                Ok(Snapshot {
+                    unreadable: Some("snapshot file".to_string()),
+                    ..self.seed()
+                })
             }
         }
     }
@@ -611,9 +620,7 @@ impl CatalogCache {
             if is_usable(&prior) {
                 return Ok((prior, RefreshOutcome::Offline));
             }
-            return Err(MarsError::ModelCacheUnavailable {
-                reason: offline_unavailable_reason(mode),
-            });
+            return Err(unavailable(&prior, offline_unavailable_reason(mode)));
         }
 
         let lock_path = dir.join(".models-cache.lock");
@@ -704,10 +711,18 @@ fn fallback_to_stale_or_error(
             },
         ))
     } else {
-        Err(MarsError::ModelCacheUnavailable {
-            reason: unavailable_reason,
-        })
+        Err(unavailable(&under_lock, unavailable_reason))
     }
+}
+
+/// No usable catalog: say so, and when a file was there but unreadable, say that rather than
+/// let it read as an empty cache.
+fn unavailable(prior: &Snapshot, reason: String) -> MarsError {
+    let reason = match &prior.unreadable {
+        Some(what) => format!("the cached {what} is unreadable; {reason}"),
+        None => reason,
+    };
+    MarsError::ModelCacheUnavailable { reason }
 }
 
 fn offline_unavailable_reason(requested_mode: RefreshMode) -> String {

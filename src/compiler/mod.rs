@@ -184,8 +184,8 @@ fn compile_inner(
     if mars_agent_scan.has_agents() && models_cache.reasoning_data_missing() {
         diag.warn_advisory(
             "models-reasoning-missing",
-            "the models catalog has no reasoning data yet, so Agent efforts are written as given; \
-             it fills in at the next successful refresh"
+            "the models catalog has no reasoning data yet, so Agent efforts are written as given, \
+             without checking the model; it fills in at the next successful refresh"
                 .to_string(),
         );
     }
@@ -342,7 +342,9 @@ fn refreshed_models_cache(
         Err(err) => {
             diag.warn_advisory(
                 "models-cache-refresh",
-                format!("failed to refresh models cache: {err}"),
+                format!(
+                    "failed to refresh models cache: {err} Efforts are written as given, without checking the model."
+                ),
             );
             crate::models::ModelsCache::default()
         }

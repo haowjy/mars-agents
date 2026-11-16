@@ -968,7 +968,7 @@ export interface EffortResolution {
  * The level to send for `requested` on a model and a host. `requested` is a level, `"auto"` or
  * `null` (both send no effort). `model` is the models.dev row's `reasoning` and
  * `reasoning_options`, or `null` when the model is unknown. A level the model or host does not
- * take moves to the nearest one they share (the nearest below, else the nearest above; never to
+ * take moves to the nearest one they share (the nearest on the ladder, a tie going up; never to
  * `none` unless `none` was asked), and `moved` says from what, to what and why. A model that
  * reasons but lists no effort values takes every level, less `none` unless it has a toggle.
  */

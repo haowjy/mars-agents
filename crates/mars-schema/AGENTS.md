@@ -50,7 +50,7 @@ Providers compare by `catalog_provider_canonical` of the raw models.dev key (`pr
 by display name: `meta` and `meta-llama` both display as "Meta". Fetching, the snapshot file and the
 per-project provider filter are the binary's.
 
-`effort.rs` is the one effort rule (`resolve_effort`, `harness_levels`): a request moves to the nearest level
+`effort.rs` is the one effort rule (`resolve_effort`, `harness_levels`): a request moves to the nearest level on the ladder (a tie goes up, set by `TIES_GO_UP`)
 the model's row and the host both take, and the move is reported. Both the CLI and the WASM
 `resolveEffort` call it; a host's accepted levels are recorded there, not in an adapter. A model's
 reasoning is `ModelReasoning`: unknown, does not reason, or reasons with whether it can be switched off

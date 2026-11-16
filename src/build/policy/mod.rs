@@ -225,7 +225,7 @@ pub fn resolve_policy(
     ) {
         Ok(pair) => pair,
         Err(err) => {
-            warnings.push(format!("models cache unavailable: {err}"));
+            warnings.push(err.to_string());
             (
                 model::load_models_cache(input.project_root, &providers).unwrap_or_default(),
                 models::RefreshOutcome::Offline,
@@ -644,7 +644,7 @@ pub(crate) struct EffortRoute<'a> {
 pub(crate) struct ModelProfile {
     pub profile: AgentProfile,
     /// Names the model, both levels and why, when the requested effort moved.
-    pub effort_moved: Option<String>,
+    pub effort_moved: Option<reasoning::EffortWarning>,
     /// The Cursor slug that carries the resolved effort.
     pub cursor_slug: Option<String>,
 }

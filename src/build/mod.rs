@@ -109,7 +109,15 @@ pub fn build_launch_bundle(
         }
         .into());
     }
-    diagnostics.extend(effective_project_config.diagnostics.iter().cloned());
+    // The floor warning is for the author, in `mars check` and `mars sync`; Meridian prints
+    // `warnings[]` at every launch.
+    diagnostics.extend(
+        effective_project_config
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code != "min-mars-version-low")
+            .cloned(),
+    );
     let overlay = request
         .agent
         .as_deref()

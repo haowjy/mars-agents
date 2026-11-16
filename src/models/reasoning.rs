@@ -85,13 +85,21 @@ pub fn catalog_row<'a>(
         .find(|row| slug::normalize_model_id(&row.id) == identity.model)
 }
 
+/// A move's warning. `not_sent` tells a request that went unsent from one that moved to another
+/// level, which the sync summary counts apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffortWarning {
+    pub message: String,
+    pub not_sent: bool,
+}
+
 /// An effort resolved for one route, with the warning its move deserves.
 pub struct RouteEffort<'a> {
     pub row: Option<&'a CachedModel>,
     pub resolution: EffortResolution,
-    pub warning: Option<String>,
-    /// The row is there but has no reasoning data (a snapshot from before 0.35), so the model
-    /// was treated as unknown.
+    pub warning: Option<EffortWarning>,
+    /// The model was treated as unknown because the catalog has no reasoning data for it: there
+    /// is no snapshot, or its row is from before 0.35.
     pub reasoning_data_missing: bool,
     /// Cursor's tiers for the model, when the effort needed them.
     pub cursor_tiers: Option<CursorTiers>,
@@ -143,14 +151,16 @@ pub fn resolve_for_route<'a>(
         }
     }
     let resolution = resolve_effort(request, &reasoning, &harness_set);
-    let warning = resolution
-        .moved
-        .map(|moved| move_warning(&moved, model, harness, &reasoning, &harness_set));
+    let warning = resolution.moved.map(|moved| EffortWarning {
+        message: move_warning(&moved, model, harness, &reasoning, &harness_set),
+        not_sent: moved.to.is_none(),
+    });
     RouteEffort {
         row,
         resolution,
         warning,
-        reasoning_data_missing: row.is_some() && reasoning == ModelReasoning::Unknown,
+        reasoning_data_missing: reasoning == ModelReasoning::Unknown
+            && (row.is_some() || catalog.is_empty()),
         cursor_tiers,
         cursor_failure,
     }
@@ -194,11 +204,18 @@ fn move_warning(
     // other side and so shaped where the level landed.
     let lacks = |levels: &Levels| !levels.contains(moved.from);
     let mut limits = Vec::new();
-    if lacks(&model_levels) || !model_levels.covers(harness_set) {
-        limits.push(format!("`{model}` takes {}", model_levels.describe()));
-    }
-    if lacks(harness_set) || !harness_set.covers(&model_levels) {
-        limits.push(format!("{harness} takes {}", harness_set.describe()));
+    if model_levels == *harness_set {
+        limits.push(format!(
+            "`{model}` and {harness} take {}",
+            model_levels.describe()
+        ));
+    } else {
+        if lacks(&model_levels) || !model_levels.covers(harness_set) {
+            limits.push(format!("`{model}` takes {}", model_levels.describe()));
+        }
+        if lacks(harness_set) || !harness_set.covers(&model_levels) {
+            limits.push(format!("{harness} takes {}", harness_set.describe()));
+        }
     }
     format!(
         "effort `{from}` → `{}`: {}",

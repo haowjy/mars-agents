@@ -19,7 +19,7 @@ use semver::{Version, VersionReq};
 pub enum Constraint {
     /// Semver requirement (`^1.0`, `>=0.5.0`, `~2.1`, an exact version).
     Semver(VersionReq),
-    /// Any version, prefer newest.
+    /// Any version: the newest when nothing is locked, else the lock.
     Latest,
     /// Branch or commit pin: no semver resolution.
     RefPin(String),
@@ -268,9 +268,9 @@ pub fn allows(
         })
 }
 
-/// Whether the lock is kept: `policy` prefers it (a [`Constraint::Latest`] asks for the newest, so
-/// beside one `PreferLockThenLatest` prefers nothing) and the locked version is allowed. It does
-/// not ask whether the tag is still in the repository, so the answer needs no tag list and a tag
+/// Whether the lock is kept: `policy` prefers it and the locked version is allowed. A
+/// [`Constraint::Latest`] allows any version, so it keeps the lock like a range that holds; only
+/// `mars upgrade` (`LatestOnly`) moves it. It does not ask whether the tag is still in the repository, so the answer needs no tag list and a tag
 /// deleted upstream keeps the lock. `--frozen` is the binary's own rule and asks [`allows`].
 pub fn keeps_lock(
     constraints: &[(&str, &Constraint)],
@@ -278,11 +278,7 @@ pub fn keeps_lock(
     policy: SelectionPolicy,
     excluded: &HashSet<Version>,
 ) -> bool {
-    policy == SelectionPolicy::PreferLockThenLatest
-        && !constraints
-            .iter()
-            .any(|(_, constraint)| matches!(constraint, Constraint::Latest))
-        && allows(constraints, locked, excluded)
+    policy == SelectionPolicy::PreferLockThenLatest && allows(constraints, locked, excluded)
 }
 
 /// Choose one of `available` that [`allows`] and return its index. The newest allowed wins

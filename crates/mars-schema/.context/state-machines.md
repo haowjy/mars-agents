@@ -239,7 +239,7 @@ stateDiagram-v2
   Settling --> PinsDiffer: two different pins
   Settling --> PinBesideRange: a pin and a semver range
   Settling --> Choosing: no pin
-  Choosing --> Locked: the lock meets every range, no constraint is latest, and the policy prefers it
+  Choosing --> Locked: the lock meets every range and the policy prefers it (a `latest` constraint allows any version, so it keeps the lock too)
   Choosing --> Tag: the newest allowed tag, whether or not it is the locked one
   Choosing --> Untagged: no version tags at all
   Choosing --> NoSatisfying: tags exist and none is allowed
@@ -258,8 +258,8 @@ stateDiagram-v2
 - **`Chosen::Locked` can name a version that is not in `available`.** A caller that indexes
   `available` with it panics or picks the wrong commit.
 - **`latest` beside a pin is deliberate.** `settle` returns the pin and the `latest` constraint
-  "holds but drifts". `keeps_lock` refuses to keep the lock when any constraint is `latest`, so
-  `choose` and `select` agree only because of that one check.
+  "holds but drifts". `settle` returns the pin before the lock is read, so `latest` never
+  reaches `keeps_lock` there.
 - `Tag` silently ignores a tag that is not a version (`nightly`). The binary uses the same rule
   when it lists tags, and the two must stay in step.
 - `select` breaks ties toward the later of two equal versions, which keeps the choice stable when

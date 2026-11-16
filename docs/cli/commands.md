@@ -153,7 +153,7 @@ mars upgrade [names...]
 |---|---|
 | `names` | Specific dependency names to upgrade (default: all) |
 
-Takes the newest compatible version instead of keeping the locked one. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions.
+Takes the newest compatible version instead of keeping the locked one. `mars sync` never does this, for a dependency with no `version` either: `mars.lock` is kept until you run `mars upgrade`. Only git sources with semver constraints are upgradeable; path sources have no version to maximize. It moves dependency versions and never edits definitions.
 
 A marketplace plugin is refreshed as a whole: Mars re-reads the marketplace at its ref, takes the plugin's current source from it and resolves the plugin's content commit anew, even when the marketplace itself did not change. A plugin whose source moved to another repository or path is reported (`plugin <name> of <dependency> moved: <old> -> <new>`).
 

@@ -67,7 +67,8 @@ less `none` when it cannot be switched off; the listing shows the shape, never t
   grammars: bare `0.20` is a caret range for a dependency and a minimum for a
   requirement. Keep their parsers distinct.
 - `version::keeps_lock` keeps a lock under `PreferLockThenLatest` when every
-  semver constraint allows it, it is not excluded, and no request asks for latest,
+  semver constraint allows it and it is not excluded (a `latest` request allows
+  any version, so an unversioned dependency keeps its lock; `mars upgrade` moves it),
   without checking whether its tag still exists upstream. This lets a locked
   install replay without listing tags. Every constraint must hold at the chosen ref;
   incompatible pins and a pin beside a range fail.

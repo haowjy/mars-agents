@@ -81,43 +81,6 @@ pub(crate) fn finalize(
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
-
-        let mars_path = ctx.project_root.join(".mars");
-        let settings = &state
-            .applied
-            .planned
-            .targeted
-            .resolved
-            .loaded
-            .effective
-            .settings;
-        let ttl = settings.models_cache_ttl_hours();
-        let providers = settings
-            .catalog_providers
-            .clone()
-            .unwrap_or_else(crate::models::default_catalog_providers);
-        let refresh = crate::models::resolve_models_refresh_control(
-            request.options.refresh_models,
-            request.options.no_refresh_models,
-        )?;
-        match crate::models::ensure_fresh_with_catalog_providers(
-            &mars_path,
-            ttl,
-            refresh.catalog_mode,
-            &providers,
-        ) {
-            Ok((_, outcome)) => {
-                if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                    diag.warn_advisory("models-cache-refresh", warning);
-                }
-            }
-            Err(err) => {
-                diag.warn_advisory(
-                    "models-cache-refresh",
-                    format!("failed to refresh models cache: {err}"),
-                );
-            }
-        }
     }
 
     for warning in &state.applied.planned.targeted.warnings {

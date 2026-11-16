@@ -16,6 +16,7 @@ use crate::diagnostic::DiagnosticCollector;
 use mars_schema::agent::EffortRequest;
 
 pub mod availability;
+pub(crate) mod catalog;
 mod catalog_api;
 mod catalog_cache;
 mod dependencies;

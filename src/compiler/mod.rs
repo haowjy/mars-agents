@@ -89,6 +89,10 @@ fn compile_inner(
     diag: &mut DiagnosticCollector,
     enforce_diagnostic_gate: bool,
 ) -> Result<SyncReport, MarsError> {
+    let refresh = crate::models::resolve_models_refresh_control(
+        request.options.refresh_models,
+        request.options.no_refresh_models,
+    )?;
     let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
     if enforce_diagnostic_gate {
@@ -150,8 +154,19 @@ fn compile_inner(
         .catalog_providers
         .clone()
         .unwrap_or_else(crate::models::default_catalog_providers);
-    let models_cache = crate::models::read_cache(&mars_dir, &catalog_providers)
-        .unwrap_or_else(|_| crate::models::ModelsCache::default());
+    // The catalog is settled here, before any model or effort is resolved against it: a refresh
+    // after the agents are written would leave them lowered against the catalog it replaced.
+    let models_cache = if request.options.dry_run {
+        crate::models::read_cache(&mars_dir, &catalog_providers).unwrap_or_default()
+    } else {
+        refreshed_models_cache(
+            &mars_dir,
+            effective_settings.models_cache_ttl_hours(),
+            refresh.catalog_mode,
+            &catalog_providers,
+            diag,
+        )
+    };
     let model_aliases =
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =
@@ -166,6 +181,14 @@ fn compile_inner(
             .with_settings(effective_settings.clone())
         });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
+    if mars_agent_scan.has_agents() && models_cache.reasoning_data_missing() {
+        diag.warn_advisory(
+            "models-reasoning-missing",
+            "the models catalog has no reasoning data yet, so Agent efforts are written as given; \
+             it fills in at the next successful refresh"
+                .to_string(),
+        );
+    }
 
     // Install canonical content before emitting config that refers to it.
     let mut synced = sync_targets(ctx, applied, request, agent_surface_policy.clone(), diag);
@@ -299,4 +322,29 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
         .filter(|outcome| outcome.item_id.kind != mars_schema::item::ItemKind::Agent)
         .cloned()
         .collect()
+}
+
+/// The models catalog, refreshed per `mode`, with the refresh's warning on `diag`.
+fn refreshed_models_cache(
+    mars_dir: &std::path::Path,
+    ttl_hours: u32,
+    mode: crate::models::RefreshMode,
+    providers: &[String],
+    diag: &mut DiagnosticCollector,
+) -> crate::models::ModelsCache {
+    match crate::models::ensure_fresh_with_catalog_providers(mars_dir, ttl_hours, mode, providers) {
+        Ok((cache, outcome)) => {
+            if let Some(warning) = crate::models::refresh_warning(&outcome) {
+                diag.warn_advisory("models-cache-refresh", warning);
+            }
+            cache
+        }
+        Err(err) => {
+            diag.warn_advisory(
+                "models-cache-refresh",
+                format!("failed to refresh models cache: {err}"),
+            );
+            crate::models::ModelsCache::default()
+        }
+    }
 }

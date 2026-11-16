@@ -1,0 +1,13 @@
+{
+  "requested": "none",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "budget_tokens",
+        "min": 1024
+      }
+    ]
+  },
+  "host": "claude"
+}

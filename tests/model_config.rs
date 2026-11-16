@@ -49,11 +49,7 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
 
     let cache = read_cache_json(&project_root);
     assert!(
-        cache["models"]
-            .as_array()
-            .expect("cache.models should be an array")
-            .len()
-            >= 2,
+        cached_model_count(&cache) >= 2,
         "expected sync to populate models cache"
     );
     assert!(

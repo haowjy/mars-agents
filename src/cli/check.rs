@@ -14,11 +14,11 @@ use serde::Serialize;
 use crate::error::MarsError;
 use crate::package_prepare::{DiskTreeSource, FileFindings, source_label};
 
-use mars_schema::agent::EffortRequest;
 use mars_schema::check::Check;
 use mars_schema::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use mars_schema::item::DefinitionKind;
 use mars_schema::keys;
+use mars_schema::ordered::OrderedValue;
 use mars_schema::prepare::Classification;
 use mars_schema::read::Reading;
 
@@ -245,18 +245,31 @@ pub(crate) fn package_floor(
         let Reading::Agent(reading) = &definition.reading else {
             continue;
         };
-        if let Some(agent) = &reading.fields {
-            let policy_efforts = agent
-                .model_policies
-                .iter()
-                .filter_map(|rule| rule.overrides.effort.as_deref());
-            let efforts = agent.effort.map(EffortRequest::as_str).into_iter();
-            uses.extend(
-                efforts
-                    .chain(policy_efforts)
-                    .map(|value| keys::Used::profile_effort(&definition.slug, value)),
-            );
-        }
+        let Some(agent) = &reading.fields else {
+            continue;
+        };
+        // The Agent's own `effort` as its author wrote it: the reading holds only the parsed
+        // request, and a floor message quotes the file.
+        let written = reading
+            .frontmatter
+            .iter()
+            .find(|(key, _)| key == "effort")
+            .and_then(|(_, value)| match value {
+                OrderedValue::Null => Some(None),
+                OrderedValue::String(text) => Some(Some(text.as_str())),
+                _ => None,
+            })
+            .filter(|_| agent.effort.is_some());
+        let policy_efforts = agent
+            .model_policies
+            .iter()
+            .filter_map(|rule| rule.overrides.effort.as_deref());
+        uses.extend(
+            written
+                .into_iter()
+                .chain(policy_efforts.map(Some))
+                .map(|written| keys::Used::profile_effort(&definition.slug, written)),
+        );
     }
     // Only a schema 1 package states its tool rules in a form an older Mars can misread.
     if uses.iter().any(|used| used.key == "schema") {

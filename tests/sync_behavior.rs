@@ -789,7 +789,7 @@ path = "{}"
         ))
         .unwrap();
 
-    mars()
+    mars_for(project.path())
         .args(["sync", "--root", project.path().to_str().unwrap()])
         .assert()
         .success();

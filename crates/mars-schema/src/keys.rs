@@ -64,6 +64,7 @@ pub struct Gated {
     pub gate: Gate,
 }
 
+use crate::agent::EffortRequest;
 use Surface::*;
 
 fn denies_or_asks(action: &str) -> bool {
@@ -78,9 +79,11 @@ fn new_effort_request(value: &str) -> bool {
     )
 }
 
-/// `default_effort` values Mars before 0.35.0 refuses (it took `auto` already).
+/// `default_effort` spellings Mars before 0.35.0 refuses: it matched `low`, `medium`, `high`,
+/// `xhigh`, `max` and `auto` exactly, in lowercase. Mars now reads any case and the new levels.
 fn new_default_effort(value: &str) -> bool {
-    matches!(value.to_ascii_lowercase().as_str(), "none" | "minimal")
+    !matches!(value, "low" | "medium" | "high" | "xhigh" | "max" | "auto")
+        && EffortRequest::parse(value).is_some()
 }
 
 /// The first Mars that honours `min_mars_version`. A floor at or below it protects nothing a
@@ -165,13 +168,18 @@ impl Used {
         }
     }
 
-    /// An effort an Agent's frontmatter writes, in `effort` or in a model policy's override.
-    pub fn profile_effort(agent: &str, value: &str) -> Self {
+    /// An effort an Agent's frontmatter writes, in `effort` or in a model policy's override,
+    /// as written: `null` is YAML null, anything else the text of a string.
+    pub fn profile_effort(agent: &str, written: Option<&str>) -> Self {
+        let (value, shown) = match written {
+            Some(text) => (text, format!("\"{text}\"")),
+            None => ("null", "null".to_string()),
+        };
         Self {
             surface: AgentProfile,
             key: "effort".into(),
             value: Some(value.into()),
-            at: format!("agent `{agent}` `effort` = \"{value}\""),
+            at: format!("agent `{agent}` `effort` = {shown}"),
         }
     }
 

@@ -1,13 +1,12 @@
 use crate::build::bundle::{CatalogRow, Routing};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
+use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::CursorProbeResult;
-use crate::models::probes::cursor::{CursorTiers, CursorTiersError, cursor_tiers};
+use crate::models::probes::cursor::CursorEffortFailure;
 use crate::models::reasoning;
 use crate::routing::{MatchEvidence, report::RouteDecisionReport};
-use mars_schema::HarnessId;
 use mars_schema::agent::{EffortLevel, EffortRequest};
-use mars_schema::models::CachedModel;
 
 pub(super) struct RoutingInput<'a> {
     pub(super) model: String,
@@ -20,7 +19,7 @@ pub(super) struct RoutingInput<'a> {
     /// What the layers ask for; resolved here once the harness model is known.
     pub(super) effort: Option<EffortRequest>,
     /// Every provider's rows, for the model's reasoning and the bundle's `catalog_row`.
-    pub(super) catalog: &'a [CachedModel],
+    pub(super) catalog: &'a Catalog,
     pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
     pub(super) route_report: RouteDecisionReport,
 }
@@ -35,14 +34,6 @@ pub(super) struct RoutingResolution {
     pub(super) warnings: Vec<String>,
     /// Cursor could not say which slug carries the requested effort.
     pub(super) cursor_effort_failure: Option<CursorEffortFailure>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum CursorEffortFailure {
-    ProbeUnavailable,
-    ProbeFailed { error: Option<String> },
-    ProbeReturnedNoSlugs,
-    NoModelPrefixMatch,
 }
 
 pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
@@ -78,9 +69,14 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         .map(|assessment| assessment.candidate_slugs.clone())
         .unwrap_or_default();
 
-    let catalog_row =
-        reasoning::catalog_row(catalog, harness_id, &model, &runnable.harness_model_id)
-            .map(CatalogRow::from);
+    let route = reasoning::resolve_for_route(
+        effort.unwrap_or(EffortRequest::Default),
+        catalog,
+        harness_id,
+        &model,
+        &runnable.harness_model_id,
+        cursor_probe_result,
+    );
     let mut routing = Routing {
         model,
         model_token,
@@ -92,78 +88,36 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         harness_model_source: runnable.source.label().to_string(),
         harness_model_confidence: runnable.confidence.label().to_string(),
         candidate_slugs,
-        catalog_row,
+        catalog_row: route.row.map(CatalogRow::from),
         route_trace: route_report,
     };
     let mut resolved = RoutingResolution {
         routing: routing.clone(),
-        effort: None,
+        effort: route.resolution.level,
         effort_consumed: false,
-        warnings: Vec::new(),
-        cursor_effort_failure: None,
+        warnings: route.warning.iter().cloned().collect(),
+        cursor_effort_failure: route.cursor_failure.clone(),
     };
-    let Some(request @ EffortRequest::Level(_)) = effort else {
-        return resolved;
-    };
-
-    // Cursor's levels are the slugs its probe lists for this model, so its set comes from the probe.
-    let mut cursor_tiers = None;
-    let harness_set = if harness_id == HarnessId::Cursor {
-        match cursor_tiers_for(&routing.model, cursor_probe_result) {
-            Ok(tiers) => {
-                let levels = tiers.levels();
-                cursor_tiers = Some(tiers);
-                levels
-            }
-            Err(failure) => {
-                resolved.cursor_effort_failure = Some(failure);
-                reasoning::harness_set(harness_id)
-            }
-        }
-    } else {
-        reasoning::harness_set(harness_id)
-    };
-    let route = reasoning::resolve_for_route(
-        request,
-        catalog,
-        harness_id,
-        &routing.model,
-        &routing.harness_model,
-        &harness_set,
-    );
-    resolved.warnings.extend(route.warning);
-    resolved.effort = route.resolution.level;
-
-    if let (Some(tiers), Some(level)) = (cursor_tiers, resolved.effort)
-        && let Some(slug) = tiers.slug_by_level.get(&level)
+    if route.reasoning_data_missing
+        && let Some(EffortRequest::Level(level)) = effort
     {
-        routing.harness_model = slug.clone();
+        resolved.warnings.push(format!(
+            "effort `{}` sent as written: the models catalog has no reasoning data for `{}` until it refreshes",
+            level.as_str(),
+            routing.model
+        ));
+    }
+    if let Some(slug) = route.cursor_slug()
+        && let Some(tiers) = &route.cursor_tiers
+    {
+        routing.harness_model = slug.to_string();
         routing.harness_model_source = RunnablePathSource::CachedProbe.label().to_string();
         routing.harness_model_confidence = RunnableConfidence::Confirmed.label().to_string();
-        routing.candidate_slugs = tiers.candidate_slugs;
+        routing.candidate_slugs = tiers.candidate_slugs.clone();
         routing.match_evidence = MatchEvidence::Confirmed.label().to_string();
         resolved.effort = None;
         resolved.effort_consumed = true;
     }
     resolved.routing = routing;
     resolved
-}
-
-fn cursor_tiers_for(
-    model: &str,
-    probe: Option<&CursorProbeResult>,
-) -> Result<CursorTiers, CursorEffortFailure> {
-    if model.trim().is_empty() {
-        return Err(CursorEffortFailure::NoModelPrefixMatch);
-    }
-    let probe = probe.ok_or(CursorEffortFailure::ProbeUnavailable)?;
-    if !probe.model_probe_success {
-        return Err(CursorEffortFailure::ProbeFailed {
-            error: probe.error.clone(),
-        });
-    }
-    cursor_tiers(model, &probe.slugs).map_err(|error| match error {
-        CursorTiersError::NoProbeSlugs => CursorEffortFailure::ProbeReturnedNoSlugs,
-        CursorTiersError::NoModelPrefixMatch => CursorEffortFailure::NoModelPrefixMatch,
-    })
 }

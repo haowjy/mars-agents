@@ -207,8 +207,67 @@ pub enum CursorTiersError {
     NoModelPrefixMatch,
 }
 
-/// The tiers `slugs` list for `model_id`.
+/// Why a launch could not learn which slug carries an effort.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CursorEffortFailure {
+    ProbeUnavailable,
+    ProbeFailed { error: Option<String> },
+    ProbeReturnedNoSlugs,
+    NoModelPrefixMatch,
+}
+
+/// The tiers the probe lists for `model_id`, which is the base model: never a slug that
+/// already carries a tier.
+pub fn cursor_tiers_from_probe(
+    model_id: &str,
+    probe: Option<&CursorProbeResult>,
+) -> Result<CursorTiers, CursorEffortFailure> {
+    if model_id.trim().is_empty() {
+        return Err(CursorEffortFailure::NoModelPrefixMatch);
+    }
+    let probe = probe.ok_or(CursorEffortFailure::ProbeUnavailable)?;
+    if !probe.model_probe_success {
+        return Err(CursorEffortFailure::ProbeFailed {
+            error: probe.error.clone(),
+        });
+    }
+    cursor_tiers(model_id, &probe.slugs).map_err(|error| match error {
+        CursorTiersError::NoProbeSlugs => CursorEffortFailure::ProbeReturnedNoSlugs,
+        CursorTiersError::NoModelPrefixMatch => CursorEffortFailure::NoModelPrefixMatch,
+    })
+}
+
+/// The tiers `slugs` list for `model_id`, under the id Cursor itself spells it with when that
+/// differs from models.dev's.
 pub fn cursor_tiers(model_id: &str, slugs: &[String]) -> Result<CursorTiers, CursorTiersError> {
+    let tiers = tiers_of_id(model_id, slugs);
+    match cursor_probe_model_id_shim(model_id) {
+        Some(shimmed) if tiers.is_err() => tiers_of_id(&shimmed, slugs),
+        _ => tiers,
+    }
+}
+
+/// Cursor's spelling of a model models.dev spells differently.
+pub fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
+    match model_id.to_ascii_lowercase().as_str() {
+        "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
+        "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
+        _ => None,
+    }
+}
+
+/// `slug` without the effort tier Cursor folded into it (`gpt-5.5-high` is `gpt-5.5`), or
+/// `None` when it names no tier. A model's own name can end in a level (`gpt-5.1-codex-max`):
+/// the catalog, not this function, says which reading is right.
+pub fn without_tier(slug: &str) -> Option<&str> {
+    let slug = slug.strip_suffix("-thinking").unwrap_or(slug);
+    EffortLevel::LADDER
+        .into_iter()
+        .filter(|level| *level != EffortLevel::None)
+        .find_map(|level| slug.strip_suffix(level.as_str())?.strip_suffix('-'))
+}
+
+fn tiers_of_id(model_id: &str, slugs: &[String]) -> Result<CursorTiers, CursorTiersError> {
     if slugs.is_empty() {
         return Err(CursorTiersError::NoProbeSlugs);
     }

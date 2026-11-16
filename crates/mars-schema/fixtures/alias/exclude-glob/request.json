@@ -1,0 +1,22 @@
+{
+  "rows": [
+    {
+      "id": "m-mini",
+      "provider": "openai",
+      "release_date": "2026-03-01"
+    },
+    {
+      "id": "m-1",
+      "provider": "openai",
+      "release_date": "2026-01-01"
+    }
+  ],
+  "options": {
+    "match": [
+      "m-*"
+    ],
+    "exclude": [
+      "*-mini"
+    ]
+  }
+}

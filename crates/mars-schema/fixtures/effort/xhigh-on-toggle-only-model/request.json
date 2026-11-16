@@ -1,0 +1,12 @@
+{
+  "requested": "xhigh",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "toggle"
+      }
+    ]
+  },
+  "host": "codex"
+}

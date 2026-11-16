@@ -1,0 +1,15 @@
+{
+  "requested": "high",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "none"
+        ]
+      }
+    ]
+  },
+  "host": "claude"
+}

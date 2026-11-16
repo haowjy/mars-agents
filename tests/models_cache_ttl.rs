@@ -35,11 +35,7 @@ fn scenario_a_cold_cache_refreshes_on_models_catalog() {
 
     let cache = read_cache_json(&project_root);
     assert!(
-        cache["models"]
-            .as_array()
-            .expect("cache.models should be an array")
-            .len()
-            >= 2,
+        cached_model_count(&cache) >= 2,
         "expected non-empty models cache"
     );
     assert!(

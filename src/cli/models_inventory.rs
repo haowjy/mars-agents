@@ -5,6 +5,7 @@ use crate::curation::{CuratedRow, CuratedRules, Decision};
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, NativeAuthCache};
 use crate::harness::registry;
+use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::possible::{ListingIssue, Provenance, SessionPossibleSource};
 use crate::models::probes::cursor::cursor_tiers;
@@ -14,7 +15,6 @@ use crate::routing::{self, RoutingInput, slug};
 use crate::types::MarsContext;
 use mars_schema::HarnessId;
 use mars_schema::effort::Levels;
-use mars_schema::models::CachedModel;
 
 use super::models::{CatalogViewArgs, ListArgs, SessionProbeResolver};
 use super::models_common::{
@@ -414,22 +414,22 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
 /// holds as rows; every other harness has one table.
 fn reasoning_of(
     row: &CuratedRow,
-    catalog: &[CachedModel],
+    catalog: &Catalog,
     cursor_slugs: &[String],
 ) -> Option<reasoning::ReasoningListing> {
     let harness = row.key.harness;
-    let catalog_row = reasoning::catalog_row(
+    let identity = reasoning::catalog_identity(
         catalog,
         harness,
         &row.key.model_id,
         &row.key.harness_model_id,
-    );
+    )?;
     let harness_set = if harness == HarnessId::Cursor {
-        cursor_tiers(&row.key.model_id, cursor_slugs).map_or(Levels::Any, |tiers| tiers.levels())
+        cursor_tiers(&identity.model, cursor_slugs).map_or(Levels::Any, |tiers| tiers.levels())
     } else {
         reasoning::harness_set(harness)
     };
-    reasoning::listing(catalog_row, &harness_set)
+    reasoning::listing(reasoning::catalog_row(catalog, &identity), &harness_set)
 }
 
 fn assess(

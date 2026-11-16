@@ -381,6 +381,29 @@ fn a_kept_choice_is_not_reused_against_a_new_constraint() {
 }
 
 #[test]
+fn a_fetched_package_cannot_declare_a_path_dependency() {
+    let mut map = Map::default();
+    // The answerer could serve this folder; the core must not ask for it.
+    map.paths.insert(
+        "/local/b".to_string(),
+        Rc::new(
+            FileTree::from_files([("mars.toml".to_string(), package("b", "", &[]).into_bytes())])
+                .unwrap(),
+        ),
+    );
+    map.release(
+        "a",
+        "1.0.0",
+        &package("a", "\n[dependencies.b]\npath = \"/local/b\"\n", &[]),
+    );
+    let failure = failed(resolve(&request(vec![root("a", "^1")]), &map)).failure;
+    assert!(matches!(
+        &failure,
+        Failure::Path { name, declared_in } if name == "b" && declared_in == "a"
+    ));
+}
+
+#[test]
 fn an_override_replaces_the_source_of_a_transitive_dependency() {
     let mut map = Map::default();
     map.release("a", "1.0.0", &package("a", "", &[("b", "^1")]));

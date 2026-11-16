@@ -485,9 +485,12 @@ pub(crate) fn mars_error(failure: Failure, answers: &CliAnswers<'_>) -> MarsErro
             source_name: name,
             message: format!("subpath `{subpath}` {}", detail.reason()),
         },
+        // A path the core refused (a fetched package's), not one the answerer failed.
+        Failure::Path { name, .. } => MarsError::Source {
+            source_name: name,
+            message,
+        },
         // Answers that failed carry their own error above; a bound is the caller's to set.
-        Failure::Path { .. } | Failure::Unavailable { .. } | Failure::Bounds { .. } => {
-            MarsError::Internal(message)
-        }
+        Failure::Unavailable { .. } | Failure::Bounds { .. } => MarsError::Internal(message),
     }
 }

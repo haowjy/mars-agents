@@ -316,6 +316,17 @@ fn read_table(
     let mut entries = IndexMap::new();
     for (name, item) in items.into_iter().flat_map(|items| items.iter()) {
         let path = child_path(table, name);
+        // Entries reach JavaScript as plain objects: a name or value JSON can't hold exactly is
+        // left out here, as in every other table `read` returns.
+        if let Err(message) = crate::ordered::reject_unholdable_key(name) {
+            diagnostics.push(SchemaDiagnostic::new(
+                "toml.non-json-value",
+                refusal,
+                path,
+                message,
+            ));
+            continue;
+        }
         let key_path = format!("{table}.{name}");
         let raw = match item.clone().into_value() {
             Ok(value) => RawEntry::deserialize(
@@ -337,7 +348,36 @@ fn read_table(
             }
         };
         match Entry::read(name, raw, Strictness::Package) {
-            Ok((entry, warnings)) => {
+            Ok((mut entry, warnings)) => {
+                // Unknown keys are only reported and handed to JavaScript, never written back,
+                // so each value is kept as JSON holds it: a datetime becomes its text.
+                let written = item.as_table_like();
+                let unknown = std::mem::take(&mut entry.unknown);
+                for (key, value) in unknown {
+                    let holdable = crate::ordered::reject_unholdable_key(&key).and_then(|()| {
+                        match written.and_then(|table| table.get(&key)) {
+                            Some(item) => crate::manifest::item_json(item).and_then(|json| {
+                                toml::Value::try_from(&json).map_err(|error| error.to_string())
+                            }),
+                            None => Ok(value),
+                        }
+                    });
+                    match holdable {
+                        Ok(value) => {
+                            entry.unknown.insert(key, value);
+                        }
+                        Err(message) => {
+                            let mut at = path.clone();
+                            at.push(crate::diagnostic::PathSegment::Key(key));
+                            diagnostics.push(SchemaDiagnostic::new(
+                                "toml.non-json-value",
+                                Severity::Warning,
+                                at,
+                                message,
+                            ));
+                        }
+                    }
+                }
                 diagnostics.extend(warnings.into_iter().map(|warning| {
                     SchemaDiagnostic::new(
                         warning.code,

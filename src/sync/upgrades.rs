@@ -85,7 +85,7 @@ impl VersionStep {
     }
 }
 
-fn short_commit(commit: &str) -> String {
+pub(crate) fn short_commit(commit: &str) -> String {
     commit.chars().take(12).collect()
 }
 
@@ -130,34 +130,38 @@ pub(crate) fn pending_upgrades(
         .collect()
 }
 
-/// The dependencies this run resolved to a different version or commit than `old_lock` had.
+/// The dependencies this run resolved to a different commit than `old_lock` had. A move that
+/// keeps its version label (a branch that advanced, a tag pointed at a new commit) is labelled
+/// with both commits, so the two sides differ.
 pub(crate) fn moved_dependencies(
     old_lock: &LockFile,
     graph: &ResolvedGraph,
     effective: &EffectiveConfig,
 ) -> Vec<VersionStep> {
-    let label = |version: Option<&str>, commit: Option<&str>| {
-        version
-            .map(str::to_string)
-            .or_else(|| commit.map(short_commit))
-            .unwrap_or_else(|| "-".to_string())
-    };
     graph
         .nodes
         .values()
         .filter_map(|node| {
             let old = old_lock.dependencies.get(&node.source_name)?;
-            let new_version = node.resolved_ref.version_tag.as_deref();
-            let new_commit = node.resolved_ref.commit.as_ref().map(AsRef::as_ref);
-            let from = label(old.version.as_deref(), old.commit.as_deref());
-            let to = label(new_version, new_commit);
-            if new_commit.is_none() || from == to {
+            let new_commit = node.resolved_ref.commit.as_ref().map(AsRef::as_ref)?;
+            let old_commit = old.commit.as_deref();
+            if old_commit == Some(new_commit) {
                 return None;
             }
+            let old_version = old.version.as_deref();
+            let new_version = node.resolved_ref.version_tag.as_deref();
+            let label = |version: Option<&str>, commit: Option<&str>| {
+                let commit = commit.map_or_else(|| "-".to_string(), short_commit);
+                match version {
+                    Some(version) if old_version == new_version => format!("{version}@{commit}"),
+                    Some(version) => version.to_string(),
+                    None => commit,
+                }
+            };
             Some(VersionStep {
                 name: node.source_name.clone(),
-                from,
-                to,
+                from: label(old_version, old_commit),
+                to: label(new_version, Some(new_commit)),
                 transitive: !effective.dependencies.contains_key(&node.source_name),
             })
         })

@@ -409,7 +409,7 @@ fn reject_key(key: &str) -> Result<(), String> {
     crate::ordered::reject_unholdable_key(key)
 }
 
-fn item_json(item: &toml_edit::Item) -> Result<OrderedValue, String> {
+pub(crate) fn item_json(item: &toml_edit::Item) -> Result<OrderedValue, String> {
     use toml_edit::{Item, Value};
     Ok(match item {
         Item::None => OrderedValue::Null,

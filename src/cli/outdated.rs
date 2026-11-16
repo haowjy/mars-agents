@@ -71,10 +71,15 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             }
         };
 
+        // A lock at a bare commit shows the commit, as the upgrade hint does.
         let locked_version = lock
             .dependencies
             .get(name)
-            .and_then(|s| s.version.clone())
+            .and_then(|s| {
+                s.version
+                    .clone()
+                    .or_else(|| s.commit.as_deref().map(crate::sync::upgrades::short_commit))
+            })
             .unwrap_or_else(|| "-".to_string());
         let unchecked = |updateable: &str, latest: &str| OutdatedEntry {
             source: name.to_string(),

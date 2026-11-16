@@ -1,0 +1,6 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    {"capability": "mcp(pubmed)", "pattern": null, "action": "ask"}
+  ]
+}

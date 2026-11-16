@@ -39,6 +39,16 @@ impl Capability {
             Self::Unknown(name) => name,
         }
     }
+
+    /// Whether the rule names an MCP tool in any spelling: `mcp(...)` or a wire token such as
+    /// `mcp__server__tool`, which parses as `Unknown`.
+    pub fn names_mcp(&self) -> bool {
+        match self {
+            Self::Mcp(_) => true,
+            Self::Unknown(name) => is_mcp_wire_token(name),
+            Self::Any | Self::Builtin(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

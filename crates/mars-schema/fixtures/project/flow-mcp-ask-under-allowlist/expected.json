@@ -1,0 +1,36 @@
+{
+  "host": "meridian-flow",
+  "default": "deny",
+  "rules": [
+    {
+      "rule": {
+        "capability": "*",
+        "pattern": null,
+        "action": "deny",
+        "origin": "profile"
+      },
+      "status": null,
+      "native": [],
+      "native_tools": [],
+      "note": null,
+      "covered_by": null
+    },
+    {
+      "rule": {
+        "capability": "mcp",
+        "pattern": "pubmed/*",
+        "action": "ask",
+        "origin": "profile"
+      },
+      "status": "known",
+      "native": [],
+      "native_tools": [],
+      "note": "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given",
+      "covered_by": null
+    }
+  ],
+  "allow": [],
+  "deny": [],
+  "ask": [],
+  "available": []
+}

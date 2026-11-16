@@ -35,10 +35,10 @@
         "action": "allow",
         "origin": "profile"
       },
-      "status": "absent",
+      "status": "known",
       "native": [],
       "native_tools": [],
-      "note": null,
+      "note": "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given",
       "covered_by": null
     },
     {
@@ -48,10 +48,18 @@
         "action": "deny",
         "origin": "profile"
       },
-      "status": "absent",
-      "native": [],
-      "native_tools": [],
-      "note": null,
+      "status": "known",
+      "native": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "native_tools": [
+        "mcp_describe",
+        "mcp_call",
+        "mcp_run"
+      ],
+      "note": "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them, for every server",
       "covered_by": null
     },
     {
@@ -69,7 +77,11 @@
     }
   ],
   "allow": [],
-  "deny": [],
+  "deny": [
+    "mcp_describe",
+    "mcp_call",
+    "mcp_run"
+  ],
   "ask": [],
   "available": []
 }

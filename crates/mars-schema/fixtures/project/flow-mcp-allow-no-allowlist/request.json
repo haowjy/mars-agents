@@ -1,0 +1,7 @@
+{
+  "host": "meridian-flow",
+  "rules": [
+    {"capability": "read", "pattern": null, "action": "allow"},
+    {"capability": "mcp(pubmed/search)", "pattern": null, "action": "allow"}
+  ]
+}

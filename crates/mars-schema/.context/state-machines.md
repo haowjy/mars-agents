@@ -357,7 +357,7 @@ and `project` marks coverage (`beat`).
 ```mermaid
 stateDiagram-v2
   [*] --> Projected: project_rule, per rule and host
-  Projected --> Known: every capability has a native name
+  Projected --> Known: every capability has a native name; an mcp rule on Flow fans out to all its connection tools, or, for an allow or ask under an allow-list, keeps none and carries a note
   Projected --> Absent: the host has no such tool
   Projected --> Unknown: no switch, no table row, or a name Mars does not know
   Projected --> Unscopable: a pattern on a host whose tools take no scope

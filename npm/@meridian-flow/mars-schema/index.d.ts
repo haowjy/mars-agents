@@ -266,6 +266,12 @@ export interface ProjectedRule {
    * name it (the host has no switch for it, Mars has no row, or it is not a tool Mars knows),
    * with the reason in `note`; `unscopable`: the rule has a pattern and the host's tool takes
    * none. `null` for `*`, which names no tool.
+   *
+   * On `meridian-flow`, `mcp(...)` rules and MCP wire tokens lower onto the connection tools
+   * `mcp_describe`, `mcp_call` and `mcp_run`: a deny of any server or tool covers all of them
+   * (which can be broader than written), as does an ask with no allow-list; an allow with no
+   * allow-list loses nothing, and an allow or ask under an allow-list is `known` with no native
+   * names and a `note` saying none is granted, since granting them would give every connection.
    */
   status: "known" | "absent" | "unknown" | "unscopable" | null;
   /** The permission names the rule keeps. Empty for a gap, and when a stricter rule won every name. */
@@ -297,6 +303,7 @@ export interface ToolProjection {
  * does for a harness. Throws `input.invalid` for an unknown host or a rule that does not parse.
  * A consumer must refuse a rule whose `status` is `unscopable` or `unknown` rather than read only
  * `allow`/`deny`/`ask`: an unscopable `read(src/**): deny` leaves `allow: ["read"]` granting every read.
+ * When a tool is in both `available` and `deny`, `deny` wins.
  */
 export function project(rules: { /** A capability, or a whole key such as `bash(git *)` or `Bash(git push:*)` when `pattern` is absent. */ capability: string; pattern?: string | null; action: "allow" | "deny" | "ask"; origin?: ToolRule["origin"] }[], host: Host): ToolProjection;
 

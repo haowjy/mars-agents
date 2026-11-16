@@ -47,7 +47,9 @@ impl Host {
                 Err("Codex per-tool MCP gating lives in server config, not the tool list")
             }
             Self::Harness(HarnessId::Pi) => Err("Harness has no MCP tool surface"),
-            Self::MeridianFlow => unreachable!("Flow's MCP refs are absent in `project_rule`"),
+            Self::MeridianFlow => {
+                unreachable!("Flow's MCP refs lower in `project_flow_connection_tools`")
+            }
         }
     }
 }
@@ -91,6 +93,9 @@ impl NativeStatus {
 }
 
 const UNSCOPABLE_NOTE: &str = "this host's tool takes no pattern, so the rule cannot be scoped";
+const FLOW_MCP_DENY_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them, for every server";
+const FLOW_MCP_ASK_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool, for every server";
+const FLOW_MCP_GRANT_NOTE: &str = "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given";
 const NO_NATIVE_NAME: &str = "no native name known for this tool on this harness; left out";
 
 /// The stricter rule that wins a covered rule's calls, as its author wrote it.
@@ -241,7 +246,10 @@ impl ProjectedRule {
 
 /// Project `rule` onto `harness`. The one place a capability becomes native permission names
 /// and unscoped harness tool names.
-fn project_rule(rule: &ToolRule, host: Host) -> ProjectedRule {
+///
+/// `restricted` is whether the policy has a `*` rule that is not `allow`: the Agent lists the
+/// tools it has, so an `allow` or `ask` is what would grant a tool.
+fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule {
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
@@ -249,12 +257,8 @@ fn project_rule(rule: &ToolRule, host: Host) -> ProjectedRule {
             note: None,
             covered_by: None,
         },
-        // Flow's tool set is closed: it has no MCP tools, whatever the ref or wire token.
-        Capability::Mcp(_) if host == Host::MeridianFlow => {
-            ProjectedRule::with_status(NativeStatus::Absent)
-        }
-        Capability::Unknown(name) if is_mcp_wire_token(name) && host == Host::MeridianFlow => {
-            ProjectedRule::with_status(NativeStatus::Absent)
+        capability if host == Host::MeridianFlow && capability.names_mcp() => {
+            project_flow_connection_tools(rule.action, restricted)
         }
         Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {
             Ok(token) => ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None),
@@ -269,6 +273,28 @@ fn project_rule(rule: &ToolRule, host: Host) -> ProjectedRule {
             project_builtin_capability(name, rule.pattern.as_deref(), host)
         }
     }
+}
+
+/// Flow has no per-server MCP tools, only the connection tools in
+/// [`tool_natives::FLOW_CONNECTION_TOOLS`], which take the server as an argument and cannot be
+/// scoped to one. A deny or an ask therefore lands on all of them, whatever it names. A grant
+/// under an allow-list would give every connection and not the one named, so it gives none: the
+/// rule stays `known` with the note, because Flow refuses `unscopable` but shows a note as a warning.
+/// Without an allow-list the tools are available anyway, so an allow loses nothing.
+fn project_flow_connection_tools(action: ToolAction, restricted: bool) -> ProjectedRule {
+    if restricted && action != ToolAction::Deny {
+        return ProjectedRule::known(Vec::new(), Some(FLOW_MCP_GRANT_NOTE));
+    }
+    let note = match action {
+        ToolAction::Deny => Some(FLOW_MCP_DENY_NOTE),
+        ToolAction::Ask => Some(FLOW_MCP_ASK_NOTE),
+        ToolAction::Allow => None,
+    };
+    let bindings = tool_natives::FLOW_CONNECTION_TOOLS
+        .iter()
+        .map(|name| NativeBinding::direct(name, None))
+        .collect();
+    ProjectedRule::known(bindings, note)
 }
 
 /// Project one canonical builtin capability through the same table and status semantics as a
@@ -333,10 +359,14 @@ fn project_builtin_capability(
 /// coverage; pure over the rules, the host and the published native tables.
 pub fn project(policy: &EffectiveToolPolicy, host: impl Into<Host>) -> PolicyProjection<'_> {
     let host = host.into();
+    let restricted = policy
+        .rules
+        .iter()
+        .any(|rule| rule.is_wildcard() && rule.action != ToolAction::Allow);
     let mut rules: Vec<(&ToolRule, ProjectedRule)> = policy
         .rules
         .iter()
-        .map(|rule| (rule, project_rule(rule, host)))
+        .map(|rule| (rule, project_rule(rule, host, restricted)))
         .collect();
     keep_strictest_per_native(&mut rules);
     for (index, by) in covered(policy) {
@@ -527,7 +557,11 @@ mod tests {
     fn natives(raw: &str, harness: &str) -> (Vec<String>, &'static str) {
         let kind = Host::parse(harness).expect("test host exists");
         let parsed = parse_mars_tool_name(raw).unwrap();
-        let projected = project_rule(&ToolRule::from_parsed(parsed, ToolAction::Deny), kind);
+        let projected = project_rule(
+            &ToolRule::from_parsed(parsed, ToolAction::Deny),
+            kind,
+            false,
+        );
         (
             projected.native(),
             projected.status.map_or("none", NativeStatus::as_str),
@@ -739,6 +773,7 @@ mod tests {
             let projected = project_rule(
                 &ToolRule::from_parsed(parsed, ToolAction::Deny),
                 Host::Harness(HarnessId::Claude),
+                false,
             );
             assert_eq!(projected.native_tools(), native_tools, "{rule}");
         }
@@ -749,6 +784,7 @@ mod tests {
                 ToolAction::Allow,
             ),
             Host::Harness(HarnessId::Claude),
+            false,
         );
         assert!(
             write
@@ -842,6 +878,7 @@ mod tests {
                 let projected = project_rule(
                     &ToolRule::from_parsed(parse_mars_tool_name(raw).unwrap(), ToolAction::Deny),
                     kind,
+                    false,
                 );
                 assert_eq!(projected.native_tools(), [raw], "{raw} on {harness}");
             }

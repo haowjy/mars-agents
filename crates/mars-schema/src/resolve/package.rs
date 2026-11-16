@@ -464,15 +464,7 @@ impl<'a> Run<'a> {
         let declared = if dep.declared == dep.spec {
             id.clone()
         } else {
-            // An overridden entry's declared path is never opened, so it is compared as written.
-            match &dep.declared {
-                Spec::Path(path) => SourceId::Path {
-                    canonical: path.clone(),
-                    subpath: dep.subpath.clone(),
-                    plugin: dep.plugin.clone(),
-                },
-                git => self.source_id(dep, git)?,
-            }
+            self.source_id(dep, &dep.declared)?
         };
         Ok((declared, id))
     }

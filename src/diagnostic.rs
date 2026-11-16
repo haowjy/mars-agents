@@ -243,7 +243,12 @@ impl DiagnosticCollector {
     }
 
     /// Buffer an Agent's effort move for `harness`; `drain` renders it by mode.
-    pub(crate) fn record_effort_move(&mut self, agent: &str, harness: &str, message: String) {
+    pub(crate) fn record_effort_move(
+        &mut self,
+        agent: &str,
+        harness: &str,
+        warning: &crate::models::reasoning::EffortWarning,
+    ) {
         if !self.lossiness_mode.surfaces_lossiness() {
             return;
         }
@@ -251,7 +256,8 @@ impl DiagnosticCollector {
             .push(crate::compiler::lossiness::EffortMoveRecord {
                 agent: agent.to_string(),
                 harness: harness.to_string(),
-                message,
+                message: warning.message.clone(),
+                not_sent: warning.not_sent,
             });
     }
 

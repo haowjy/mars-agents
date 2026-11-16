@@ -174,7 +174,13 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
         models::RefreshMode::Force,
         &providers,
     )?;
+    // `models_count` is what this project's `catalog_providers` let through; the snapshot also
+    // holds every other provider's rows.
     let count = cache.models.len();
+    let fetched = match &outcome {
+        models::RefreshOutcome::Refreshed { models_count, .. } => Some(*models_count),
+        _ => None,
+    };
     let cache_warning = cache_warning(&outcome);
 
     if let Some(warning) = cache_warning.as_deref() {
@@ -187,6 +193,7 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
         let out = serde_json::json!({
             "status": "ok",
             "models_count": count,
+            "fetched_models_count": fetched,
             "fetched_at": cache.fetched_at,
         });
         let mut out = out;
@@ -197,11 +204,16 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     } else {
         if cache_warning.is_some() {
             println!(
-                "Using stale models cache with {} models in the models cache",
+                "Using stale models cache with {} models in this project's catalog_providers",
                 count
             );
         } else {
-            println!("Cached {} models in the models cache", count);
+            match fetched {
+                Some(fetched) => println!(
+                    "Fetched {fetched} models from models.dev; {count} are in this project's catalog_providers"
+                ),
+                None => println!("Cached {count} models in this project's catalog_providers"),
+            }
         }
     }
 

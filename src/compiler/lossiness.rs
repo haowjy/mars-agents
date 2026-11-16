@@ -147,6 +147,8 @@ pub(crate) struct EffortMoveRecord {
     pub harness: String,
     /// Names the model, both levels and why: see `models::reasoning`.
     pub message: String,
+    /// No effort was sent, as against moving to another level.
+    pub not_sent: bool,
 }
 
 /// `Surface` prints one line for all Agents; `Verbose` one line per Agent and harness.
@@ -174,17 +176,29 @@ pub(crate) fn render_effort_moves(
         }));
         return;
     }
-    let agents: BTreeSet<&str> = moves.iter().map(|moved| moved.agent.as_str()).collect();
-    let plural = if agents.len() == 1 { "" } else { "s" };
-    out.push(diagnostic(
-        DiagnosticLevel::Warning,
-        "agent.effort-moved",
-        format!(
-            "effort moved to a level the model takes for {} agent{plural} ({}); run `{rerun}` for each Agent and harness",
-            agents.len(),
-            name_list(&agents)
-        ),
-    ));
+    for (not_sent, what) in [
+        (false, "effort moved to a level the model takes"),
+        (true, "effort not sent"),
+    ] {
+        let agents: BTreeSet<&str> = moves
+            .iter()
+            .filter(|moved| moved.not_sent == not_sent)
+            .map(|moved| moved.agent.as_str())
+            .collect();
+        if agents.is_empty() {
+            continue;
+        }
+        let plural = if agents.len() == 1 { "" } else { "s" };
+        out.push(diagnostic(
+            DiagnosticLevel::Warning,
+            "agent.effort-moved",
+            format!(
+                "{what} for {} agent{plural} ({}); run `{rerun}` for each Agent and harness",
+                agents.len(),
+                name_list(&agents)
+            ),
+        ));
+    }
 }
 
 /// How many item names the default line lists before it counts the rest.

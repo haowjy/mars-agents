@@ -198,11 +198,21 @@ pub fn harness_levels(host: Host) -> Levels {
     }
 }
 
+/// Which way a request equally far from two levels moves. The one place the direction is set.
+const TIES_GO_UP: bool = true;
+
+fn ladder_position(level: EffortLevel) -> usize {
+    EffortLevel::LADDER
+        .iter()
+        .position(|candidate| *candidate == level)
+        .expect("every level is on the ladder")
+}
+
 /// Resolves `requested` for a model on a harness.
 ///
-/// A request in both sets stays. Otherwise it moves to the nearest level below it, or the
-/// nearest above when none is below; a move never lands on `none` unless `none` was asked,
-/// because off is not less thinking. `Default` sends nothing. A model that does not reason
+/// A request in both sets stays. Otherwise it moves to the nearest level on the ladder, below or
+/// above, and a tie goes up ([`TIES_GO_UP`]); a move never lands on `none` unless `none` was
+/// asked, because off is not less thinking. `Default` sends nothing. A model that does not reason
 /// gets nothing whatever was asked. An empty intersection sends nothing.
 pub fn resolve_effort(
     requested: EffortRequest,
@@ -241,15 +251,14 @@ pub fn resolve_effort(
     let to = match &allowed {
         // `Any` contains every level, so it returned above.
         Levels::Any => None,
-        Levels::Only(set) => {
-            let usable =
-                |level: &&EffortLevel| **level != EffortLevel::None || from == EffortLevel::None;
-            set.range(..from)
-                .rev()
-                .find(usable)
-                .or_else(|| set.range(from..).find(usable))
-                .copied()
-        }
+        Levels::Only(set) => set
+            .iter()
+            .filter(|level| **level != EffortLevel::None || from == EffortLevel::None)
+            .min_by_key(|level| {
+                let distance = ladder_position(**level).abs_diff(ladder_position(from));
+                (distance, (**level > from) != TIES_GO_UP)
+            })
+            .copied(),
     };
     EffortResolution {
         level: to,
@@ -383,10 +392,30 @@ mod tests {
     }
 
     #[test]
-    fn ties_go_down() {
+    fn a_tie_goes_up() {
         // Flow has no xhigh: high and max are both one step away.
         let r = resolve(level(XHigh), Some(&gpt55_with_max()), Host::MeridianFlow);
+        assert_eq!(r.level, Some(Max));
+        let r = resolve(level(Medium), Some(&low_high_max()), CODEX);
         assert_eq!(r.level, Some(High));
+    }
+
+    #[test]
+    fn the_nearest_level_wins_whichever_side_it_is_on() {
+        let low_max =
+            row(r#"{"reasoning":true,"options":[{"type":"effort","values":["low","max"]}]}"#);
+        assert_eq!(
+            resolve(level(XHigh), Some(&low_max), CODEX).level,
+            Some(Max)
+        );
+        assert_eq!(
+            resolve(level(Medium), Some(&low_max), CODEX).level,
+            Some(Low)
+        );
+    }
+
+    fn low_high_max() -> ModelReasoningRow {
+        row(r#"{"reasoning":true,"options":[{"type":"effort","values":["low","high","max"]}]}"#)
     }
 
     fn gpt55_with_max() -> ModelReasoningRow {

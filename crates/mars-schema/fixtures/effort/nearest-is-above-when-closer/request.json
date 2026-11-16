@@ -1,0 +1,16 @@
+{
+  "requested": "xhigh",
+  "model": {
+    "reasoning": true,
+    "reasoning_options": [
+      {
+        "type": "effort",
+        "values": [
+          "low",
+          "max"
+        ]
+      }
+    ]
+  },
+  "host": "codex"
+}

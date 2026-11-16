@@ -319,7 +319,7 @@ fn removed_flags_report_migration_and_visibility_config_is_unread() {
         // The table is not read, so the command gets as far as the empty cache.
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         let msg = value["error"]["message"].as_str().unwrap();
-        assert!(msg.contains("models cache is empty"), "{name}: {msg}");
+        assert!(msg.contains("models cache is unavailable"), "{name}: {msg}");
         fs::write(&path, "[settings]\n").unwrap();
     }
 }

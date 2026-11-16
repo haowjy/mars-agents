@@ -528,7 +528,7 @@ fn lower_agent(
     );
     effective = resolved.profile;
     if let Some(moved) = resolved.effort_moved {
-        diag.record_effort_move(item.id.name.as_str(), tree_profile.harness.as_str(), moved);
+        diag.record_effort_move(item.id.name.as_str(), tree_profile.harness.as_str(), &moved);
     }
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);

@@ -393,6 +393,10 @@ mars models aliases [--refresh-models|--no-refresh-models]
 mars models catalog [--refresh-models|--no-refresh-models]
 ```
 
+`mars models refresh` prints how many models it fetched and how many of them the project's
+`catalog_providers` let through; `--json` carries both, as `fetched_models_count` (`null` when
+it served stale data) and `models_count`.
+
 `mars models refresh` fetches models.dev metadata synchronously into the per-user
 catalog snapshot (`models-catalog-v2.json` in the Mars cache root, `MARS_CACHE_DIR`), shared by every
 project on the machine. The snapshot holds every models.dev provider; a project's
@@ -829,7 +833,7 @@ Build a harness-targeted launch bundle — a JSON artifact containing routing, e
 mars build launch-bundle [--agent NAME] [--model TOKEN] [flags]
 ```
 
-A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2, and prints no bundle.
+A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2, and prints no bundle. A `min-mars-version-low` warning (a file that uses a newer key without a `min_mars_version` that says so) belongs to the author: `mars sync` prints it and the bundle's `warnings[]` does not.
 
 **Two modes:**
 

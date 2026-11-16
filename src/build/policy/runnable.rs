@@ -95,14 +95,14 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         routing: routing.clone(),
         effort: route.resolution.level,
         effort_consumed: false,
-        warnings: route.warning.iter().cloned().collect(),
+        warnings: route.warning.iter().map(|w| w.message.clone()).collect(),
         cursor_effort_failure: route.cursor_failure.clone(),
     };
     if route.reasoning_data_missing
         && let Some(EffortRequest::Level(level)) = effort
     {
         resolved.warnings.push(format!(
-            "effort `{}` sent as written: the models catalog has no reasoning data for `{}` until it refreshes",
+            "effort `{}` sent as written without checking `{}`: the models catalog has no reasoning data until it refreshes",
             level.as_str(),
             routing.model
         ));

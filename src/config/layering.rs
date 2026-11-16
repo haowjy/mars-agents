@@ -174,7 +174,7 @@ impl LocalSettings {
 
     pub(crate) fn overlay_settings(&self, base: &Settings) -> (Settings, TargetSource) {
         let mut merged = base.clone();
-        let field = base.effective_links().source;
+        let field = crate::config::targets::effective_links(base).source;
         let mut target_source = TargetSource {
             field,
             origin: if field == LinkSource::None {

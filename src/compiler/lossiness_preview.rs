@@ -33,7 +33,7 @@ use mars_schema::HarnessId;
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
     let registry = TargetRegistry::new();
     let mut keys = Vec::new();
-    for target in settings.managed_targets() {
+    for target in crate::config::targets::managed_targets(settings) {
         if let Some(key) = registry
             .get(&target)
             .and_then(|adapter| adapter.skill_variant_key())
@@ -63,7 +63,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
     let mut codex_emitted = false;
     let agent_copy_spec = agent_copy::build_agent_copy_spec(
         settings.meridian_agent_copy(),
-        &settings.managed_targets(),
+        &crate::config::targets::managed_targets(settings),
         &mut diag,
     );
     let policy = agent_surface_policy(

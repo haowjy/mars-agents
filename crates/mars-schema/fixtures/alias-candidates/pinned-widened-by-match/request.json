@@ -1,0 +1,98 @@
+{
+  "rows": [
+    {
+      "id": "claude-fable-5",
+      "provider": "anthropic",
+      "release_date": "2026-06-07"
+    },
+    {
+      "id": "claude-fable-5-1",
+      "provider": "anthropic",
+      "release_date": "2026-09-01"
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "release_date": "2025-10-15"
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "provider": "anthropic",
+      "release_date": "2025-10-15"
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "provider": "anthropic",
+      "release_date": "2026-10-07"
+    },
+    {
+      "id": "claude-opus-4-5",
+      "provider": "anthropic",
+      "release_date": "2025-11-24"
+    },
+    {
+      "id": "claude-opus-4-5-20251101",
+      "provider": "anthropic",
+      "release_date": "2025-11-24"
+    },
+    {
+      "id": "claude-opus-4-6",
+      "provider": "anthropic",
+      "release_date": "2026-02-04"
+    },
+    {
+      "id": "claude-opus-4-7",
+      "provider": "anthropic",
+      "release_date": "2026-04-14"
+    },
+    {
+      "id": "claude-opus-4-8",
+      "provider": "anthropic",
+      "release_date": "2026-05-28"
+    },
+    {
+      "id": "claude-opus-5",
+      "provider": "anthropic",
+      "release_date": "2026-07-24"
+    },
+    {
+      "id": "claude-opus-5-5",
+      "provider": "anthropic",
+      "release_date": "2026-09-22"
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "release_date": "2025-09-29"
+    },
+    {
+      "id": "claude-sonnet-4-5-20250929",
+      "provider": "anthropic",
+      "release_date": "2025-09-29"
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "provider": "anthropic",
+      "release_date": "2026-02-17"
+    },
+    {
+      "id": "claude-sonnet-5",
+      "provider": "anthropic",
+      "release_date": "2026-06-29"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "provider": "anthropic",
+      "release_date": "2026-09-28"
+    }
+  ],
+  "alias": {
+    "model": "claude-opus-4-1",
+    "match": [
+      "claude*opus*"
+    ],
+    "exclude": [
+      "*:*"
+    ]
+  }
+}

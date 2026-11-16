@@ -176,7 +176,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let divergence = check_target_divergence(
             &ctx.project_root,
             &lock,
-            &project_config.effective.settings.managed_targets(),
+            &crate::config::targets::managed_targets(&project_config.effective.settings),
             &mut warnings,
         );
         if let Some(summary) = divergence.summary() {
@@ -200,8 +200,7 @@ fn check_legacy_agents_directory(
     }
 
     let is_explicit_target = settings.is_some_and(|settings| {
-        settings
-            .managed_targets()
+        crate::config::targets::managed_targets(settings)
             .iter()
             .any(|target| target == ".agents")
     });

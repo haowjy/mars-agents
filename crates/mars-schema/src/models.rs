@@ -113,6 +113,38 @@ pub fn provider_key_from_display(display: &str) -> String {
     display.to_ascii_lowercase()
 }
 
+/// The provider a model id's prefix names, for ids no alias or row gives one for.
+pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
+    let id = model_id.to_lowercase();
+    if id.starts_with("claude-") {
+        return Some("anthropic");
+    }
+    if id.starts_with("gpt-")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4")
+        || id.starts_with("codex-")
+    {
+        return Some("openai");
+    }
+    if id.starts_with("gemini") {
+        return Some("google");
+    }
+    if id.starts_with("llama") {
+        return Some("meta");
+    }
+    if id.starts_with("mistral") || id.starts_with("codestral") {
+        return Some("mistral");
+    }
+    if id.starts_with("deepseek") {
+        return Some("deepseek");
+    }
+    if id.starts_with("command") {
+        return Some("cohere");
+    }
+    None
+}
+
 /// `*` globs over a whole string; no other metacharacter.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     let segments: Vec<&str> = pattern.split('*').collect();

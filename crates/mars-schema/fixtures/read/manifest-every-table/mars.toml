@@ -1,0 +1,95 @@
+[package]
+name = "every-table"
+version = "1.2.3"
+schema = 1
+description = "A manifest that uses every table Mars reads."
+requires-mars = ">=0.34.0"
+uses-providers = ["anthropic"]
+
+[package.tools]
+"bash(git push *)" = "ask"
+
+[dependencies.base]
+url = "https://github.com/example/base"
+version = "^1.0"
+agents = ["coder"]
+mystery = true
+
+[local-dependencies.helper]
+path = "../helper"
+
+[plugin]
+dir = "plugin"
+
+[settings]
+managed_root = ".claude"
+targets = [".claude", ".codex"]
+models_cache_ttl_hours = 12
+min_mars_version = ">=0.34.0"
+default_harness = "claude"
+default_model = "sonnet"
+default_network = "allow"
+network-allow = ["api.example.com"]
+network-deny = ["evil.example.com"]
+harness_order = ["claude", "codex"]
+provider_order = ["anthropic", "openai"]
+catalog_providers = ["anthropic", "openai"]
+agent_emission = "never"
+unknown_setting = 1
+
+[settings.tools]
+"bash(rm *)" = "deny"
+
+[settings.meridian.agent_copy]
+harnesses = ["claude"]
+include_fanout = true
+
+[settings.meridian.fanout]
+agents = ["orchestrator"]
+
+[[settings.model-policies]]
+match = { alias = "opus" }
+override = { effort = "high" }
+
+[models.sonnet]
+harness = "claude"
+description = "Everyday work."
+prompting = "Be brief."
+default_effort = "high"
+autocompact = 200000
+autocompact_pct = 80
+match = ["claude*sonnet*"]
+exclude = ["*:*"]
+provider = "anthropic"
+
+[models.pinned]
+model = "gpt-5.5"
+
+[models.pinned-widened]
+model = "claude-opus-4-1"
+match = ["claude*opus*"]
+exclude = ["*:*"]
+
+[agents.coder]
+description = "Writes code."
+model = "sonnet"
+harness = "claude"
+effort = "medium"
+approval = "auto"
+sandbox = "workspace-write"
+network = "allow"
+network-allow = ["docs.example.com"]
+model-invocable = true
+user-invocable = false
+
+[agents.coder.tools]
+"bash(git *)" = "allow"
+
+[[agents.coder.model-policies]]
+match = { model = "gpt-5.5" }
+override = { effort = "low" }
+
+[skills.review]
+description = "Reviews a diff."
+model-invocable = false
+user-invocable = true

@@ -15,6 +15,12 @@ macro_rules! string_newtype {
         #[serde(transparent)]
         pub struct $name(String);
 
+        impl $name {
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
         impl From<String> for $name {
             fn from(value: String) -> Self {
                 Self(value)
@@ -90,11 +96,10 @@ string_newtype!(
     ItemName
 );
 
-impl ItemName {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
+string_newtype!(
+    /// A dependency's name: its key under `[dependencies]` and `[local-dependencies]`.
+    SourceName
+);
 
 /// Why a relative coordinate was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

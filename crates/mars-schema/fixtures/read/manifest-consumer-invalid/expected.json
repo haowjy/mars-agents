@@ -1,0 +1,35 @@
+{
+  "frontmatter": [
+    [
+      "name",
+      "consumer-invalid"
+    ],
+    [
+      "version",
+      "1.0.0"
+    ],
+    [
+      "schema",
+      1
+    ]
+  ],
+  "fields": {
+    "name": "consumer-invalid",
+    "version": "1.0.0",
+    "schema": 1
+  },
+  "body": null,
+  "diagnostics": [
+    {
+      "code": "config.invalid",
+      "severity": "error",
+      "path": [],
+      "message": "TOML parse error at line 12, column 1\n   |\n12 | [models.broken]\n   | ^^^^^^^^^^^^^^^\nmodel alias must have either 'model' (pinned) or 'match' (auto-resolve)\n"
+    }
+  ],
+  "dependencies": {
+    "base": {
+      "url": "https://github.com/example/base"
+    }
+  }
+}

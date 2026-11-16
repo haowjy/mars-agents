@@ -366,6 +366,18 @@ for (const name of cases("alias")) {
   const { rows, options } = json("alias", name, "request.json");
   check(wasm.resolveAlias(rows, options), json("alias", name, "expected.json"), `alias/${name}`);
 }
+for (const name of cases("alias-candidates")) {
+  const { rows, alias } = json("alias-candidates", name, "request.json");
+  check(wasm.aliasCandidates(rows, alias), json("alias-candidates", name, "expected.json"), `alias-candidates/${name}`);
+}
+for (const name of cases("alias-resolve-all")) {
+  const { rows, manifest } = json("alias-resolve-all", name, "request.json");
+  check(wasm.resolveAliases(manifest, rows), json("alias-resolve-all", name, "expected.json"), `alias-resolve-all/${name}`);
+}
+assert.equal(attempt(() => wasm.resolveAlias([], { match: ["a"], typo: 1 })).error?.code, "input.invalid", "an alias key Mars does not read");
+assert.equal(attempt(() => wasm.resolveAlias([], { exclude: ["a"] })).error?.code, "input.invalid", "an alias with neither model nor match");
+check(wasm.resolveAliases({ models: {} }, []), {}, "resolveAliases of no models");
+check(wasm.resolveAliases({}, []), {}, "resolveAliases of a manifest with no models");
 check(wasm.effortLevels(), json("effort-levels", "expected.json"), "effortLevels");
 assert.equal(attempt(() => wasm.resolveEffort("loud", null, "claude")).error?.code, "input.invalid", "unknown effort");
 assert.equal(attempt(() => wasm.resolveEffort("high", null, "gemini")).error?.code, "input.invalid", "unknown host");

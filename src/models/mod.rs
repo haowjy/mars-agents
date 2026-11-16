@@ -10,7 +10,7 @@
 //! Merge precedence: consumer > deps (declaration order).
 
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::diagnostic::DiagnosticCollector;
 use mars_schema::agent::EffortRequest;
@@ -34,57 +34,11 @@ pub use catalog_cache::{
     read_cache, refresh_warning, run_background_refresh,
 };
 pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
+pub use mars_schema::alias::{ModelAlias, ModelSpec};
 pub use mars_schema::models::{
-    CachedModel, auto_resolve_all, catalog_provider_canonical, glob_match, sort_best_first,
+    CachedModel, auto_resolve_all, catalog_provider_canonical, glob_match,
+    infer_provider_from_model_id, sort_best_first,
 };
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ModelAlias {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompting: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_effort: Option<EffortRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub autocompact: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub autocompact_pct: Option<u8>,
-    #[serde(flatten)]
-    pub spec: ModelSpec,
-}
-
-impl ModelAlias {
-    pub fn pinned_model_id(&self) -> Option<&str> {
-        match &self.spec {
-            ModelSpec::Pinned { model, .. } | ModelSpec::PinnedWithMatch { model, .. } => {
-                Some(model.as_str())
-            }
-            ModelSpec::AutoResolve { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ModelSpec {
-    Pinned {
-        model: String,
-        provider: Option<String>,
-    },
-    PinnedWithMatch {
-        model: String,
-        provider: Option<String>,
-        match_patterns: Vec<String>,
-        exclude_patterns: Vec<String>,
-    },
-    AutoResolve {
-        provider: Option<String>,
-        match_patterns: Vec<String>,
-        exclude_patterns: Vec<String>,
-    },
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,205 +68,6 @@ pub struct ResolvedAlias {
     pub autocompact_pct: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability: Option<ModelAvailability>,
-}
-
-impl Serialize for ModelSpec {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        match self {
-            ModelSpec::Pinned { model, provider } => {
-                let mut count = 1;
-                if provider.is_some() {
-                    count += 1;
-                }
-                let mut map = serializer.serialize_map(Some(count))?;
-                map.serialize_entry("model", model)?;
-                if let Some(provider) = provider {
-                    map.serialize_entry("provider", provider)?;
-                }
-                map.end()
-            }
-            ModelSpec::PinnedWithMatch {
-                model,
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                let mut count = 2; // model + match
-                if provider.is_some() {
-                    count += 1;
-                }
-                if !exclude_patterns.is_empty() {
-                    count += 1;
-                }
-                let mut map = serializer.serialize_map(Some(count))?;
-                map.serialize_entry("model", model)?;
-                map.serialize_entry("match", match_patterns)?;
-                if let Some(provider) = provider {
-                    map.serialize_entry("provider", provider)?;
-                }
-                if !exclude_patterns.is_empty() {
-                    map.serialize_entry("exclude", exclude_patterns)?;
-                }
-                map.end()
-            }
-            ModelSpec::AutoResolve {
-                provider,
-                match_patterns,
-                exclude_patterns,
-            } => {
-                let mut count = 1; // match
-                if provider.is_some() {
-                    count += 1;
-                }
-                if !exclude_patterns.is_empty() {
-                    count += 1;
-                }
-                let mut map = serializer.serialize_map(Some(count))?;
-                if let Some(provider) = provider {
-                    map.serialize_entry("provider", provider)?;
-                }
-                map.serialize_entry("match", match_patterns)?;
-                if !exclude_patterns.is_empty() {
-                    map.serialize_entry("exclude", exclude_patterns)?;
-                }
-                map.end()
-            }
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RawModelAlias {
-    harness: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    prompting: Option<String>,
-    #[serde(default)]
-    native: Option<toml::Value>,
-    #[serde(default)]
-    default_effort: Option<String>,
-    #[serde(default)]
-    autocompact: Option<toml::Value>,
-    #[serde(default)]
-    autocompact_pct: Option<toml::Value>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    provider: Option<String>,
-    #[serde(default, rename = "match")]
-    match_patterns: Option<Vec<String>>,
-    #[serde(default)]
-    exclude: Option<Vec<String>>,
-}
-
-impl<'de> Deserialize<'de> for ModelAlias {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = RawModelAlias::deserialize(deserializer)?;
-        let normalized_harness = if let Some(ref harness_name) = raw.harness {
-            Some(
-                harness::normalize_harness_name(harness_name).ok_or_else(|| {
-                    serde::de::Error::custom(format!(
-                        "invalid harness '{harness_name}'; valid harnesses: {}",
-                        mars_schema::harness::names()
-                    ))
-                })?,
-            )
-        } else {
-            None
-        };
-        if raw.native.is_some() {
-            return Err(serde::de::Error::custom(
-                "[models.<alias>.native] is no longer supported; Cursor model adaptation is internal",
-            ));
-        }
-        let default_effort = raw
-            .default_effort
-            .filter(|value| !value.trim().is_empty())
-            .map(|effort| {
-                EffortRequest::parse(&effort).ok_or_else(|| {
-                    serde::de::Error::custom(format!(
-                        "invalid default_effort '{effort}'; accepted values: {}",
-                        EffortRequest::ALLOWED
-                    ))
-                })
-            })
-            .transpose()?;
-        let autocompact: Option<u32> = match raw.autocompact {
-            Some(toml::Value::Integer(value)) => match u32::try_from(value) {
-                Ok(v) => Some(v),
-                Err(_) => {
-                    return Err(serde::de::Error::custom(format!(
-                        "autocompact {value} is out of u32 range (0–4294967295)"
-                    )));
-                }
-            },
-            Some(other) => {
-                return Err(serde::de::Error::custom(format!(
-                    "autocompact must be an integer (token count), got {other:?}"
-                )));
-            }
-            None => None,
-        };
-        let autocompact_pct: Option<u8> = match raw.autocompact_pct {
-            Some(toml::Value::Integer(value)) if (1..=100).contains(&value) => Some(value as u8),
-            Some(toml::Value::Integer(value)) => {
-                return Err(serde::de::Error::custom(format!(
-                    "autocompact_pct {value} is out of range 1-100"
-                )));
-            }
-            Some(other) => {
-                return Err(serde::de::Error::custom(format!(
-                    "autocompact_pct must be an integer 1-100, got {other:?}"
-                )));
-            }
-            None => None,
-        };
-
-        let has_match = raw.match_patterns.is_some();
-
-        let spec = if let Some(model) = raw.model {
-            if !has_match && raw.exclude.is_some() {
-                return Err(serde::de::Error::custom(
-                    "model alias with 'exclude' must also include 'match'",
-                ));
-            }
-            if let Some(match_patterns) = raw.match_patterns {
-                ModelSpec::PinnedWithMatch {
-                    model,
-                    provider: raw.provider,
-                    match_patterns,
-                    exclude_patterns: raw.exclude.unwrap_or_default(),
-                }
-            } else {
-                ModelSpec::Pinned {
-                    model,
-                    provider: raw.provider,
-                }
-            }
-        } else if let Some(match_patterns) = raw.match_patterns {
-            ModelSpec::AutoResolve {
-                provider: raw.provider,
-                match_patterns,
-                exclude_patterns: raw.exclude.unwrap_or_default(),
-            }
-        } else {
-            return Err(serde::de::Error::custom(
-                "model alias must have either 'model' (pinned) or 'match' (auto-resolve)",
-            ));
-        };
-
-        Ok(ModelAlias {
-            harness: normalized_harness,
-            description: raw.description,
-            prompting: raw.prompting,
-            default_effort,
-            autocompact,
-            autocompact_pct,
-            spec,
-        })
-    }
 }
 
 pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {
@@ -807,37 +562,6 @@ fn format_alias_resolution_for_diag(
             }
         }
     }
-}
-
-pub fn infer_provider_from_model_id(model_id: &str) -> Option<&'static str> {
-    let id = model_id.to_lowercase();
-    if id.starts_with("claude-") {
-        return Some("anthropic");
-    }
-    if id.starts_with("gpt-")
-        || id.starts_with("o1")
-        || id.starts_with("o3")
-        || id.starts_with("o4")
-        || id.starts_with("codex-")
-    {
-        return Some("openai");
-    }
-    if id.starts_with("gemini") {
-        return Some("google");
-    }
-    if id.starts_with("llama") {
-        return Some("meta");
-    }
-    if id.starts_with("mistral") || id.starts_with("codestral") {
-        return Some("mistral");
-    }
-    if id.starts_with("deepseek") {
-        return Some("deepseek");
-    }
-    if id.starts_with("command") {
-        return Some("cohere");
-    }
-    None
 }
 
 pub fn split_provider_constrained_model_token(token: &str) -> (String, Option<String>) {

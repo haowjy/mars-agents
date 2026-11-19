@@ -45,7 +45,10 @@ pub(crate) fn preflight_config_entries(
     // Targets whose keyed files and hook files this sync reads: those the old lock has records
     // on, those with something selected, and a managed target's fixed entries.
     let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
-    if managed.iter().any(|target| target == crate::target::AGENTS_TARGET) {
+    if managed
+        .iter()
+        .any(|target| target == crate::target::AGENTS_TARGET)
+    {
         for target in &managed {
             if registry
                 .get(target)

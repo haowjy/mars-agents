@@ -69,14 +69,15 @@ pub struct HarnessDescriptor {
     pub class: HarnessClass,
 }
 
-/// Default launch-bundle harness try order when `settings.harness_order` is unset.
+/// Default launch-bundle harness try order when `settings.harness_order` is unset. A harness
+/// joins it only when Meridian can launch it; Antigravity is reached through `harness_order` or
+/// an alias that names it.
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,
     HarnessId::Pi,
     HarnessId::Cursor,
     HarnessId::OpenCode,
-    HarnessId::Antigravity,
 ];
 
 pub fn default_harness_order_names() -> Vec<String> {
@@ -241,6 +242,7 @@ mod tests {
             (Pi, Some(ListingAuth::Gated)),
             (Cursor, Some(ListingAuth::Gated)),
             (OpenCode, Some(ListingAuth::Ungated)),
+            (Antigravity, Some(ListingAuth::Gated)),
         ] {
             let listing = match descriptor(harness).class {
                 HarnessClass::Native { .. } => None,
@@ -254,10 +256,22 @@ mod tests {
     fn provider_candidates_prefer_native_then_follow_default_order() {
         use HarnessId::*;
         for (provider, expected) in [
-            ("openai", vec![Codex, Claude, Pi, Cursor, OpenCode]),
-            ("anthropic", vec![Claude, Codex, Pi, Cursor, OpenCode]),
-            ("unknown", vec![Claude, Codex, Pi, Cursor, OpenCode]),
-            ("google", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            (
+                "openai",
+                vec![Codex, Claude, Pi, Cursor, OpenCode],
+            ),
+            (
+                "anthropic",
+                vec![Claude, Codex, Pi, Cursor, OpenCode],
+            ),
+            (
+                "unknown",
+                vec![Claude, Codex, Pi, Cursor, OpenCode],
+            ),
+            (
+                "google",
+                vec![Claude, Codex, Pi, Cursor, OpenCode],
+            ),
         ] {
             assert_eq!(provider_candidate_order(provider), expected, "{provider}");
         }

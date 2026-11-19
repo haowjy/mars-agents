@@ -20,9 +20,19 @@ use serde::ser::{SerializeStruct, Serializer};
 /// What a host does with a tool name, which only this module's lowering needs.
 impl Host {
     /// Whether a tool name can be narrowed to a pattern. A harness spells the scope in the
-    /// permission name (`Bash(git push *)`); Flow's tools take no scope.
+    /// permission name (`Bash(git push *)`); Flow's tools and `agy`'s `tools` names take no
+    /// scope. Every host states it, so a new host cannot inherit a default.
     fn scopes_patterns(self) -> bool {
-        !matches!(self, Self::MeridianFlow)
+        match self {
+            Self::Harness(
+                HarnessId::Claude
+                | HarnessId::Codex
+                | HarnessId::OpenCode
+                | HarnessId::Pi
+                | HarnessId::Cursor,
+            ) => true,
+            Self::Harness(HarnessId::Antigravity) | Self::MeridianFlow => false,
+        }
     }
 
     /// An MCP ref as this host names it. Server and tool segments are kept verbatim, never

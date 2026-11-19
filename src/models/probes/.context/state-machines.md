@@ -6,10 +6,10 @@ The module's rules are in [CONTEXT.md](CONTEXT.md).
 ## Probe cache
 
 One harness's cached model listing: fresh, stale or failed. One machine in `cache.rs` serves
-the three `CachedProbe` impls in `pi.rs`, `opencode.rs` and `cursor.rs`; the refresh decision is
+the four `CachedProbe` impls in `pi.rs`, `opencode.rs`, `cursor.rs` and `agy.rs`; the refresh decision is
 `probe_refresh.rs`. The record is one JSON file per harness in the **global** cache,
-`availability/{pi,cursor-probe,opencode-probe}.json`, each beside its own lock (`.pi.lock`,
-`.cursor-probe.lock`, `.opencode-probe.lock`):
+`availability/{pi,cursor-probe,opencode-probe,antigravity-probe}.json`, each beside its own lock
+(`.pi.lock`, `.cursor-probe.lock`, `.opencode-probe.lock`, `.antigravity-probe.lock`):
 
 | Field | Meaning |
 |---|---|
@@ -18,7 +18,7 @@ the three `CachedProbe` impls in `pi.rs`, `opencode.rs` and `cursor.rs`; the ref
 | `last_error` | why the last attempt failed |
 | `result: Option<...>` and `model_probe_success` | the last listing, successful or not |
 | `schema_version` | a mismatch makes the whole file read as absent |
-| `harness` | written for all three, not checked on read; kept because older builds read a `pi.json` without `harness: "pi"` as a miss |
+| `harness` | written for all four, not checked on read; kept because older builds read a `pi.json` without `harness: "pi"` as a miss |
 
 Derived, never stored: usable (`result` present and successful), fresh (`fetched_at` within
 `MARS_PROBE_CACHE_TTL_SECS`, default 60), and `latest_attempt_ok`

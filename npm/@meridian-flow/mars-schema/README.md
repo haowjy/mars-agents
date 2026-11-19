@@ -98,7 +98,7 @@ natives.claude.edit;               // { kind: "scoped-tools", unscoped: [...], s
 natives["meridian-flow"].work;                 // { kind: "tools", tools: ["work"] }
 ```
 
-`natives` has one table for each of `claude`, `codex`, `opencode`, `pi`, `cursor` and `meridian-flow` (Meridian Flow's own tools, which is not a harness). An entry is the host's tool names (`tools`), file tools scoped through a permission category (`scoped-tools`), `absent` (the host has no such tool) or `no-switch` (the host can do it but has no tool to turn off). The capability table is explained in [Tool capabilities](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#tool-capabilities).
+`natives` has one table for each of `claude`, `codex`, `opencode`, `pi`, `cursor`, `antigravity` and `meridian-flow` (Meridian Flow's own tools, which is not a harness). An entry is the host's tool names (`tools`), file tools scoped through a permission category (`scoped-tools`), `absent` (the host has no such tool) or `no-switch` (the host can do it but has no tool to turn off). The capability table is explained in [Tool capabilities](https://github.com/haowjy/mars-agents/blob/main/docs/config/schema-v1.md#tool-capabilities).
 
 ### `project`
 
@@ -110,7 +110,7 @@ p.default;                  // "deny" for `{"*": deny}`: what a tool no rule nam
 p.rules[0].status;          // "known" | "absent" | "unknown" | "unscopable" | null (for `*`)
 ```
 
-`host` is `claude`, `codex`, `pi`, `opencode`, `cursor` or `meridian-flow`. A rule with a gap has `status` other than `known`, no `native` names and the reason in `note`; a rule a stricter rule beats keeps its place in `rules` with `covered_by` set or the shared name missing from `native`. The result decides nothing: whether a gap is a warning or an error is the caller's policy. Meridian Flow's tools take no scope, so a rule with a pattern there is `unscopable`.
+`host` is `claude`, `codex`, `pi`, `opencode`, `cursor`, `antigravity` or `meridian-flow`. A rule with a gap has `status` other than `known`, no `native` names and the reason in `note`; a rule a stricter rule beats keeps its place in `rules` with `covered_by` set or the shared name missing from `native`. The result decides nothing: whether a gap is a warning or an error is the caller's policy. Meridian Flow's tools take no scope, so a rule with a pattern there is `unscopable`.
 
 On `meridian-flow`, `mcp(...)` rules and MCP wire tokens (`mcp__server__tool`) lower onto Flow's connection tools (`mcp_describe`, `mcp_call`, `mcp_run`), which take the server as an argument and cannot be scoped to one. An `mcp(...)` deny, whatever it names, is `known` and disallows all of them, which can be broader than written, the safe direction (the rule's `note` says it covers every server). An `ask` lands on all of them the same way. An `allow` or `ask` under an allow-list (a `*` rule that is not `allow`) is `known` with no native names and a `note` saying none is granted, because granting them would give every connection and not the one named; show the note as a warning. With no allow-list the tools are available anyway, so an `allow` is `known` and loses nothing.
 

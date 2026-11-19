@@ -134,7 +134,7 @@ model: gpt55                # an alias
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi` (case-insensitive) |
+| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi`, `antigravity` (case-insensitive) |
 | Default | none (universal agent) |
 
 Routing and model-selection hint. Native emission is controlled separately by

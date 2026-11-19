@@ -130,7 +130,7 @@ In the launch bundle, a skill with no `metadata.type` has `skill_type` `referenc
 
 ## `harness-overrides`
 
-A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped, and `mars sync --verbose` names it.
+A skill takes the same `harness-overrides` table as an Agent: a map of harness name to the native keys that harness's `SKILL.md` should carry. Mars writes the block for each harness into that harness's skill file (and plugin tree) and into no other. A key Mars lowers itself (`name`, `description`, `license`, `metadata`, `disable-model-invocation`, `user-invocable`, Antigravity's `disable-slash-command`, and Cursor's `alwaysApply`) keeps Mars's value; the override is dropped, and `mars sync --verbose` names it.
 
 ```yaml
 ---
@@ -154,24 +154,26 @@ Mars compiles universal frontmatter fields to each target's native field names d
 
 ### Field mapping table
 
-| Field | `.mars/` | Claude | Codex | OpenCode | Pi | Cursor |
-|---|---|---|---|---|---|---|
-| `name` | preserved | `name` | `name` | `name` | `name` | `name` |
-| `description` | preserved | `description` | `description` | `description` | `description` | `description` |
-| `model-invocable: false` | preserved | `disable-model-invocation: true` | sibling `openai.yaml`: `policy.allow_implicit_invocation: false`¹ | dropped | `disable-model-invocation: true` | `alwaysApply: false`, `description` removed² |
-| `model-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | `alwaysApply: false`, `description` kept |
-| `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped |
-| `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) |
-| `license` | preserved | `license` | `license` | `license` | `license` | `license` |
-| `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
-| unknown fields | preserved | dropped | dropped | dropped | dropped | dropped |
-| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys |
+| Field | `.mars/` | Claude | Codex | OpenCode | Pi | Cursor | Antigravity |
+|---|---|---|---|---|---|---|---|
+| `name` | preserved | `name` | `name` | `name` | `name` | `name` | `name` |
+| `description` | preserved | `description` | `description` | `description` | `description` | `description` | `description` |
+| `model-invocable: false` | preserved | `disable-model-invocation: true` | sibling `openai.yaml`: `policy.allow_implicit_invocation: false`¹ | dropped, and reported³ | `disable-model-invocation: true` | `alwaysApply: false`, `description` removed² | dropped, and reported³ |
+| `model-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | `alwaysApply: false`, `description` kept | (omit) |
+| `user-invocable: false` | preserved | `user-invocable: false` | dropped | dropped | dropped | dropped | `disable-slash-command: true` |
+| `user-invocable: true` | preserved | (omit) | (omit) | (omit) | (omit) | (omit) | (omit) |
+| `license` | preserved | `license` | `license` | `license` | `license` | `license` | `license` |
+| `metadata` | preserved | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` | `metadata` |
+| unknown fields | preserved | dropped | dropped | dropped | dropped | dropped | dropped |
+| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys | extra keys |
 
 ¹ Codex gets `openai.yaml` beside the skill's `SKILL.md` (`policy:` with `allow_implicit_invocation: false`) only when the source skill explicitly sets `model-invocable: false`. An absent or `true` value writes nothing, because Codex allows implicit invocation by default. The field never appears in the Codex `SKILL.md`.
 
 ² Cursor rules have no invocation flag. A rule without a description is a Manual rule that Cursor's agent won't select by itself; a rule with one is selected when the description fits.
 
-`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation, but skills lose no restriction, so nothing prints by default. `--verbose` on `mars sync`, `mars upgrade` or `mars check` lists each dropped field per skill, and `Approximate` entries too.
+³ `agy` has no switch that keeps a skill away from the model: `description` stays and the model can still pick the skill. A `model-invocable: false` that OpenCode or Antigravity cannot express is a lost restriction, so sync prints it by default (an `invocation` loss). `user-invocable: false` is `disable-slash-command: true` on Antigravity: it leaves the slash-command list, and the model still uses the skill, which is what the field means.
+
+`skill-field-dropped` entries follow the same lossiness metadata model as agent compilation. Apart from that one restriction, a skill loses none, so nothing else prints by default. `--verbose` on `mars sync`, `mars upgrade` or `mars check` lists each dropped field per skill, and `Approximate` entries too.
 
 ---
 
@@ -193,7 +195,7 @@ skills/<name>/
       gpt55/SKILL.md                # body override for Codex + gpt55 model
 ```
 
-Recognized harness keys: `claude`, `codex`, `opencode`, `pi`, `cursor`.
+Recognized harness keys: `claude`, `codex`, `opencode`, `pi`, `cursor`, `antigravity`.
 
 Model-level directories (`variants/<harness>/<model>/`) are indexed and validated but never selected: neither sync nor the launch bundle chooses a body by model.
 

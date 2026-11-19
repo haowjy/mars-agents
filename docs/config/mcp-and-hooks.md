@@ -12,7 +12,7 @@ agents and skills. Mars compiles these into target-specific config files during
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** are written once in Claude's hook format (`[hooks]` in `hook.toml`)
   and installed natively in Claude, Codex, OpenCode and Pi, or contributed as
-  target-native hooks (JSON for Claude, Codex and Cursor; TypeScript for
+  target-native hooks (JSON for Claude, Codex, Cursor and Antigravity; TypeScript for
   OpenCode and Pi). Their complete hook directories install beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
   directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
@@ -32,6 +32,7 @@ project root:
 | `.opencode` | `.opencode/opencode.json` | `mcp` | `{env:VAR}` |
 | `.pi` | `.pi/mcp.json` | `mcpServers` | `${VAR}` |
 | `.cursor` | `.cursor/mcp.json` | `mcpServers` | `${env:VAR}` |
+| `.agy` | `.agy/mcp_config.json` | `mcpServers` | inherited (see [Antigravity](#antigravity-agy)) |
 
 Mars edits these files in place. Other keys, other servers, and (in
 `.codex/config.toml`) comments and key order survive. Stdio servers are written as
@@ -223,6 +224,7 @@ the same `mcp-env-missing` check as `env`.
 | `.cursor` | `{"url", "headers"}` | `prefix${env:VAR}` |
 | `.opencode` | `{"type": "remote", "url", "headers"}` | `prefix{env:VAR}` |
 | `.pi` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
+| `.agy` | `{"url", "headers"}`, literal headers only; not described by `agy`'s docs and not run | none |
 | `.codex` | `url`, `http_headers`, `env_http_headers`, `bearer_token_env_var` | see below |
 
 **Codex** reads a header from the environment whole (`env_http_headers`, no
@@ -996,6 +998,55 @@ OpenCode native hook; `${MARS_HOOK_TARGET}` is `.opencode` there. The Cursor tre
 `[hooks]`. For each hook that gets nothing in a tree (no native hook for it, and `[hooks]`
 render nothing there), sync reports `plugin-native-hook-dropped`, naming the harnesses that
 won't get it. A native hook for another target also reports it.
+
+### Antigravity (`agy`)
+
+`mars link antigravity` adds the target `.agy`. `agy` reads nothing from `.agy/` by itself, so
+Mars writes it as an `agy` **plugin** and adds one entry to the project's `.agents/plugins.json`:
+
+```
+.agents/plugins.json     {"entries": [..., {"path": ".agy"}]}   Mars's entry, after yours
+.agy/plugin.json         {"name": "mars", "version": "1.0.0"}
+.agy/skills/<name>/      as for every target
+.agy/agents/<name>.md    see agent-compilation.md
+.agy/hooks.json          one top-level key per hook
+.agy/hooks/<name>/       the hook's directory
+.agy/mcp_config.json     {"mcpServers": {...}}
+.agy/mcp/<name>/         a server's directory, when it uses `${MARS_MCP_DIR}`
+```
+
+Mars owns the pointer entry, the manifest keys, each hook and each MCP server **by key**, in
+files you may also edit, with the rules MCP servers have above: an entry equal to what Mars
+recorded is Mars's; one you edited is kept with a warning (`plugin-pointer-divergent`, ...) until
+`--force`; one Mars did not write collides unless identical, and an identical one, such as an
+existing `{"path": ".agy"}`, is adopted. Other entries of `plugins.json` and their order stay.
+A `plugins.json` that is not a JSON object with an `entries` array fails the sync before anything
+is written, as a bad `.mcp.json` does. A file Mars's change leaves empty is deleted; `.agents/`
+stays. Mars writes no `.gitignore`: ignoring `.agy/` and committing `.agents/plugins.json` is the
+usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` carries a
+`version` because `agy plugin validate --strict` warns on a plugin without one.
+
+**Skills.** Linking `.agents` too puts the neutral copy and the `agy` copy of each skill in front
+of `agy` under one name; sync warns (`target-skills-duplicated`).
+
+**MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
+own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`. So `${MARS_MCP_DIR}` becomes
+`${PLUGIN_ROOT}/mcp/<name>` in `args` and the relative `mcp/<name>` in `command`, and the file
+stays valid wherever `.agy/` lives. An `env` entry that passes a variable through under its own
+name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
+spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
+off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's
+`url` and literal headers are written as Claude's are; env headers are left out the same way.
+Sessions started over `agy acp` did not call a plugin's MCP servers in the one probe that ran
+them (a server passed in ACP `session/new` was called); plain `agy` did.
+
+**Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
+A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,
+installed under the hook's name. `${MARS_HOOK_DIR}` becomes `hooks/<name>`, relative to the
+working directory `agy` gives a hook command (`.agy/`). The events are `SessionStart`,
+`PreInvocation`, `PostInvocation`, `Stop` (handler objects) and `PreToolUse`, `PostToolUse`
+(`{matcher, hooks}` groups). Portable `[hooks]` is not translated yet: a hook selected for `.agy`
+with only `[hooks]` is skipped and sync reports `translation ... is not yet implemented`.
 
 ### Ownership and removal
 

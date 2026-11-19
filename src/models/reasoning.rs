@@ -13,7 +13,7 @@ use mars_schema::{HarnessId, Host};
 
 use super::catalog::Catalog;
 use super::infer_provider_from_model_id;
-use super::probes::CursorProbeResult;
+use super::probes::Listing;
 use super::probes::cursor::{
     CursorEffortFailure, CursorTiers, cursor_tiers_from_probe, without_tier,
 };
@@ -127,7 +127,7 @@ pub fn resolve_for_route<'a>(
     harness: HarnessId,
     model: &str,
     harness_model: &str,
-    cursor_probe: Option<&CursorProbeResult>,
+    cursor_probe: Option<&Listing>,
 ) -> RouteEffort<'a> {
     let identity = catalog_identity(catalog, harness, model, harness_model);
     let row = identity

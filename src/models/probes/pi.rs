@@ -62,6 +62,16 @@ impl super::cache::CachedProbe for PiProbeResult {
     fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
+    fn listing(&self) -> super::Listing {
+        super::Listing {
+            slugs: self.model_slugs.iter().cloned().collect(),
+            succeeded: self.model_probe_success,
+            error: self.error.clone(),
+            incompatible: (!self.compatible).then_some("pi_incompatible"),
+            ..super::Listing::default()
+        }
+    }
 }
 
 pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {

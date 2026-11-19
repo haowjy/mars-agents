@@ -35,17 +35,16 @@ stateDiagram-v2
 ## Probe loading and known providers
 
 Which harness probes one command has loaded, and whether the provider list is trustworthy yet: two
-facts on `CapabilitySession` (`host.rs`). Executable checks run eagerly in `collect`; each probe
-outcome is an `Option<ObservedOutcome<..>>` loaded on first use and memoized (`opencode_outcome`
-and its siblings). `into_scoped_snapshot` fills unloaded outcomes from the cache and blanks
-harnesses the scope excludes, so "unloaded" and "excluded" both end as
-`CachedProbeOutcome::Unavailable` in a snapshot. `known_providers` (`known_providers.rs`) returns
-`None` while the answer could still be wrong.
+facts on `CapabilitySession` (`host.rs`). Executable checks run eagerly in `collect`; each
+probe-backed harness's listing outcome is loaded on first use (`outcome(harness)`), memoized in a map
+keyed by `HarnessId`, and read by every caller as the common `Listing` view. A native harness
+has no probe and reads as `CachedProbeOutcome::Unavailable`. `known_providers`
+(`known_providers.rs`) returns `None` while the answer could still be wrong.
 
 ```mermaid
 stateDiagram-v2
  [*] --> NotLoaded
- NotLoaded --> Loaded: first access to opencode/pi/cursor outcome
+ NotLoaded --> Loaded: first access to a probe-backed harness's outcome
  Loaded --> Loaded: later reads reuse the memoized ObservedOutcome
  [*] --> Pending: catalog empty, or an installed harness was never probed
  Pending --> Known: every installed gated harness has a listing or a failed attempt

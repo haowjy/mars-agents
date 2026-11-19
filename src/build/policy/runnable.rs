@@ -2,7 +2,7 @@ use crate::build::bundle::{CatalogRow, Routing};
 use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
-use crate::models::probes::CursorProbeResult;
+use crate::models::probes::Listing;
 use crate::models::probes::cursor::CursorEffortFailure;
 use crate::models::reasoning;
 use crate::routing::{MatchEvidence, report::RouteDecisionReport};
@@ -20,7 +20,7 @@ pub(super) struct RoutingInput<'a> {
     pub(super) effort: Option<EffortRequest>,
     /// Every provider's rows, for the model's reasoning and the bundle's `catalog_row`.
     pub(super) catalog: &'a Catalog,
-    pub(super) cursor_probe_result: Option<&'a CursorProbeResult>,
+    pub(super) cursor_probe_result: Option<&'a Listing>,
     pub(super) route_report: RouteDecisionReport,
 }
 

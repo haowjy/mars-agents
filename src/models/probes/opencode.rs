@@ -42,6 +42,15 @@ impl super::cache::CachedProbe for OpenCodeProbeResult {
     fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
+    fn listing(&self) -> super::Listing {
+        super::Listing {
+            slugs: self.model_slugs.clone(),
+            succeeded: self.model_probe_success,
+            error: self.error.clone(),
+            ..super::Listing::default()
+        }
+    }
 }
 
 /// Probe OpenCode with a specific timeout.

@@ -8,7 +8,7 @@ Cursor represents the `medium` tier with an unsuffixed model slug and the others
 
 A failed refresh retains last-good support evidence, but a failed latest Pi or Cursor listing does not prove current authentication. Background refresh can leave the current command using its prior observation. A command must keep the timestamp and error associated with the observation it loaded rather than rereading the cache later.
 
-One cache implementation (`cache.rs`) serves Pi, OpenCode and Cursor; a harness adds a `CachedProbe` impl, not a copy. Every write, foreground or detached, goes through `persist_probe_attempt`, which keeps the last-good listing and moves `last_attempt_at` past `fetched_at` on failure.
+One cache implementation (`cache.rs`) serves Pi, OpenCode and Cursor; a harness adds a `CachedProbe` impl, not a copy. A probe-backed harness is one `ProbeSpec` row in `harness/registry.rs`: its `ProbeDriver::of::<Result>()`, its `ListingAuth` and its `SlugShape`. Everything outside the probe modules reads a result as a `Listing` (slugs, whether the listing completed, error, incompatibility, whether an empty listing proves nothing), never as the harness's own result type; `CachedProbe::listing` is where each result says so. Routing's matching for a `Bare` shape (Cursor) still lives in `routing/mod.rs` and `cursor.rs`. Every write, foreground or detached, goes through `persist_probe_attempt`, which keeps the last-good listing and moves `last_attempt_at` past `fetched_at` on failure.
 
 If the refresh lock is held, use a usable cached result without writing; without one, a command may probe for itself but must not persist that result. This avoids racing the lock holder.
 

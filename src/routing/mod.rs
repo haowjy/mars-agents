@@ -1,7 +1,7 @@
 use crate::config::targets::HarnessScope;
-use crate::harness::host::{AuthState, ListingEvidence, ListingEvidenceSet};
+use crate::harness::host::{AuthState, CapabilitySession, ListingEvidence};
 use crate::harness::registry;
-use crate::harness::registry::{HarnessClass, ListingAuth};
+use crate::harness::registry::{HarnessClass, ListingAuth, ProbeSpec, SlugShape};
 use mars_schema::HarnessId;
 use std::collections::HashSet;
 
@@ -14,9 +14,7 @@ pub mod slug;
 pub(crate) use probe_match::{SlugSelection, select_probe_slug};
 
 use crate::models;
-use crate::models::probes::CursorProbeResult;
-use crate::models::probes::OpenCodeProbeResult;
-use crate::models::probes::PiProbeResult;
+use crate::models::probes::Listing;
 
 pub use evidence::{RoutingEvidence, RoutingSettingsEvidence};
 
@@ -225,9 +223,6 @@ pub struct RoutingInput<'a> {
     pub installed_harnesses: &'a HashSet<String>,
     pub harness_scope: HarnessScope,
     pub excluded_harnesses: &'a [HarnessId],
-    pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pub pi_probe_result: Option<&'a PiProbeResult>,
-    pub cursor_probe_result: Option<&'a CursorProbeResult>,
     /// Cached catalog slugs (`provider/model`) for full model-id matching on native harnesses.
     pub catalog_model_slugs: Option<&'a [String]>,
 }
@@ -248,64 +243,20 @@ pub fn permission_denial(
     }
 }
 
+/// The probe-backed harnesses' listings, read lazily.
 pub trait ProbeResolver {
-    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult>;
-    fn pi_probe_result(&mut self) -> Option<PiProbeResult>;
-    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult>;
+    fn listing(&mut self, harness: HarnessId) -> Option<Listing>;
     fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence;
 }
 
-#[derive(Debug, Default)]
-struct StaticProbeResolver {
-    opencode_probe_result: Option<OpenCodeProbeResult>,
-    pi_probe_result: Option<PiProbeResult>,
-    cursor_probe_result: Option<CursorProbeResult>,
-}
-
-impl StaticProbeResolver {
-    fn from_input(input: &RoutingInput<'_>) -> Self {
-        Self {
-            opencode_probe_result: input.opencode_probe_result.cloned(),
-            pi_probe_result: input.pi_probe_result.cloned(),
-            cursor_probe_result: input.cursor_probe_result.cloned(),
-        }
-    }
-}
-
-impl ProbeResolver for StaticProbeResolver {
-    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
-        self.opencode_probe_result.clone()
-    }
-
-    fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
-        self.pi_probe_result.clone()
-    }
-
-    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
-        self.cursor_probe_result.clone()
+impl ProbeResolver for CapabilitySession {
+    fn listing(&mut self, harness: HarnessId) -> Option<Listing> {
+        CapabilitySession::listing(self, harness)
     }
 
     fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
-        ListingEvidenceSet::from_results_assuming_latest_ok(
-            self.opencode_probe_result.as_ref(),
-            self.pi_probe_result.as_ref(),
-            self.cursor_probe_result.as_ref(),
-        )
-        .get(harness)
+        CapabilitySession::listing_evidence(self, harness)
     }
-}
-
-/// Assess one fixed harness using a supplied auth observer and the probe snapshot.
-pub fn evaluate_fixed_harness_with_auth<F>(
-    input: &RoutingInput<'_>,
-    harness: &str,
-    auth_check: F,
-) -> CandidateAssessment
-where
-    F: Fn(&str) -> crate::harness::host::AuthState,
-{
-    let mut probes = StaticProbeResolver::from_input(input);
-    evaluate_fixed_harness_with_auth_and_probes(input, harness, &mut probes, auth_check)
 }
 
 pub fn evaluate_fixed_harness_with_auth_and_probes<F, P>(
@@ -365,15 +316,6 @@ pub fn provider_for_order_for_fixed_harness<'a>(
     native_provider_for_harness(harness).or(provider_for_order)
 }
 
-pub fn evaluate_candidates_with_auth<F>(input: &RoutingInput<'_>, auth_check: F) -> RoutingTrace
-where
-    F: Fn(&str) -> crate::harness::host::AuthState,
-{
-    let mut probe_resolver = StaticProbeResolver::from_input(input);
-    evaluate_candidates(input, &mut probe_resolver, auth_check)
-}
-
-/// The single candidate evaluator for runtime routing and native materialization.
 pub fn evaluate_candidates<F, P>(
     input: &RoutingInput<'_>,
     probe_resolver: &mut P,
@@ -553,9 +495,10 @@ where
     if assessment.match_evidence.is_some() && assessment.skip_reason.is_none() {
         let auth = match harness_id.map(|id| registry::descriptor(id).class) {
             Some(HarnessClass::Native { .. }) => auth_check(harness),
-            Some(HarnessClass::ProbeBacked {
+            Some(HarnessClass::ProbeBacked(ProbeSpec {
                 listing: ListingAuth::Gated,
-            }) => {
+                ..
+            })) => {
                 let listing =
                     probe_resolver.listing_evidence(harness_id.expect("registry harness"));
                 if listing.succeeded && !listing.latest_attempt_ok {
@@ -691,243 +634,14 @@ where
         };
     }
 
-    if harness_id == Some(HarnessId::OpenCode) {
-        let Some(opencode_probe) = probe_resolver.opencode_probe_result() else {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: Vec::new(),
-                filtered_slugs: Vec::new(),
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: Some(MatchEvidence::Passthrough),
-                skip_reason: None,
-            };
-        };
-        if !opencode_probe.model_probe_success {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: Vec::new(),
-                filtered_slugs: Vec::new(),
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: Some(MatchEvidence::Passthrough),
-                skip_reason: None,
-            };
-        }
-
-        let selection = select_probe_slug(
-            input.model_id,
-            input.provider_constraint,
-            input.provider_for_order,
-            provider_order,
-            opencode_probe.model_slugs.iter().map(String::as_str),
-        );
-
-        if let Some(chosen_slug) = selection.chosen_slug.clone() {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: selection.candidate_slugs,
-                filtered_slugs: selection.filtered_slugs,
-                chosen_model: slug::parse(&chosen_slug).map(|parts| parts.model_id.to_string()),
-                chosen_slug: Some(chosen_slug),
-                match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
-                skip_reason: None,
-            };
-        }
-
-        if !selection.candidate_slugs.is_empty() {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: selection.candidate_slugs,
-                filtered_slugs: selection.filtered_slugs,
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: None,
-                skip_reason: Some("provider_constraint_unsatisfied"),
-            };
-        }
-
-        return CandidateAssessment {
-            auth: None,
-            harness: harness.to_string(),
-            installed: true,
-            candidate_slugs: selection.candidate_slugs,
-            filtered_slugs: selection.filtered_slugs,
-            chosen_slug: None,
-            chosen_model: None,
-            match_evidence: None,
-            skip_reason: Some("no_model_match"),
-        };
-    }
-
-    if harness_id == Some(HarnessId::Pi) {
-        if let Some(pi_probe) = probe_resolver.pi_probe_result() {
-            if pi_probe.compatible {
-                if !pi_probe.model_probe_success {
-                    return passthrough_assessment(harness);
-                }
-                let selection = select_probe_slug(
-                    input.model_id,
-                    input.provider_constraint,
-                    input.provider_for_order,
-                    provider_order,
-                    pi_probe.model_slugs.iter().map(String::as_str),
-                );
-
-                if let Some(chosen_slug) = selection.chosen_slug.clone() {
-                    return CandidateAssessment {
-                        auth: None,
-                        harness: harness.to_string(),
-                        installed: true,
-                        candidate_slugs: selection.candidate_slugs,
-                        filtered_slugs: selection.filtered_slugs,
-                        chosen_model: slug::parse(&chosen_slug)
-                            .map(|parts| parts.model_id.to_string()),
-                        chosen_slug: Some(chosen_slug),
-                        match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
-                        skip_reason: None,
-                    };
-                }
-
-                if !selection.candidate_slugs.is_empty() {
-                    return CandidateAssessment {
-                        auth: None,
-                        harness: harness.to_string(),
-                        installed: true,
-                        candidate_slugs: selection.candidate_slugs,
-                        filtered_slugs: selection.filtered_slugs,
-                        chosen_slug: None,
-                        chosen_model: None,
-                        match_evidence: None,
-                        skip_reason: Some("provider_constraint_unsatisfied"),
-                    };
-                }
-
-                return CandidateAssessment {
-                    auth: None,
-                    harness: harness.to_string(),
-                    installed: true,
-                    candidate_slugs: selection.candidate_slugs,
-                    filtered_slugs: selection.filtered_slugs,
-                    chosen_slug: None,
-                    chosen_model: None,
-                    match_evidence: None,
-                    skip_reason: Some("no_model_match"),
-                };
+    if let Some(spec) = harness_id.and_then(registry::probe_spec) {
+        let listing =
+            probe_resolver.listing(harness_id.expect("probe-backed harness is registered"));
+        return match spec.slugs {
+            SlugShape::Qualified => {
+                qualified_listing_assessment(input, harness, provider_order, listing.as_ref())
             }
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: Vec::new(),
-                filtered_slugs: Vec::new(),
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: None,
-                skip_reason: Some("pi_incompatible"),
-            };
-        }
-
-        return CandidateAssessment {
-            auth: None,
-            harness: harness.to_string(),
-            installed: true,
-            candidate_slugs: Vec::new(),
-            filtered_slugs: Vec::new(),
-            chosen_slug: None,
-            chosen_model: None,
-            match_evidence: Some(MatchEvidence::Passthrough),
-            skip_reason: None,
-        };
-    }
-
-    if harness_id == Some(HarnessId::Cursor) {
-        let Some(cursor_probe) = probe_resolver.cursor_probe_result() else {
-            return passthrough_assessment(harness);
-        };
-        if !cursor_probe.model_probe_success {
-            return passthrough_assessment(harness);
-        }
-        if cursor_probe.slugs.is_empty() {
-            return passthrough_assessment(harness);
-        }
-
-        let normalized_model = crate::models::probes::cursor::normalize_slug(input.model_id);
-        if cursor_probe
-            .slugs
-            .iter()
-            .any(|slug| crate::models::probes::cursor::normalize_slug(slug) == normalized_model)
-        {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: vec![input.model_id.to_string()],
-                filtered_slugs: vec![input.model_id.to_string()],
-                chosen_slug: Some(input.model_id.to_string()),
-                chosen_model: Some(input.model_id.to_string()),
-                match_evidence: Some(MatchEvidence::Confirmed),
-                skip_reason: None,
-            };
-        }
-
-        let matches = crate::models::probes::cursor::find_cursor_prefix_matches(
-            input.model_id,
-            &cursor_probe.slugs,
-        );
-        if !matches.is_empty() {
-            let candidate_slugs: Vec<String> =
-                matches.iter().map(|slug| (*slug).to_string()).collect();
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: candidate_slugs.clone(),
-                filtered_slugs: candidate_slugs,
-                chosen_slug: Some(input.model_id.to_string()),
-                chosen_model: Some(input.model_id.to_string()),
-                match_evidence: Some(MatchEvidence::Confirmed),
-                skip_reason: None,
-            };
-        }
-
-        // Probe slugs didn't match, but if the alias declares provider=cursor,
-        // trust the constraint over possibly-stale probe cache.
-        if input
-            .provider_constraint
-            .is_some_and(|p| p.eq_ignore_ascii_case("cursor"))
-        {
-            return CandidateAssessment {
-                auth: None,
-                harness: harness.to_string(),
-                installed: true,
-                candidate_slugs: Vec::new(),
-                filtered_slugs: Vec::new(),
-                chosen_slug: None,
-                chosen_model: None,
-                match_evidence: Some(MatchEvidence::Constrained),
-                skip_reason: None,
-            };
-        }
-
-        return CandidateAssessment {
-            auth: None,
-            harness: harness.to_string(),
-            installed: true,
-            candidate_slugs: Vec::new(),
-            filtered_slugs: Vec::new(),
-            chosen_slug: None,
-            chosen_model: None,
-            match_evidence: None,
-            skip_reason: Some("no_model_match"),
+            SlugShape::Bare => bare_listing_assessment(input, harness, listing.as_ref()),
         };
     }
 
@@ -941,6 +655,155 @@ where
         chosen_model: None,
         match_evidence: None,
         skip_reason: Some("unsupported_candidate"),
+    }
+}
+
+/// Cursor lists flat slugs with effort tiers folded in, so a model matches by normalized name
+/// or prefix rather than by provider.
+fn bare_listing_assessment(
+    input: &RoutingInput<'_>,
+    harness: &str,
+    listing: Option<&Listing>,
+) -> CandidateAssessment {
+    let Some(cursor_probe) = listing.filter(|listing| listing.is_evidence()) else {
+        return passthrough_assessment(harness);
+    };
+
+    let normalized_model = crate::models::probes::cursor::normalize_slug(input.model_id);
+    if cursor_probe
+        .slugs
+        .iter()
+        .any(|slug| crate::models::probes::cursor::normalize_slug(slug) == normalized_model)
+    {
+        return CandidateAssessment {
+            auth: None,
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: vec![input.model_id.to_string()],
+            filtered_slugs: vec![input.model_id.to_string()],
+            chosen_slug: Some(input.model_id.to_string()),
+            chosen_model: Some(input.model_id.to_string()),
+            match_evidence: Some(MatchEvidence::Confirmed),
+            skip_reason: None,
+        };
+    }
+
+    let matches = crate::models::probes::cursor::find_cursor_prefix_matches(
+        input.model_id,
+        &cursor_probe.slugs,
+    );
+    if !matches.is_empty() {
+        let candidate_slugs: Vec<String> = matches.iter().map(|slug| (*slug).to_string()).collect();
+        return CandidateAssessment {
+            auth: None,
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: candidate_slugs.clone(),
+            filtered_slugs: candidate_slugs,
+            chosen_slug: Some(input.model_id.to_string()),
+            chosen_model: Some(input.model_id.to_string()),
+            match_evidence: Some(MatchEvidence::Confirmed),
+            skip_reason: None,
+        };
+    }
+
+    // Probe slugs didn't match, but if the alias declares provider=cursor,
+    // trust the constraint over possibly-stale probe cache.
+    if input
+        .provider_constraint
+        .is_some_and(|p| p.eq_ignore_ascii_case("cursor"))
+    {
+        return CandidateAssessment {
+            auth: None,
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
+            match_evidence: Some(MatchEvidence::Constrained),
+            skip_reason: None,
+        };
+    }
+
+    CandidateAssessment {
+        auth: None,
+        harness: harness.to_string(),
+        installed: true,
+        candidate_slugs: Vec::new(),
+        filtered_slugs: Vec::new(),
+        chosen_slug: None,
+        chosen_model: None,
+        match_evidence: None,
+        skip_reason: Some("no_model_match"),
+    }
+}
+
+/// A `provider/model` listing: the model must appear under a provider the constraint and
+/// `provider_order` allow. A harness that cannot be driven, or whose listing failed or is
+/// absent, passes the model through.
+fn qualified_listing_assessment(
+    input: &RoutingInput<'_>,
+    harness: &str,
+    provider_order: Option<&[String]>,
+    listing: Option<&Listing>,
+) -> CandidateAssessment {
+    let Some(listing) = listing else {
+        return passthrough_assessment(harness);
+    };
+    if let Some(reason) = listing.incompatible {
+        return CandidateAssessment {
+            auth: None,
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: Vec::new(),
+            filtered_slugs: Vec::new(),
+            chosen_slug: None,
+            chosen_model: None,
+            match_evidence: None,
+            skip_reason: Some(reason),
+        };
+    }
+    if !listing.succeeded {
+        return passthrough_assessment(harness);
+    }
+    let selection = select_probe_slug(
+        input.model_id,
+        input.provider_constraint,
+        input.provider_for_order,
+        provider_order,
+        listing.slugs.iter().map(String::as_str),
+    );
+
+    if let Some(chosen_slug) = selection.chosen_slug.clone() {
+        return CandidateAssessment {
+            auth: None,
+            harness: harness.to_string(),
+            installed: true,
+            candidate_slugs: selection.candidate_slugs,
+            filtered_slugs: selection.filtered_slugs,
+            chosen_model: slug::parse(&chosen_slug).map(|parts| parts.model_id.to_string()),
+            chosen_slug: Some(chosen_slug),
+            match_evidence: Some(match_evidence_for_match(input.provider_constraint)),
+            skip_reason: None,
+        };
+    }
+
+    let skip_reason = if selection.candidate_slugs.is_empty() {
+        "no_model_match"
+    } else {
+        "provider_constraint_unsatisfied"
+    };
+    CandidateAssessment {
+        auth: None,
+        harness: harness.to_string(),
+        installed: true,
+        candidate_slugs: selection.candidate_slugs,
+        filtered_slugs: selection.filtered_slugs,
+        chosen_slug: None,
+        chosen_model: None,
+        match_evidence: None,
+        skip_reason: Some(skip_reason),
     }
 }
 
@@ -1072,15 +935,21 @@ fn assessment_from_slug_selection(
 mod tests {
     use super::*;
 
+    struct NoProbes;
+
+    impl ProbeResolver for NoProbes {
+        fn listing(&mut self, _: HarnessId) -> Option<Listing> {
+            None
+        }
+
+        fn listing_evidence(&mut self, _: HarnessId) -> ListingEvidence {
+            ListingEvidence::default()
+        }
+    }
+
     fn installed(names: &[&str]) -> HashSet<String> {
         names.iter().map(|name| (*name).to_string()).collect()
     }
-
-    type ProbeInputs<'a> = (
-        Option<&'a OpenCodeProbeResult>,
-        Option<&'a PiProbeResult>,
-        Option<&'a CursorProbeResult>,
-    );
 
     fn routing_input<'a>(
         model_id: &'a str,
@@ -1089,7 +958,6 @@ mod tests {
         config_default_harness: Option<&'a str>,
         installed_harnesses: &'a HashSet<String>,
         linked_harnesses: Option<&'a [String]>,
-        probe_inputs: ProbeInputs<'a>,
     ) -> RoutingInput<'a> {
         routing_input_with_catalog(
             model_id,
@@ -1099,7 +967,6 @@ mod tests {
             installed_harnesses,
             linked_harnesses,
             None,
-            probe_inputs,
         )
     }
 
@@ -1112,9 +979,7 @@ mod tests {
         installed_harnesses: &'a HashSet<String>,
         linked_harnesses: Option<&'a [String]>,
         catalog_model_slugs: Option<&'a [String]>,
-        probe_inputs: ProbeInputs<'a>,
     ) -> RoutingInput<'a> {
-        let (opencode_probe_result, pi_probe_result, cursor_probe_result) = probe_inputs;
         RoutingInput {
             preferred_harness: None,
             model_id,
@@ -1134,9 +999,6 @@ mod tests {
                         .collect(),
                 ),
             },
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
             catalog_model_slugs,
         }
     }
@@ -1152,7 +1014,6 @@ mod tests {
             None,
             &installed,
             None,
-            (None, None, None),
         );
         for (auth, verdict, reason) in [
             (AuthState::Authenticated, Eligibility::Eligible, None),
@@ -1169,7 +1030,12 @@ mod tests {
                 Some("auth_unknown"),
             ),
         ] {
-            let assessment = evaluate_fixed_harness_with_auth(&input, "claude", |_| auth.clone());
+            let assessment = evaluate_fixed_harness_with_auth_and_probes(
+                &input,
+                "claude",
+                &mut NoProbes,
+                |_| auth.clone(),
+            );
             assert_eq!(assessment.match_evidence, Some(MatchEvidence::Confirmed));
             assert_eq!(assessment.auth, Some(auth));
             assert_eq!(assessment.eligibility(), verdict);

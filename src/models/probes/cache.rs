@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use super::probe_refresh::{ProbeCacheBranch, ProbeRefreshMode, resolve_probe_cache_branch};
-use super::{ObservedOutcome, ProbeObservation};
+use super::{Listing, ObservedOutcome, ProbeObservation};
 use crate::error::MarsError;
 
 const DEFAULT_TTL_SECS: u64 = 60;
@@ -31,6 +31,7 @@ pub trait CachedProbe: Clone + Serialize + DeserializeOwned {
     /// A listing that may stand as last-good evidence.
     fn is_usable(&self) -> bool;
     fn error(&self) -> Option<&str>;
+    fn listing(&self) -> Listing;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +84,17 @@ impl<R> CachedProbeOutcome<R> {
             | Self::StaleFailed(r)
             | Self::Failed(r) => Some(r),
             Self::Unavailable => None,
+        }
+    }
+
+    pub fn map<T>(self, f: impl FnOnce(R) -> T) -> CachedProbeOutcome<T> {
+        match self {
+            Self::Hit(r) => CachedProbeOutcome::Hit(f(r)),
+            Self::Stale(r) => CachedProbeOutcome::Stale(f(r)),
+            Self::Miss(r) => CachedProbeOutcome::Miss(f(r)),
+            Self::StaleFailed(r) => CachedProbeOutcome::StaleFailed(f(r)),
+            Self::Failed(r) => CachedProbeOutcome::Failed(f(r)),
+            Self::Unavailable => CachedProbeOutcome::Unavailable,
         }
     }
 
@@ -219,15 +231,19 @@ fn cached_outcome<R>(latest_attempt_ok: bool, result: R, fresh: bool) -> CachedP
     }
 }
 
-pub fn probe_cached<R: CachedProbe>(
+pub fn probe_cached_listing<R: CachedProbe>(
     installed: &HashSet<String>,
     mars_offline: bool,
     probe_refresh: ProbeRefreshMode,
-) -> CachedProbeOutcome<R> {
-    probe_cached_observed(installed, mars_offline, probe_refresh).outcome
+) -> ObservedOutcome<CachedProbeOutcome<Listing>> {
+    let observed = probe_cached_observed::<R>(installed, mars_offline, probe_refresh);
+    ObservedOutcome {
+        outcome: observed.outcome.map(|result| result.listing()),
+        observation: observed.observation,
+    }
 }
 
-pub fn probe_cached_observed<R: CachedProbe>(
+fn probe_cached_observed<R: CachedProbe>(
     installed: &HashSet<String>,
     mars_offline: bool,
     probe_refresh: ProbeRefreshMode,

@@ -21,31 +21,6 @@ mod runnable;
 use crate::models::probes::cursor::CursorEffortFailure;
 use crate::models::reasoning;
 
-struct SessionProbeResolver<'a> {
-    session: &'a mut CapabilitySession,
-}
-
-impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
-    fn opencode_probe_result(&mut self) -> Option<crate::models::probes::OpenCodeProbeResult> {
-        self.session.opencode_probe_result()
-    }
-
-    fn pi_probe_result(&mut self) -> Option<crate::models::probes::PiProbeResult> {
-        self.session.pi_probe_result()
-    }
-
-    fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
-        self.session.cursor_probe_result()
-    }
-
-    fn listing_evidence(
-        &mut self,
-        harness: mars_schema::HarnessId,
-    ) -> crate::harness::host::ListingEvidence {
-        self.session.listing_evidence(harness)
-    }
-}
-
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
     pub runtime_aliases: &'a IndexMap<String, ModelAlias>,
@@ -301,9 +276,6 @@ pub fn resolve_policy(
             &candidate.model,
             selected_alias_token(&candidate),
         );
-        let mut probe_resolver = SessionProbeResolver {
-            session: &mut capability_session,
-        };
         let result = harness::resolve_harness(
             &input,
             candidate.alias,
@@ -320,13 +292,10 @@ pub fn resolve_policy(
                     installed_harnesses: &installed_harnesses,
                     harness_scope: harness_scope.clone(),
                     excluded_harnesses: input.excluded_harnesses,
-                    opencode_probe_result: None,
-                    pi_probe_result: None,
-                    cursor_probe_result: None,
                     catalog_model_slugs: Some(catalog_slugs.as_slice()),
                 },
             },
-            &mut probe_resolver,
+            &mut capability_session,
             |harness| native_auth.state(harness),
         );
         match result {
@@ -535,7 +504,7 @@ pub fn resolve_policy(
     let needs_cursor_probe =
         mars_schema::harness::parse(&selected_harness) == Some(mars_schema::HarnessId::Cursor);
     let cursor_probe_result = needs_cursor_probe
-        .then(|| capability_session.cursor_probe_result())
+        .then(|| capability_session.listing(mars_schema::HarnessId::Cursor))
         .flatten();
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
@@ -638,7 +607,7 @@ pub(crate) struct EffortRoute<'a> {
     /// Every provider's rows; empty when there is no catalog (a package build).
     pub catalog: &'a crate::models::catalog::Catalog,
     /// Cursor's probe, whose slugs are its levels for the model.
-    pub cursor_probe: Option<&'a crate::models::probes::CursorProbeResult>,
+    pub cursor_probe: Option<&'a crate::models::probes::Listing>,
 }
 
 /// A profile resolved for one model and harness, and the warning its effort earned.

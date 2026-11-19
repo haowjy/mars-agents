@@ -101,13 +101,110 @@ impl Harness {
 
 /// The seconds a handler with no `timeout` runs for: Claude's default for the event, which a
 /// hook gets on Claude, so it times out here as it would there.
-fn default_timeout(claude: &targets::Event) -> serde_json::Number {
+pub(super) fn default_timeout(claude: &targets::Event) -> serde_json::Number {
     let ms = claude.default_timeout_ms;
     if ms.is_multiple_of(1000) {
         (ms / 1000).into()
     } else {
         serde_json::Number::from_f64(f64::from(ms) / 1000.0).expect("finite")
     }
+}
+
+/// What a harness's generated hook needs of its matcher groups.
+pub(super) struct GroupRules<'a> {
+    /// The harness's display name, in skip reasons.
+    pub harness_name: &'a str,
+    /// Whether the harness gives the event the field Claude's matcher tests.
+    pub supplies_matcher: bool,
+    pub tokens: &'a Tokens<'a>,
+    /// Names a matcher the harness's runner cannot evaluate.
+    pub matcher_problem: &'a dyn Fn(&str) -> Option<String>,
+}
+
+/// The matcher groups of `event` that a generated hook keeps, as the JSON the generated file
+/// holds, reporting through `skip` each handler or group left out.
+pub(super) fn surviving_groups(
+    event: &str,
+    groups: &[MatcherGroup],
+    claude: &targets::Event,
+    rules: &GroupRules<'_>,
+    skip: &mut dyn FnMut(&str, String),
+) -> Vec<Value> {
+    let GroupRules {
+        harness_name,
+        supplies_matcher,
+        tokens,
+        matcher_problem,
+    } = *rules;
+    let mut out = Vec::new();
+    for (g, group) in groups.iter().enumerate() {
+        let matcher = group
+            .matcher
+            .as_deref()
+            .filter(|m| !m.is_empty() && *m != "*");
+        if let (Some(matcher), Some(field), false) = (matcher, claude.matcher, supplies_matcher) {
+            skip(
+                event,
+                format!(
+                    "matcher group {g}: {harness_name} gives `{event}` no `{field}` to test `{matcher}` against"
+                ),
+            );
+            continue;
+        }
+        if let Some(problem) = group.matcher.as_deref().and_then(matcher_problem) {
+            skip(event, format!("matcher group {g}: {problem}"));
+            continue;
+        }
+        let mut kept = Vec::new();
+        for (h, handler) in group.handlers.iter().enumerate() {
+            let at = format!("matcher group {g}, handler {h}");
+            if handler.kind != "command" {
+                skip(
+                    event,
+                    format!(
+                        "{at}: {harness_name} runs `command` handlers, not `{}`",
+                        handler.kind
+                    ),
+                );
+                continue;
+            }
+            let Some(command) = handler.command_to_run() else {
+                skip(event, format!("{at}: {NO_COMMAND}"));
+                continue;
+            };
+            if handler.condition.is_some() && !claude.is_tool_event() {
+                skip(
+                    event,
+                    format!("{at}: Claude never runs a handler with `if` on a non-tool event"),
+                );
+                continue;
+            }
+            let windows = match handler.extra.get("commandWindows") {
+                Some(crate::ordered::OrderedValue::String(text)) => Some(tokens.substitute(text)),
+                _ => None,
+            };
+            kept.push(json!({
+                "command": tokens.substitute(command),
+                "commandWindows": windows,
+                // Claude never times out an `async` handler, so none gets a timeout.
+                "timeout": if handler.is_async == Some(true) {
+                    None
+                } else {
+                    Some(handler.timeout.clone().unwrap_or_else(|| default_timeout(claude)))
+                },
+                "if": handler.condition.as_deref().map(|c| tokens.substitute(c)),
+                "onFailure": handler.on_failure,
+                "async": handler.is_async.unwrap_or(false),
+            }));
+        }
+        if !kept.is_empty() {
+            out.push(json!({
+                "matcher": group.matcher.as_deref().map(|m| tokens.substitute(m)),
+                "handlers": kept,
+            }));
+        }
+    }
+    out
 }
 
 /// `table` (the events Claude knows) as `harness` takes them, with `tokens` substituted.
@@ -141,72 +238,18 @@ pub(super) fn render(
             skip(event, reason);
             continue;
         };
-        let mut kept_groups = Vec::new();
-        for (g, group) in groups.iter().enumerate() {
-            let matcher = group
-                .matcher
-                .as_deref()
-                .filter(|m| !m.is_empty() && *m != "*");
-            if let (Some(matcher), Some(field), None) = (matcher, claude.matcher, row.matcher) {
-                skip(
-                    event,
-                    format!(
-                        "matcher group {g}: {harness_name} gives `{event}` no `{field}` to test `{matcher}` against"
-                    ),
-                );
-                continue;
-            }
-            let mut kept = Vec::new();
-            for (h, handler) in group.handlers.iter().enumerate() {
-                let at = format!("matcher group {g}, handler {h}");
-                if handler.kind != "command" {
-                    skip(
-                        event,
-                        format!(
-                            "{at}: {harness_name} runs `command` handlers, not `{}`",
-                            handler.kind
-                        ),
-                    );
-                    continue;
-                }
-                let Some(command) = handler.command_to_run() else {
-                    skip(event, format!("{at}: {NO_COMMAND}"));
-                    continue;
-                };
-                if handler.condition.is_some() && !claude.is_tool_event() {
-                    skip(
-                        event,
-                        format!("{at}: Claude never runs a handler with `if` on a non-tool event"),
-                    );
-                    continue;
-                }
-                let windows = match handler.extra.get("commandWindows") {
-                    Some(crate::ordered::OrderedValue::String(text)) => {
-                        Some(tokens.substitute(text))
-                    }
-                    _ => None,
-                };
-                kept.push(json!({
-                    "command": tokens.substitute(command),
-                    "commandWindows": windows,
-                    // Claude never times out an `async` handler, so none gets a timeout.
-                    "timeout": if handler.is_async == Some(true) {
-                        None
-                    } else {
-                        Some(handler.timeout.clone().unwrap_or_else(|| default_timeout(claude)))
-                    },
-                    "if": handler.condition.as_deref().map(|c| tokens.substitute(c)),
-                    "onFailure": handler.on_failure,
-                    "async": handler.is_async.unwrap_or(false),
-                }));
-            }
-            if !kept.is_empty() {
-                kept_groups.push(json!({
-                    "matcher": group.matcher.as_deref().map(|m| tokens.substitute(m)),
-                    "handlers": kept,
-                }));
-            }
-        }
+        let kept_groups = surviving_groups(
+            event,
+            groups,
+            claude,
+            &GroupRules {
+                harness_name,
+                supplies_matcher: row.matcher.is_some(),
+                tokens,
+                matcher_problem: &|_| None,
+            },
+            &mut skip,
+        );
         if kept_groups.is_empty() {
             continue;
         }

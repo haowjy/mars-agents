@@ -4,6 +4,7 @@
 //! rendered for it (for a TypeScript harness, its glue, limits and native hook contract), and
 //! what its generated files are called. A new target is one row here; the binary only places
 //! what the row describes. Nothing about a target is kept anywhere else.
+use super::antigravity;
 use super::typescript::{self, Harness};
 
 /// A hook event of one target and the input field its `matcher` tests.
@@ -78,7 +79,12 @@ pub enum Placement {
     File { dir: &'static str },
     /// Each hook is one entry of the JSON object in `file`, under the target root, keyed by
     /// the hook's name: the hook's own events, as the harness reads them, are the value.
-    Keyed { file: &'static str },
+    /// A hook that translates `[hooks]` keeps its runner data in `dir`, beside its own
+    /// directory copy, and never inside it: target sync owns that copy as a whole.
+    Keyed {
+        file: &'static str,
+        dir: &'static str,
+    },
 }
 
 /// How `[hooks]` becomes a target's entries.
@@ -90,6 +96,9 @@ pub enum Rules {
     Codex,
     /// Generated TypeScript for the harness (`hooks::typescript`).
     TypeScript(&'static Harness),
+    /// Translated for the harness's own events and answers by a `mars hook run` command
+    /// (`hooks::antigravity`).
+    Translated(&'static antigravity::Translation),
     /// Nothing is rendered for the target, as a whole; `reason` says why.
     Withheld { reason: &'static str },
 }
@@ -111,6 +120,15 @@ impl Profile {
     /// The profile's row for `name`.
     pub fn event(&self, name: &str) -> Option<&'static Event> {
         self.events.iter().find(|e| e.name == name)
+    }
+
+    /// The `[hooks]` events a native event stands for: a translating target's event serves
+    /// others (`agy`'s `PreInvocation` is `UserPromptSubmit`); any other serves itself.
+    pub fn served<'a>(&self, native_event: &'a str) -> Vec<&'a str> {
+        match self.rules {
+            Rules::Translated(translation) => translation.serves(native_event).to_vec(),
+            _ => vec![native_event],
+        }
     }
 
     /// Whether the rules render `[hooks]` at all.
@@ -151,7 +169,7 @@ impl Target {
     /// The file whose entries are keyed by hook name; `None` for any other placement.
     pub fn keyed_file(&self) -> Option<&'static str> {
         match self.placement {
-            Placement::Keyed { file } => Some(file),
+            Placement::Keyed { file, .. } => Some(file),
             Placement::Merge(_) | Placement::File { .. } => None,
         }
     }
@@ -170,6 +188,12 @@ impl Target {
         matches!(self.placement, Placement::File { .. })
     }
 
+    /// Whether a hook can own files on the target besides its directory copy: the files of
+    /// a file target, or a keyed target's runner data.
+    pub fn installs_files(&self) -> bool {
+        self.is_file() || self.keyed_file().is_some()
+    }
+
     /// The path, relative to the target root, of the hook's own native hook file; `None` for a
     /// merge target, which has no per-hook file.
     pub fn native_hook_path(&self, hook_name: &str) -> Option<String> {
@@ -182,10 +206,13 @@ impl Target {
     /// The path, relative to the target root, of the file generated from the hook's
     /// `[hooks]`; `None` for a merge target.
     pub fn generated_path(&self, hook_name: &str) -> Option<String> {
-        let Placement::File { dir } = self.placement else {
-            return None;
-        };
-        Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.ts"))
+        match self.placement {
+            Placement::File { dir } => Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.ts")),
+            Placement::Keyed { dir, .. } => {
+                Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.json"))
+            }
+            Placement::Merge(_) => None,
+        }
     }
 }
 
@@ -285,7 +312,8 @@ const PI_EVENTS: &[Event] = &[
 // `agy` reads these six from a plugin's `hooks.json`; the first four take handler objects,
 // the last two `{matcher, hooks}` groups (`probe-agent-frontmatter.md` §9).
 const ANTIGRAVITY_EVENTS: &[Event] = &[
-    event("SessionStart"),
+    // The runner gives a SessionStart matcher `startup`, the one source `agy` fires it for.
+    matched("SessionStart", "source"),
     event("PreInvocation"),
     event("PostInvocation"),
     event("Stop"),
@@ -374,13 +402,14 @@ const TARGETS: &[Target] = &[
     Target {
         root: ".agy",
         // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
-        placement: Placement::Keyed { file: "hooks.json" },
+        placement: Placement::Keyed {
+            file: "hooks.json",
+            dir: "hooks",
+        },
         profile: Profile {
             events: ANTIGRAVITY_EVENTS,
             verified_against: Some("agy 1.5.12"),
-            rules: Rules::Withheld {
-                reason: "translating `[hooks]` for `agy` is not yet implemented; only a native `[targets.\".agy\"]` hook installs",
-            },
+            rules: Rules::Translated(&antigravity::ANTIGRAVITY),
         },
         other_events: &[],
     },

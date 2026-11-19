@@ -156,6 +156,10 @@ pub(crate) fn preflight_config_entries(
             }
         }
     }
+    // A translated hook's command runs the `mars` that wrote it, by absolute path.
+    let mars_exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for (dir, item) in targeted.target.selected_hooks() {
         let target_name = dir.target();
         let Some(target) = mars_schema::hooks::targets::target(target_name) else {
@@ -175,6 +179,7 @@ pub(crate) fn preflight_config_entries(
         let tokens = Tokens {
             hook_dir: &installed,
             hook_target: target_name,
+            mars_exe: &mars_exe,
             ..Default::default()
         };
         let output = match load_output(item, target, &tokens) {
@@ -186,6 +191,26 @@ pub(crate) fn preflight_config_entries(
         };
         match &output {
             HookOutput::Merge(merged) | HookOutput::Keyed(merged) => {
+                for file in &merged.files {
+                    let destination = ctx.project_root.join(target_name).join(&file.path);
+                    if let Err(error) =
+                        validate_destination_path(&ctx.project_root, &destination, false)
+                    {
+                        errors.push(error);
+                    }
+                }
+                for limit in &merged.answer_limits {
+                    diag.info(
+                        "hook-answer-unsupported",
+                        format!(
+                            "hook `{}` from `{}`: `{target_name}` `{}`: {}",
+                            item.def.name,
+                            item.source_name,
+                            limit.event.as_deref().unwrap_or(""),
+                            limit.reason,
+                        ),
+                    );
+                }
                 for event in &merged.unchecked_events {
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }

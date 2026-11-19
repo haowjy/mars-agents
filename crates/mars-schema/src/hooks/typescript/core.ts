@@ -55,6 +55,7 @@ function claudeTool(native: string, input: any, cwd: string): { name: string; in
 }
 
 // Claude's matcher rule: exact (`|` or `,` list) for plain names, else an unanchored regex.
+// (The Rust runner's regex has no look-around: hook-vectors.json holds only what both agree on.)
 function matcherAccepts(pattern: string | null | undefined, value: string): boolean {
   if (pattern == null || pattern === "" || pattern === "*") return true;
   if (/^[A-Za-z0-9_ ,|-]+$/.test(pattern)) {
@@ -190,8 +191,10 @@ function readAnswer(event: string, stdout: string): Outcome | null {
   return answer;
 }
 
-async function runHandler(event: string, handler: any, stdin: string, cwd: string): Promise<Outcome | null> {
-  const run = await runCommand(handler, stdin, cwd);
+// What one finished command means: exit 0 parses stdout, exit 2 blocks (on an event that can),
+// any other end is ignored unless the handler asks `onFailure = "block"`. The Rust runner
+// (`src/hook_run/logic.rs`) ports this; hook-vectors.json pins the two together.
+function decide(event: string, handler: any, run: Run): Outcome | null {
   const blocking = BLOCKING.has(event);
   if (!run.ok || (run.status !== 0 && run.status !== 2)) {
     if (!blocking || handler.onFailure !== "block") return null;
@@ -202,6 +205,10 @@ async function runHandler(event: string, handler: any, stdin: string, cwd: strin
     return blocking ? { block: run.stderr.trim() || `Blocked by hook ${HOOK.name}` } : null;
   }
   return readAnswer(event, run.stdout);
+}
+
+async function runHandler(event: string, handler: any, stdin: string, cwd: string): Promise<Outcome | null> {
+  return decide(event, handler, await runCommand(handler, stdin, cwd));
 }
 
 type Moment = {

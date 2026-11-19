@@ -77,6 +77,11 @@ pub struct MergeOutput {
     pub skips: Vec<Skip>,
     /// A keyed target's `enabled` switch, as the native hook sets it.
     pub enabled: Option<bool>,
+    /// Files a keyed target's entries run, relative to the target root (`[hooks]` translated:
+    /// the runner's data file).
+    pub files: Vec<OutputFile>,
+    /// Rendered events whose portable answers do not all carry over to the target.
+    pub answer_limits: Vec<Skip>,
 }
 
 impl MergeOutput {
@@ -264,16 +269,33 @@ impl HookDef {
     ) -> Result<MergeOutput, NativeHookError> {
         let mut output = MergeOutput::default();
         if let (Some(portable), true) = (&self.portable, self.generates_for(target.root)) {
+            let generated = target.generated_path(&self.name).unwrap_or_default();
+            let tokens = &Tokens {
+                hook_name: &self.name,
+                generated_file: &generated,
+                ..*tokens
+            };
             let rendered = portable.render(profile, tokens);
-            if let render::Output::Merge {
-                events,
-                unchecked_events,
-            } = rendered.output
-            {
-                output.events = events;
-                output.unchecked_events = unchecked_events;
+            match rendered.output {
+                render::Output::Merge {
+                    events,
+                    unchecked_events,
+                } => {
+                    output.events = events;
+                    output.unchecked_events = unchecked_events;
+                }
+                render::Output::Keyed { events, data_file } => {
+                    output.events = events;
+                    output.files = data_file
+                        .zip(target.generated_path(&self.name))
+                        .map(|(content, path)| OutputFile { path, content })
+                        .into_iter()
+                        .collect();
+                }
+                render::Output::File { .. } => {}
             }
             output.skips = rendered.skips;
+            output.answer_limits = rendered.answer_limits;
         }
         self.lay_native_hook(output, target, profile, native_hook_text, origin, tokens)
     }
@@ -337,12 +359,25 @@ impl HookDef {
                 return Err(err(format!("event `{event}` value must be an array")));
             };
             array.iter_mut().for_each(|e| tokens.substitute_value(e));
-            if self.portable.as_ref().is_some_and(|p| p.declares(&event)) {
-                output.overrides.push(event.clone());
+            // A translating target's event serves other names (`PreInvocation` is
+            // `UserPromptSubmit`): what the native hook replaces is what those events carried.
+            let served = profile.served(&event);
+            if let Some(declared) = served
+                .iter()
+                .find(|name| self.portable.as_ref().is_some_and(|p| p.declares(name)))
+            {
+                output.overrides.push((*declared).to_owned());
             }
-            output
-                .skips
-                .retain(|skip| skip.event.as_deref() != Some(event.as_str()));
+            output.skips.retain(|skip| {
+                !served
+                    .iter()
+                    .any(|name| skip.event.as_deref() == Some(name))
+            });
+            output.answer_limits.retain(|limit| {
+                !served
+                    .iter()
+                    .any(|name| limit.event.as_deref() == Some(name))
+            });
             output.events.insert(event, array);
         }
         Ok(output)

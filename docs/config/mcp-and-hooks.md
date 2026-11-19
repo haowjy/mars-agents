@@ -11,7 +11,7 @@ agents and skills. Mars compiles these into target-specific config files during
   gate which MCP tools an agent may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** are written once in Claude's hook format (`[hooks]` in `hook.toml`)
-  and installed natively in Claude, Codex, OpenCode and Pi, or contributed as
+  and installed natively in Claude, Codex, OpenCode and Pi (translated for Antigravity), or contributed as
   target-native hooks (JSON for Claude, Codex, Cursor and Antigravity; TypeScript for
   OpenCode and Pi). Their complete hook directories install beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
@@ -337,7 +337,7 @@ The token applies to `command` and `args`. `env` values remain symbolic
 
 Write a hook once, in the shape Claude Code uses for `"hooks"` in
 `settings.json`, expressed as TOML. Mars installs it natively in Claude Code,
-Codex, OpenCode and Pi. A hook directory holds `hook.toml` and the script it
+Codex, OpenCode and Pi, and translated for Antigravity. A hook directory holds `hook.toml` and the script it
 runs:
 
 ```
@@ -1011,6 +1011,7 @@ Mars writes it as an `agy` **plugin** and adds one entry to the project's `.agen
 .agy/agents/<name>.md    see agent-compilation.md
 .agy/hooks.json          one top-level key per hook
 .agy/hooks/<name>/       the hook's directory
+.agy/hooks/mars-<name>.hooks.json   a translated hook's data, beside the directory
 .agy/mcp_config.json     {"mcpServers": {...}}
 .agy/mcp/<name>/         a server's directory, when it uses `${MARS_MCP_DIR}`
 ```
@@ -1045,8 +1046,41 @@ A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds
 installed under the hook's name. `${MARS_HOOK_DIR}` becomes `hooks/<name>`, relative to the
 working directory `agy` gives a hook command (`.agy/`). The events are `SessionStart`,
 `PreInvocation`, `PostInvocation`, `Stop` (handler objects) and `PreToolUse`, `PostToolUse`
-(`{matcher, hooks}` groups). Portable `[hooks]` is not translated yet: a hook selected for `.agy`
-with only `[hooks]` is skipped and sync reports `translation ... is not yet implemented`.
+(`{matcher, hooks}` groups).
+
+A portable `[hooks]` table is **translated**: `agy`'s events, payloads and replies are not
+Claude's, so each `hooks.json` handler runs `mars hook run` (hidden; `agy` calls it, you do not)
+on the hook's data file, `hooks/mars-<name>.hooks.json`. The runner reads `agy`'s payload,
+builds Claude's (`tool_name` and `tool_input` through the tool and argument tables in
+`mars_schema::hooks::antigravity`, `session_id`, `cwd`, `transcript_path`), runs the hook's
+commands with Claude's matcher, `if`, timeout and exit-code rules (the same as the generated
+TypeScript for OpenCode and Pi; `crates/mars-schema/fixtures/hook-vectors.json` pins the two),
+and answers in the form `agy` reads for that event. The hook's commands run with the `cwd` `agy`
+reports (the project), and `${MARS_HOOK_DIR}` is the hook's directory.
+
+The command names the `mars` that ran the sync by absolute path, so `hooks.json` is
+machine-local (the same reason Claude's hooks go to `settings.local.json`): moving the binary
+needs a `mars sync`. On Windows `agy` runs `cmd /c` and the command is a `cmd` form of the same
+guard, written but never run. A guard in front of `mars` settles a missing binary by the hook's
+failure rule: exit 0 with no output leaves the call alone, and exit 1 blocks it when a handler of
+a blocking event (`PreToolUse`, `UserPromptSubmit`, `Stop`) has `onFailure = "block"`. A data
+file of a version this `mars` does not read is settled the same way, with a message on stderr.
+
+| Claude event | `agy` event | What carries over |
+|---|---|---|
+| `PreToolUse` | `PreToolUse` | `deny`, `ask`, `allow` and `updatedInput` (as `overwrite`, top-level keys only) answers and exit 2; no opinion is empty output, which leaves the call to `agy`'s own permission flow. `additionalContext` is dropped |
+| `PostToolUse`, `PostToolUseFailure` | `PostToolUse` | `agy` passes no tool output and reads no answer: the hook runs, its answers are dropped; the failure event is the call's `error` being set |
+| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, not on resume, so `source` is always `startup` |
+| `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`); `stop_hook_active` is `agy`'s `continuationActive` |
+| `UserPromptSubmit` | `PreInvocation` | runs on the first invocation of a prompt (`invocationNum` 0); a `block` answer ends the turn with the reason as an error message; context becomes a system message |
+
+Any other Claude event is skipped and reported. Sync reports (`hook-answer-unsupported`) each
+translated event whose answers or firing do not fully carry over, and a matcher the runner's
+regular-expression engine cannot compile (look-around and backreferences, which Claude's can).
+`agy` timeouts are the sum of the Claude timeouts of an event's handlers plus a second, since
+the runner runs them in turn and must outlive its last kill. A tool matcher that names plain
+Claude tools is narrowed to `agy`'s names for them; any other is `*`, and the runner applies
+Claude's matcher either way.
 
 ### Ownership and removal
 

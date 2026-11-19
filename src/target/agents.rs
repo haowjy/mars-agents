@@ -1,5 +1,6 @@
 use crate::types::DestPath;
 /// are preserved.
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
 use super::TargetAdapter;
@@ -9,11 +10,7 @@ use super::TargetAdapter;
 pub struct AgentsAdapter;
 
 impl TargetAdapter for AgentsAdapter {
-    fn name(&self) -> &str {
-        ".agents"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
+    fn harness(&self) -> Option<HarnessId> {
         None
     }
 

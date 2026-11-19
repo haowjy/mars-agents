@@ -1,4 +1,5 @@
 use crate::types::DestPath;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
 use mars_schema::mcp_servers::{McpRender, env_map, header_map};
@@ -35,12 +36,8 @@ fn render(server: &McpServerEntry) -> McpRender {
 pub struct OpencodeAdapter;
 
 impl TargetAdapter for OpencodeAdapter {
-    fn name(&self) -> &str {
-        ".opencode"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
-        Some("opencode")
+    fn harness(&self) -> Option<HarnessId> {
+        Some(HarnessId::OpenCode)
     }
 
     fn mcp_file(&self) -> Option<McpFile> {

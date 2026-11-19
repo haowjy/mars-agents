@@ -125,7 +125,10 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 
     let bare = trimmed.strip_prefix('.').unwrap_or(trimmed);
-    if let Some(harness) = mars_schema::harness::parse(bare) {
+    // A link names a harness by its name or by its target directory.
+    let harness = mars_schema::harness::parse(bare)
+        .or_else(|| crate::harness::registry::harness_for_target(&format!(".{bare}")));
+    if let Some(harness) = harness {
         return NormalizedLink {
             raw: raw.to_string(),
             target: crate::harness::registry::descriptor(harness)

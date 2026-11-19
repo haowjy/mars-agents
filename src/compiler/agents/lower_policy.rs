@@ -301,7 +301,7 @@ const ANTIGRAVITY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
         LoweredField::Identity,
-        LoweredField::Tools,
+        LoweredField::AllowlistOrAll,
         LoweredField::Roles,
     ],
     lossiness: &[
@@ -425,6 +425,7 @@ impl<'a> AgentLoweringCtx<'a> {
             LoweredField::Effort => self.insert_claude_effort(),
             LoweredField::Mode => self.insert_mode(),
             LoweredField::Roles => self.insert_roles(),
+            LoweredField::AllowlistOrAll => self.insert_allowlist_or_all(),
         }
     }
 
@@ -461,9 +462,6 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_tools(&mut self) {
-        if self.harness == HarnessId::Antigravity {
-            return self.insert_agy_tools();
-        }
         let target = self.target_name();
         let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
@@ -503,8 +501,9 @@ impl<'a> AgentLoweringCtx<'a> {
 
     /// `agy` loads an agent with no `tools` key without write or shell, and it has no deny list:
     /// the key is the allowlist, `*` when the policy does not restrict. An empty allowlist
-    /// writes no key, the closest `agy` has to no tools.
-    fn insert_agy_tools(&mut self) {
+    /// writes no key. The probes saw an agent with no `tools` run no write or shell in most
+    /// trials, but sometimes run a shell command, and why is unknown, so it may not be "no tools".
+    fn insert_allowlist_or_all(&mut self) {
         let projection = project(self.eff.tools, self.harness);
         for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
             self.lossy.push(LossyField {

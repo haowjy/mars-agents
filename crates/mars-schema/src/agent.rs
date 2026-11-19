@@ -26,10 +26,12 @@ pub enum LoweredField {
     Mode,
     /// `agy`'s `mainAgent` and `subagent` flags, which it reads where other harnesses read `mode`.
     Roles,
+    /// `agy`'s `tools`: an allowlist, `*` when the policy does not restrict, and no deny list.
+    AllowlistOrAll,
 }
 
 impl LoweredField {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Identity,
         Self::Model,
         Self::Skills,
@@ -37,6 +39,7 @@ impl LoweredField {
         Self::Effort,
         Self::Mode,
         Self::Roles,
+        Self::AllowlistOrAll,
     ];
 
     /// Frontmatter keys this field lowers, whether or not the profile has a value for them.
@@ -49,6 +52,7 @@ impl LoweredField {
             Self::Effort => &["effort"],
             Self::Mode => &["mode"],
             Self::Roles => &["mainAgent", "subagent"],
+            Self::AllowlistOrAll => &["tools"],
         }
     }
 

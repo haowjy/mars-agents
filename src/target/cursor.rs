@@ -2,7 +2,7 @@ use crate::types::DestPath;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
-use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CursorAdapter;
@@ -25,7 +25,7 @@ impl TargetAdapter for CursorAdapter {
 
     fn mcp_file(&self) -> Option<McpFile> {
         Some(McpFile {
-            at: McpLocation {
+            at: KeyedSection {
                 path: ".cursor/mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },

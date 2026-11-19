@@ -296,7 +296,7 @@ that never names the token has no directory and needs none.
    servers skip this step: step 10 removes and writes them in one pass.
 10. Write desired entries to target config files: MCP through each adapter's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
-    pass per file (`mcp_file::reconcile`: stale owned entries removed, desired
+    pass per file (`keyed_entries::reconcile`: stale owned entries removed, desired
     ones written, one save), hooks through the adapter (`settings.local.json`,
     `hooks.json`) and, for OpenCode and Pi, as generated files
     (`.opencode/plugins/mars-<name>.hooks.ts`, `.pi/extensions/mars-<name>.hooks.ts`). A same-named MCP entry the lock does not own is kept.

@@ -9,8 +9,8 @@ index of all machines is [state-machines/index.md](../../../.context/state-machi
 
 One entry in a target's MCP config file (`.mcp.json`, `.codex/config.toml`, `.cursor/mcp.json`
 and others), and whether Mars may overwrite or remove it. Ownership is the comparison of the entry
-on disk with the JSON Mars recorded when it wrote it (`ownership` in `mcp_file.rs`).
-`try_reconcile` runs the whole file: the removal pass removes only `Ownership::Owned` entries,
+on disk with the JSON Mars recorded when it wrote it (`ownership` in `keyed_entries.rs`).
+`try_reconcile` in the shared keyed-entries engine runs the whole section: the removal pass removes only `Ownership::Owned` entries,
 and the write pass has a four-way decision and keeps the previous record when it does not write,
 so a preserved entry keeps its claim. A failed scan keeps every prior record.
 

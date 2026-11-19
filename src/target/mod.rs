@@ -4,18 +4,22 @@ pub mod codex;
 mod config_doc;
 pub mod cursor;
 pub(crate) mod hook_file;
+pub(crate) mod keyed_entries;
 pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
 
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
+pub use keyed_entries::{KeyedKind, KeyedSection};
 use mars_schema::item::ItemKind;
-pub use mcp_file::{McpFile, McpLocation};
+pub use mcp_file::McpFile;
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-pub(crate) const MCP_KEY_PREFIX: &str = "mcp:";
+/// Every kind of keyed entry Mars owns; an adapter declares which it takes.
+pub(crate) const KEYED_KINDS: [KeyedKind; 1] = [mcp_file::MCP_KIND];
+
 pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
 
 /// Env values are variable names (symbolic). Adapters translate them to the
@@ -57,6 +61,15 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// there; `None` when the target takes no MCP servers.
     fn mcp_file(&self) -> Option<McpFile> {
         None
+    }
+
+    /// The keyed-entry sections Mars owns entries in for this target: one per
+    /// [`KeyedKind`] the target declares. Reconcile and unlink drive from this.
+    fn keyed_sections(&self) -> Vec<(KeyedKind, KeyedSection)> {
+        self.mcp_file()
+            .map(|file| (mcp_file::MCP_KIND, file.at))
+            .into_iter()
+            .collect()
     }
 }
 

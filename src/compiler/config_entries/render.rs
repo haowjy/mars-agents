@@ -1,13 +1,14 @@
 //! Hook preflight: read, validate and render every selected hook once, before any mutation.
 //! Compile reuses the result.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
 use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
+use crate::target::plugin::HOOK_ENTRY_KIND;
 use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetAdapter};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
@@ -41,58 +42,97 @@ pub(crate) fn preflight_config_entries(
     let mut errors = Vec::new();
     let mut rendered = HashMap::new();
     let mut reported: HashMap<(String, String), Vec<Skip>> = HashMap::new();
-    // Targets whose MCP file / hook files this sync reads: those the old lock
-    // has records on, and those with something selected.
-    let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
+    // Targets whose keyed files and hook files this sync reads: those the old lock has records
+    // on, those with something selected, and a managed target's fixed entries.
+    let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
+    let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
-    for (target, records) in &resolved.loaded.old_lock.config_entries {
-        if records
-            .keys()
-            .any(|key| key.starts_with(MCP_KIND.key_prefix))
+    for target in &managed {
+        for (kind, _) in registry
+            .get(target)
+            .into_iter()
+            .flat_map(|a| a.fixed_entries())
         {
-            mcp_targets.insert(target.clone());
+            keyed_touched
+                .entry(target.clone())
+                .or_default()
+                .insert(kind.key_prefix);
+        }
+    }
+    for (target, records) in &resolved.loaded.old_lock.config_entries {
+        for (kind, _) in registry
+            .get(target)
+            .into_iter()
+            .flat_map(|adapter| adapter.keyed_sections())
+        {
+            if records.keys().any(|key| key.starts_with(kind.key_prefix)) {
+                keyed_touched
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(kind.key_prefix);
+            }
         }
         if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
             hook_targets.insert(target.clone());
         }
     }
-    hook_targets.extend(
-        targeted
-            .target
-            .selected_hooks()
-            .map(|(dir, _)| dir.target().to_string()),
-    );
-    mcp_targets.extend(targeted.target.selected_mcp_targets().map(str::to_string));
-    for target_name in mcp_targets.union(&hook_targets) {
-        let touches_mcp = mcp_targets.contains(target_name);
-        let touches_hooks = hook_targets.contains(target_name);
+    for target in targeted.target.selected_mcp_targets() {
+        keyed_touched
+            .entry(target.to_string())
+            .or_default()
+            .insert(MCP_KIND.key_prefix);
+    }
+    for (dir, _) in targeted.target.selected_hooks() {
+        let target = dir.target().to_string();
+        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_file().is_some()) {
+            keyed_touched
+                .entry(target.clone())
+                .or_default()
+                .insert(HOOK_ENTRY_KIND.key_prefix);
+        }
+        hook_targets.insert(target);
+    }
+    for target_name in keyed_touched
+        .keys()
+        .chain(hook_targets.iter())
+        .collect::<BTreeSet<_>>()
+    {
         let target_dir = ctx.project_root.join(target_name);
         if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
             errors.push(error);
             continue;
         }
-        if let Some(adapter) = registry.get(target_name) {
-            if touches_mcp && let Some(file) = adapter.mcp_file() {
-                let location = &file.at;
-                let path = ctx.project_root.join(location.path);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                } else if let Err(error) = crate::target::keyed_entries::validate(location, &path) {
-                    errors.push(format!(
-                        "target `{target_name}` reads MCP servers from `{}`: {}",
-                        location.path,
-                        error_message(error)
-                    ));
-                }
+        let Some(adapter) = registry.get(target_name) else {
+            continue;
+        };
+        for (kind, location) in adapter.keyed_sections() {
+            if !keyed_touched
+                .get(target_name)
+                .is_some_and(|kinds| kinds.contains(kind.key_prefix))
+            {
+                continue;
             }
-            if touches_hooks && let Some(merge) = super::merge_file(target_name) {
-                let path = target_dir.join(merge.file);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                }
-                if let Err(error) = crate::target::hook_file::validate(&path) {
-                    errors.push(error_message(error));
-                }
+            let path = ctx.project_root.join(location.path);
+            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                errors.push(error);
+            } else if let Err(error) = crate::target::keyed_entries::validate(&location, &path) {
+                errors.push(format!(
+                    "target `{target_name}` reads {} from `{}`: {}",
+                    kind.plural,
+                    location.path,
+                    error_message(error)
+                ));
+            }
+        }
+        if hook_targets.contains(target_name)
+            && let Some(merge) = super::merge_file(target_name)
+        {
+            let path = target_dir.join(merge.file);
+            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                errors.push(error);
+            }
+            if let Err(error) = crate::target::hook_file::validate(&path) {
+                errors.push(error_message(error));
             }
         }
     }
@@ -105,7 +145,13 @@ pub(crate) fn preflight_config_entries(
             ));
             continue;
         };
-        let installed = installed_token(ctx, dir);
+        // A keyed hook's commands run from the plugin directory, so its directory is the
+        // relative path there and the file stays valid wherever the target is.
+        let installed = if target.keyed_file().is_some() {
+            dir.native()
+        } else {
+            installed_token(ctx, dir)
+        };
         let tokens = Tokens {
             hook_dir: &installed,
             hook_target: target_name,
@@ -119,7 +165,7 @@ pub(crate) fn preflight_config_entries(
             }
         };
         match &output {
-            HookOutput::Merge(merged) => {
+            HookOutput::Merge(merged) | HookOutput::Keyed(merged) => {
                 for event in &merged.unchecked_events {
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
@@ -275,7 +321,8 @@ pub(crate) fn lower_hook_entries(
     shared: Option<&Profile>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
-    let Some(target) = mars_schema::hooks::targets::target(adapter.name()).filter(|t| !t.is_file())
+    let Some(target) =
+        mars_schema::hooks::targets::target(adapter.name()).filter(|t| t.merge_file().is_some())
     else {
         return Vec::new();
     };
@@ -302,7 +349,7 @@ pub(crate) fn lower_hook_entries(
                 }
                 outputs.push((*item, output));
             }
-            Ok(HookOutput::File(_)) => {}
+            Ok(HookOutput::File(_) | HookOutput::Keyed(_)) => {}
             Err(error) => crate::compiler::hooks::report_native_hook(item, &error, diag),
         }
     }

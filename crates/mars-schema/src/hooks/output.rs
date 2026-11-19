@@ -80,6 +80,23 @@ pub struct MergeOutput {
 }
 
 impl MergeOutput {
+    /// The hook as a keyed target's file holds it: `enabled`, then each event with entries.
+    pub fn keyed_value(&self) -> serde_json::Value {
+        let mut value = serde_json::Map::new();
+        if let Some(enabled) = self.enabled {
+            value.insert("enabled".to_owned(), enabled.into());
+        }
+        for (event, entries) in &self.events {
+            if !entries.is_empty() {
+                value.insert(
+                    event.clone(),
+                    OrderedValue::Array(entries.clone()).to_json(),
+                );
+            }
+        }
+        value.into()
+    }
+
     /// Hold every event Claude lists to Codex's handler rules, reporting what that leaves
     /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
     /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.

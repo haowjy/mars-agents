@@ -55,6 +55,9 @@ pub enum Lost {
     Network,
     /// A harness-override key that carries permissions (`sandbox_mode`, `permission`, …).
     Policy,
+    /// A skill's `model-invocable: false` that the target cannot express, so the model can
+    /// still pick the skill.
+    Invocation,
 }
 
 impl Lost {
@@ -65,6 +68,7 @@ impl Lost {
             Lost::Mcp => "MCP",
             Lost::Network => "network",
             Lost::Policy => "permission",
+            Lost::Invocation => "invocation",
         }
     }
 }

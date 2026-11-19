@@ -347,11 +347,11 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
     }
 
     let mcp_files = report.mcp_files_changed.len();
-    for (target_root, file) in &report.mcp_files_changed {
+    for (target_root, file, what) in &report.mcp_files_changed {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = write!(stdout, "  ~ ");
         let _ = stdout.reset();
-        let _ = writeln!(stdout, "{file} (MCP servers, {target_root})");
+        let _ = writeln!(stdout, "{file} ({what}, {target_root})");
     }
 
     let _ = writeln!(stdout);

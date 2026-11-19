@@ -194,7 +194,9 @@ pub fn harness_levels(host: Host) -> Levels {
     match host {
         Host::Harness(HarnessId::Claude) => Levels::only([Low, Medium, High, XHigh, Max]),
         Host::Harness(HarnessId::Codex | HarnessId::Pi) => Levels::only(EffortLevel::LADDER),
-        Host::Harness(HarnessId::OpenCode | HarnessId::Cursor | HarnessId::Antigravity) => Levels::Any,
+        Host::Harness(HarnessId::OpenCode | HarnessId::Cursor | HarnessId::Antigravity) => {
+            Levels::Any
+        }
         Host::MeridianFlow => Levels::only([None, Low, Medium, High, Max]),
     }
 }

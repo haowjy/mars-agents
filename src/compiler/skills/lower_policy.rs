@@ -2,7 +2,7 @@
 
 use serde_yaml::{Mapping, Value};
 
-use crate::compiler::lossiness::{Lossiness, LossyField, LoweredOutput, LoweredSibling};
+use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, LoweredSibling};
 use crate::harness::registry;
 use mars_schema::HarnessId;
 use mars_schema::skill::{self, SkillProfile};
@@ -20,8 +20,8 @@ fn user_invocation_disabled(profile: &SkillProfile) -> bool {
     !profile.user_invocable
 }
 
-/// Cursor Manual: explicit `model-invocable: false` — @-mention only, no auto-selection hook.
-fn cursor_manual_mode(profile: &SkillProfile) -> bool {
+/// Explicit `model-invocable: false`: Cursor's Manual mode, and the loss elsewhere.
+fn model_invocation_explicitly_off(profile: &SkillProfile) -> bool {
     profile.had_model_invocable_field && !profile.model_invocable
 }
 
@@ -122,13 +122,28 @@ fn record_user_invocation_loss(
     }
 }
 
+/// A target with no switch for `model-invocable: false` keeps the skill selectable by the model.
+fn record_model_invocation_loss(
+    lossy_fields: &mut Vec<LossyField>,
+    profile: &SkillProfile,
+    target_name: &str,
+) {
+    if model_invocation_explicitly_off(profile) {
+        lossy_fields.push(LossyField {
+            field: "model-invocable".to_string(),
+            target: target_name.to_string(),
+            classification: Lossiness::Dropped(Lost::Invocation),
+        });
+    }
+}
+
 fn apply_cursor_rule_mode(yaml: &mut Mapping, profile: &SkillProfile) {
     if !profile.has_frontmatter {
         return;
     }
     // Cursor's Manual and Intelligent modes both require alwaysApply:false.
     yaml.insert(yk("alwaysApply"), Value::Bool(false));
-    if cursor_manual_mode(profile) {
+    if model_invocation_explicitly_off(profile) {
         yaml.remove(yk("description"));
     }
 }
@@ -181,7 +196,17 @@ pub(super) fn lower_skill_with_policy(
         }
         HarnessId::OpenCode => {
             insert_license_metadata(&mut yaml, profile);
+            record_model_invocation_loss(&mut lossy_fields, profile, target_name);
             record_user_invocation_loss(&mut lossy_fields, profile, target_name);
+        }
+        HarnessId::Antigravity => {
+            insert_license_metadata(&mut yaml, profile);
+            // `agy` hides the skill from the slash-command list; the model still uses it,
+            // which is what `user-invocable: false` means.
+            if user_invocation_disabled(profile) {
+                yaml.insert(yk("disable-slash-command"), Value::Bool(true));
+            }
+            record_model_invocation_loss(&mut lossy_fields, profile, target_name);
         }
         HarnessId::Pi => {
             insert_disable_model_invocation(&mut yaml, profile);

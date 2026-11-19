@@ -23,6 +23,7 @@ pub fn lower_skill_for_harness(
         HarnessId::OpenCode => lower_skill_to_opencode(profile, body),
         HarnessId::Pi => lower_skill_to_pi(profile, body),
         HarnessId::Cursor => lower_skill_to_cursor(profile, body),
+        HarnessId::Antigravity => lower_skill_to_antigravity(profile, body),
     }
 }
 
@@ -44,6 +45,10 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
 
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
     lower_policy::lower_skill_with_policy(HarnessId::Cursor, profile, body)
+}
+
+pub fn lower_skill_to_antigravity(profile: &SkillProfile, body: &str) -> LoweredOutput {
+    lower_policy::lower_skill_with_policy(HarnessId::Antigravity, profile, body)
 }
 
 #[cfg(test)]

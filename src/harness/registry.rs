@@ -1,5 +1,6 @@
 use crate::models::probes::{
-    CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver, cursor,
+    AntigravityProbeResult, CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver,
+    cursor,
 };
 use mars_schema::HarnessId;
 use mars_schema::agent::EffortLevel;
@@ -75,6 +76,7 @@ pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Pi,
     HarnessId::Cursor,
     HarnessId::OpenCode,
+    HarnessId::Antigravity,
 ];
 
 pub fn default_harness_order_names() -> Vec<String> {
@@ -137,6 +139,21 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
             tiers: Some(SlugTiers {
                 bare_level: Some(EffortLevel::Medium),
                 respell: cursor::model_id_shim,
+            }),
+        }),
+    },
+    HarnessDescriptor {
+        id: HarnessId::Antigravity,
+        display_name: "Antigravity",
+        binary: "agy",
+        default_target: ".agy",
+        class: HarnessClass::ProbeBacked(ProbeSpec {
+            probe: ProbeDriver::of::<AntigravityProbeResult>(),
+            listing: ListingAuth::Gated,
+            slugs: SlugShape::Bare,
+            tiers: Some(SlugTiers {
+                bare_level: None,
+                respell: |_| None,
             }),
         }),
     },

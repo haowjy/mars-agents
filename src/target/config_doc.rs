@@ -22,6 +22,15 @@ use crate::error::{ConfigError, MarsError};
 pub enum SectionFormat {
     JsonSection(&'static str),
     TomlTable(&'static str),
+    /// The root object is the section: each top-level key is an entry (`hooks.json`,
+    /// `plugin.json`).
+    JsonTopLevel,
+    /// An array at `section` whose elements are objects, each named by its `field` value;
+    /// other elements keep their place and a new one is appended (`plugins.json`).
+    JsonArrayByField {
+        section: &'static str,
+        field: &'static str,
+    },
 }
 
 /// A JSON file, narrowed to the object at `key`. Hook config files use this
@@ -34,7 +43,54 @@ pub(super) struct JsonDoc {
 
 pub(super) enum Doc {
     Json(JsonDoc),
-    Toml { doc: DocumentMut, key: &'static str },
+    Toml {
+        doc: DocumentMut,
+        key: &'static str,
+    },
+    JsonTop(IndexMap<String, OrderedValue>),
+    JsonArray {
+        root: IndexMap<String, OrderedValue>,
+        section: &'static str,
+        field: &'static str,
+    },
+}
+
+fn load_json_object(path: &Path) -> Result<IndexMap<String, OrderedValue>, MarsError> {
+    let raw = std::fs::read_to_string(path)?;
+    let root = serde_json::from_str::<OrderedValue>(&raw)
+        .map_err(|error| invalid(format!("{} is not valid JSON: {error}", path.display())))?;
+    match root {
+        OrderedValue::Object(root) => Ok(root),
+        _ => Err(invalid(format!("{} is not a JSON object", path.display()))),
+    }
+}
+
+fn save_json_object(path: &Path, root: &IndexMap<String, OrderedValue>) -> Result<(), MarsError> {
+    let mut json = serde_json::to_string_pretty(root)
+        .map_err(|e| invalid(format!("failed to serialize {}: {e}", path.display())))?;
+    json.push('\n');
+    write_through(path, json.as_bytes())
+}
+
+/// The elements of `section`, each an object that carries `field`.
+fn array_section<'a>(
+    root: &'a IndexMap<String, OrderedValue>,
+    section: &str,
+) -> Option<&'a [OrderedValue]> {
+    match root.get(section)? {
+        OrderedValue::Array(elements) => Some(elements),
+        _ => None,
+    }
+}
+
+fn element_name<'a>(element: &'a OrderedValue, field: &str) -> Option<&'a str> {
+    match element {
+        OrderedValue::Object(object) => match object.get(field)? {
+            OrderedValue::String(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn invalid(message: String) -> MarsError {
@@ -146,6 +202,32 @@ impl Doc {
     pub(super) fn load(path: &Path, format: SectionFormat) -> Result<Option<Self>, MarsError> {
         match format {
             SectionFormat::JsonSection(key) => Ok(JsonDoc::load(path, key)?.map(Self::Json)),
+            SectionFormat::JsonTopLevel => {
+                if !path.is_file() {
+                    return Ok(None);
+                }
+                Ok(Some(Self::JsonTop(load_json_object(path)?)))
+            }
+            SectionFormat::JsonArrayByField { section, field } => {
+                if !path.is_file() {
+                    return Ok(None);
+                }
+                let root = load_json_object(path)?;
+                if root
+                    .get(section)
+                    .is_some_and(|value| !matches!(value, OrderedValue::Array(_)))
+                {
+                    return Err(invalid(format!(
+                        "{}: {section} is not an array",
+                        path.display()
+                    )));
+                }
+                Ok(Some(Self::JsonArray {
+                    root,
+                    section,
+                    field,
+                }))
+            }
             SectionFormat::TomlTable(key) => {
                 if !path.is_file() {
                     return Ok(None);
@@ -169,6 +251,12 @@ impl Doc {
                 doc: DocumentMut::new(),
                 key,
             },
+            SectionFormat::JsonTopLevel => Self::JsonTop(IndexMap::new()),
+            SectionFormat::JsonArrayByField { section, field } => Self::JsonArray {
+                root: IndexMap::new(),
+                section,
+                field,
+            },
         }
     }
 
@@ -178,6 +266,15 @@ impl Doc {
             Self::Toml { doc, key } => {
                 Some(item_to_json(doc.get(key)?.as_table_like()?.get(name)?))
             }
+            Self::JsonTop(root) => Some(root.get(name)?.to_json()),
+            Self::JsonArray {
+                root,
+                section,
+                field,
+            } => array_section(root, section)?
+                .iter()
+                .find(|element| element_name(element, field) == Some(name))
+                .map(OrderedValue::to_json),
         }
     }
 
@@ -187,6 +284,11 @@ impl Doc {
             // Comments live in decor, not items: require the rendered text to be
             // blank so a user's comment-only file is not deleted.
             Self::Toml { doc, .. } => doc.to_string().trim().is_empty(),
+            Self::JsonTop(root) => root.is_empty(),
+            Self::JsonArray { root, section, .. } => root.iter().all(|(key, value)| {
+                key == section
+                    && matches!(value, OrderedValue::Array(elements) if elements.is_empty())
+            }),
         }
     }
 
@@ -205,6 +307,29 @@ impl Doc {
                     .expect("validated on load")
                     .insert(name, json_to_item(&value));
             }
+            Self::JsonTop(root) => {
+                root.insert(name.to_owned(), to_ordered(value));
+            }
+            Self::JsonArray {
+                root,
+                section,
+                field,
+            } => {
+                let OrderedValue::Array(elements) = root
+                    .entry((*section).to_owned())
+                    .or_insert_with(|| OrderedValue::Array(Vec::new()))
+                else {
+                    unreachable!("validated on load")
+                };
+                let ordered = to_ordered(value);
+                match elements
+                    .iter_mut()
+                    .find(|element| element_name(element, field) == Some(name))
+                {
+                    Some(existing) => *existing = ordered,
+                    None => elements.push(ordered),
+                }
+            }
         }
     }
 
@@ -221,6 +346,23 @@ impl Doc {
                 }
                 removed
             }
+            Self::JsonTop(root) => root.shift_remove(name).is_some(),
+            Self::JsonArray {
+                root,
+                section,
+                field,
+            } => {
+                let Some(OrderedValue::Array(elements)) = root.get_mut(*section) else {
+                    return false;
+                };
+                let before = elements.len();
+                elements.retain(|element| element_name(element, field) != Some(name));
+                let removed = elements.len() != before;
+                if removed && elements.is_empty() {
+                    root.shift_remove(*section);
+                }
+                removed
+            }
         }
     }
 
@@ -228,6 +370,7 @@ impl Doc {
         match self {
             Self::Json(doc) => doc.save(path),
             Self::Toml { doc, .. } => write_through(path, doc.to_string().as_bytes()),
+            Self::JsonTop(root) | Self::JsonArray { root, .. } => save_json_object(path, root),
         }
     }
 }

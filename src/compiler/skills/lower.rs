@@ -152,4 +152,39 @@ mod tests {
         assert!(!out.contains("user-invocable"));
         assert!(is_quiet(&lowered.lossy_fields, "user-invocable", "Cursor"));
     }
+
+    #[test]
+    fn antigravity_hides_the_slash_command_for_user_invocable_false() {
+        let lowered = lower_skill_to_antigravity(&user_invocable_false_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("disable-slash-command: true"), "{out}");
+        assert!(!out.contains("user-invocable"), "{out}");
+        assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn model_invocable_false_is_a_lost_restriction_where_no_switch_exists() {
+        for (lower, target) in [
+            (
+                lower_skill_to_antigravity as fn(&SkillProfile, &str) -> LoweredOutput,
+                "Antigravity",
+            ),
+            (lower_skill_to_opencode, "OpenCode"),
+        ] {
+            let lowered = lower(&profile(), "Body\n");
+            let out = String::from_utf8(lowered.bytes).unwrap();
+            assert!(
+                out.contains("description: desc"),
+                "description stays: {out}"
+            );
+            assert!(
+                lowered
+                    .lossy_fields
+                    .iter()
+                    .any(|f| f.field == "model-invocable"
+                        && f.target == target
+                        && matches!(f.classification, Lossiness::Dropped(_)))
+            );
+        }
+    }
 }

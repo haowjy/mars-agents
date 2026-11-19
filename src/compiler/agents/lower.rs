@@ -11,7 +11,8 @@ pub use lower_policy::{NativeModel, lower_for_harness_with_model};
 #[cfg(test)]
 #[cfg(test)]
 pub use lower_policy::{
-    lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode, lower_to_pi,
+    lower_to_antigravity, lower_to_claude, lower_to_codex, lower_to_cursor_with_model,
+    lower_to_opencode, lower_to_pi,
 };
 
 #[cfg(test)]
@@ -308,6 +309,81 @@ mod tests {
             .expect("approval should appear in lossy_fields");
         assert_eq!(field.target, "Cursor");
         assert_eq!(field.classification, Lossiness::MeridianOnly);
+    }
+
+    // --- Antigravity lowering ---
+
+    fn antigravity(content: &str) -> (String, Vec<crate::compiler::lossiness::LossyField>) {
+        let (profile, fm, _) = profile_from(content);
+        let out = lower_to_antigravity(&profile, fm.body(), &NativeModel::Inherit);
+        (String::from_utf8(out.bytes).unwrap(), out.lossy_fields)
+    }
+
+    #[test]
+    fn antigravity_agent_without_rules_gets_every_tool_and_both_roles() {
+        let (text, lossy) =
+            antigravity("---\nname: r\ndescription: d\nmodel: opus\neffort: high\n---\n# body");
+        assert!(text.contains("tools:\n- '*'\n"), "{text}");
+        assert!(text.contains("mainAgent: true\nsubagent: true\n"), "{text}");
+        assert!(
+            !text.contains("model:") && !text.contains("effort:"),
+            "{text}"
+        );
+        assert!(
+            lossy
+                .iter()
+                .any(|f| f.field == "effort" && f.classification == Lossiness::MeridianOnly)
+        );
+    }
+
+    #[test]
+    fn antigravity_allowlist_lists_native_names_and_the_mcp_gateway() {
+        let (text, lossy) = antigravity(
+            "---\nname: r\nmode: subagent\ntools:\n  \"*\": deny\n  read: allow\n  bash: allow\n  mcp(srv/ping): allow\n---\n# body",
+        );
+        assert!(
+            text.contains("tools:\n- read_file\n- run_command\n- call_mcp_tool\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("mainAgent: false\nsubagent: true\n"),
+            "{text}"
+        );
+        assert!(
+            !lossy
+                .iter()
+                .any(|f| matches!(f.classification, Lossiness::Dropped(_))),
+            "an allowlist the file carries loses nothing: {lossy:?}"
+        );
+    }
+
+    #[test]
+    fn antigravity_keeps_the_wildcard_and_reports_a_deny_it_cannot_write() {
+        let (text, lossy) =
+            antigravity("---\nname: r\nmode: primary\ntools:\n  bash: deny\n---\n# body");
+        assert!(
+            text.contains("tools:\n- '*'\n") && !text.contains("run_command"),
+            "{text}"
+        );
+        assert!(
+            text.contains("mainAgent: true\nsubagent: false\n"),
+            "{text}"
+        );
+        assert!(
+            lossy.iter().any(|f| f.field.contains("deny bash")
+                && matches!(f.classification, Lossiness::Dropped(_)))
+        );
+    }
+
+    #[test]
+    fn antigravity_never_lists_view_file_beside_read_file() {
+        let (text, _) = antigravity(
+            "---\nname: r\ntools:\n  \"*\": deny\n  read: allow\n  edit: allow\n  ls: allow\n---\n# body",
+        );
+        assert!(
+            text.contains("read_file") && !text.contains("view_file"),
+            "{text}"
+        );
     }
 
     // --- 3.3: Dispatch ---

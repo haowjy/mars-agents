@@ -72,3 +72,20 @@ impl TargetAdapter for AntigravityAdapter {
 fn render(server: &McpServerEntry) -> McpRender {
     mcp_servers::render(&server.transport, Flavor::Agy)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hook_file_is_where_the_hook_table_places_keyed_hooks() {
+        let adapter = AntigravityAdapter;
+        let file = mars_schema::hooks::targets::target(adapter.name())
+            .and_then(|target| target.keyed_file())
+            .expect("the hook table has a keyed row for .agy");
+        assert_eq!(
+            adapter.plugin().unwrap().hooks.path,
+            format!("{}/{file}", adapter.name())
+        );
+    }
+}

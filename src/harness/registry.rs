@@ -256,22 +256,10 @@ mod tests {
     fn provider_candidates_prefer_native_then_follow_default_order() {
         use HarnessId::*;
         for (provider, expected) in [
-            (
-                "openai",
-                vec![Codex, Claude, Pi, Cursor, OpenCode],
-            ),
-            (
-                "anthropic",
-                vec![Claude, Codex, Pi, Cursor, OpenCode],
-            ),
-            (
-                "unknown",
-                vec![Claude, Codex, Pi, Cursor, OpenCode],
-            ),
-            (
-                "google",
-                vec![Claude, Codex, Pi, Cursor, OpenCode],
-            ),
+            ("openai", vec![Codex, Claude, Pi, Cursor, OpenCode]),
+            ("anthropic", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            ("unknown", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            ("google", vec![Claude, Codex, Pi, Cursor, OpenCode]),
         ] {
             assert_eq!(provider_candidate_order(provider), expected, "{provider}");
         }

@@ -137,6 +137,7 @@ fn table(host: Host) -> Table {
         Host::Harness(HarnessId::OpenCode) => OPENCODE,
         Host::Harness(HarnessId::Pi) => PI,
         Host::Harness(HarnessId::Cursor) => CURSOR,
+        Host::Harness(HarnessId::Antigravity) => AGY,
         Host::MeridianFlow => FLOW,
     }
 }
@@ -444,6 +445,67 @@ const CURSOR: Table = &[
     ("plan_mode", Tools(&["SwitchMode"])),
 ];
 
+/// Antigravity CLI (`agy`) 1.5.12.
+///
+/// Source: live probes of plugin agents (`antigravity-mars/evidence/probe-agent-frontmatter.md`
+/// §1, §2, §10). An agent's `tools` list loaded with `find_by_name`, `grep_search`,
+/// `list_dir`, `multi_replace_file_content`, `read_file`, `replace_file_content`,
+/// `run_command`, `search_web` and `write_to_file` together, and a shell call ran;
+/// `call_mcp_tool` loaded alone. `view_file` is the same tool as `read_file`: listing both
+/// fails. `browser_subagent`, `codebase_search`, `view_code_item` and `view_file_outline` did
+/// not resolve. One unknown name makes the agent fail at its first prompt, so a row holds only
+/// a name a probe loaded, and a tool nobody loaded is `Absent` here, which means "Mars knows
+/// no name to write", not "agy has no such tool". `agy` reaches every MCP server through the
+/// one `call_mcp_tool` tool, so MCP rules lower onto it (`tool_project`). The subagent tool is
+/// `invoke_subagent` in permission requests, but no probe listed it in `tools`, so `agent` is
+/// `NoSwitch` until one does. `agy` loads a skill by reading its `SKILL.md` with `read_file`.
+const AGY: Table = &[
+    ("bash", Tools(&["run_command"])),
+    ("ls", Tools(&["list_dir"])),
+    ("work", Absent),
+    ("read", Tools(&["read_file"])),
+    ("write", Tools(&["write_to_file"])),
+    (
+        "edit",
+        Tools(&[
+            "replace_file_content",
+            "multi_replace_file_content",
+            "write_to_file",
+        ]),
+    ),
+    ("notebook", Absent),
+    (
+        "agent",
+        NoSwitch("agy's subagent tool (`invoke_subagent`) is not a verified `tools` name"),
+    ),
+    (
+        "skill",
+        NoSwitch("agy loads skills by reading files; no switch"),
+    ),
+    ("workflow", Absent),
+    ("glob", Tools(&["find_by_name"])),
+    ("grep", Tools(&["grep_search"])),
+    ("web", Tools(&["search_web"])),
+    ("web_search", Tools(&["search_web"])),
+    ("web_fetch", Absent),
+    ("ask_user", Absent),
+    ("task", Absent),
+    ("plan_mode", Absent),
+    ("cron", Absent),
+    ("notifications", Absent),
+    ("worktree", Absent),
+    ("lsp", Absent),
+    ("monitor", Absent),
+    ("send_user_file", Absent),
+    ("schedule_wakeup", Absent),
+    ("remote_trigger", Absent),
+    ("tool_search", Absent),
+    ("image", Absent),
+];
+
+/// The one tool `agy` reaches every MCP server through (`server` and `tool` are arguments).
+pub const AGY_MCP_GATEWAY: &[&str] = &["call_mcp_tool"];
+
 /// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
 /// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
 /// adds joins by being listed here.
@@ -612,6 +674,19 @@ mod tests {
                 "read",
                 "write",
             ],
+            // `agy` 1.5.12: the names the probes in the `AGY` doc comment loaded as agent tools.
+            HarnessId::Antigravity => &[
+                "call_mcp_tool",
+                "find_by_name",
+                "grep_search",
+                "list_dir",
+                "multi_replace_file_content",
+                "read_file",
+                "replace_file_content",
+                "run_command",
+                "search_web",
+                "write_to_file",
+            ],
             // Mars 0.16 table; not re-verified (target unmaintained).
             HarnessId::Cursor => &[
                 "AskQuestion",
@@ -742,6 +817,7 @@ mod tests {
             HarnessId::Codex,
             HarnessId::OpenCode,
             HarnessId::Pi,
+            HarnessId::Antigravity,
         ] {
             for capability in crate::tool_names::canonical_capabilities() {
                 assert!(

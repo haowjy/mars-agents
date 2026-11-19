@@ -38,6 +38,12 @@ pub enum Flavor {
     /// forwarded name in `env_vars`, a renamed one an `env` `${VAR}` that Codex would pass
     /// through literally (reported in [`McpRender::lossy`]), a remote entry typed `http`.
     Plugin,
+    /// An `agy` plugin's `mcp_config.json`: the server inherits `agy`'s environment, so a
+    /// variable passed through by name is left out and a renamed one cannot be written (a
+    /// `${VAR}` that the plugin does not declare in `variables` is passed literally, and
+    /// declaring one turns the whole plugin off until the user fills it in), and a remote
+    /// entry has no `type`.
+    Agy,
 }
 
 /// One server rendered into a harness's native shape.
@@ -111,9 +117,13 @@ fn braced(var: &str) -> String {
 
 /// Render one server's transport as an `mcpServers` entry.
 pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
+    if flavor == Flavor::Agy {
+        return render_agy(transport);
+    }
     let interpolate = |var: &str| match flavor {
         Flavor::Cursor => format!("${{env:{var}}}"),
         Flavor::Claude | Flavor::Plugin => braced(var),
+        Flavor::Agy => unreachable!("`render_agy` spells agy's entries"),
     };
     let mut lossy = Vec::new();
     let value = match transport {
@@ -158,6 +168,42 @@ pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
                     HeaderValue::Literal(_) => None,
                 }));
             }
+            entry
+        }
+    };
+    McpRender { value, lossy }
+}
+
+fn render_agy(transport: &McpTransport) -> McpRender {
+    let mut lossy = Vec::new();
+    let value = match transport {
+        McpTransport::Stdio { command, args, env } => {
+            let (_, renamed) = partition_env(env);
+            lossy.extend(renamed.into_iter().map(|(key, variable)| {
+                format!(
+                    "agy sets a server's env only from a plugin variable, which turns the whole plugin off until the user fills it in; `{key}` is not set from `{variable}`. Name the key `{variable}` to pass it through."
+                )
+            }));
+            serde_json::json!({ "command": command, "args": args })
+        }
+        McpTransport::Http { url, headers } => {
+            let mut literals = Map::new();
+            for (name, value) in headers {
+                match value {
+                    HeaderValue::Literal(text) => {
+                        literals.insert(name.clone(), Value::String(text.clone()));
+                    }
+                    HeaderValue::Env { env, .. } => lossy.push(format!(
+                        "agy sets a header only from a plugin variable, which turns the whole plugin off until the user fills it in; `{name}` is not set from `{}`.",
+                        env.var_name()
+                    )),
+                }
+            }
+            let mut entry = serde_json::json!({ "url": url });
+            if !literals.is_empty() {
+                entry["headers"] = literals.into();
+            }
+            lossy.push("agy's docs do not describe a remote server's entry; its `url` and `headers` are written as Claude's are and were not run.".to_owned());
             entry
         }
     };

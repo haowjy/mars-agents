@@ -21,9 +21,6 @@ const AGENTS_TARGET: &str = ".agents";
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-/// Every kind of keyed entry Mars owns; an adapter declares which it takes.
-pub(crate) const KEYED_KINDS: [KeyedKind; 1] = [mcp_file::MCP_KIND];
-
 pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
 
 /// Env values are variable names (symbolic). Adapters translate them to the

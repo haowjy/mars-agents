@@ -168,12 +168,17 @@ fn remove_owned_target_content(
     );
     let mut keyed_records = std::collections::BTreeMap::new();
     let mut keyed_removed = Vec::new();
-    for kind in &crate::target::KEYED_KINDS {
+    let kinds = registry
+        .get(target_name)
+        .into_iter()
+        .flat_map(|adapter| adapter.keyed_sections())
+        .map(|(kind, _)| kind);
+    for kind in kinds {
         let reconciled = crate::compiler::config_entries::reconcile_keyed(
             &registry,
             &ctx.project_root,
             target_name,
-            kind,
+            &kind,
             Some(&previous),
             &[],
             false,

@@ -3,9 +3,6 @@
 #[path = "lower_policy.rs"]
 mod lower_policy;
 
-use crate::compiler::harness_descriptor::{
-    SkillLoweringPolicyKind, descriptor, descriptor_for_variant_key,
-};
 use crate::compiler::lossiness::LoweredOutput;
 use mars_schema::HarnessId;
 use mars_schema::skill::SkillProfile;
@@ -13,19 +10,19 @@ use mars_schema::skill::SkillProfile;
 pub type SkillHarness = HarnessId;
 
 pub fn skill_harness_from_variant_key(key: &str) -> Option<SkillHarness> {
-    descriptor_for_variant_key(key).map(|descriptor| descriptor.kind)
+    mars_schema::harness::parse(key)
 }
 pub fn lower_skill_for_harness(
     harness: SkillHarness,
     profile: &SkillProfile,
     body: &str,
 ) -> LoweredOutput {
-    match descriptor(harness).skill_policy {
-        SkillLoweringPolicyKind::Claude => lower_skill_to_claude(profile, body),
-        SkillLoweringPolicyKind::Codex => lower_skill_to_codex(profile, body),
-        SkillLoweringPolicyKind::OpenCode => lower_skill_to_opencode(profile, body),
-        SkillLoweringPolicyKind::Pi => lower_skill_to_pi(profile, body),
-        SkillLoweringPolicyKind::Cursor => lower_skill_to_cursor(profile, body),
+    match harness {
+        HarnessId::Claude => lower_skill_to_claude(profile, body),
+        HarnessId::Codex => lower_skill_to_codex(profile, body),
+        HarnessId::OpenCode => lower_skill_to_opencode(profile, body),
+        HarnessId::Pi => lower_skill_to_pi(profile, body),
+        HarnessId::Cursor => lower_skill_to_cursor(profile, body),
     }
 }
 

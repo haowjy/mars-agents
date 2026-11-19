@@ -222,7 +222,7 @@ pub(super) fn check_sources(
     for profile in profiles {
         for (_, item) in input
             .target
-            .selected_mcp_for_target(profile.descriptor().target_dir)
+            .selected_mcp_for_target(profile.descriptor().default_target)
         {
             if seen_mcp.insert(item.source_path.clone()) {
                 let content = std::fs::read_to_string(&item.source_path)?;
@@ -240,7 +240,7 @@ pub(super) fn check_sources(
     for profile in profiles {
         for (_, hook) in input
             .target
-            .selected_hooks_for_target(profile.descriptor().target_dir)
+            .selected_hooks_for_target(profile.descriptor().default_target)
         {
             (profile.check_hook)(hook, diag);
         }
@@ -311,9 +311,9 @@ pub(super) fn write_tree(
     // the generated config points at this tree's copy.
     let hooks = input
         .target
-        .selected_hooks_for_target(descriptor.target_dir)
+        .selected_hooks_for_target(descriptor.default_target)
         .map(|(dir, hook)| {
-            let excluded = other_hook_native_hooks(hook, descriptor.target_dir);
+            let excluded = other_hook_native_hooks(hook, descriptor.default_target);
             crate::fs::copy_dir_filtered(&hook.hook_dir, &root.join(dir.native()), &excluded)?;
             Ok((
                 profile
@@ -326,7 +326,7 @@ pub(super) fn write_tree(
     // A server whose `command`/`args` name no directory ships no copy.
     let mcp = input
         .target
-        .selected_mcp_for_target(descriptor.target_dir)
+        .selected_mcp_for_target(descriptor.default_target)
         .map(|(dir, item)| {
             if item.uses_dir_token() {
                 crate::fs::copy_dir_filtered(item.server_dir(), &root.join(dir.native()), &[])?;
@@ -341,8 +341,8 @@ pub(super) fn write_tree(
         .collect::<Result<Vec<_>, MarsError>>()?;
     let registry = crate::target::TargetRegistry::new();
     let adapter = registry
-        .get(descriptor.target_dir)
-        .expect("compiler harness descriptor names a registered target");
+        .get(descriptor.default_target)
+        .expect("harness descriptor names a registered target");
     let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
     let hook_entries = crate::compiler::config_entries::render::lower_hook_entries(
         &hooks,
@@ -537,15 +537,13 @@ fn lower_agent(
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(
             "{} agent lowering produced invalid UTF-8 for `{}`: {error}",
-            tree_profile.descriptor().canonical_id,
-            item.id.name
+            tree_profile.harness, item.id.name
         ))
     })?;
     let mut doc = mars_schema::frontmatter::parse(&lowered).map_err(|error| {
         MarsError::Internal(format!(
             "{} agent lowering produced an unreadable agent `{}`: {error}",
-            tree_profile.descriptor().canonical_id,
-            item.id.name
+            tree_profile.harness, item.id.name
         ))
     })?;
     if let Some(agent_policy) = tree_profile.agents {
@@ -583,7 +581,7 @@ fn write_skill(
     crate::compiler::variants::project_skill_for_target_with_checked_schema(
         &item.source_path,
         &destination,
-        Some(profile.descriptor().variant_key),
+        Some(profile.harness.as_str()),
         diag,
         item.id.name.as_str(),
     )?;

@@ -11,7 +11,6 @@ pub mod agents;
 pub mod config_entries;
 pub(crate) mod effective_tools;
 /// Typed native harness descriptor table shared by compiler lowering lanes.
-pub(crate) mod harness_descriptor;
 pub mod hooks;
 /// Hook compiler lane: native event discovery, validation, and ordering.
 pub(crate) mod lossiness;
@@ -148,7 +147,7 @@ fn compile_inner(
         ctx.meridian_managed,
     );
     let configured_emit_harnesses =
-        harness_descriptor::configured_emit_harnesses(effective_settings);
+        crate::config::targets::configured_emit_harnesses(effective_settings);
     let mars_dir = ctx.project_root.join(".mars");
     let catalog_providers = effective_settings
         .catalog_providers

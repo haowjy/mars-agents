@@ -182,6 +182,14 @@ pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
 }
 
+/// Harnesses that would receive native agent artifacts during sync for these settings.
+pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessId> {
+    managed_targets(settings)
+        .iter()
+        .filter_map(|target| crate::harness::registry::harness_for_target(target))
+        .collect()
+}
+
 /// The known harnesses the configured links name; generic targets are ignored.
 pub fn linked_harnesses(settings: &Settings) -> Vec<String> {
     effective_links(settings)

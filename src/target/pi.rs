@@ -27,6 +27,7 @@ impl TargetAdapter for PiAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render: super::mcp_file::claude_render,
+            unreached: None,
         })
     }
 }

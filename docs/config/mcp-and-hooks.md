@@ -1006,7 +1006,7 @@ Mars writes it as an `agy` **plugin** and adds one entry to the project's `.agen
 
 ```
 .agents/plugins.json     {"entries": [..., {"path": ".agy"}]}   Mars's entry, after yours
-.agy/plugin.json         {"name": "mars", "version": "1.0.0"}
+.agy/plugin.json         {"name": "mars-<project>", "version": "1.0.0"}   <project> is the directory name, as [a-z0-9-]
 .agy/skills/<name>/      as for every target
 .agy/agents/<name>.md    see agent-compilation.md
 .agy/hooks.json          one top-level key per hook
@@ -1038,7 +1038,8 @@ spelling: `agy` sets env only from plugin `variables`, and declaring one turns t
 off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's
 `url` and literal headers are written as Claude's are; env headers are left out the same way.
 Sessions started over `agy acp` did not call a plugin's MCP servers in the one probe that ran
-them (a server passed in ACP `session/new` was called); plain `agy` did.
+them (a server passed in ACP `session/new` was called); plain `agy` did. Sync warns once
+(`mcp-unreached`) whenever a server lands in `.agy`, since Meridian spawns run over ACP.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
 A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,

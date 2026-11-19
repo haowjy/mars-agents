@@ -22,6 +22,8 @@ pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
 pub struct McpFile {
     pub at: KeyedSection,
     pub render: fn(&McpServerEntry) -> McpRender,
+    /// A session this file's servers do not reach, reported once per sync when any lands.
+    pub unreached: Option<&'static str>,
 }
 
 /// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
@@ -34,6 +36,14 @@ pub(crate) fn render_all(
     servers: &[McpServerEntry],
     diag: &mut DiagnosticCollector,
 ) -> Vec<Rendered> {
+    if let Some(unreached) = file.unreached
+        && !servers.is_empty()
+    {
+        diag.warn(
+            "mcp-unreached",
+            format!("MCP servers in `{}`: {unreached}", file.at.path),
+        );
+    }
     servers
         .iter()
         .map(|server| {

@@ -71,7 +71,7 @@ pub(crate) fn preflight_config_entries(
         for (kind, _) in registry
             .get(target)
             .into_iter()
-            .flat_map(|a| a.fixed_entries())
+            .flat_map(|a| a.fixed_entries(&ctx.project_root))
         {
             keyed_touched
                 .entry(target.clone())

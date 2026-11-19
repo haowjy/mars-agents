@@ -246,7 +246,7 @@ pub(crate) fn compile_config_entries(
         let keyed: Vec<(KeyedKind, keyed_entries::Rendered)> = rendered
             .into_iter()
             .map(|server| (MCP_KIND, server))
-            .chain(adapter.fixed_entries())
+            .chain(adapter.fixed_entries(&ctx.project_root))
             .chain(keyed_hooks.into_iter().map(|hook| (HOOK_ENTRY_KIND, hook)))
             .collect();
         let target_records: BTreeMap<_, _> = keyed

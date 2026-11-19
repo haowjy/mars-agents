@@ -2,7 +2,7 @@ use crate::types::DestPath;
 use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
-use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct ClaudeAdapter;
@@ -24,7 +24,7 @@ impl TargetAdapter for ClaudeAdapter {
             // The project-root file: Claude reads `<project>/.mcp.json`, not
             // `.claude/.mcp.json`. Claude asks the user to approve project
             // servers; mars does not.
-            at: McpLocation {
+            at: KeyedSection {
                 path: ".mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },

@@ -21,7 +21,7 @@ use mars_schema::item::ItemKind;
 pub use mcp_file::McpFile;
 use plugin::PluginTarget;
 
-const AGENTS_TARGET: &str = ".agents";
+pub(crate) const AGENTS_TARGET: &str = ".agents";
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 

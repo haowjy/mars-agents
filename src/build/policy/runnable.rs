@@ -3,8 +3,8 @@ use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::Listing;
-use crate::models::probes::cursor::CursorEffortFailure;
 use crate::models::reasoning;
+use crate::models::slug_tiers::TierFailure;
 use crate::routing::{MatchEvidence, report::RouteDecisionReport};
 use mars_schema::agent::{EffortLevel, EffortRequest};
 
@@ -20,20 +20,21 @@ pub(super) struct RoutingInput<'a> {
     pub(super) effort: Option<EffortRequest>,
     /// Every provider's rows, for the model's reasoning and the bundle's `catalog_row`.
     pub(super) catalog: &'a Catalog,
-    pub(super) cursor_probe_result: Option<&'a Listing>,
+    /// The selected harness's listing, read when it folds effort tiers into its slugs.
+    pub(super) listing: Option<&'a Listing>,
     pub(super) route_report: RouteDecisionReport,
 }
 
 pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
-    /// The level the harness is launched with; `None` sends no effort, including when Cursor
-    /// folded the level into `harness_model`.
+    /// The level the harness is launched with; `None` sends no effort, including when the level
+    /// was folded into `harness_model`.
     pub(super) effort: Option<EffortLevel>,
-    /// Cursor folded the effort into `harness_model`.
+    /// The effort was folded into `harness_model`.
     pub(super) effort_consumed: bool,
     pub(super) warnings: Vec<String>,
-    /// Cursor could not say which slug carries the requested effort.
-    pub(super) cursor_effort_failure: Option<CursorEffortFailure>,
+    /// The harness could not say which slug carries the requested effort.
+    pub(super) tier_failure: Option<TierFailure>,
 }
 
 pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
@@ -47,7 +48,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         provider_for_order,
         effort,
         catalog,
-        cursor_probe_result,
+        listing,
         route_report,
     } = input;
 
@@ -75,7 +76,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         harness_id,
         &model,
         &runnable.harness_model_id,
-        cursor_probe_result,
+        listing,
     );
     let mut routing = Routing {
         model,
@@ -96,7 +97,7 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         effort: route.resolution.level,
         effort_consumed: false,
         warnings: route.warning.iter().map(|w| w.message.clone()).collect(),
-        cursor_effort_failure: route.cursor_failure.clone(),
+        tier_failure: route.tier_failure.clone(),
     };
     if route.reasoning_data_missing
         && let Some(EffortRequest::Level(level)) = effort
@@ -107,8 +108,8 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
             routing.model
         ));
     }
-    if let Some(slug) = route.cursor_slug()
-        && let Some(tiers) = &route.cursor_tiers
+    if let Some(slug) = route.tier_slug()
+        && let Some(tiers) = &route.tiers
     {
         routing.harness_model = slug.to_string();
         routing.harness_model_source = RunnablePathSource::CachedProbe.label().to_string();

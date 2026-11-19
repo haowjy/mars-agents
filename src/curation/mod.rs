@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::targets::HarnessScope;
 use crate::error::{ConfigError, MarsError};
-use crate::harness::registry;
+use crate::harness::registry::{self, SlugShape};
 use crate::models::{self, possible::PossibleRow};
 use crate::routing::slug;
 use mars_schema::HarnessId;
@@ -437,10 +437,14 @@ impl CuratedRules {
                     }
                     continue;
                 }
-                if harness == HarnessId::Cursor && rule.provider.is_some() {
+                if rule.provider.is_some()
+                    && registry::probe_spec(harness)
+                        .is_some_and(|spec| spec.slugs == SlugShape::Bare)
+                {
                     view.diagnostics.push(format!(
-                        "{}: Cursor declaration `{}` cannot have a provider",
+                        "{}: {} declaration `{}` cannot have a provider",
                         tier.path.display(),
+                        registry::descriptor(harness).display_name,
                         rule.model
                     ));
                     continue;

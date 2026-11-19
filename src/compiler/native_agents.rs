@@ -279,9 +279,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         harness: mars_schema::HarnessId,
     ) -> crate::build::policy::ModelProfile {
         let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
-        let cursor_probe = (harness == mars_schema::HarnessId::Cursor)
-            .then(|| self.session.listing(mars_schema::HarnessId::Cursor))
-            .flatten();
+        let listing = crate::harness::registry::slug_tiers(harness)
+            .and_then(|_| self.session.listing(harness));
         crate::build::policy::profile_for_model(
             profile,
             overlay,
@@ -296,7 +295,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             &crate::build::policy::EffortRoute {
                 harness,
                 catalog: &self.cache.catalog,
-                cursor_probe: cursor_probe.as_ref(),
+                listing: listing.as_ref(),
             },
         )
     }
@@ -308,7 +307,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
-        let memo_effort = if *target_harness == mars_schema::HarnessId::Cursor {
+        let memo_effort = if crate::harness::registry::slug_tiers(*target_harness).is_some() {
             self.profile_for_token(profile, overlay, Some(token), *target_harness)
                 .profile
                 .effort
@@ -398,9 +397,8 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         model_id: &str,
     ) -> Vec<String> {
         let mut ids = vec![model_id.to_string()];
-        if *target_harness == mars_schema::HarnessId::Cursor
-            && let Some(shimmed) =
-                crate::models::probes::cursor::cursor_probe_model_id_shim(model_id)
+        if let Some(tiers) = crate::harness::registry::slug_tiers(*target_harness)
+            && let Some(shimmed) = (tiers.respell)(model_id)
             && !ids.iter().any(|id| id == &shimmed)
         {
             ids.push(shimmed);
@@ -437,15 +435,15 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             return (!launch.harness_model_id.is_empty() && launch.harness_model_id.contains('/'))
                 .then_some(launch.harness_model_id);
         }
-        if *target_harness != mars_schema::HarnessId::Cursor {
+        if crate::harness::registry::slug_tiers(*target_harness).is_none() {
             return Some(resolved.model_id.clone());
         }
 
-        // Cursor folds the resolved effort into the model slug; with none to send, the routed id
+        // The resolved effort is folded into the model slug; with none to send, the routed id
         // stands.
         Some(
             self.profile_for_token(agent.profile, agent.overlay, Some(token), *target_harness)
-                .cursor_slug
+                .tier_slug
                 .unwrap_or_else(|| routed_model_id.to_string()),
         )
     }

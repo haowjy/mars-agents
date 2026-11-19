@@ -523,7 +523,7 @@ fn lower_agent(
         &crate::build::policy::EffortRoute {
             harness: tree_profile.harness,
             catalog: &crate::models::catalog::Catalog::default(),
-            cursor_probe: None,
+            listing: None,
         },
     );
     effective = resolved.profile;

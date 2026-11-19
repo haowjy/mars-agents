@@ -1,7 +1,8 @@
 use crate::config::targets::HarnessScope;
 use crate::harness::host::{AuthState, CapabilitySession, ListingEvidence};
 use crate::harness::registry;
-use crate::harness::registry::{HarnessClass, ListingAuth, ProbeSpec, SlugShape};
+use crate::harness::registry::{HarnessClass, ListingAuth, ProbeSpec, SlugShape, SlugTiers};
+use crate::models::slug_tiers::{normalize_slug, prefix_matches};
 use mars_schema::HarnessId;
 use std::collections::HashSet;
 
@@ -641,7 +642,9 @@ where
             SlugShape::Qualified => {
                 qualified_listing_assessment(input, harness, provider_order, listing.as_ref())
             }
-            SlugShape::Bare => bare_listing_assessment(input, harness, listing.as_ref()),
+            SlugShape::Bare => {
+                bare_listing_assessment(input, harness, spec.tiers, listing.as_ref())
+            }
         };
     }
 
@@ -658,22 +661,23 @@ where
     }
 }
 
-/// Cursor lists flat slugs with effort tiers folded in, so a model matches by normalized name
-/// or prefix rather than by provider.
+/// A harness with bare slugs lists no provider, so a model matches by normalized name, and by
+/// prefix when the harness folds effort tiers into its slugs.
 fn bare_listing_assessment(
     input: &RoutingInput<'_>,
     harness: &str,
+    tiers: Option<SlugTiers>,
     listing: Option<&Listing>,
 ) -> CandidateAssessment {
-    let Some(cursor_probe) = listing.filter(|listing| listing.is_evidence()) else {
+    let Some(listing) = listing.filter(|listing| listing.is_evidence()) else {
         return passthrough_assessment(harness);
     };
 
-    let normalized_model = crate::models::probes::cursor::normalize_slug(input.model_id);
-    if cursor_probe
+    let normalized_model = normalize_slug(input.model_id);
+    if listing
         .slugs
         .iter()
-        .any(|slug| crate::models::probes::cursor::normalize_slug(slug) == normalized_model)
+        .any(|slug| normalize_slug(slug) == normalized_model)
     {
         return CandidateAssessment {
             auth: None,
@@ -688,10 +692,11 @@ fn bare_listing_assessment(
         };
     }
 
-    let matches = crate::models::probes::cursor::find_cursor_prefix_matches(
-        input.model_id,
-        &cursor_probe.slugs,
-    );
+    let matches = if tiers.is_some() {
+        prefix_matches(input.model_id, &listing.slugs)
+    } else {
+        Vec::new()
+    };
     if !matches.is_empty() {
         let candidate_slugs: Vec<String> = matches.iter().map(|slug| (*slug).to_string()).collect();
         return CandidateAssessment {
@@ -707,11 +712,11 @@ fn bare_listing_assessment(
         };
     }
 
-    // Probe slugs didn't match, but if the alias declares provider=cursor,
+    // Probe slugs didn't match, but if the alias declares the harness itself as its provider,
     // trust the constraint over possibly-stale probe cache.
     if input
         .provider_constraint
-        .is_some_and(|p| p.eq_ignore_ascii_case("cursor"))
+        .is_some_and(|p| p.eq_ignore_ascii_case(harness))
     {
         return CandidateAssessment {
             auth: None,

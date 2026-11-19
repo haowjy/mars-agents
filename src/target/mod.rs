@@ -12,8 +12,8 @@ pub mod pi;
 use crate::harness::registry;
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
-use mars_schema::HarnessId;
 pub use keyed_entries::{KeyedKind, KeyedSection};
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 pub use mcp_file::McpFile;
 

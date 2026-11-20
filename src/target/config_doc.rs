@@ -162,10 +162,12 @@ impl JsonDoc {
         Some(self.section()?.get(name)?.to_json())
     }
 
-    fn is_empty(&self) -> bool {
-        self.root
-            .iter()
-            .all(|(k, v)| k == self.key && matches!(v, OrderedValue::Object(map) if map.is_empty()))
+    /// Whether the file holds nothing but an empty section and the `keys` Mars sets itself.
+    pub(super) fn is_empty_but(&self, keys: &[&str]) -> bool {
+        self.root.iter().all(|(k, v)| {
+            keys.contains(&k.as_str())
+                || k == self.key && matches!(v, OrderedValue::Object(map) if map.is_empty())
+        })
     }
 
     fn insert(&mut self, name: &str, value: Value) {
@@ -280,7 +282,7 @@ impl Doc {
 
     pub(super) fn is_empty(&self) -> bool {
         match self {
-            Self::Json(doc) => doc.is_empty(),
+            Self::Json(doc) => doc.is_empty_but(&[]),
             // Comments live in decor, not items: require the rendered text to be
             // blank so a user's comment-only file is not deleted.
             Self::Toml { doc, .. } => doc.to_string().trim().is_empty(),

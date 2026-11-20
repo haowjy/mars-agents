@@ -73,9 +73,28 @@ pub(crate) fn replace(
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
-    strip(&mut doc, path, records, target, diag);
+    let stripped = strip(&mut doc, path, records, target, diag);
     append(&mut doc, path, hooks, top_level)?;
-    doc.save(path)
+    save_or_delete(&doc, path, top_level, stripped)
+}
+
+/// Save `doc`, or delete the file when it holds nothing but what Mars sets (`top_level`). Only
+/// a file this change emptied is deleted: one Mars never touched may be the user's, empty on
+/// purpose.
+fn save_or_delete(
+    doc: &JsonDoc,
+    path: &Path,
+    top_level: &[(&str, i64)],
+    changed: bool,
+) -> Result<(), MarsError> {
+    let keys: Vec<&str> = top_level.iter().map(|(key, _)| *key).collect();
+    if !doc.is_empty_but(&keys) {
+        return doc.save(path);
+    }
+    if changed {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 fn append(
@@ -174,11 +193,12 @@ pub(crate) fn untrusted_positions(before: &TrustPositions, after: &TrustPosition
 }
 
 /// Remove the entries `records` say mars wrote, wherever they still equal what
-/// was recorded. The file is saved only if something went.
+/// was recorded. The file is saved only if something went, and deleted if nothing else is left.
 pub(crate) fn remove_recorded(
     path: &Path,
     records: &BTreeMap<String, ConfigEntryRecord>,
     target: &str,
+    top_level: &[(&str, i64)],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let Some(mut doc) = load(path)? else {
@@ -188,7 +208,7 @@ pub(crate) fn remove_recorded(
         return Ok(());
     }
     doc.drop_section_if_empty();
-    doc.save(path)
+    save_or_delete(&doc, path, top_level, true)
 }
 
 /// Remove the recorded entries from `doc` in memory; whether any went. An entry that has
@@ -282,6 +302,7 @@ mod tests {
             &path,
             &record("SessionStart", "original"),
             ".codex",
+            &[],
             &mut DiagnosticCollector::new(),
         )
         .unwrap();
@@ -291,5 +312,27 @@ mod tests {
             std::fs::metadata(&path).unwrap().modified().unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn removal_deletes_a_file_it_empties_and_keeps_one_with_a_user_key() {
+        let tmp = TempDir::new().unwrap();
+        let hook = r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"original"}]}]}"#;
+        for (name, user_key, left) in [
+            ("owned.json", "", false),
+            ("shared.json", r#","keep":1"#, true),
+        ] {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, format!("{hook}{user_key}}}")).unwrap();
+            remove_recorded(
+                &path,
+                &record("SessionStart", "original"),
+                ".claude",
+                &[],
+                &mut DiagnosticCollector::new(),
+            )
+            .unwrap();
+            assert_eq!(path.exists(), left, "{name}");
+        }
     }
 }

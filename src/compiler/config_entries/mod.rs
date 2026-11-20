@@ -523,6 +523,7 @@ pub(crate) fn remove_hooks(
             &target_dir.join(merge.file),
             &removal.prior_records,
             &target_root,
+            merge.top_level,
             diag,
         )
         .map_or_else(

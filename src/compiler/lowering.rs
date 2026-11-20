@@ -7,8 +7,8 @@
 use mars_schema::HarnessId;
 
 use crate::compiler::agents::lower::{
-    AGY_AGENT_POLICY, AgentLoweringPolicy, CLAUDE_AGENT_POLICY, CURSOR_AGENT_POLICY,
-    OPENCODE_AGENT_POLICY, PI_AGENT_POLICY,
+    AGY_AGENT_POLICY, AgentLoweringPolicy, CLAUDE_AGENT_POLICY, OPENCODE_AGENT_POLICY,
+    PI_AGENT_POLICY,
 };
 
 pub(crate) struct Lowering {
@@ -51,8 +51,6 @@ pub(crate) enum ModelOff {
     SiblingFile,
     /// No switch: the explicit `false` is reported lost.
     Lost,
-    /// Cursor's rule modes: `alwaysApply: false`, and the description dropped when explicit.
-    CursorManual,
 }
 
 /// What a skill with `user-invocable: false` becomes.
@@ -70,7 +68,6 @@ pub(crate) fn lowering(id: HarnessId) -> &'static Lowering {
         HarnessId::Codex => &CODEX,
         HarnessId::Pi => &PI,
         HarnessId::OpenCode => &OPENCODE,
-        HarnessId::Cursor => &CURSOR,
         HarnessId::Agy => &AGY,
     }
 }
@@ -106,15 +103,6 @@ const OPENCODE: Lowering = Lowering {
     agent: AgentFormat::Markdown(&OPENCODE_AGENT_POLICY),
     skill: SkillKeys {
         model_off: ModelOff::Lost,
-        user_off: UserOff::Lost,
-    },
-    needs_description: false,
-};
-
-const CURSOR: Lowering = Lowering {
-    agent: AgentFormat::Markdown(&CURSOR_AGENT_POLICY),
-    skill: SkillKeys {
-        model_off: ModelOff::CursorManual,
         user_off: UserOff::Lost,
     },
     needs_description: false,

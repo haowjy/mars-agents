@@ -8,13 +8,13 @@ MARS=$(pwd)/target/debug/mars
 cargo build -q
 ```
 
-## Sync preserves hand-written `.cursor` agents
+## Sync preserves hand-written `.opencode` agents
 
 ```bash
 tmpdir=$(mktemp -d)
 cd "$tmpdir"
 echo '[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "never"
 
 [dependencies.base]
@@ -22,11 +22,11 @@ path = "/path/to/local/source"
 ' > mars.toml
 
 $MARS sync
-mkdir -p .cursor/agents
-echo '# custom' > .cursor/agents/cursor-only-test.md
-echo '# hand-written' > .cursor/agents/design-lead.md
+mkdir -p .opencode/agents
+echo '# custom' > .opencode/agents/opencode-only-test.md
+echo '# hand-written' > .opencode/agents/design-lead.md
 $MARS sync
-cat .cursor/agents/design-lead.md   # expect: # hand-written
+cat .opencode/agents/design-lead.md   # expect: # hand-written
 ```
 
 ## Link fails without `--force` on collision

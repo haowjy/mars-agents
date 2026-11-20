@@ -200,7 +200,7 @@ struct RuleInput {
     origin: mars_schema::tool_policy::RuleOrigin,
 }
 
-/// Lower tool rules onto a host (`claude`, `codex`, `pi`, `opencode`, `cursor` or
+/// Lower tool rules onto a host (`claude`, `codex`, `pi`, `opencode`, `antigravity` or
 /// `meridian-flow`): the native names per action, each rule's gap or coverage, and how the
 /// host handles `ask`. The same code `mars sync` lowers an agent's tools with.
 #[wasm_bindgen]

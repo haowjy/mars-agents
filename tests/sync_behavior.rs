@@ -6,7 +6,6 @@ use predicates::prelude::*;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
 
@@ -907,30 +906,30 @@ fn sync_detects_and_repairs_diverged_native_agent_output() {
 }
 
 #[test]
-fn sync_cursor_native_agent_target_emits_cursor_markdown_and_lossiness_warning() {
+fn sync_opencode_native_agent_target_emits_opencode_markdown_and_lossiness_warning() {
     let dir = TempDir::new().unwrap();
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
+    let opencode_agent = r#"---
+name: opencode-worker
+description: OpenCode worker
+harness: opencode
 model: gpt55
 tools:
-  mcp(plugin:cursor): allow
+  mcp(plugin:opencode): allow
 model-policies:
   - match: {model: gpt-6}
     override: {effort: low}
 harness-overrides:
+  codex:
+    codex-only: true
   opencode:
-    opencode-only: true
-  cursor:
-    mcp-tools: [plugin:cursor]
+    mcp-tools: [plugin:opencode]
     native-config:
-      cursor.only: true
+      opencode.only: true
 ---
-# Cursor body
-Use Cursor-native markdown.
+# OpenCode body
+Use OpenCode-native markdown.
 "#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+    let source = create_source(&dir, "base", &[("opencode-worker", opencode_agent)], &[]);
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -938,7 +937,7 @@ Use Cursor-native markdown.
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies.base]
@@ -953,190 +952,30 @@ path = "{}"
         .assert()
         .success();
 
-    assert!(project.child(".mars/agents/cursor-worker.md").exists());
-    assert!(project.child(".cursor/agents/cursor-worker.md").exists());
-    assert!(!project.child(".opencode/agents/cursor-worker.md").exists());
-    assert!(!project.child(".codex/agents/cursor-worker.toml").exists());
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(cursor_native.contains("name: cursor-worker"));
+    assert!(project.child(".mars/agents/opencode-worker.md").exists());
     assert!(
-        !cursor_native.contains("model:"),
-        "unresolved cursor model should be cleared in EmitAll mode: {cursor_native}"
+        project
+            .child(".opencode/agents/opencode-worker.md")
+            .exists()
     );
-    assert!(cursor_native.contains("# Cursor body"));
+    assert!(!project.child(".pi/agents/opencode-worker.md").exists());
+    assert!(!project.child(".codex/agents/opencode-worker.toml").exists());
+
+    let opencode_native =
+        fs::read_to_string(project.child(".opencode/agents/opencode-worker.md").path()).unwrap();
+    assert!(opencode_native.contains("name: opencode-worker"));
     assert!(
-        cursor_native.contains("mcp-tools") && cursor_native.contains("cursor.only"),
-        "the cursor override block is written to the Cursor file: {cursor_native}"
+        !opencode_native.contains("model:"),
+        "unresolved opencode model should be cleared in EmitAll mode: {opencode_native}"
     );
+    assert!(opencode_native.contains("# OpenCode body"));
     assert!(
-        !cursor_native.contains("opencode-only"),
-        "another harness's override block must not reach Cursor: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-low"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-schema = 1
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-high"),
-        "cursor model should be internally adapted: {cursor_native}"
+        opencode_native.contains("mcp-tools") && opencode_native.contains("opencode.only"),
+        "the opencode override block is written to the OpenCode file: {opencode_native}"
     );
     assert!(
-        !cursor_native.contains("model: gpt55"),
-        "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_uses_mars_local_model_overlay_for_native_slug_mapping() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-turbo-high"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-schema = 1
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    write_cache(
-        project.path(),
-        vec![
-            json!({
-                "id": "gpt-5.5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "gpt-5.5-turbo",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    project
-        .child("mars.local.toml")
-        .write_str(
-            r#"[models.gpt55]
-harness = "codex"
-model = "gpt-5.5-turbo"
-default_effort = "high"
-"#,
-        )
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-turbo-high"),
-        "local model overlay should drive cursor slug mapping: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("model: gpt-5.5-high"),
-        "dependency alias model should be overridden by mars.local.toml: {cursor_native}"
+        !opencode_native.contains("codex-only"),
+        "another harness's override block must not reach OpenCode: {opencode_native}"
     );
 }
 
@@ -1324,29 +1163,6 @@ path = "{}"
         Some("gpt-b"),
         "the dependency declared first in mars.toml should win persisted alias conflicts: {stdout}"
     );
-}
-
-fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
-    let cache_path = cache_root.join("availability").join("cursor-probe.json");
-    if let Some(parent) = cache_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_secs();
-    let payload = json!({
-        "schema_version": 1,
-        "fetched_at": now,
-        "last_attempt_at": now,
-        "last_error": null,
-        "result": {
-            "slugs": slugs,
-            "model_probe_success": true,
-            "error": null
-        }
-    });
-    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 #[test]
@@ -1699,7 +1515,7 @@ fn lock_dependency_version(project_root: &Path, source_name: &str) -> Option<Str
 }
 
 #[test]
-fn sync_preserves_handwritten_cursor_agents_when_lock_only_tracks_mars() {
+fn sync_preserves_handwritten_opencode_agents_when_lock_only_tracks_mars() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
         &dir,
@@ -1714,7 +1530,7 @@ fn sync_preserves_handwritten_cursor_agents_when_lock_only_tracks_mars() {
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "never"
 
 [dependencies.base]
@@ -1729,14 +1545,16 @@ path = "{}"
         .assert()
         .success();
 
-    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".opencode/agents").path()).unwrap();
     fs::write(
-        project.child(".cursor/agents/cursor-only-test.md").path(),
+        project
+            .child(".opencode/agents/opencode-only-test.md")
+            .path(),
         "# custom\n",
     )
     .unwrap();
     fs::write(
-        project.child(".cursor/agents/design-lead.md").path(),
+        project.child(".opencode/agents/design-lead.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1746,16 +1564,20 @@ path = "{}"
         .assert()
         .success();
 
-    assert!(project.child(".cursor/agents/cursor-only-test.md").exists());
-    assert!(project.child(".cursor/agents/design-lead.md").exists());
+    assert!(
+        project
+            .child(".opencode/agents/opencode-only-test.md")
+            .exists()
+    );
+    assert!(project.child(".opencode/agents/design-lead.md").exists());
     assert_eq!(
-        fs::read_to_string(project.child(".cursor/agents/design-lead.md").path()).unwrap(),
+        fs::read_to_string(project.child(".opencode/agents/design-lead.md").path()).unwrap(),
         "# hand-written\n"
     );
 }
 
 #[test]
-fn sync_preserves_handwritten_cursor_agent_with_agent_emission_always() {
+fn sync_preserves_handwritten_opencode_agent_with_agent_emission_always() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
         &dir,
@@ -1770,7 +1592,7 @@ fn sync_preserves_handwritten_cursor_agent_with_agent_emission_always() {
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies.base]
@@ -1789,9 +1611,9 @@ path = "{}"
     // Under full-coverage EmitAll, mars owns every *source* agent name on every
     // configured target, so an edit to design-lead.md is managed drift that sync
     // restores. Unmanaged-collision protection only guards non-source names.
-    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".opencode/agents").path()).unwrap();
     fs::write(
-        project.child(".cursor/agents/handwritten-only.md").path(),
+        project.child(".opencode/agents/handwritten-only.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1802,10 +1624,10 @@ path = "{}"
         .success();
 
     assert_eq!(
-        fs::read_to_string(project.child(".cursor/agents/handwritten-only.md").path()).unwrap(),
+        fs::read_to_string(project.child(".opencode/agents/handwritten-only.md").path()).unwrap(),
         "# hand-written\n"
     );
-    assert!(project.child(".cursor/agents/design-lead.md").exists());
+    assert!(project.child(".opencode/agents/design-lead.md").exists());
 }
 
 #[test]

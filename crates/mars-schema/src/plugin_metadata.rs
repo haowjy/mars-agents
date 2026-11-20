@@ -26,17 +26,12 @@ pub const CLAUDE_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
     path: ".claude-plugin/marketplace.json",
     catalog_directory: Some(".claude-plugin"),
 };
-pub const CURSOR_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
-    path: ".cursor-plugin/marketplace.json",
-    catalog_directory: Some(".cursor-plugin"),
-};
 pub const OPENCODE_ROOT_FILE: GeneratedRootFile = GeneratedRootFile {
     path: "package.json",
     catalog_directory: None,
 };
 
-pub const GENERATED_ROOT_FILES: &[GeneratedRootFile] =
-    &[CLAUDE_ROOT_FILE, CURSOR_ROOT_FILE, OPENCODE_ROOT_FILE];
+pub const GENERATED_ROOT_FILES: &[GeneratedRootFile] = &[CLAUDE_ROOT_FILE, OPENCODE_ROOT_FILE];
 
 impl GeneratedRootFile {
     pub fn path(self) -> &'static str {

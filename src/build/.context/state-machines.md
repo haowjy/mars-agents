@@ -74,7 +74,7 @@ An instance of [an atomic replace](../../../.context/state-machines/atomic-repla
 ## Generated root files
 
 One path `mars build plugin` writes beside the output directory, inside the package root:
-`.claude-plugin/marketplace.json`, `.cursor-plugin/marketplace.json` or an npm `package.json`
+`.claude-plugin/marketplace.json` or an npm `package.json`
 (`mars_schema::plugin_metadata::GENERATED_ROOT_FILES`). The record is the marker's `root_files`
 (what this build wrote) and `root_files_previous` (what its bytes replaced). Defined by
 `PluginRootFileState` in `plugin/inspect.rs` and by `plugin/root_files.rs`.

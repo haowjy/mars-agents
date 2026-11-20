@@ -173,7 +173,7 @@ fn assert_config_entry_consistency_with_diagnostics(
                     .expect("emitted config-entry record must be a hook");
                 let file = match target.as_str() {
                     ".claude" => "settings.local.json",
-                    ".codex" | ".cursor" => "hooks.json",
+                    ".codex" => "hooks.json",
                     other => panic!("{other} cannot own merge-mode hook records"),
                 };
                 let path = project.child(target).child(file);
@@ -199,7 +199,6 @@ fn assert_config_entry_consistency_with_diagnostics(
                 let (file, section) = match target.as_str() {
                     ".claude" => (".mcp.json", "mcpServers"),
                     ".codex" => (".codex/config.toml", "mcp_servers"),
-                    ".cursor" => (".cursor/mcp.json", "mcpServers"),
                     ".opencode" => (".opencode/opencode.json", "mcp"),
                     ".pi" => (".pi/mcp.json", "mcpServers"),
                     ".agy" => (".agy/mcp_config.json", "mcpServers"),

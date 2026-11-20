@@ -33,11 +33,7 @@ fn nested_hook_container_is_ignored_consistently() {
 
 #[test]
 fn malformed_merge_target_configs_fail_preflight_without_mutation() {
-    for (target, config) in [
-        (".claude", "settings.local.json"),
-        (".codex", "hooks.json"),
-        (".cursor", "hooks.json"),
-    ] {
+    for (target, config) in [(".claude", "settings.local.json"), (".codex", "hooks.json")] {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
         project.create_dir_all().unwrap();
@@ -52,14 +48,10 @@ fn malformed_merge_target_configs_fail_preflight_without_mutation() {
             .write_str("{bad,")
             .unwrap();
         write_hook(&project, "audit", &format!("[targets.\"{target}\"]\n"));
-        let (event, entry) = if target == ".cursor" {
-            ("sessionStart", r#"{"command":"true"}"#)
-        } else {
-            (
-                "SessionStart",
-                r#"{"hooks":[{"type":"command","command":"true"}]}"#,
-            )
-        };
+        let (event, entry) = (
+            "SessionStart",
+            r#"{"hooks":[{"type":"command","command":"true"}]}"#,
+        );
         write_native_hook(
             &project,
             "audit",
@@ -423,12 +415,6 @@ fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
             r#"{"hooks":[{"type":"command","command":"printf owned"}]}"#,
             "printf edited-codex",
         ),
-        (
-            ".cursor",
-            "sessionStart",
-            r#"{"command":"printf owned"}"#,
-            "printf edited-cursor",
-        ),
     ] {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
@@ -453,11 +439,7 @@ fn edited_managed_entries_emit_divergence_warnings_on_every_merge_target() {
         let path = project.child(target).child(config);
         let mut json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
-        if target == ".cursor" {
-            json["hooks"][event][0]["command"] = edited_command.into();
-        } else {
-            json["hooks"][event][0]["hooks"][0]["command"] = edited_command.into();
-        }
+        json["hooks"][event][0]["hooks"][0]["command"] = edited_command.into();
         path.write_str(&serde_json::to_string_pretty(&json).unwrap())
             .unwrap();
 
@@ -478,7 +460,6 @@ fn empty_native_hook_events_never_create_merge_config_residue() {
     for (target, event, config) in [
         (".claude", "SessionStart", "settings.local.json"),
         (".codex", "SessionStart", "hooks.json"),
-        (".cursor", "sessionStart", "hooks.json"),
     ] {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
@@ -516,99 +497,6 @@ fn empty_native_hook_events_never_create_merge_config_residue() {
         .unwrap();
         assert!(removed.get("hooks").is_none());
     }
-}
-
-#[test]
-fn cursor_native_hooks_emit_flat_versioned_entries_and_preserve_user_entries() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".cursor\"]\n")
-        .unwrap();
-    project.child(".cursor").create_dir_all().unwrap();
-    project
-        .child(".cursor/hooks.json")
-        .write_str(r#"{"version":99,"hooks":{"sessionStart":[{"command":"printf user"}]}}"#)
-        .unwrap();
-    write_hook(&project, "audit", "[targets.\".cursor\"]\n");
-    write_native_hook(
-        &project,
-        "audit",
-        "cursor.json",
-        r#"{"version":1,"hooks":{
-          "beforeShellExecution":[{"command":"bash \"${MARS_HOOK_DIR}/run.sh\"","matcher":"^git ","timeout":5,"futureField":true}],
-          "postToolUse":[{"command":"printf managed"}]
-        }}"#,
-    );
-
-    sync(&project).success();
-    let path = project.child(".cursor/hooks.json");
-    let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
-    assert_eq!(json["version"], 1);
-    assert_eq!(json["hooks"]["sessionStart"][0]["command"], "printf user");
-    let emitted = &json["hooks"]["beforeShellExecution"][0];
-    assert_eq!(emitted["matcher"], "^git ");
-    assert_eq!(emitted["futureField"], true);
-    assert!(emitted.get("hooks").is_none());
-    assert!(
-        emitted["command"]
-            .as_str()
-            .unwrap()
-            .contains("/.cursor/hooks/audit/run.sh")
-    );
-
-    let mut edited = json;
-    edited["hooks"]["postToolUse"][0]["command"] = serde_json::json!("printf user-edited");
-    path.write_str(&serde_json::to_string_pretty(&edited).unwrap())
-        .unwrap();
-    fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-    sync(&project).success();
-    let after: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(path.path()).unwrap()).unwrap();
-    assert!(after["hooks"].get("beforeShellExecution").is_none());
-    assert_eq!(after["hooks"]["sessionStart"][0]["command"], "printf user");
-    assert_eq!(
-        after["hooks"]["postToolUse"][0]["command"],
-        "printf user-edited"
-    );
-}
-
-#[test]
-fn cursor_allowlist_is_camel_case_and_unchecked_passes_unknown_events() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = [\".cursor\"]\n")
-        .unwrap();
-    write_hook(&project, "future", "[targets.\".cursor\"]\n");
-    write_native_hook(
-        &project,
-        "future",
-        "cursor.json",
-        r#"{"FutureEvent":[{"command":"true"}]}"#,
-    );
-    sync(&project)
-        .failure()
-        .stderr(predicate::str::contains(
-            "valid events: beforeShellExecution, beforeMCPExecution",
-        ))
-        .stderr(predicate::str::contains("sessionStart"))
-        .stderr(predicate::str::contains("preToolUse"));
-    project
-        .child("hooks/future/hook.toml")
-        .write_str("[targets.\".cursor\"]\nunchecked = true\n")
-        .unwrap();
-    sync(&project).success();
-    let json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".cursor/hooks.json").path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(json["hooks"]["FutureEvent"][0]["command"], "true");
 }
 
 #[test]

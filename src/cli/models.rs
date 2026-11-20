@@ -1483,7 +1483,7 @@ description = "Old alias"
 
         let err = run_alias(&args, &ctx, false).unwrap_err().to_string();
         assert!(err.contains("invalid harness 'gemini'"));
-        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, cursor, agy"));
+        assert!(err.contains("valid harnesses: claude, codex, pi, opencode, agy"));
     }
 
     #[test]

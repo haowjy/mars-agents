@@ -591,6 +591,8 @@ fn validate_rules(path: &Path, action: &str, rules: Vec<RuleFile>) -> Result<Vec
     rules
         .into_iter()
         .enumerate()
+        // A rule for a harness Mars retired matches no row, so it is dropped, not an error.
+        .filter(|(_, rule)| mars_schema::retired::retired_target(&rule.harness).is_none())
         .map(|(index, rule)| {
             let harness = if rule.harness == "*" {
                 None

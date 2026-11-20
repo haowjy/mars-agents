@@ -90,9 +90,6 @@ stateDiagram-v2
   candidate --> routing: profile.model, then each model-policy entry
   routing --> set: route accepted and the model id is usable
   routing --> candidate: harness or acceptance rejected
-  routing --> shim: a tiered harness, second model id for its listing
-  shim --> set
-  shim --> candidate
   candidate --> clear: no candidate left, emit_all
   candidate --> skip: no candidate left, selective
   set --> [*]
@@ -110,7 +107,7 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   file. `qualifying_agent_emissions` is where `Skip` becomes "no artifact". With nothing left,
   `EmitAll` clears and `EmitSelective` skips.
 - Nothing is persisted. The decision is recomputed every run; the memo is keyed on (token,
-  harness, effort folded into a tiered harness's slug). Effort resolves per target harness: the same Agent can send `low` to Claude and `minimal` to Codex.
+  harness). Effort resolves per target harness: the same Agent can send `low` to Claude and `minimal` to Codex.
 - The plugin build resolves a model separately in `src/build/plugin/model.rs`
   (`NativeModel::Set` or `Clear`, with no routing and no `Skip`). A change to what a model token
   means here has to be made there too.

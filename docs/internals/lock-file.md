@@ -181,7 +181,7 @@ Current locks use `version = 3`. Items are keyed by stable id (e.g. `agent/coder
 
 | Field | Description |
 |---|---|
-| `target_root` | Target directory Mars wrote to (e.g. `.mars`, `.cursor`, `.agents`) |
+| `target_root` | Target directory Mars wrote to (e.g. `.mars`, `.claude`, `.agents`) |
 | `dest_path` | Path relative to that target root |
 | `state` | `"installed"` when Mars confirms its bytes are present; `"pending-deletion"` when removal remains to be retried |
 | `installed_checksum` | SHA-256 of content at that target path; present only for installed records |
@@ -190,7 +190,7 @@ Mars may delete a path in a linked target only when the previous lock contains
 a matching `(target_root, dest_path)`. Overwriting existing content additionally
 requires an installed checksum claim; pending deletion authorizes only another
 removal attempt. The same `dest_path` under `.mars` does not imply ownership
-under `.cursor`.
+under `.claude`.
 
 The same rule applies to divergence checks for installed records. Canonical sync diff compares `.mars/` disk content only with installed `.mars` output records. Linked/native targets may have different compiled bytes and different `installed_checksum` values for the same relative `dest_path`. Pending-deletion records retain deletion authority without participating in checksum comparison. See `src/lock/.context/CONTEXT.md` and `src/target_sync/.context/CONTEXT.md`.
 

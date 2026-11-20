@@ -26,7 +26,7 @@ Mars classifies a package root before it reads any definition:
 | `[package] schema = 1` | Reads every definition strictly. Errors fail `mars sync`. |
 | `[package]` without `schema` | Refuses the package with `manifest.schema-missing`, which says to add `schema = 1` ([Retired keys](retired-keys.md#package-without-schema)). Mars before 0.34.0 read such a package as the format before schema 1. |
 | `schema` higher than 1, or not an integer | Refuses the package. A Mars that does not know the schema cannot read it. |
-| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex, OpenCode or Cursor repository). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans). A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
+| no `mars.toml` | The tree is a foreign layout (a Claude plugin, a marketplace, a tree of `SKILL.md` directories, a Codex or OpenCode repository, or a Cursor one). Mars translates it into a schema v1 package; a tree of plain `agents/` and `skills/` folders is translated by Claude's rules (or OpenCode's, when an Agent has a `permission` map or a `tools` map of booleans). A key or value the translation cannot make schema v1 is moved under `harness-overrides.<dialect>` (or dropped when no harness reads it, or when Mars lowers it itself) with a warning, never an error: only an authored schema v1 file is read strictly. See [Dialect](mars-toml.md#dialect). |
 
 The same classification runs for dependencies, the local package, `.mars-src/`, `mars check`, `mars validate` and plugin builds. A consumer's own items in `.mars-src/`, and a manifest-less tree declared `dialect = "mars-native"`, are read as schema 1. Reading finishes for the whole dependency graph before any content is written; see [the sync pipeline](../internals/sync-pipeline.md#preparation-and-the-gate).
 
@@ -47,7 +47,7 @@ An installed `.mars/` tree is read by the same readers, with one exception: an A
 |---|---|---|
 | `name` | non-empty string | Optional. The file name is the Agent's identity when omitted. |
 | `description` | string | Shown in listings and written to native files. |
-| `harness` | `claude`, `codex`, `opencode`, `cursor`, `pi`, `agy` | Optional routing hint. An unknown name is an error. `agy` is accepted but never routed to: Meridian does not launch it. |
+| `harness` | `claude`, `codex`, `opencode`, `pi`, `agy` | Optional routing hint. An unknown name is an error. `agy` is accepted but never routed to: Meridian does not launch it. |
 | `model` | string | An alias from `[models]` or a concrete model ID. |
 | `mode` | `primary`, `subagent` | |
 | `model-invocable` | boolean, default `true` | Whether another model can invoke this Agent. |
@@ -118,11 +118,10 @@ Removed: `package.visibility`, with nothing to replace it.
 | Codex | every level |
 | Pi | every level (`none` is `--thinking off`) |
 | OpenCode | any: it reads models.dev's `reasoning_options` itself |
-| Cursor | the effort suffixes the model's probe slugs list; the bare slug is `medium` |
-| Agy | the effort suffixes the model's `agy models` slugs list (`gemini-3.8-flash-low`); a bare slug stands for no level |
+| Agy | any: Meridian does not launch it, so Mars sets no effort for it |
 | Meridian Flow (WASM only) | `none`, `low`, `medium`, `high`, `max` |
 
-A requested level in both sets is kept. Otherwise it moves to the nearest level on the ladder that both take, below or above, and a tie goes up, and Mars warns: "`max` → `high`: `o3` takes low, medium, high". When both sets limit the request, the warning names both. A move never lands on `none` unless `none` was asked, because off is not less thinking. What the model takes comes from its row: the effort values it lists, plus `none` when it has a toggle. A model that reasons but lists no values (toggle only, budget only, or no control) takes every level, less `none` when it cannot be switched off, so `none` moves up to `minimal` or `low` there. A model with no row is unknown and takes any level. A model that does not reason gets none, with a warning when a level other than `none` was asked. The row is the one for the provider the harness calls: `openai/o3` takes `low`, `medium` and `high`, while `openrouter/openai/o3` is toggle only. A provider-qualified model (`openai/o3` pinned by an alias) and a Cursor slug that carries its tier (`gpt-5.5-high`) find the row of the model behind them. On a machine whose catalog still comes from a build before 0.35, no row has reasoning data: `mars sync` and `mars build launch-bundle` say so, and send the effort as written until the first refresh succeeds.
+A requested level in both sets is kept. Otherwise it moves to the nearest level on the ladder that both take, below or above, and a tie goes up, and Mars warns: "`max` → `high`: `o3` takes low, medium, high". When both sets limit the request, the warning names both. A move never lands on `none` unless `none` was asked, because off is not less thinking. What the model takes comes from its row: the effort values it lists, plus `none` when it has a toggle. A model that reasons but lists no values (toggle only, budget only, or no control) takes every level, less `none` when it cannot be switched off, so `none` moves up to `minimal` or `low` there. A model with no row is unknown and takes any level. A model that does not reason gets none, with a warning when a level other than `none` was asked. The row is the one for the provider the harness calls: `openai/o3` takes `low`, `medium` and `high`, while `openrouter/openai/o3` is toggle only. A provider-qualified model (`openai/o3` pinned by an alias) and an Antigravity slug that carries its tier (`gemini-3.8-flash-low`) find the row of the model behind them. On a machine whose catalog still comes from a build before 0.35, no row has reasoning data: `mars sync` and `mars build launch-bundle` say so, and send the effort as written until the first refresh succeeds.
 
 `mars models list` shows what each row says, not what a launch could send: the levels the model lists that the harness takes, `on/off` for a toggle, `budget` for a budget only, nothing for a model that reasons with no control, and `—` for a model that does not reason (`reasoning.levels` is `null` for all but the first).
 
@@ -135,8 +134,7 @@ What each harness's native file or launch carries for the resolved level:
 | Claude Code | `effort: <level>` in the native file |
 | Codex | `model_reasoning_effort = "<level>"` in the native file |
 | OpenCode, Pi | no effort field is written; the bundle carries the level for the launcher |
-| Agy | as Cursor: the level is folded into the slug (`gemini-3.8-flash-low`); the native agent file carries no effort |
-| Cursor | the level is folded into the model slug (`gpt-5.5-high`) and the bundle carries none; if Cursor's list is unavailable, or has no slug for the model, a launch with an effort fails with `invalid_execution_policy` |
+| Agy | the native agent file carries no effort |
 
 The launcher reads the bundle's `effort` and passes it through; it never interprets it. `mars build launch-bundle --effort none` overrides the Agent from the command line, and `--config-effort` carries the caller's own configuration (Meridian's `primary.effort`), which sits above the model alias's `default_effort` and below the Agent and model policies.
 
@@ -256,11 +254,11 @@ Names are case-insensitive, and harness spellings and aliases (`Bash`, `shell`, 
 
 `*` stands for every tool no other rule names, and `mcp(server)`, `mcp(server/tool)`, `mcp(server/*)`, `mcp(*/tool)` and `mcp(*/*)` gate MCP tools. Neither is a capability in the table.
 
-The vocabulary also records, per host, which native tools a capability becomes. The hosts are `claude`, `codex`, `opencode`, `pi`, `cursor` and `meridian-flow`. Each entry is one of:
+The vocabulary also records, per host, which native tools a capability becomes. The hosts are `claude`, `codex`, `opencode`, `pi`, `antigravity` and `meridian-flow`. Each entry is one of:
 
 - the host's tool names;
 - *scoped tools*: Claude spells a scoped file rule through a permission category, such as `Edit(path)`;
-- *absent*: the host has no such tool, so a deny is already met (`ls` on Claude, Codex and Cursor; `work` everywhere but Meridian Flow);
+- *absent*: the host has no such tool, so a deny is already met (`ls` on Claude and Codex; `work` everywhere but Meridian Flow);
 - *no switch*: the host can do it but has no tool to turn off (Codex reads files through its shell).
 
 The per-harness names are in [Agent compilation](agent-compilation.md#tool-name-projection). Meridian Flow is not a harness; its tools are `read`, `write`, `grep`, `ls`, `skill`, `ask_user`, `work`, and `spawn` with the `thread_*` family. Its `mcp(...)` rules and MCP wire tokens lower onto its connection tools (`mcp_describe`, `mcp_call`, `mcp_run`), which cannot be scoped to one server: a deny or ask covers all of them, and an allow or ask under an allow-list grants none (`known`, with a `note` saying so) ([`project`](../../npm/@meridian-flow/mars-schema/README.md#project)).

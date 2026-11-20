@@ -1,4 +1,4 @@
-//! Shared probe cache refresh semantics for pi / opencode / cursor caches.
+//! Shared probe cache refresh semantics for pi / opencode / antigravity caches.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProbeRefreshMode {

@@ -28,6 +28,15 @@ pub struct LinkArgs {
 /// Run `mars link`.
 pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let parsed_target = super::target::normalize_target_name(&args.target)?;
+    if let Some(retired) = mars_schema::retired::retired_target(&parsed_target) {
+        return Err(MarsError::Link {
+            target: retired.dir.to_string(),
+            message: retired.message(&crate::types::managed_cmd(&format!(
+                "mars unlink {}",
+                retired.dir
+            ))),
+        });
+    }
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
     link_target(ctx, &target_name, args.force, json)
 }
@@ -110,7 +119,10 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    diagnostics.extend(crate::config::targets::target_advisories(&runtime_targets));
+    diagnostics.extend(crate::config::targets::target_advisories(
+        &runtime_targets,
+        &crate::config::targets::effective_links(&effective.settings).retired_targets(),
+    ));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 

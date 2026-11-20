@@ -23,7 +23,7 @@
         "path": [
           "harness"
         ],
-        "message": "agent `g`: `harness: 7` ignored (not a string); use claude, codex, opencode, cursor or pi"
+        "message": "agent `g`: `harness: 7` ignored (not a string); use claude, codex, pi, opencode or agy"
       }
     ]
   },

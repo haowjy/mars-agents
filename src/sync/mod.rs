@@ -327,10 +327,13 @@ pub(crate) fn load_config(
     let unmanaged_records = old_lock.set_aside_unmanaged(&crate::config::targets::managed_targets(
         &effective.settings,
     ));
+    // A retired target the configuration still names has its own warning.
+    let retired = crate::config::targets::effective_links(&effective.settings).retired_targets();
     diag.extend(
         unmanaged_records
             .targets()
             .into_iter()
+            .filter(|target| !retired.iter().any(|retired| retired.dir == *target))
             .map(crate::config::targets::unmanaged_target_diagnostic)
             .collect(),
     );

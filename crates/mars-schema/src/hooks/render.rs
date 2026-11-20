@@ -100,17 +100,6 @@ impl PortableHooks {
         let mut rendered = match profile.rules {
             Rules::Claude => render_claude(&events, profile),
             Rules::Codex => render_codex(&events, profile),
-            Rules::Withheld { reason } => Rendered {
-                output: Output::Merge {
-                    events: BTreeMap::new(),
-                    unchecked_events: Vec::new(),
-                },
-                skips: vec![Skip {
-                    event: None,
-                    reason: reason.into(),
-                }],
-                answer_limits: Vec::new(),
-            },
             Rules::TypeScript(harness) => {
                 super::typescript::render(&events, profile, harness, tokens)
             }
@@ -454,14 +443,6 @@ mod tests {
             .render(&profile(".codex"), &tokens());
         assert!(rendered.is_empty());
         assert_eq!(rendered.skips.len(), 1);
-    }
-
-    #[test]
-    fn cursor_renders_nothing_and_says_why() {
-        let cursor = hooks(MIXED).render(&profile(".cursor"), &tokens());
-        assert!(cursor.is_empty());
-        assert_eq!(cursor.skips.len(), 1);
-        assert_eq!(cursor.skips[0].event, None);
     }
 
     #[test]

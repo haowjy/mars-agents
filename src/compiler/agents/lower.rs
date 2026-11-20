@@ -157,7 +157,6 @@ enum AgentLossinessStep {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AgentLoweringPolicy {
-    description: DescriptionPolicy,
     mode_note: Option<&'static str>,
     skills: AgentSkillsPolicy,
     fields: &'static [LoweredField],
@@ -166,7 +165,6 @@ pub(crate) struct AgentLoweringPolicy {
 
 #[derive(Debug, Clone, Copy)]
 enum AgentSkillsPolicy {
-    NativePreload,
     NativePreloadWithReminder,
     BodyGuidance,
 }
@@ -175,20 +173,9 @@ impl AgentSkillsPolicy {
     fn native_preload(self) -> bool {
         !matches!(self, Self::BodyGuidance)
     }
-
-    fn load_guidance(self) -> bool {
-        !matches!(self, Self::NativePreload)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum DescriptionPolicy {
-    Preserve,
-    CursorOneLine,
 }
 
 pub(crate) const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    description: DescriptionPolicy::Preserve,
     mode_note: None,
     // Claude ignores `skills:` when this file is selected with `claude --agent`.
     skills: AgentSkillsPolicy::NativePreloadWithReminder,
@@ -214,7 +201,6 @@ pub(crate) const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy 
 };
 
 pub(crate) const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    description: DescriptionPolicy::Preserve,
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
@@ -239,34 +225,7 @@ pub(crate) const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolic
     ],
 };
 
-pub(crate) const CURSOR_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    description: DescriptionPolicy::CursorOneLine,
-    mode_note: None,
-    skills: AgentSkillsPolicy::NativePreload,
-    fields: &[
-        LoweredField::Identity,
-        LoweredField::Model,
-        LoweredField::Skills,
-        LoweredField::Mode,
-    ],
-    lossiness: &[
-        AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::Nothing,
-            ask: false,
-            allowlist: Allowlist::Nothing,
-            writes_covered: false,
-            mcp_remainder: Some(Lossiness::Approximate {
-                note: "MCP grants on subprocess errors; streaming uses session payload",
-            }),
-        }),
-        AgentLossinessStep::EffortApproximate("effort maps to --variant on subprocess only"),
-        AgentLossinessStep::MeridianOnlyFields,
-        AgentLossinessStep::InvocationAxes,
-    ],
-};
-
 pub(crate) const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    description: DescriptionPolicy::Preserve,
     mode_note: Some("Pi may use the same mode concept"),
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[
@@ -291,7 +250,6 @@ pub(crate) const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
 };
 
 pub(crate) const AGY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
-    description: DescriptionPolicy::Preserve,
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
     fields: &[LoweredField::Identity, LoweredField::AllowlistOrAll],
@@ -429,11 +387,7 @@ impl<'a> AgentLoweringCtx<'a> {
             self.yaml.insert(yk("name"), yv(name));
         }
         if let Some(desc) = &self.profile.description {
-            let rendered = match self.policy.description {
-                DescriptionPolicy::Preserve => desc.clone(),
-                DescriptionPolicy::CursorOneLine => normalize_cursor_description(desc),
-            };
-            self.yaml.insert(yk("description"), yv(&rendered));
+            self.yaml.insert(yk("description"), yv(desc));
         }
     }
 
@@ -692,10 +646,7 @@ fn lower_agent_skills(
         .into_iter()
         .filter(|skill| !load.contains(skill))
         .collect::<Vec<_>>();
-    let body_load = policy
-        .load_guidance()
-        .then_some(load.as_slice())
-        .filter(|skills| !skills.is_empty());
+    let body_load = Some(load.as_slice()).filter(|skills| !skills.is_empty());
 
     let mut guidance = Vec::new();
     if let Some(load) = body_load {
@@ -980,10 +931,6 @@ fn lower_to_codex(profile: &AgentProfile, body: &str, model_field: &NativeModel)
     }
 }
 
-fn normalize_cursor_description(description: &str) -> String {
-    description.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// Lower an agent to the native format of `harness`.
 pub fn lower_for_harness_with_model(
     harness: HarnessId,
@@ -1242,8 +1189,8 @@ mod tests {
     // --- 3.3: OpenCode lowering ---
 
     #[test]
-    fn cursor_lowering_uses_top_level_policy_and_matching_passthrough() {
-        let content = "---\nname: r\nharness: cursor\ntools:\n  \"*\": deny\n  Read: allow\n  mcp(plugin:base): allow\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
+    fn override_passthrough_keeps_mcp_lossiness_and_stays_with_its_harness() {
+        let content = "---\nname: r\nharness: opencode\ntools:\n  \"*\": deny\n  Read: allow\n  mcp(plugin:base): allow\nharness-overrides:\n  opencode:\n    tools: []\n    mcp-tools: []\n    native-config:\n      opencode.only: true\n  cursor:\n    tools: [Bash]\n    mcp-tools: [plugin:cursor]\n    native-config:\n      cursor.only: true\n---\n# body";
         let (profile, fm, _) = profile_from(content);
 
         let opencode = lower_for_harness_with_model(
@@ -1268,89 +1215,6 @@ mod tests {
                 .any(|field| field.field == "mcp"),
             "harness-overrides passthrough should not clear mcp lossiness",
         );
-
-        let cursor = lower_for_harness_with_model(
-            HarnessId::Cursor,
-            &profile,
-            fm.body(),
-            &NativeModel::Inherit,
-        );
-        assert!(
-            cursor
-                .lossy_fields
-                .iter()
-                .any(|field| field.field.starts_with("tools")),
-            "cursor override should keep tools lossiness",
-        );
-        assert!(
-            cursor.lossy_fields.iter().any(|field| field.field == "mcp"),
-            "cursor override should keep mcp lossiness",
-        );
-        assert!(
-            String::from_utf8(cursor.bytes)
-                .unwrap()
-                .contains("native-config:")
-                && !String::from_utf8(opencode.bytes)
-                    .unwrap()
-                    .contains("cursor.only"),
-            "each harness gets only its own override block",
-        );
-    }
-
-    #[test]
-    fn cursor_sandbox_is_meridian_only() {
-        let content = "---\nname: r\nharness: cursor\nsandbox: read-only\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_for_harness_with_model(
-            HarnessId::Cursor,
-            &profile,
-            fm.body(),
-            &NativeModel::Inherit,
-        );
-
-        // sandbox must not appear in the emitted YAML artifact
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("sandbox:"),
-            "sandbox leaked into artifact: {text}"
-        );
-
-        // Meridian applies it at spawn, like every other target
-        let field = out
-            .lossy_fields
-            .iter()
-            .find(|f| f.field == "sandbox")
-            .expect("sandbox should appear in lossy_fields");
-        assert_eq!(field.target, "Cursor");
-        assert_eq!(field.classification, Lossiness::MeridianOnly);
-    }
-
-    #[test]
-    fn cursor_approval_is_meridian_only() {
-        let content = "---\nname: r\nharness: cursor\napproval: auto\n---\n# body";
-        let (profile, fm, _) = profile_from(content);
-        let out = lower_for_harness_with_model(
-            HarnessId::Cursor,
-            &profile,
-            fm.body(),
-            &NativeModel::Inherit,
-        );
-
-        // approval must not appear in the emitted YAML artifact
-        let text = String::from_utf8(out.bytes).unwrap();
-        assert!(
-            !text.contains("approval:"),
-            "approval leaked into artifact: {text}"
-        );
-
-        // Meridian applies it at spawn, like every other target
-        let field = out
-            .lossy_fields
-            .iter()
-            .find(|f| f.field == "approval")
-            .expect("approval should appear in lossy_fields");
-        assert_eq!(field.target, "Cursor");
-        assert_eq!(field.classification, Lossiness::MeridianOnly);
     }
 
     // --- Antigravity lowering ---

@@ -77,9 +77,9 @@ A finding is here when it is true of the package wherever it runs. What one harn
 | Module | Holds |
 |---|---|
 | `tool_names` | the capability vocabulary and the `capability(pattern)` grammar; `capabilities()` lists them with their aliases |
-| `tool_natives` | per-host native tool tables as data (Claude, Codex, OpenCode, Pi, Cursor, and the `meridian-flow` table); `vocabulary()` returns the published whole |
+| `tool_natives` | per-host native tool tables as data (Claude, Codex, OpenCode, Pi, Antigravity, and the `meridian-flow` table); `vocabulary()` returns the published whole |
 | `tool_policy`, `mcp` | the tool rules of an Agent and the `mcp(server/tool)` reference grammar |
-| `mcp_server`, `mcp_servers`, `visibility` | an `mcp.toml` server definition, the one codec for the Claude `mcpServers` entry (read and rendered for Claude, Pi, Cursor and a plugin tree), and `Visibility` |
+| `mcp_server`, `mcp_servers`, `visibility` | an `mcp.toml` server definition, the one codec for the Claude `mcpServers` entry (read and rendered for Claude, Pi and a plugin tree), and `Visibility` |
 | `model_policy` | the `model-policies` rule and its validator |
 | `harness` | `HarnessId` and the reserved consumer namespaces (`meridian-flow`, `meridian-cli`) |
 | `hooks`, `visibility` | the `hook.toml` model, its per-target tables and renderers (above), and `Visibility` |

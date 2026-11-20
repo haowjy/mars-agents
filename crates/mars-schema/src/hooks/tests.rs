@@ -114,13 +114,11 @@ fn profile(root: &str) -> targets::Profile {
 
 #[test]
 fn event_tables_match_supported_command_hook_targets() {
-    let (claude, codex, cursor) = (events(".claude"), events(".codex"), events(".cursor"));
+    let (claude, codex) = (events(".claude"), events(".codex"));
     assert_eq!(claude.len(), 29);
     assert!(claude.iter().any(|e| e.name == "SessionEnd"));
     assert_eq!(codex.len(), 11);
     assert!(codex.iter().any(|e| e.name == "SessionEnd"));
-    assert_eq!(cursor.len(), 21);
-    assert!(cursor.iter().any(|e| e.name == "beforeShellExecution"));
     for root in [".opencode", ".pi"] {
         assert!(targets::target(root).unwrap().is_file());
     }
@@ -271,10 +269,10 @@ fn reads_targets_with_default_native_hooks() {
 #[test]
 fn hooks_select_every_managed_target_that_renders_an_event() {
     let def = read_local(GUARD).def.unwrap();
-    let managed: Vec<String> = [".claude", ".codex", ".cursor", ".opencode", ".pi"]
+    let managed: Vec<String> = [".claude", ".codex", ".opencode", ".pi"]
         .map(String::from)
         .into();
-    // Cursor renders nothing before 0.26; GUARD's PreToolUse renders on the two TypeScript targets.
+    // GUARD's PreToolUse renders on the two TypeScript targets.
     assert_eq!(
         def.select(&managed),
         [".claude", ".codex", ".opencode", ".pi"]

@@ -139,7 +139,7 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
-    memo: HashMap<(String, String, Option<String>), Option<String>>,
+    memo: HashMap<(String, String), Option<String>>,
 }
 
 impl<'a> NativeModelRoutingRuntime<'a> {
@@ -189,7 +189,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     pub(crate) fn decision_for_profile(
         &mut self,
         profile: &mars_schema::agent::AgentProfile,
-        overlay: Option<&crate::config::AgentOverlay>,
         target_harness: &mars_schema::HarnessId,
         include_fanout: bool,
         emit_all: bool,
@@ -202,9 +201,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             {
                 continue;
             }
-            if let Some(model_id) =
-                self.route_candidate(profile, overlay, &candidate.token, target_harness)
-            {
+            if let Some(model_id) = self.route_candidate(&candidate.token, target_harness) {
                 return NativeModelDecision::Set {
                     model_id,
                     token: candidate.token,
@@ -280,8 +277,6 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         harness: mars_schema::HarnessId,
     ) -> crate::build::policy::ModelProfile {
         let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
-        let listing = crate::harness::registry::slug_tiers(harness)
-            .and_then(|_| self.session.listing(harness));
         crate::build::policy::profile_for_model(
             profile,
             overlay,
@@ -296,44 +291,27 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             &crate::build::policy::EffortRoute {
                 harness,
                 catalog: &self.cache.catalog,
-                listing: listing.as_ref(),
             },
         )
     }
 
     fn route_candidate(
         &mut self,
-        profile: &mars_schema::agent::AgentProfile,
-        overlay: Option<&crate::config::AgentOverlay>,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
-        let memo_effort = if crate::harness::registry::slug_tiers(*target_harness).is_some() {
-            self.profile_for_token(profile, overlay, Some(token), *target_harness)
-                .profile
-                .effort
-                .map(|effort| effort.as_str().to_string())
-        } else {
-            None
-        };
-        let key = (
-            token.to_string(),
-            target_harness.as_str().to_string(),
-            memo_effort,
-        );
+        let key = (token.to_string(), target_harness.as_str().to_string());
         if let Some(cached) = self.memo.get(&key) {
             return cached.clone();
         }
 
-        let routed = self.route_candidate_uncached(profile, overlay, token, target_harness);
+        let routed = self.route_candidate_uncached(token, target_harness);
         self.memo.insert(key, routed.clone());
         routed
     }
 
     fn route_candidate_uncached(
         &mut self,
-        profile: &mars_schema::agent::AgentProfile,
-        overlay: Option<&crate::config::AgentOverlay>,
         token: &str,
         target_harness: &mars_schema::HarnessId,
     ) -> Option<String> {
@@ -342,111 +320,39 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         let provider_order = self.routing_settings.provider_order_names();
         let harness_order = self.routing_settings.harness_order_names();
         let default_harness = self.routing_settings.default_harness_name();
-        let route_model_ids = self.route_model_ids(target_harness, &resolved.model_id);
-
-        for route_model_id in route_model_ids {
-            let input = crate::routing::RoutingInput {
-                preferred_harness: None,
-                model_id: &route_model_id,
-                provider_for_order: if resolved.explicit_provider {
-                    None
-                } else {
-                    resolved.provider_for_order.as_deref()
-                },
-                provider_constraint: resolved.provider_constraint.as_deref(),
-                settings_provider_order: provider_order.as_deref(),
-                settings_harness_order: harness_order.as_deref(),
-                config_default_harness: default_harness.as_deref(),
-                installed_harnesses: &self.installed_for_native_targets,
-                excluded_harnesses: &[],
-                harness_scope: crate::config::targets::HarnessScope::Only(
-                    [*target_harness].into_iter().collect(),
-                ),
-                catalog_model_slugs: Some(self.catalog_model_slugs.as_slice()),
-            };
-            let trace = crate::routing::evaluate_candidates(&input, &mut self.session, |_| {
-                crate::harness::host::AuthState::Unchecked
-            });
-            if trace.selected_harness() != target_name {
-                continue;
-            }
-            if crate::routing::acceptance::accept_route(
-                &trace,
-                &self.installed_for_native_targets,
-                native_acceptance_policy(*target_harness),
-            )
-            .is_err()
-            {
-                continue;
-            }
-
-            return self.native_model_id(
-                AgentRef { profile, overlay },
-                token,
-                target_harness,
-                &resolved,
-                &route_model_id,
-                &trace,
-            );
+        let input = crate::routing::RoutingInput {
+            preferred_harness: None,
+            model_id: &resolved.model_id,
+            provider_for_order: if resolved.explicit_provider {
+                None
+            } else {
+                resolved.provider_for_order.as_deref()
+            },
+            provider_constraint: resolved.provider_constraint.as_deref(),
+            settings_provider_order: provider_order.as_deref(),
+            settings_harness_order: harness_order.as_deref(),
+            config_default_harness: default_harness.as_deref(),
+            installed_harnesses: &self.installed_for_native_targets,
+            excluded_harnesses: &[],
+            harness_scope: crate::config::targets::HarnessScope::Only(
+                [*target_harness].into_iter().collect(),
+            ),
+            catalog_model_slugs: Some(self.catalog_model_slugs.as_slice()),
+        };
+        let trace = crate::routing::evaluate_candidates(&input, &mut self.session, |_| {
+            crate::harness::host::AuthState::Unchecked
+        });
+        if trace.selected_harness() != target_name {
+            return None;
         }
-        None
-    }
-
-    fn route_model_ids(
-        &self,
-        target_harness: &mars_schema::HarnessId,
-        model_id: &str,
-    ) -> Vec<String> {
-        let mut ids = vec![model_id.to_string()];
-        if let Some(tiers) = crate::harness::registry::slug_tiers(*target_harness)
-            && let Some(shimmed) = (tiers.respell)(model_id)
-            && !ids.iter().any(|id| id == &shimmed)
-        {
-            ids.push(shimmed);
-        }
-        ids
-    }
-
-    fn native_model_id(
-        &mut self,
-        agent: AgentRef<'_>,
-        token: &str,
-        target_harness: &mars_schema::HarnessId,
-        resolved: &NativeResolvedModel<'_>,
-        routed_model_id: &str,
-        trace: &crate::routing::RoutingTrace,
-    ) -> Option<String> {
-        if *target_harness == mars_schema::HarnessId::OpenCode {
-            let harness_name = target_harness;
-            let selected = trace
-                .assessments
-                .iter()
-                .find(|assessment| assessment.harness == harness_name.as_str());
-            let launch = crate::models::harness_model::resolve_harness_model(
-                *harness_name,
-                &resolved.model_id,
-                selected.and_then(|assessment| assessment.chosen_slug.as_deref()),
-                selected.and_then(|assessment| assessment.chosen_model.as_deref()),
-                resolved.provider_constraint.as_deref(),
-                resolved.provider_for_order.as_deref(),
-            );
-            // Routing acceptance can succeed without a usable OpenCode probe.
-            // Never emit a bare model id in that case: OpenCode requires a
-            // provider/model slug, so skip this native projection instead.
-            return (!launch.harness_model_id.is_empty() && launch.harness_model_id.contains('/'))
-                .then_some(launch.harness_model_id);
-        }
-        if crate::harness::registry::slug_tiers(*target_harness).is_none() {
-            return Some(resolved.model_id.clone());
-        }
-
-        // The resolved effort is folded into the model slug; with none to send, the routed id
-        // stands.
-        Some(
-            self.profile_for_token(agent.profile, agent.overlay, Some(token), *target_harness)
-                .tier_slug
-                .unwrap_or_else(|| routed_model_id.to_string()),
+        crate::routing::acceptance::accept_route(
+            &trace,
+            &self.installed_for_native_targets,
+            native_acceptance_policy(*target_harness),
         )
+        .ok()?;
+
+        native_model_id(target_harness, &resolved, &trace)
     }
 
     fn resolve_candidate(&self, token: &str) -> Option<NativeResolvedModel<'a>> {
@@ -909,7 +815,7 @@ pub(crate) fn qualifying_agent_emissions(
             continue;
         }
         let (model, resolved) =
-            match model_router.decision_for_profile(profile, overlay, harness, true, true) {
+            match model_router.decision_for_profile(profile, harness, true, true) {
                 NativeModelDecision::Set { model_id, token } => (
                     crate::compiler::agents::lower::NativeModel::Set(model_id),
                     model_router.profile_for_token(profile, overlay, Some(&token), *harness),
@@ -930,13 +836,9 @@ pub(crate) fn qualifying_agent_emissions(
             if !in_scope(harness) {
                 continue;
             }
-            if let NativeModelDecision::Set { model_id, token } = model_router.decision_for_profile(
-                profile,
-                overlay,
-                harness,
-                effective_fanout,
-                false,
-            ) {
+            if let NativeModelDecision::Set { model_id, token } =
+                model_router.decision_for_profile(profile, harness, effective_fanout, false)
+            {
                 emissions.push(NativeEmission::new(
                     *harness,
                     crate::compiler::agents::lower::NativeModel::Set(model_id),
@@ -1152,6 +1054,35 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
     }
     .map(|provider| provider.trim().to_ascii_lowercase())
     .filter(|provider| !provider.is_empty())
+}
+
+/// The model id a native agent file carries on `target_harness`, or `None` when the harness
+/// cannot name the model.
+fn native_model_id(
+    target_harness: &mars_schema::HarnessId,
+    resolved: &NativeResolvedModel<'_>,
+    trace: &crate::routing::RoutingTrace,
+) -> Option<String> {
+    if *target_harness != mars_schema::HarnessId::OpenCode {
+        return Some(resolved.model_id.clone());
+    }
+    let selected = trace
+        .assessments
+        .iter()
+        .find(|assessment| assessment.harness == target_harness.as_str());
+    let launch = crate::models::harness_model::resolve_harness_model(
+        *target_harness,
+        &resolved.model_id,
+        selected.and_then(|assessment| assessment.chosen_slug.as_deref()),
+        selected.and_then(|assessment| assessment.chosen_model.as_deref()),
+        resolved.provider_constraint.as_deref(),
+        resolved.provider_for_order.as_deref(),
+    );
+    // Routing acceptance can succeed without a usable OpenCode probe.
+    // Never emit a bare model id in that case: OpenCode requires a
+    // provider/model slug, so skip this native projection instead.
+    (!launch.harness_model_id.is_empty() && launch.harness_model_id.contains('/'))
+        .then_some(launch.harness_model_id)
 }
 
 /// A native harness serves its provider's models directly; a probe-backed one proves a slug

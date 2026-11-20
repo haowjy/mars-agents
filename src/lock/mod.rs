@@ -1651,7 +1651,7 @@ installed_checksum = "sha256:bbb"
         assert_eq!(pi.installed_checksum, "sha256:pi");
         assert!(index.contains_output(".mars", &dest));
         assert!(index.contains_output(".pi", &dest));
-        assert!(!index.contains_output(".cursor", &dest));
+        assert!(!index.contains_output(".opencode", &dest));
     }
 
     #[test]
@@ -1662,18 +1662,18 @@ installed_checksum = "sha256:bbb"
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
 
         let mars_paths = lock.output_dest_paths_for_target(".mars");
         assert!(mars_paths.contains("agents/coder.md"));
         assert!(mars_paths.contains("skills/review"));
 
-        let cursor_paths = lock.output_dest_paths_for_target(".cursor");
-        assert_eq!(cursor_paths.len(), 1);
-        assert!(cursor_paths.contains("agents/coder.md"));
+        let opencode_paths = lock.output_dest_paths_for_target(".opencode");
+        assert_eq!(opencode_paths.len(), 1);
+        assert!(opencode_paths.contains("agents/coder.md"));
         assert!(lock.output_dest_paths_for_target(".claude").is_empty());
     }
 
@@ -1681,19 +1681,19 @@ installed_checksum = "sha256:bbb"
     fn contains_output_matches_target_root_and_dest_path() {
         let mut lock = sample_lock();
         assert!(lock.contains_output(".mars", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
 
         lock.items
             .get_mut("agent/coder")
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
-        assert!(lock.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/missing.md"));
+        assert!(lock.contains_output(".opencode", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/missing.md"));
     }
 
     #[test]
@@ -2123,19 +2123,19 @@ installed_checksum = "sha256:bbb"
             &old_lock,
             &apply_outcomes,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
         assert!(view.contains_output(".mars", "agents/coder.md"));
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
+        assert!(view.contains_output(".opencode", "agents/coder.md"));
         assert!(!old_lock.contains_output(".mars", "agents/coder.md"));
     }
 
@@ -2145,19 +2145,19 @@ installed_checksum = "sha256:bbb"
         let view = ownership_lock_after_target_sync(
             &lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(view.contains_output(".opencode", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
     }
 
     #[test]
@@ -2166,23 +2166,23 @@ installed_checksum = "sha256:bbb"
         apply_target_sync_outputs(
             &mut lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
-        assert!(lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(lock.contains_output(".opencode", "agents/coder.md"));
 
         apply_target_sync_outputs(
             &mut lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 0,
                 items_removed: 1,
                 errors: Vec::new(),
@@ -2190,7 +2190,7 @@ installed_checksum = "sha256:bbb"
                 removed_dest_paths: vec!["agents/coder.md".to_string()],
             }],
         );
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
         assert!(lock.contains_output(".mars", "agents/coder.md"));
     }
 
@@ -2202,9 +2202,9 @@ installed_checksum = "sha256:bbb"
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
 
         let canonical = lock.canonical_flat_items();
@@ -2220,9 +2220,9 @@ installed_checksum = "sha256:bbb"
                 .all(|(_, item)| { lock.contains_output(".mars", item.dest_path.as_str()) })
         );
 
-        let cursor = lock.flat_items_for_target(".cursor");
-        assert_eq!(cursor.len(), 1);
-        assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
+        let opencode = lock.flat_items_for_target(".opencode");
+        assert_eq!(opencode.len(), 1);
+        assert_eq!(opencode[0].0.as_str(), "agents/coder.md");
     }
 
     #[test]

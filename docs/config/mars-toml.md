@@ -169,7 +169,7 @@ dir = "plugin"
 name = "meridian-base"
 marketplace = "meridian-base"
 description = "Core agents and skills for Meridian"
-harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
+harnesses = ["claude", "codex", "grok", "opencode"]
 ```
 
 | Field | Type | Default | Description |
@@ -178,14 +178,14 @@ harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
 | `name` | string | `[package].name` | Plugin identifier and namespace |
 | `marketplace` | string | `[package].name` | Marketplace/catalog identifier used with `name@marketplace` installs |
 | `description` | string | `[package].description` | Plugin-facing description |
-| `marketplace-repository` | string | unset | Repository that hosts the package (`owner/repo` for GitHub, or an `https://` or `ssh://` URL). Set, the Claude marketplace entry's `source` becomes `{ "source": "git-subdir", "url": <this>, "path": "<dir>/claude", "ref": "v<[package].version>" }`, so a marketplace install serves the release tag instead of `main`. Needs `claude` among the harnesses. Cursor's catalog takes a local path only, so it stays unpinned |
-| `harnesses` | string[] | every supported harness | Harnesses the build serves: `claude`, `codex`, `grok`, `cursor`, and `opencode`. Harnesses added in later releases join the default |
+| `marketplace-repository` | string | unset | Repository that hosts the package (`owner/repo` for GitHub, or an `https://` or `ssh://` URL). Set, the Claude marketplace entry's `source` becomes `{ "source": "git-subdir", "url": <this>, "path": "<dir>/claude", "ref": "v<[package].version>" }`, so a marketplace install serves the release tag instead of `main`. Needs `claude` among the harnesses. |
+| `harnesses` | string[] | every supported harness | Harnesses the build serves: `claude`, `codex`, `grok`, and `opencode`. Harnesses added in later releases join the default |
 
 `dir` must stay inside the package and cannot be `.`, `..`, a dot directory, or an
 `agents`, `skills`, `hooks`, or `bootstrap` source directory. Absolute paths and parent
 components are rejected. Pi has no plugin format and cannot be listed.
 
-`name` must satisfy every listed harness. Cursor and Codex require lowercase identifiers
+`name` must satisfy every listed harness. Codex requires lowercase identifiers
 made from letters, digits, dots, and hyphens; OpenCode requires an npm-compatible package
 name. Claude-compatible names cannot contain spaces, `@`, `:`, or path separators.
 
@@ -240,7 +240,7 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `path` | string | Local filesystem path (relative to project root or absolute) |
 | `subpath` | string | Optional package root under the fetched repo or local path |
 | `version` | string | Version constraint for git sources (see [Version Constraints](#version-constraints)) |
-| `dialect` | string | Inbound lift dialect: `claude`, `agent-skills`, `codex`, `opencode`, `cursor`, or `mars-native` (see [Dialect](#dialect)) |
+| `dialect` | string | Inbound lift dialect: `claude`, `agent-skills`, `codex`, `opencode`, `cursor` (a Cursor repository layout, read for its rules and skills), or `mars-native` (see [Dialect](#dialect)) |
 | `plugin` | string | The plugin to install from the Claude marketplace at this source (see [Marketplace plugins](#marketplace-plugins)) |
 
 `subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
@@ -351,7 +351,7 @@ Rules:
 
 ```toml
 [settings]
-targets = [".claude", ".cursor"]
+targets = [".claude", ".opencode"]
 agent_emission = "auto"
 min_mars_version = "0.12.0"
 models_cache_ttl_hours = 24
@@ -369,7 +369,7 @@ include_fanout = false
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `targets` | string[] | unset | Managed target directories copied from `.mars/`. A sync writes and removes only what it recorded in these targets. What it installed in a target you take out of the list stays on disk and in `mars.lock`, and every sync warns (`unmanaged-target`) until you run `mars unlink <target>` or list the target again. `.cursor` is deprecated: a sync warns (`deprecated-cursor-target`) while it is listed, and Mars drops Cursor in the minor after 0.37.0 |
+| `targets` | string[] | unset | Managed target directories copied from `.mars/`. A sync writes and removes only what it recorded in these targets. What it installed in a target you take out of the list stays on disk and in `mars.lock`, and every sync warns (`unmanaged-target`) until you run `mars unlink <target>` or list the target again. `.cursor` is retired: a sync warns (`retired-target`) while it is listed and writes nothing there ([Cursor](retired-keys.md#cursor)) |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never`. Under `MERIDIAN_MANAGED=1`, `auto` withholds the agents of harnesses Meridian launches and still writes Antigravity's, which Meridian does not launch |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
@@ -529,7 +529,7 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
   - A project-wide deny that a target's native agent files cannot carry is one line for the
     project in `mars sync`: the rule is named once per target, not once per agent, and
     `--verbose` lists it. Native `.claude` and `.opencode` files carry every deny
-    (scoped ones included), and `.codex`, `.pi` and `.cursor` carry none, so the rule holds there only for
+    (scoped ones included), and `.codex` and `.pi` carry none, so the rule holds there only for
     launches through Meridian.
   - A restriction every agent must keep belongs here and not in `opencode.json`: an OpenCode
     agent file's rules come after `opencode.json` in OpenCode's order, so an agent that carries
@@ -633,7 +633,7 @@ agent = "deny"
 |---|---|---|
 | `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
-| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `agy`) |
+| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `pi`, `agy`) |
 | `effort` | string | Effort level: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. See [Effort](schema-v1.md#effort) |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |

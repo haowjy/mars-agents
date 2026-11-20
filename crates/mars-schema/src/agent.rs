@@ -328,7 +328,10 @@ fn push_unknown_harness(diags: &mut Vec<crate::diagnostic::SchemaDiagnostic>, va
         "harness.unknown",
         Severity::Error,
         key_path("harness"),
-        format!("unknown harness `{value}`; known: claude, codex, opencode, cursor, pi"),
+        format!(
+            "unknown harness `{value}`; known: {}",
+            crate::harness::names()
+        ),
     ));
 }
 
@@ -683,7 +686,10 @@ pub(crate) fn read_fields(
             "harness" => {
                 profile.harness = read_string(value, "harness", false, diags).and_then(|name| {
                     crate::harness::parse(&name).or_else(|| {
-                        push_unknown_harness(diags, &name);
+                        match crate::retired::harness_diagnostic(&name, key_path("harness")) {
+                            Some(retired) => diags.push(retired),
+                            None => push_unknown_harness(diags, &name),
+                        }
                         None
                     })
                 });

@@ -137,7 +137,7 @@ This is the core operation. It runs the full [sync pipeline](../internals/sync-p
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
-The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)`; the other files Mars edits by key in the same way (an `agy` plugin's `.agents/plugins.json`, `.agy/plugin.json` and `.agy/hooks.json`) are listed with them, named by what they hold (`plugin entries`, `plugin manifest keys`, `hooks`). All of them count as `updated N config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the MCP files' count as `mcp_files_changed`; the other keyed files are not in it. `--diff` previews them as `would update N config files`. `already up to date` prints when the sync changed none of the installed items, hook files and MCP files above and raised no warning. A native agent file the sync recreates because you deleted it is not counted, so that sync can print the line too. The exceptions are advisory warnings, which say nothing about whether the sync reached its state: lossiness notes, unset env vars, unknown hook events, skipped or renamed names, and package format or version notices. Any other warning, such as a failed write or an entry Mars left in place because it was edited by hand, withholds the line. A sync that rewrites a hand-edited hook file, native agent or skill copy also warns, so it does not print the line either. `--diff` does not look at every file a real sync rewrites, so with nothing pending it prints `no pending changes found`, not `already up to date`. `--diff` also shows the MCP warnings a real sync would, such as a hand-edited server it would leave alone; `mars validate` does not.
+The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)`; the other files Mars edits by key in the same way (an `agy` plugin's `.agents/plugins.json`, `.agy/plugin.json` and `.agy/hooks.json`) are listed with them, named by what they hold (`plugin entries`, `plugin manifest keys`, `hooks`). All of them count as `updated N config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the MCP files' count as `mcp_files_changed`; the other keyed files are not in it. `--diff` previews them as `would update N config files`. `already up to date` prints when the sync changed none of the installed items, hook files and MCP files above and raised no warning. A native agent file the sync recreates because you deleted it is not counted, so that sync can print the line too. The exceptions are advisory warnings, which say nothing about whether the sync reached its state: lossiness notes, unset env vars, unknown hook events, skipped or renamed names, and package format or version notices. Any other warning, such as a failed write or an entry Mars left in place because it was edited by hand, withholds the line. A sync that rewrites a hand-edited hook file, native agent or skill copy also warns, so it does not print the line either. `--diff` does not look at every file a real sync rewrites, so with nothing pending it prints `no pending changes found`, not `already up to date`. `--diff` also shows the MCP warnings a real sync would, such as a hand-edited server it would leave alone; `mars validate` does not.
 
 ---
 
@@ -349,12 +349,12 @@ mars link <target> [--force]
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
-- Linking `.cursor` warns (`deprecated-cursor-target`), and so does every sync while it is a target: Cursor support goes away in the minor after 0.37.0. Run `mars unlink .cursor` to remove it
-- Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
+- `mars link cursor` fails: Mars no longer writes `.cursor` ([Cursor](../config/retired-keys.md#cursor)). A project whose `targets` still names it gets a `retired-target` warning on every sync
+- Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.opencode` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
-mars link .cursor            # Copy skills/MCP into .cursor (deprecated, see below)
+mars link .opencode          # Copy skills/MCP into .opencode
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
@@ -377,6 +377,7 @@ mars unlink <target>
 - Removes only outputs and config entries owned by the target's lock records. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays
 - Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
 - Reports if the target was not managed (no-op)
+- Works for a retired target (`.cursor`): it removes what the lock records, including the MCP servers and hook entries Mars added to `.cursor/mcp.json` and `.cursor/hooks.json` ([Cursor](../config/retired-keys.md#cursor))
 
 ```bash
 mars unlink .agents          # Remove deprecated .agents target
@@ -804,7 +805,7 @@ the user `config.toml`, `mars.lock`, `.mars/`, project target configuration, or 
 model catalogs.
 
 Without `--out`, `[plugin]` is required and the command writes `[plugin].dir` (default `plugin`).
-The configured build also writes the Claude and Cursor marketplace catalogs plus the root OpenCode
+The configured build also writes the Claude marketplace catalog plus the root OpenCode
 `package.json`. With `--out`, Mars writes only the output directory and accepts a package without
 `[plugin]`; an explicit destination cannot resolve to the configured directory.
 
@@ -813,16 +814,14 @@ The output is an owned nested artifact:
 ```text
 <dir>/
   claude/    # Claude, Codex, and Grok
-  cursor/    # Cursor
   opencode/  # OpenCode
   .mars-plugin.json
 ```
 
 Only trees selected by `[plugin].harnesses` are written. The shared Claude tree contains native
 agents, skills, exported hooks, exported MCP servers, and `.claude-plugin/plugin.json`; Codex
-loads its skills, hooks, and MCP servers but not its agents. Cursor receives its native tree.
-OpenCode receives an npm-shaped package that registers skills, agents and MCP servers and
-composes default-export native hooks. `[hooks]` reaches only the shared Claude tree; the OpenCode and Cursor trees drop it with `plugin-native-hook-dropped` unless the hook has a native hook for that tree (see [Plugin builds](../config/mcp-and-hooks.md#plugin-builds)).
+loads its skills, hooks, and MCP servers but not its agents. OpenCode receives an npm-shaped package that registers skills, agents and MCP servers and
+composes default-export native hooks. `[hooks]` reaches only the shared Claude tree; the OpenCode tree drops it with `plugin-native-hook-dropped` unless the hook has a native hook for that tree (see [Plugin builds](../config/mcp-and-hooks.md#plugin-builds)).
 
 Mars records generated file hashes, input and dependency identities, version, and root-file
 ownership in the sentinel. It atomically replaces owned output, recovers interrupted staging, and
@@ -857,7 +856,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`; `agy` is refused: Meridian does not launch it). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`; `agy` is refused: Meridian does not launch it). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |
@@ -945,7 +944,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 - `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
-- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Cursor, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
+- `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Antigravity, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
 - `execution_policy.network` is one resolved `{mode, allow, deny}` object. `mode` is
   `"allow"`, `"deny"`, `"allowlist"`, or `null`; Meridian resolves a remaining unset mode
   from the sandbox. Mars removes inert sets (`deny` removes both; `allow` removes `allow`) and
@@ -1015,7 +1014,6 @@ The two fields stay distinct on every harness:
 | Codex | `bash(git *)` | `exec_command(git *)` | `exec_command` |
 | OpenCode | `web` | `websearch`, `webfetch` | `websearch`, `webfetch` |
 | Pi | `edit(src/**)` | `edit(src/**)`, `write(src/**)` | `edit`, `write` |
-| Cursor | `notebook(file.ipynb)` | `EditNotebook(file.ipynb)` | `EditNotebook` |
 
 **Warning semantics:** `warnings[]` contains only unexpected, user-actionable conditions. Routing path facts are NOT warnings — `harness_model_source: "passthrough"` and `harness_model_confidence: "unknown"` (e.g., Pi or explicit harness) appear in routing/provenance fields and do not produce warnings. Real warnings include: enabled-target constraints exhausting auto-routing candidates.
 

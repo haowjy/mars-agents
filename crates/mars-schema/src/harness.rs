@@ -29,7 +29,6 @@ harnesses! {
     Pi,
     #[serde(rename = "opencode")]
     OpenCode,
-    Cursor,
     Agy,
 }
 
@@ -40,7 +39,6 @@ impl HarnessId {
             Self::Codex => "codex",
             Self::Pi => "pi",
             Self::OpenCode => "opencode",
-            Self::Cursor => "cursor",
             Self::Agy => "agy",
         }
     }
@@ -174,14 +172,6 @@ const OPENCODE: HostSpec = HostSpec {
     effort: None,
 };
 
-const CURSOR: HostSpec = HostSpec {
-    display_name: "Cursor",
-    tools: tool_natives::CURSOR,
-    scopes_patterns: true,
-    mcp: McpNaming::Format(|server, tool| format!("Mcp({server}:{tool})")),
-    effort: None,
-};
-
 /// `agy models` 1.5.12.
 const AGY: HostSpec = HostSpec {
     display_name: "Antigravity",
@@ -208,7 +198,6 @@ impl Host {
             Self::Harness(HarnessId::Codex) => &CODEX,
             Self::Harness(HarnessId::Pi) => &PI,
             Self::Harness(HarnessId::OpenCode) => &OPENCODE,
-            Self::Harness(HarnessId::Cursor) => &CURSOR,
             Self::Harness(HarnessId::Agy) => &AGY,
             Self::MeridianFlow => &FLOW,
         }

@@ -316,7 +316,7 @@ Copies content from `.mars/` canonical store to each configured target directory
 - Targets are the directories in `settings.targets`, which `mars link` writes. Mars creates none by default: with none set, a sync copies nothing outside `.mars/`
 - All targets get file copies
 - Uses `platform::fs` for atomic operations (tmp+rename)
-- Orphan cleanup: scoped per target via `output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target** (`target_root` + `dest_path` on lock `OutputRecord`). A `.mars`-only record does not authorize deletes under `.cursor` or other targets. Untracked collisions are preserved unless `mars sync --force` adopts them (see `src/target_sync/.context/CONTEXT.md`)
+- Orphan cleanup: scoped per target via `output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target** (`target_root` + `dest_path` on lock `OutputRecord`). A `.mars`-only record does not authorize deletes under `.claude` or other targets. Untracked collisions are preserved unless `mars sync --force` adopts them (see `src/target_sync/.context/CONTEXT.md`)
 - Non-fatal per-target: errors on one target are recorded in `TargetSyncOutcome` but don't stop other targets from syncing
 
 ### 7. Finalize (`finalize`)

@@ -3,8 +3,6 @@ mod test_common;
 
 #[path = "launch_bundle/common.rs"]
 mod common;
-#[path = "launch_bundle/cursor.rs"]
-mod cursor;
 #[path = "launch_bundle/decision_report.rs"]
 mod decision_report;
 #[path = "launch_bundle/errors.rs"]

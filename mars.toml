@@ -5,6 +5,5 @@ url = "https://github.com/haowjy/meridian-dev-workflow"
 targets = [
     ".pi",
     ".claude",
-    ".cursor",
 ]
 models_cache_ttl_hours = 24

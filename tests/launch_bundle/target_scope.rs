@@ -213,7 +213,7 @@ fn caller_exclusions_can_deny_all_without_configured_targets() {
             "--exclude-harness",
             "opencode",
             "--exclude-harness",
-            "cursor",
+            "agy",
         ],
     );
     assert!(!output.status.success());

@@ -352,6 +352,11 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(stdout, "{file} ({}, {target_root})", kind.plural);
     }
 
+    // Copies into target directories (`.claude/skills/...`) that no action outcome names, such as
+    // those a newly added target gets.
+    let target_written: usize = report.target_outcomes.iter().map(|o| o.items_synced).sum();
+    let target_removed: usize = report.target_outcomes.iter().map(|o| o.items_removed).sum();
+
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
     if installed > 0 {
@@ -396,6 +401,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
         }
     }
+    if target_written > 0 {
+        let _ = writeln!(stdout, "  wrote       {target_written} target files");
+    }
+    if target_removed > 0 {
+        let _ = writeln!(stdout, "  removed     {target_removed} target files");
+    }
     if config_files > 0 {
         let noun = if config_files == 1 { "file" } else { "files" };
         if dry {
@@ -420,6 +431,8 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && native_removed == 0
         && hook_files == 0
         && config_files == 0
+        && target_written == 0
+        && target_removed == 0
         && report.dependency_moves.is_empty()
         && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {

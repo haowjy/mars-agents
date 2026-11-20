@@ -341,7 +341,7 @@ const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 
 impl Settings {
     fn managed_root_note(&self) -> Option<SchemaDiagnostic> {
-        managed_root_note(self.managed_root.as_deref(), self.targets.is_some())
+        managed_root_note(self.managed_root.as_deref(), self.targets.is_none())
     }
 
     pub fn models_cache_ttl_hours(&self) -> u32 {
@@ -442,23 +442,22 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     })
 }
 
-/// The `field.deprecated` note for a file's `managed_root`, worded for whether Mars reads it. A
-/// file that sets `targets` has it ignored; otherwise it counts when no other file sets
-/// `targets`. Both `[settings]` readers, `mars.toml` and `mars.local.toml`, call this once, so the
-/// key has no other reader. It goes in the minor after 0.37.0, with `targets` alone left.
-pub fn managed_root_note(
-    managed_root: Option<&str>,
-    file_sets_targets: bool,
-) -> Option<SchemaDiagnostic> {
+/// The `field.deprecated` note for a file's `managed_root`, worded for whether it takes effect
+/// (`in_effect`): the key counts only while no layer sets `targets`, and a higher file's
+/// `managed_root` replaces a lower one's. A reader of one file alone (`read_consumer`, for the
+/// WASM) cannot see the other layers and passes whether the file itself sets `targets`; the CLI
+/// drops that note (`is_managed_root_note`) and words its own from the layered result. The key
+/// goes in the minor after 0.37.0, with `targets` alone left.
+pub fn managed_root_note(managed_root: Option<&str>, in_effect: bool) -> Option<SchemaDiagnostic> {
     let managed_root = managed_root?;
     let as_target = format!("[\"{managed_root}\"]");
-    let message = if file_sets_targets {
+    let message = if in_effect {
         format!(
-            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars ignores it here because the file sets `targets`. Delete it: {DOCS}/mars-toml.md#managed_root"
+            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}`. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
         )
     } else {
         format!(
-            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}` while no file sets `targets`. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
+            "`settings.managed_root` is deprecated and goes away in the next minor release; it has no effect because another setting overrides it. Delete it: {DOCS}/mars-toml.md#managed_root"
         )
     };
     Some(SchemaDiagnostic::new(
@@ -467,6 +466,11 @@ pub fn managed_root_note(
         key_path(&["settings", "managed_root"]),
         message,
     ))
+}
+
+/// Whether `note` is the one [`managed_root_note`] builds.
+pub fn is_managed_root_note(note: &SchemaDiagnostic) -> bool {
+    note.code == "field.deprecated" && note.path == key_path(&["settings", "managed_root"])
 }
 
 /// One `field.unknown` note for each key a serde pass left unread, `prefix` being where the

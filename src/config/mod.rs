@@ -552,7 +552,10 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    unknown_keys.chain(managed_root_notes).chain(floors).collect()
+    unknown_keys
+        .chain(managed_root_notes)
+        .chain(floors)
+        .collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {

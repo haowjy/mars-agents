@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.36.2] - 2026-11-20
+
+### Fixed
+- `mars add <repo> --plugin <name>` installs only the skills a marketplace entry lists when the entry's source is the repository root, even if the repository also has a `.claude-plugin/plugin.json` with its own `skills` key. `jamesrochabrun/skills --plugin frontend-designer` installed 24 skills and now installs 1.
+
 ## [0.36.1] - 2026-11-20
 
 ### Fixed

@@ -1219,11 +1219,6 @@ pub(crate) fn record_provided_skills(
                 }
             }
         }
-        outputs.sort_by(|a, b| {
-            a.target_root
-                .cmp(&b.target_root)
-                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
-        });
         lock.items.insert(
             key,
             LockedItemV2 {

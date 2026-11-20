@@ -109,6 +109,38 @@ fn a_hosts_content_is_recorded_beside_mars_lock_not_in_it() {
 }
 
 #[test]
+fn provided_records_of_an_unnamed_target_stay_in_the_machine_lock_across_syncs() {
+    let dir = TempDir::new().unwrap();
+    let root = project(&dir);
+    let bundle = dir.child("bundle");
+    write_bundle(bundle.path(), false);
+    provide(&root, bundle.path());
+    sync(&root);
+
+    fs::write(
+        root.join("mars.toml"),
+        "[settings]\ntargets = [\".claude\"]\n",
+    )
+    .unwrap();
+    let warned = sync(&root);
+    let local = fs::read_to_string(root.join(".mars/machine.lock")).unwrap();
+    assert!(warned.contains(".agy"), "{warned}");
+    for kept in ["mcp:meridian", "hook-entry:guard", "skill/probe__meridian"] {
+        assert!(local.contains(kept), "machine.lock lost `{kept}`:\n{local}");
+    }
+    let committed = fs::read_to_string(root.join("mars.lock")).unwrap();
+    assert!(
+        !committed.contains("mcp:") && !committed.contains("hook-entry:"),
+        "{committed}"
+    );
+    sync(&root);
+    assert_eq!(
+        fs::read_to_string(root.join(".mars/machine.lock")).unwrap(),
+        local
+    );
+}
+
+#[test]
 fn a_hosts_hook_and_mcp_server_yield_to_a_package_with_one_warning_in_either_order() {
     let dir = TempDir::new().unwrap();
     let package = dir.child("pkg");

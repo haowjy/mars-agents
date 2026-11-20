@@ -60,6 +60,11 @@ impl LockFile {
                 .partition(|(target, _)| away(target));
         self.config_entries = stay;
         rest.config_entries = gone;
+        let (gone, stay) = std::mem::take(&mut self.provided_entries)
+            .into_iter()
+            .partition(|(target, _)| away(target));
+        self.provided_entries = stay;
+        rest.provided_entries = gone;
         (self, rest)
     }
 
@@ -74,6 +79,7 @@ impl LockFile {
         }
         self.items.sort_keys();
         self.config_entries.extend(rest.config_entries);
+        self.provided_entries.extend(rest.provided_entries);
         record_local_dependency(&self.items, &mut self.dependencies);
         self.dependencies.sort_keys();
     }

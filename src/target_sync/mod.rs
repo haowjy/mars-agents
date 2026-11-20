@@ -17,7 +17,6 @@ use crate::platform::fs as fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
-use crate::types::managed_cmd;
 
 #[derive(Debug, Clone)]
 pub struct TargetSyncedOutput {
@@ -305,6 +304,13 @@ fn sync_one_target(
                                     )
                                     .unwrap_or(false);
                                 if target_projection_matches {
+                                    projection.record_lossiness(
+                                        outcome.item_id.name.as_str(),
+                                        crate::diagnostic::Owner::of(outcome.source_name.as_str())
+                                            .dependency(),
+                                        false,
+                                        diag,
+                                    );
                                     synced_outputs.push(TargetSyncedOutput {
                                         dest_path: dest_rel.to_string(),
                                         installed_checksum: projection.installed_checksum,
@@ -320,6 +326,15 @@ fn sync_one_target(
                                         if wrote {
                                             items_synced += 1;
                                         }
+                                        projection.record_lossiness(
+                                            outcome.item_id.name.as_str(),
+                                            crate::diagnostic::Owner::of(
+                                                outcome.source_name.as_str(),
+                                            )
+                                            .dependency(),
+                                            wrote,
+                                            diag,
+                                        );
                                         synced_outputs.push(TargetSyncedOutput {
                                             dest_path: dest_rel.to_string(),
                                             installed_checksum: projection
@@ -344,8 +359,7 @@ fn sync_one_target(
                             match copy_item_to_target(
                                 &source,
                                 &dest,
-                                outcome.item_id.kind,
-                                outcome.item_id.name.as_str(),
+                                outcome,
                                 native_skill_variant_key.as_deref(),
                                 diag,
                             ) {
@@ -393,15 +407,7 @@ fn sync_one_target(
                                 dest_hash.expect("a present destination has a checksum result");
                             match hash {
                                 Ok(actual) if &actual != expected_checksum => {
-                                    diag.warn(
-                                        "target-divergent",
-                                        format!(
-                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
-                                            dest_rel,
-                                            cmd1 = managed_cmd("mars sync --force"),
-                                            cmd2 = managed_cmd("mars repair"),
-                                        ),
-                                    );
+                                    surface_ownership::warn_diverged(target_name, dest_rel, diag);
                                 }
                                 Ok(_) => {}
                                 Err(e) => errors
@@ -421,8 +427,7 @@ fn sync_one_target(
                     match copy_item_to_target(
                         &source,
                         &dest,
-                        outcome.item_id.kind,
-                        outcome.item_id.name.as_str(),
+                        outcome,
                         native_skill_variant_key.as_deref(),
                         diag,
                     ) {
@@ -583,12 +588,13 @@ fn record_synced_output(
 fn copy_item_to_target(
     source: &Path,
     dest: &Path,
-    kind: mars_schema::item::ItemKind,
-    item_name: &str,
+    outcome: &ActionOutcome,
     native_skill_variant_key: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
+    let kind = outcome.item_id.kind;
     if kind == mars_schema::item::ItemKind::Skill && native_skill_variant_key.is_some() {
+        let item_name = outcome.item_id.name.as_str();
         crate::compiler::variants::validate_skill_variants(source, item_name, diag);
         return crate::compiler::variants::project_skill_for_target(
             source,
@@ -596,6 +602,7 @@ fn copy_item_to_target(
             native_skill_variant_key,
             diag,
             item_name,
+            crate::diagnostic::Owner::of(outcome.source_name.as_str()).dependency(),
         );
     }
 
@@ -916,9 +923,7 @@ mod tests {
         assert!(
             diagnostics.iter().any(|diagnostic| {
                 diagnostic.code == "target-unmanaged-collision"
-                    && diagnostic
-                        .message
-                        .contains("has no installed-content claim")
+                    && diagnostic.message.contains("no installed-content claim")
             }),
             "a pending-deletion record carries no installed-content authority"
         );

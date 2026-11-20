@@ -42,6 +42,7 @@ pub(crate) fn lower_mcp_servers(mcp: &[(McpDirs, &ParsedMcpItem)]) -> Vec<McpSer
         .map(|(dir, parsed)| McpServerEntry {
             name: parsed.name.clone(),
             transport: lower_transport(parsed, dir),
+            source: parsed.source_name.clone(),
         })
         .collect()
 }
@@ -780,7 +781,9 @@ fn emits_installed_copy(
                 crate::target::dest_paths_equivalent(&output.dest_path, &dir.native())
             })
     });
-    if !installed {
+    if !installed
+        && !crate::surface_ownership::already_left_alone(dir.target(), &dir.native(), diag)
+    {
         let (code, noun) = dir.not_installed_label();
         diag.warn(
             code,

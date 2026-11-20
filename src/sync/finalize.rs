@@ -83,9 +83,6 @@ pub(crate) fn finalize(
         }
     }
 
-    for warning in &state.applied.planned.targeted.warnings {
-        diag.warn(warning.code(), warning.message());
-    }
     let dependency_changes = state
         .applied
         .planned

@@ -624,11 +624,18 @@ Every field lowering is classified as one of four categories:
 A lost restriction that changes what an agent can do is shown by default. Every other lost
 field is available under `--verbose`. Nothing is dropped without a record.
 
-A plain `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` or `mars build plugin`
-prints one line for the project (code `agent-restriction-dropped`) when a target cannot carry a
-restriction the agent declares. The line lists the agents, the targets and the kinds lost as three
-separate sets, so it stays true for any mix: each listed agent loses at least one of the listed kinds
-on at least one of the listed targets. `--verbose` pairs them.
+A plain `mars sync`, `mars upgrade` or `mars add` prints one line for the project (code
+`agent-restriction-dropped`) when a target cannot carry a restriction, **for the items whose native
+file that run wrote or changed**: a loss is news when the file that lacks the restriction appears,
+and a sync that leaves the file as it was says nothing. `mars check`, `mars init` and
+`mars build plugin` write no native file in place, so they cover every item, and `--verbose` on
+any command lists every item whether it was written or not. The line lists the agents, skills,
+targets and kinds lost as separate sets, so it stays true for any mix: each listed item loses at
+least one of the listed kinds on at least one of the listed targets. `--verbose` pairs them.
+
+A skill from a dependency is its author's to fix, so its loss (`model-invocable: false` on a
+target with no switch for it) is an `info` line, `N skills from dependencies lose restrictions
+…`, which `--verbose`, `mars validate` and `mars check` print; the project's own skills warn.
 
 ```
 warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose restrictions across .codex, .opencode and .pi (shell, tool) that the target does not apply; run `mars sync --verbose` for the rules per item and target
@@ -649,8 +656,7 @@ What counts:
 | permission | a `harness-overrides.<harness>` key that carries permissions and Mars discards: `tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`; a scalar OpenCode `permission` |
 
 The kind of a rule follows the rule, not the target: a `bash: ask` is a shell loss on Claude as on
-Codex, an `mcp(...)` `ask` an MCP loss. Names past the third are counted (`and 2 more`). The line
-prints on every sync, because a lock change does not prove you saw it.
+Codex, an `mcp(...)` `ask` an MCP loss. Names past the third are counted (`and 2 more`).
 
 Quiet by default, listed with its reason under `--verbose`:
 
@@ -664,8 +670,8 @@ Quiet by default, listed with its reason under `--verbose`:
 | Approximate mappings | The closest native equivalent; the semantics differ slightly |
 
 `--verbose` (on `sync`, `upgrade`, `check` and `build plugin`) prints one warning per agent and
-target for every lossy field, with the field names you wrote, for example
-`tools (deny edit, deny bash)`, and the reason for each quiet one:
+target for every lossy field, with the field names you wrote, each kind under its own label
+(`shell (deny bash(git push *))`, `tools (deny edit)`, `mcp (…)`), and the reason for each quiet one:
 
 ```
 warning: agent `reviewer`: 1 field approximately mapped for .opencode (effort: effort maps to --variant on subprocess only)

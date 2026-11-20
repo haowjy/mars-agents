@@ -283,7 +283,7 @@ fn a_project_deny_equal_to_the_agents_own_stays_the_agents_loss() {
         "{verbose}"
     );
     assert!(
-        verbose.contains("agent `a`: 1 field dropped for .codex (tools (deny bash(pkill"),
+        verbose.contains("agent `a`: 1 field dropped for .codex (shell (deny bash(pkill"),
         "{verbose}"
     );
 }

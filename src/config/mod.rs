@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::types::managed_cmd;
 use crate::types::{SourceId, SourceName, SourceOrigin, SourceUrl};
 pub use mars_schema::config::{
     AgentCopyConfig, AgentEmission, AgentOverlay, Config, FanoutConfig, MeridianSettings, Settings,
@@ -582,7 +581,9 @@ pub fn merge_with_root(
     let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    diagnostics.extend(deprecated_agents_target_diagnostics(&merged_settings));
+    diagnostics.extend(targets::agents_target_diagnostic(
+        &targets::managed_targets(&merged_settings),
+    ));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
@@ -653,37 +654,6 @@ pub fn merge_with_root(
         },
         diagnostics,
     ))
-}
-
-fn deprecated_agents_target_diagnostics(settings: &Settings) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-
-    if settings.managed_root.as_deref() == Some(".agents") {
-        diagnostics.push(deprecated_agents_target_diagnostic("settings.managed_root"));
-    }
-
-    if settings
-        .targets
-        .as_ref()
-        .is_some_and(|targets| targets.iter().any(|target| target == ".agents"))
-    {
-        diagnostics.push(deprecated_agents_target_diagnostic("settings.targets"));
-    }
-
-    diagnostics
-}
-
-fn deprecated_agents_target_diagnostic(context: &str) -> Diagnostic {
-    Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target".into(),
-        message: format!(
-            "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
-            managed_cmd("mars unlink .agents"),
-        ),
-        context: Some(context.to_string()),
-        category: Some(DiagnosticCategory::Compatibility),
-    }
 }
 
 /// Where an entry's package comes from, whichever manifest holds the entry.

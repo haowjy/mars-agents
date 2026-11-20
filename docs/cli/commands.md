@@ -576,7 +576,7 @@ What its files say is the same function `@meridian-flow/mars-schema` exports as 
 | `skill-ref.provider` | error | a ref `<skill>__<provider>` whose provider `[package] uses-providers` doesn't list |
 | `skill.no-definition` | warning | `skills/<dir>/` holds files and no `SKILL.md`, so none of it is installed |
 | `selection.duplicate-slug` | warning, info | two dependencies install one slug (warning); a root item and a dependency's (info: the root's is installed) |
-| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
+| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness`. For a dependency's file the sync reports it as `info`: only its author can change it |
 | `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
 
 Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch, or one that could not be read (`unreadable_dependencies` of the function's result), is `[dependency-incomplete]`; all are errors. While the function's `missing_dependencies` or `unreadable_dependencies` is not empty its result is not a verdict: no skill ref was judged. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
@@ -658,7 +658,7 @@ Checks:
 - Target health: each managed target has the expected files with correct content
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
-Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](../dev/troubleshooting.md).
+Exit code 0 = healthy, 2 = an error was found. A skill an Agent names that is not installed is the same warning (`missing-skill`) here as in `mars sync` and `mars validate`; it does not fail the check. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).
 
 ---
 

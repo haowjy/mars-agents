@@ -334,8 +334,8 @@ fn check_warns_about_the_floor_and_a_condition_that_never_runs() {
         .stdout(predicate::str::contains(
             "write `requires-mars = \">=0.25.0\"`",
         ))
-        .stdout(predicate::str::contains("`if` on `Stop` never matches"))
-        .stdout(predicate::str::contains(
+        .stderr(predicate::str::contains("`if` on `Stop` never matches"))
+        .stderr(predicate::str::contains(
             "`.codex` does not run `Notification`",
         ));
 }

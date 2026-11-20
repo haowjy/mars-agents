@@ -151,14 +151,7 @@ pub(super) fn write_file_hook_outputs(
                     })
             });
             if diverged {
-                diag.warn(
-                    "target-divergent",
-                    format!(
-                        "target `{target_root}` item `{relative}` was edited after Mars installed it \
-                         (preserved local content; run `{}` to reset)",
-                        crate::types::managed_cmd("mars sync --force")
-                    ),
-                );
+                crate::surface_ownership::warn_diverged(&target_root, &relative, diag);
                 continue;
             }
         }

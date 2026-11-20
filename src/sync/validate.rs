@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::Owner;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
 use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
@@ -14,8 +15,8 @@ use crate::sync::LoadedConfig;
 use crate::sync::target::{
     CollisionRename, ExplicitRename, RenamableKind, TargetState, default_dest_path,
 };
-use crate::types::{DestPath, SourceName, SourceOrigin};
-use crate::validate::ValidationWarning;
+use crate::types::{DestPath, SourceName};
+use crate::validate::{SkillRef, classify_skill_ref};
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::PreparedDefinition;
 
@@ -29,23 +30,24 @@ pub(crate) fn validate_skill_refs(
     graph: &ResolvedGraph,
     provided: Option<&ProvidedNames>,
     local_declared: Option<&[String]>,
-) -> Vec<ValidationWarning> {
+    held_back_skills: &HashSet<String>,
+    diag: &mut DiagnosticCollector,
+) {
     let available_skills: HashSet<String> = target
         .items
         .values()
         .filter(|item| item.id.kind == ItemKind::Skill)
         .map(|item| item.id.name.to_string())
+        .chain(held_back_skills.iter().cloned())
         .collect();
-    let local_source = SourceName::from(SourceOrigin::LocalPackage.to_string());
-
-    let mut warnings = Vec::new();
 
     for item in target
         .items
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
-        let declared = if item.source_name == local_source {
+        let owner = Owner::of(item.source_name.as_str());
+        let declared = if owner == Owner::Own {
             local_declared
         } else {
             Some(
@@ -66,19 +68,19 @@ pub(crate) fn validate_skill_refs(
             .fields
             .map(|profile| profile.skills.all())
             .unwrap_or_default();
-        warnings.extend(skills.into_iter().filter_map(|skill_name| {
-            let provided_here = provided.is_some_and(|names| names.provides(&skill_name));
-            crate::validate::classify_skill_ref(
-                item.id.clone(),
+        for skill_name in &skills {
+            let reference = SkillRef {
+                agent: item.id.name.as_str(),
                 skill_name,
-                &available_skills,
+                owner,
                 declared,
-                provided_here,
-            )
-        }));
+                provided_here: provided.is_some_and(|names| names.provides(skill_name)),
+            };
+            if let Some(found) = classify_skill_ref(&reference, &available_skills) {
+                diag.push(found);
+            }
+        }
     }
-
-    warnings
 }
 
 pub(crate) fn warn_config_dangles_after_rename(
@@ -197,7 +199,7 @@ pub(crate) fn report_skill_links(
             diag.schema(
                 &diagnostic,
                 &format!("{package}: {}", definition.source_path),
-                false,
+                Owner::of(source_name.as_str()),
             );
         }
     }
@@ -226,7 +228,7 @@ pub(crate) fn report_skill_links(
             diag.schema(
                 &diagnostic,
                 &crate::package_prepare::source_label(root)(&definition.source_path),
-                false,
+                Owner::Own,
             );
         }
     }

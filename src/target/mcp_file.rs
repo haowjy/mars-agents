@@ -9,7 +9,7 @@ use mars_schema::mcp_servers::{Flavor, McpRender, render};
 
 use super::McpServerEntry;
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
 
 pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
     key_prefix: "mcp:",
@@ -38,8 +38,32 @@ pub(crate) fn render_all(
         .iter()
         .map(|server| {
             let rendered = (file.render)(server);
+            // Only the server's author can change what a native shape cannot carry; whoever
+            // installed it from a package is told what is theirs to do.
+            let own = server.is_own();
             for lost in rendered.lossy {
-                diag.warn_advisory("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
+                let message = if own {
+                    format!("MCP server `{}`: {}", server.name, lost.text(true))
+                } else {
+                    format!(
+                        "MCP server `{}` (from `{}`): {}",
+                        server.name,
+                        server.source,
+                        lost.text(false)
+                    )
+                };
+                let level = if own {
+                    DiagnosticLevel::Warning
+                } else {
+                    DiagnosticLevel::Info
+                };
+                diag.hold(
+                    file.at.entry_key(&server.name),
+                    Diagnostic {
+                        category: Some(DiagnosticCategory::Advisory),
+                        ..Diagnostic::new(level, "mcp-lossy", message)
+                    },
+                );
             }
             Rendered {
                 name: server.name.clone(),
@@ -78,6 +102,7 @@ mod tests {
                     })
                     .collect(),
             },
+            source: "_self".to_owned(),
         }
     }
 
@@ -149,11 +174,10 @@ mod tests {
         let registry = TargetRegistry::new();
         let adapter = registry.get(".codex").unwrap();
         let mut diag = DiagnosticCollector::new();
-        render_all(
-            &adapter.mcp_file().unwrap(),
-            &[server("r", &[("A", "B")])],
-            &mut diag,
-        );
+        let file = adapter.mcp_file().unwrap();
+        render_all(&file, &[server("r", &[("A", "B")])], &mut diag);
+        // The loss is held until the entry is written.
+        diag.release(&file.at.entry_key("r"));
         assert_eq!(diag.drain().len(), 1);
 
         write(".codex", tmp.path(), std::slice::from_ref(&entry));

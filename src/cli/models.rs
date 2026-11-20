@@ -17,6 +17,8 @@ use crate::models::probes::cache::CachedProbeOutcome;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
+use super::output;
+
 use super::models_common::{
     catalog_providers, load_merged_aliases, load_project_config_layers_optional,
     models_cache_ttl_hours,
@@ -179,9 +181,8 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     };
     let cache_warning = cache_warning(&outcome);
 
-    if let Some(warning) = cache_warning.as_deref() {
-        eprintln!("warning: {warning}");
-    } else if !json {
+    output::print_diagnostics(cache_warning.as_slice(), false);
+    if cache_warning.is_none() && !json {
         eprintln!("done.");
     }
 
@@ -193,7 +194,7 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
             "fetched_at": cache.fetched_at,
         });
         let mut out = out;
-        if let Some(warning) = cache_warning.as_deref() {
+        if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
             out["cache_warning"] = serde_json::json!(warning);
         }
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -424,7 +425,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
         .unwrap_or_default();
     let routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
-        emit_routing_settings_warnings(&routing_diagnostics);
+        print_routing_settings_warnings(&routing_diagnostics);
     }
 
     // Cache is enrichment, not a gate. If unavailable, skip to passthrough.
@@ -663,10 +664,8 @@ fn run_resolve_exact_alias(
         json,
     } = input;
     let cache_warning = cache_warning(runtime.outcome);
-    if let Some(warning) = cache_warning.as_deref()
-        && !json
-    {
-        eprintln!("warning: {warning}");
+    if !json {
+        output::print_diagnostics(cache_warning.as_slice(), false);
     }
 
     let name = &args.name;
@@ -747,7 +746,7 @@ fn run_resolve_exact_alias(
                 out["autocompact_pct"] = serde_json::json!(autocompact_pct);
             }
             add_availability_json_fields(&mut out, r.availability.as_ref());
-            if let Some(warning) = cache_warning.as_deref() {
+            if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
                 out["cache_warning"] = serde_json::json!(warning);
             }
             if !diagnostics.is_empty() {
@@ -762,7 +761,7 @@ fn run_resolve_exact_alias(
             let mut out = serde_json::json!({
                 "error": {"code": "model_unresolved", "message": format!("alias `{}` did not resolve to a model ID", name)},
             });
-            if let Some(warning) = cache_warning.as_deref() {
+            if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
                 out["cache_warning"] = serde_json::json!(warning);
             }
             if !diagnostics.is_empty() {
@@ -912,10 +911,8 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         route_trace,
     );
     let cache_warning = cache_warning(outcome);
-    if let Some(warning) = cache_warning.as_deref()
-        && !json
-    {
-        eprintln!("warning: {warning}");
+    if !json {
+        output::print_diagnostics(cache_warning.as_slice(), false);
     }
 
     if json {
@@ -944,7 +941,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         }
         out["probe_cache"] = serde_json::json!(cache_outcome.cache_status());
         add_availability_json_fields(&mut out, resolved.availability.as_ref());
-        if let Some(warning) = cache_warning.as_deref() {
+        if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
             out["cache_warning"] = serde_json::json!(warning);
         }
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
@@ -1012,10 +1009,8 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
     }
 
     let cache_warning = cache_warning(outcome);
-    if let Some(warning) = cache_warning.as_deref()
-        && !json
-    {
-        eprintln!("warning: {warning}");
+    if !json {
+        output::print_diagnostics(cache_warning.as_slice(), false);
     }
 
     let (passthrough_model_id, provider_constraint) =
@@ -1075,7 +1070,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             if !trace.selected_diagnostics().is_empty() {
                 out["diagnostics"] = serde_json::json!(trace.selected_diagnostics());
             }
-            if let Some(warning) = cache_warning.as_deref() {
+            if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
                 out["cache_warning"] = serde_json::json!(warning);
             }
             if let Some(cache_error) = cache_error {
@@ -1116,7 +1111,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         }
         add_availability_json_fields(&mut out, Some(&availability));
         add_route_json_fields(&mut out, &report);
-        if let Some(warning) = cache_warning.as_deref() {
+        if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
             out["cache_warning"] = serde_json::json!(warning);
         }
         if let Some(cache_error) = cache_error {
@@ -1125,8 +1120,8 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
-        if let Some(warning) = warning.as_deref() {
-            eprintln!("warning: {}", warning);
+        if let Some(warning) = warning {
+            output::print_diagnostics(&[Diagnostic::warning("model-passthrough", warning)], false);
         }
         let h = harness.as_deref().unwrap_or("—");
         println!("Model:      {}", name);
@@ -1302,14 +1297,16 @@ fn route_rejection_json(
     }
 }
 
-fn cache_warning(outcome: &models::RefreshOutcome) -> Option<String> {
-    models::refresh_warning(outcome)
+fn cache_warning(outcome: &models::RefreshOutcome) -> Option<Diagnostic> {
+    models::refresh_diagnostic(outcome)
 }
 
-fn emit_routing_settings_warnings(routing_diagnostics: &[String]) {
-    for message in routing_diagnostics {
-        eprintln!("warning: {message}");
-    }
+fn print_routing_settings_warnings(routing_diagnostics: &[String]) {
+    let diagnostics: Vec<Diagnostic> = routing_diagnostics
+        .iter()
+        .map(|message| Diagnostic::warning("routing-settings", message.as_str()))
+        .collect();
+    output::print_diagnostics(&diagnostics, false);
 }
 
 fn add_routing_diagnostics_json(out: &mut serde_json::Value, routing_diagnostics: &[String]) {

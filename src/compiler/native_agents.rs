@@ -752,6 +752,7 @@ pub(crate) fn compile_native_agents<'a>(
     let mut project_losses = ProjectLosses::default();
     let mut undescribed = BTreeSet::new();
     let mut codex_emitted = false;
+    let mut codex_written = false;
 
     // `mars_agents` carry already overlay-resolved profiles (resolved once in
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
@@ -769,8 +770,7 @@ pub(crate) fn compile_native_agents<'a>(
             ctx.configured_emit_harnesses,
             model_router,
         ) {
-            codex_emitted |= emission.harness == mars_schema::HarnessId::Codex;
-            emit_lowered_native_agent(
+            let written = emit_lowered_native_agent(
                 &NativeAgentEmit {
                     harness: &emission.harness,
                     profile: &emission.profile,
@@ -786,6 +786,10 @@ pub(crate) fn compile_native_agents<'a>(
                 &mut project_losses,
                 &mut undescribed,
             );
+            if emission.harness == mars_schema::HarnessId::Codex {
+                codex_emitted = true;
+                codex_written |= written;
+            }
         }
     }
     project_losses.record(ctx.project_root, diag);
@@ -803,6 +807,7 @@ pub(crate) fn compile_native_agents<'a>(
         crate::compiler::lossiness::record_project_network_loss(
             &model_router.settings.network_keys(),
             "Codex",
+            codex_written,
             diag,
         );
     }
@@ -961,14 +966,16 @@ pub(crate) fn qualifying_agent_emissions(
 /// and recorded once per target and rule. A loss any agent suffers loudly stays loud, so a
 /// read-only agent that covers a lost `edit` deny quietly does not hide the others.
 #[derive(Default)]
-struct ProjectLosses(BTreeMap<(String, String), LossyField>);
+struct ProjectLosses(BTreeMap<(String, String), (LossyField, bool)>);
 
 impl ProjectLosses {
-    fn add(&mut self, loss: ProjectLoss) {
-        let seen = self
+    /// `written` is whether the Agent's native file was written or changed this run.
+    fn add(&mut self, loss: ProjectLoss, written: bool) {
+        let (seen, seen_written) = self
             .0
             .entry((loss.field.target.clone(), loss.key))
-            .or_insert(loss.field.clone());
+            .or_insert((loss.field.clone(), false));
+        *seen_written |= written;
         if matches!(seen.classification, Lossiness::Quiet { .. })
             && matches!(loss.field.classification, Lossiness::Dropped(_))
         {
@@ -980,11 +987,11 @@ impl ProjectLosses {
         // Only a project whose `opencode.json` sets `permission` has something the agents' rules
         // take over.
         let outside = opencode_permission::project_sets_permission(project_root);
-        for ((_, key), field) in self.0 {
+        for ((_, key), (field, written)) in self.0 {
             if key == opencode_permission::OUTSIDE_RULES_KEY && !outside {
                 continue;
             }
-            diag.record_lossy_fields("project", &key, &[field]);
+            diag.record_lossy_fields("project", &key, None, &[field], written);
         }
     }
 }
@@ -996,7 +1003,7 @@ fn emit_lowered_native_agent(
     records: &mut Vec<CompiledNativeOutput>,
     project_losses: &mut ProjectLosses,
     undescribed: &mut BTreeSet<String>,
-) {
+) -> bool {
     use crate::compiler::agents::lower::lower_for_harness_with_model;
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
@@ -1029,7 +1036,7 @@ fn emit_lowered_native_agent(
                 ctx.options.collision_hint,
                 diag,
             );
-            return;
+            return false;
         }
         SurfaceCopyDecision::Proceed => {
             if dest_exists
@@ -1049,25 +1056,34 @@ fn emit_lowered_native_agent(
         }
     }
 
-    // Reported only for a file Mars writes: a preserved user file has no loss to report.
-    diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields);
-    if let Some(moved) = agent.effort_moved {
-        diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved);
-    }
-    for loss in lowered.project_losses {
-        project_losses.add(loss);
-    }
-    if *agent.harness == mars_schema::HarnessId::Claude && agent.profile.description.is_none() {
-        undescribed.insert(agent.agent_name.to_string());
-    }
-
     let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
     let existing_bytes = native_path
         .symlink_metadata()
         .ok()
         .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
         .and_then(|_| std::fs::read(&native_path).ok());
-    if existing_bytes.as_deref() == Some(lowered.bytes.as_slice()) {
+    let unchanged = existing_bytes.as_deref() == Some(lowered.bytes.as_slice());
+
+    // Reported only for a file Mars writes: a preserved user file has no loss to report. A
+    // file this run leaves as it was reports it only under `--verbose`.
+    diag.record_lossy_fields(
+        "agent",
+        agent.agent_name,
+        None,
+        &lowered.lossy_fields,
+        !unchanged,
+    );
+    if let Some(moved) = agent.effort_moved {
+        diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved, !unchanged);
+    }
+    for loss in lowered.project_losses {
+        project_losses.add(loss, !unchanged);
+    }
+    if *agent.harness == mars_schema::HarnessId::Claude && agent.profile.description.is_none() {
+        undescribed.insert(agent.agent_name.to_string());
+    }
+
+    if unchanged {
         if !ctx.options.dry_run {
             records.push(CompiledNativeOutput {
                 owner_canonical_dest_path: agent.canonical_dest_path.to_string(),
@@ -1076,7 +1092,7 @@ fn emit_lowered_native_agent(
                 installed_checksum: checksum,
             });
         }
-        return;
+        return false;
     }
 
     // `--diff` reports an edit a real sync would overwrite, as the real sync does.
@@ -1102,7 +1118,7 @@ fn emit_lowered_native_agent(
     }
 
     if ctx.options.dry_run {
-        return;
+        return true;
     }
 
     if let Err(e) = std::fs::create_dir_all(&native_agents_dir) {
@@ -1110,7 +1126,7 @@ fn emit_lowered_native_agent(
             "dual-surface-mkdir",
             format!("could not create {}: {e}", native_agents_dir.display()),
         );
-        return;
+        return true;
     }
 
     if let Err(e) = crate::fs::atomic_write(&native_path, &lowered.bytes) {
@@ -1126,6 +1142,7 @@ fn emit_lowered_native_agent(
             installed_checksum: checksum,
         });
     }
+    true
 }
 
 pub(crate) fn merged_model_aliases_for_native_agents(

@@ -110,7 +110,7 @@ leaves the original evidence on disk.
 
 ### "collides with unmanaged path"
 
-A managed item would overwrite a file that Mars doesn't own. Options:
+A managed item would overwrite a file that Mars doesn't own: your own copy, or a file Mars wrote and lost track of (a reset lock, an older Mars). One line per source lists the paths. Options:
 - Move the unmanaged file out of `.mars/` and sync again; an agent, skill or bootstrap doc you want to keep goes in `.mars-src/`, where it shadows the package's
 - Rename the managed item: `mars rename agents/conflict.md agents/other-name.md`
 - `mars sync --force` replaces every colliding path in the project and discards local edits to managed items, so preview it with `mars sync --force --diff` (it cannot replace a directory where a file goes, and does not apply to a local hook). Use `--force` only for deliberate adoption; repair does not run a special collision-removal retry loop

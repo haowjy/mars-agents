@@ -262,8 +262,10 @@ writes them to per-target config files. Target construction resolves MCP name co
 target and makes a token-using winner's directory a target-scoped item, the same way a hook
 directory is installed and pruned; this phase consumes that selection. A hook's or token-using
 server's entry is withheld with a `hook-not-installed` / `mcp-not-installed` warning naming the
-path when target sync did not install that directory: an unmanaged path (preserved without a
-claim) and a user-edited copy (preserved as `target-divergent`) both leave the entry out. A server
+path when target sync did not install that directory and did not already say why: an unmanaged
+path (preserved without a claim, reported as `target-unmanaged-collision`) and a user-edited copy
+(preserved, reported as `target-divergent`) both leave the entry out, and their own line is the
+only one. A server
 that never names the token has no directory and needs none.
 
 **Steps:**

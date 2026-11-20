@@ -7,6 +7,7 @@ use super::models_common::{
     catalog_providers, load_merged_aliases, load_project_config_layers_optional,
     models_cache_ttl_hours,
 };
+use super::output;
 use crate::build::policy::{PolicyInput, resolve_policy};
 use crate::error::MarsError;
 use crate::models::{self, ModelAlias};
@@ -178,7 +179,10 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(content) => content,
             Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {err}", disk_path.display()),
+                );
                 continue;
             }
         };
@@ -186,10 +190,9 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
         let profile = match mars_schema::agent::read(&content).into_valid() {
             Ok(valid) => valid.fields,
             Err(error) => {
-                eprintln!(
-                    "warning: skipping {}: {}",
-                    disk_path.display(),
-                    error.message()
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {}", disk_path.display(), error.message()),
                 );
                 continue;
             }

@@ -45,26 +45,6 @@ pub(crate) fn preflight_config_entries(
     // Targets whose keyed files and hook files this sync reads: those the old lock has records
     // on, those with something selected, and a managed target's fixed entries.
     let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
-    if managed
-        .iter()
-        .any(|target| target == crate::target::AGENTS_TARGET)
-    {
-        for target in &managed {
-            if registry
-                .get(target)
-                .is_some_and(|adapter| adapter.reads_agents_skills())
-            {
-                diag.warn(
-                    "target-skills-duplicated",
-                    format!(
-                        "`{}` and `{target}` are both linked, and the harness for `{target}` also reads skills from `{}/skills`, so it sees each skill twice under the same name; unlink one",
-                        crate::target::AGENTS_TARGET,
-                        crate::target::AGENTS_TARGET,
-                    ),
-                );
-            }
-        }
-    }
     let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for target in &managed {

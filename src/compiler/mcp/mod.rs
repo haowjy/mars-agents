@@ -220,7 +220,8 @@ pub fn check_env_refs(
                 if strict {
                     return Err(MarsError::Config(ConfigError::Invalid { message: msg }));
                 }
-                diag.warn_advisory("mcp-env-missing", msg);
+                // The shell that ran sync is not necessarily the one that starts the harness.
+                diag.info("mcp-env-missing", msg);
             }
         }
     }

@@ -40,6 +40,15 @@ they ignore it, and the code that finds the problem states it.
 - `Info`: nothing is lost, and it may be intended. Printed only when asked: `mars validate`,
   `mars check` and `--verbose` ask; a default `mars sync` and a launch bundle do not.
 
+Who can act decides the level. A problem in the project's own item is a `Warning`; the same
+problem in a dependency's item is `Info` to the installer, because only its author can fix it
+(`Owner` in `diagnostic.rs`; `mars check` and `mars validate` of the package itself see its own
+items, so its author gets the `Warning`). A text meant for an installer names the installer's own
+fix (`mars upgrade <source>`, or set the variable). A loss in a native file is reported by the
+sync that writes or changes that file (`record_lossy_fields(.., written)`); `--verbose` lists it
+every time. One cause is one line: findings that arise once per item share a `warn_each` group,
+and what follows from an item that was not installed is not reported again.
+
 `Diagnostic::shown` and `output::print_diagnostics` are the whole policy: no reader prints, and
 no reader decides whether its problem is shown. Reducing what users see means changing a site
 from `Warning` to `Info`, or deleting it.

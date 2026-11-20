@@ -594,7 +594,7 @@ fn self_updates_keep_existing_managed_modification_policy() {
     sync(dir.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("preserving local content"));
+        .stderr(predicate::str::contains("Local content is preserved"));
     assert_eq!(
         fs::read_to_string(dir.child(".mars/agents/muse.md").path()).unwrap(),
         "# Modified output"
@@ -647,7 +647,7 @@ fn self_native_force_replaces_only_selected_link_and_preserves_referent() {
     // Native collisions use the existing partial-outcome policy, not the canonical self gate.
     sync(project.path())
         .assert()
-        .stderr(predicate::str::contains("preserved local content"));
+        .stderr(predicate::str::contains("no installed-content claim"));
     assert!(project.child(".codex/skills/craft").path().is_symlink());
     sync(project.path()).arg("--force").assert().success();
     assert!(!project.child(".codex/skills/craft").path().is_symlink());

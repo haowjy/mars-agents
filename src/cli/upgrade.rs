@@ -50,7 +50,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose
         } else {
-            crate::diagnostic::LossinessMode::Surface
+            crate::diagnostic::LossinessMode::Written
         },
     };
 

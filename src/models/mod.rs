@@ -32,7 +32,7 @@ pub use catalog_api::default_catalog_providers;
 pub use catalog_cache::{
     BackgroundRefresh, ModelsCache, RefreshMode, RefreshOutcome,
     ensure_fresh_with_catalog_providers, is_mars_offline, now_unix_secs, now_unix_secs_value,
-    read_cache, refresh_warning, run_background_refresh,
+    read_cache, refresh_diagnostic, run_background_refresh,
 };
 pub(crate) use dependencies::{declaration_ordered_dep_models, merged_model_aliases};
 pub use mars_schema::alias::{ModelAlias, ModelSpec};

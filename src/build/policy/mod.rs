@@ -209,9 +209,11 @@ pub fn resolve_policy(
             )
         }
     };
-    if let Some(warning) = models::refresh_warning(&catalog_outcome) {
-        warnings.push(warning);
-    }
+    warnings.extend(
+        models::refresh_diagnostic(&catalog_outcome)
+            .filter(|diagnostic| diagnostic.shown(false))
+            .map(|diagnostic| diagnostic.message),
+    );
     let catalog_slugs = models::catalog_model_slugs(&cache);
     let primary_model = model::resolve_model(
         &input,

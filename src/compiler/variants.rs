@@ -209,14 +209,25 @@ pub fn harness_skill_variant_path(skill_dir: &Path, harness_key: &str) -> Option
 ///
 /// Returns `true` when bytes were written to `dest`, `false` when an existing
 /// tree was already byte-identical and left untouched.
+///
+/// `from` is the dependency the skill came from, `None` for the project's own.
 pub fn project_skill_for_target(
     source: &Path,
     dest: &Path,
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
+    from: Option<&str>,
 ) -> Result<bool, MarsError> {
-    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, true)
+    project_skill_for_target_impl(
+        source,
+        dest,
+        harness_variant_key,
+        diag,
+        skill_name,
+        from,
+        true,
+    )
 }
 
 /// Project after the caller has emitted the base skill's schema diagnostics once.
@@ -228,7 +239,15 @@ pub(crate) fn project_skill_for_target_with_checked_schema(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<bool, MarsError> {
-    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, false)
+    project_skill_for_target_impl(
+        source,
+        dest,
+        harness_variant_key,
+        diag,
+        skill_name,
+        None,
+        false,
+    )
 }
 
 fn project_skill_for_target_impl(
@@ -237,6 +256,7 @@ fn project_skill_for_target_impl(
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
+    from: Option<&str>,
     emit_schema_diags: bool,
 ) -> Result<bool, MarsError> {
     let native_projection = match harness_variant_key {
@@ -249,7 +269,11 @@ fn project_skill_for_target_impl(
         )?),
         None => None,
     };
-    project_prepared_skill_for_target(source, dest, native_projection.as_ref())
+    let wrote = project_prepared_skill_for_target(source, dest, native_projection.as_ref())?;
+    if let Some(projection) = &native_projection {
+        projection.record_lossiness(skill_name, from, wrote, diag);
+    }
+    Ok(wrote)
 }
 
 #[derive(Debug)]
@@ -257,6 +281,21 @@ pub(crate) struct NativeSkillProjection {
     overrides: std::collections::BTreeMap<String, Vec<u8>>,
     expected_tree: crate::platform::fs::DirectoryTreeSnapshot,
     pub(crate) installed_checksum: crate::types::ContentHash,
+    lossy_fields: Vec<crate::compiler::lossiness::LossyField>,
+}
+
+impl NativeSkillProjection {
+    /// Record what the projection leaves out. `written` is whether this run wrote the native
+    /// copy: a projection left as it was is news only under `--verbose`.
+    pub(crate) fn record_lossiness(
+        &self,
+        skill_name: &str,
+        from: Option<&str>,
+        written: bool,
+        diag: &mut crate::diagnostic::DiagnosticCollector,
+    ) {
+        diag.record_lossy_fields("skill", skill_name, from, &self.lossy_fields, written);
+    }
 }
 
 pub(crate) fn prepare_native_skill_projection(
@@ -286,6 +325,10 @@ fn prepare_native_skill_projection_impl(
         diag,
         emit_schema_diags,
     )?;
+    let lossy_fields = lowered
+        .as_ref()
+        .map(|lowered| lowered.lossy_fields.clone())
+        .unwrap_or_default();
 
     let mut overrides =
         std::collections::BTreeMap::from([("SKILL.md".to_string(), selected_content.into_bytes())]);
@@ -309,6 +352,7 @@ fn prepare_native_skill_projection_impl(
         overrides,
         expected_tree,
         installed_checksum,
+        lossy_fields,
     })
 }
 
@@ -366,14 +410,16 @@ pub(crate) fn emit_prepared_skill_lossiness_for_harness(
         Some(path) => fs::read_to_string(path)?,
         None => prepared_base_content.to_owned(),
     };
-    let _ = lower_skill_content_for_harness(
+    if let Some(lowered) = lower_skill_content_for_harness(
         prepared_base_content,
         &selected_content,
         harness_key,
         skill_name,
         diag,
         true,
-    )?;
+    )? {
+        diag.record_lossy_fields("skill", skill_name, None, &lowered.lossy_fields, true);
+    }
     Ok(())
 }
 
@@ -435,11 +481,11 @@ fn lower_skill_content_for_harness(
             return Ok(None);
         }
     };
-    let lowered = lower_skill_for_harness(harness, &profile, selected_fm.body());
-
-    diag.record_lossy_fields("skill", skill_name, &lowered.lossy_fields);
-
-    Ok(Some(lowered))
+    Ok(Some(lower_skill_for_harness(
+        harness,
+        &profile,
+        selected_fm.body(),
+    )))
 }
 
 fn collect_native_projection_hashes(

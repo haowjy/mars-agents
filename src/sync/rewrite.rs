@@ -6,6 +6,7 @@
 //! so guards such as "same source still owns the unrenamed item" see only items
 //! that will actually be installed.
 
+use crate::diagnostic::DiagnosticCollector;
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
@@ -153,11 +154,10 @@ pub fn apply_renames(
     index: &RenameIndex,
     graph: &ResolvedGraph,
     dep_precedence: &[SourceName],
-) -> Result<Vec<String>, MarsError> {
-    let mut warnings = Vec::new();
-
+    diag: &mut DiagnosticCollector,
+) -> Result<(), MarsError> {
     if index.is_empty() {
-        return Ok(warnings);
+        return Ok(());
     }
 
     for item in target.items.values_mut().filter(|item| {
@@ -170,10 +170,13 @@ pub fn apply_renames(
         let content = match std::fs::read_to_string(&skill_path) {
             Ok(content) => content,
             Err(error) => {
-                warnings.push(format!(
-                    "warning: could not rewrite skill name in {}: {error}",
-                    package_location(&item.source_name, &skill_path)
-                ));
+                diag.warn_advisory(
+                    "rewrite-failed",
+                    format!(
+                        "could not rewrite skill name in {}: {error}",
+                        package_location(&item.source_name, &skill_path)
+                    ),
+                );
                 continue;
             }
         };
@@ -182,10 +185,13 @@ pub fn apply_renames(
                 skill.insert("name", serde_yaml::Value::String(item.id.name.to_string()));
                 item.rewritten_content = Some(skill.render());
             }
-            Err(error) => warnings.push(format!(
-                "warning: could not rewrite skill name in {}: {error}",
-                package_location(&item.source_name, &skill_path)
-            )),
+            Err(error) => diag.warn_advisory(
+                "rewrite-failed",
+                format!(
+                    "could not rewrite skill name in {}: {error}",
+                    package_location(&item.source_name, &skill_path)
+                ),
+            ),
         }
     }
 
@@ -237,10 +243,13 @@ pub fn apply_renames(
                     rewritten_content = frontmatter.render();
                     changed = true;
                 }
-                Err(error) => warnings.push(format!(
-                    "warning: could not rewrite agent name in {}: {error}",
-                    package_location(&source_name, &source_path)
-                )),
+                Err(error) => diag.warn_advisory(
+                    "rewrite-failed",
+                    format!(
+                        "could not rewrite agent name in {}: {error}",
+                        package_location(&source_name, &source_path)
+                    ),
+                ),
             }
         }
         rewrite_content_for_agent(
@@ -249,7 +258,7 @@ pub fn apply_renames(
             "skill",
             &source_path,
             frontmatter::rewrite_content_skills,
-            &mut warnings,
+            diag,
             &mut changed,
         );
         rewrite_content_for_agent(
@@ -258,7 +267,7 @@ pub fn apply_renames(
             "subagent",
             &source_path,
             frontmatter::rewrite_content_subagents,
-            &mut warnings,
+            diag,
             &mut changed,
         );
         if changed && let Some(target_item) = target.items.get_mut(&key) {
@@ -266,7 +275,7 @@ pub fn apply_renames(
         }
     }
 
-    Ok(warnings)
+    Ok(())
 }
 
 fn push_rename(
@@ -374,7 +383,7 @@ fn rewrite_content_for_agent(
     label: &str,
     source_path: &std::path::Path,
     rewrite_content: ContentRewriteFn,
-    warnings: &mut Vec<String>,
+    diag: &mut DiagnosticCollector,
     changed: &mut bool,
 ) {
     if renames.is_empty() {
@@ -388,10 +397,13 @@ fn rewrite_content_for_agent(
         }
         Ok(None) => {}
         Err(e) => {
-            warnings.push(format!(
-                "warning: could not rewrite {label} refs in {}: {e}",
-                package_relative(source_path)
-            ));
+            diag.warn_advisory(
+                "rewrite-failed",
+                format!(
+                    "could not rewrite {label} refs in {}: {e}",
+                    package_relative(source_path)
+                ),
+            );
         }
     }
 }
@@ -497,7 +509,14 @@ mod tests {
         dep_precedence: &[SourceName],
     ) {
         let index = RenameIndex::new(explicit_skill_renames, collision_renames, target);
-        apply_renames(target, &index, graph, dep_precedence).unwrap();
+        apply_renames(
+            target,
+            &index,
+            graph,
+            dep_precedence,
+            &mut DiagnosticCollector::new(),
+        )
+        .unwrap();
     }
 
     #[test]

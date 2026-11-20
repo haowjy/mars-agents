@@ -101,7 +101,7 @@ fn untracked_file_native_hook_collision_and_later_removal_preserve_user_file() {
 
         sync(&project)
             .success()
-            .stderr(predicate::str::contains("preserved local content"));
+            .stderr(predicate::str::contains("no installed-content claim"));
         placed.assert("user content");
         fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
         sync(&project).success();

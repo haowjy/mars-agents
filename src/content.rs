@@ -58,7 +58,7 @@ pub(crate) struct ContentRoots {
 
 pub(crate) struct VisibleLockedItems {
     pub(crate) items: Vec<(ContentScope, LockedItem, PathBuf)>,
-    pub(crate) warnings: Vec<String>,
+    pub(crate) warnings: Vec<crate::diagnostic::Diagnostic>,
 }
 
 impl ContentRoots {
@@ -112,9 +112,12 @@ impl ContentRoots {
             let lock = match crate::lock::load(root.project_root()) {
                 Ok(lock) => lock,
                 Err(err) if root.scope() == ContentScope::Fallback => {
-                    warnings.push(format!(
-                        "skipping fallback content from {}: {err}",
-                        root.project_root().display()
+                    warnings.push(crate::diagnostic::Diagnostic::warning(
+                        "content-skipped",
+                        format!(
+                            "skipping fallback content from {}: {err}",
+                            root.project_root().display()
+                        ),
                     ));
                     continue;
                 }

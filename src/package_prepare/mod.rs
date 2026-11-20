@@ -12,7 +12,7 @@ use mars_schema::dialect::Dialect;
 use mars_schema::prepare::{Classification, PrepareContext, Prepared};
 use mars_schema::tree::TreeSource;
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, Owner};
 use crate::error::MarsError;
 
 /// Lazy, package-confined filesystem implementation of `TreeSource`.
@@ -219,17 +219,20 @@ pub(crate) fn report_dependency(
     let dependency = effective_config.dependencies.get(source_name);
     for (path, diagnostics) in normalized {
         for diagnostic in diagnostics {
-            diag.schema(diagnostic, &format!("{source_name}: {path}"), false);
+            diag.schema(
+                diagnostic,
+                &format!("{source_name}: {path}"),
+                Owner::Dependency(source_name.as_str()),
+            );
         }
     }
     let package_name = dependency_name(prepared, source_name);
     // Only a git source is a tree the consumer cannot edit; a path source or an override is
-    // theirs, and `mars upgrade` would leave it unchanged.
+    // theirs, and `mars upgrade` would leave it unchanged. A source the consumer's own config
+    // does not name came in through another package, which is git.
     let subject = match dependency.map(|entry| &entry.spec) {
-        Some(crate::config::SourceSpec::Git(_)) => {
-            Subject::Dependency(package_name, version, upgrading)
-        }
-        _ => Subject::Package(package_name),
+        Some(crate::config::SourceSpec::Path(_)) => Subject::Package(package_name),
+        _ => Subject::Dependency(package_name, version, upgrading),
     };
     report_diagnostics(
         prepared,
@@ -369,6 +372,10 @@ fn report_files(
     own_files: bool,
     diag: &mut DiagnosticCollector,
 ) {
+    let owner = match subject {
+        Subject::Dependency(name, ..) => Owner::Dependency(name),
+        Subject::Package(_) | Subject::AuthoredSource => Owner::Own,
+    };
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
         for diagnostic in diagnostics {
@@ -390,21 +397,21 @@ fn report_files(
                         "this dependency{resolved} was published before schema 1. Mars 0.34.0 and later do not read it: {}, or stay on a Mars before 0.34.0",
                         way_out.replace("{name}", name)
                     );
-                    diag.schema(&for_consumer, &context, false);
+                    diag.schema(&for_consumer, &context, owner);
                 }
-                _ => diag.schema(diagnostic, &context, false),
+                _ => diag.schema(diagnostic, &context, owner),
             }
         }
     }
     for (relative, lost) in prepared.lost_restrictions() {
-        diag.schema(lost, &label(relative), false);
+        diag.schema(lost, &label(relative), owner);
     }
     if own_files {
         for (relative, ignored) in prepared
             .ignored_execution_fields()
             .chain(prepared.repaired_values())
         {
-            diag.schema(ignored, &label(relative), false);
+            diag.schema(ignored, &label(relative), owner);
         }
     }
 }

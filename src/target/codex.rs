@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
-use mars_schema::mcp_servers::{McpRender, partition_env};
+use mars_schema::mcp_servers::{McpLoss, McpRender, partition_env};
 
 use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
 
@@ -51,10 +51,13 @@ fn render(server: &McpServerEntry) -> McpRender {
                 value: entry,
                 lossy: renamed
                     .into_iter()
-                    .map(|(key, variable)| {
-                        format!(
+                    .map(|(key, variable)| McpLoss {
+                        installer_fix: Some(format!(
+                            "Set `{key}` in the environment Codex runs in."
+                        )),
+                        ..McpLoss::new(format!(
                             "Codex forwards `{variable}` by name and cannot set it as `{key}`; `{key}` is not set for the server."
-                        )
+                        ))
                     })
                     .collect(),
             }
@@ -85,10 +88,10 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
             {
                 entry["bearer_token_env_var"] = env.var_name().into();
             }
-            HeaderValue::Env { env, prefix } => lossy.push(format!(
+            HeaderValue::Env { env, prefix } => lossy.push(McpLoss::new(format!(
                 "Codex reads header `{name}` from `{}` whole and cannot prepend `{prefix}`; `{name}` is not set for the server.",
                 env.var_name()
-            )),
+            ))),
         }
     }
     if !literals.is_empty() {

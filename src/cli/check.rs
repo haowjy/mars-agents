@@ -60,7 +60,6 @@ pub(crate) struct CheckReport {
     findings: Vec<FileFinding>,
     /// What only the binary can check.
     errors: Vec<String>,
-    warnings: Vec<String>,
 }
 
 impl CheckReport {
@@ -74,14 +73,12 @@ impl CheckReport {
             .collect()
     }
 
-    /// Every warning: the files' first, then the binary's. Info findings are not warnings.
-    fn warnings(&self) -> Vec<String> {
+    /// Every warning the files carry. Info findings are not warnings.
+    fn file_warnings(&self) -> impl Iterator<Item = String> + '_ {
         self.findings
             .iter()
             .filter(|finding| finding.severity == Severity::Warning)
             .filter_map(|finding| finding.line.clone())
-            .chain(self.warnings.iter().cloned())
-            .collect()
     }
 }
 
@@ -139,10 +136,13 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             if policy.match_type == mars_schema::model_policy::ModelPolicyMatchType::Alias
                 && !known_aliases.contains_key(&policy.match_value)
             {
-                report.warnings.push(format!(
-                    "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here{unconsulted}",
-                    definition.source_path, definition.slug, policy.match_value
-                ));
+                publish_diag.warn(
+                    "model-policy-alias",
+                    format!(
+                        "{}: agent `{}` has a model policy for alias `{}`, which is not a catalog alias here{unconsulted}",
+                        definition.source_path, definition.slug, policy.match_value
+                    ),
+                );
             }
         }
     }
@@ -153,10 +153,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
         report.errors.extend(requires_mars_shortfall(&lens, &floor));
     }
     report.errors.extend(hooks.errors);
-    report.warnings.extend(hooks.warnings);
-    report
-        .warnings
-        .extend(plugin_warnings(&authored_base, &lens, &mut publish_diag)?);
+    report_plugin_state(&authored_base, &lens, &mut publish_diag)?;
     let mut diagnostics = publish_diag.drain();
     diagnostics.extend(lossiness_diagnostics_for_check(
         &lens,
@@ -179,7 +176,7 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
     let clean = errors.is_empty();
 
     if json {
-        let mut warnings = report.warnings();
+        let mut warnings: Vec<String> = report.file_warnings().collect();
         warnings.extend(diagnostics.iter().map(ToString::to_string));
         output::print_json(&JsonReport {
             agents: report.agents,
@@ -201,25 +198,28 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
             let Some(line) = &finding.line else { continue };
             match finding.severity {
                 Severity::Error => output::print_error(line),
-                Severity::Warning => output::print_warn(line),
+                Severity::Warning => output::print_diagnostics(
+                    &[crate::diagnostic::Diagnostic::new(
+                        crate::diagnostic::DiagnosticLevel::Warning,
+                        finding.code.clone(),
+                        line.as_str(),
+                    )],
+                    false,
+                ),
                 Severity::Info => output::print_note(line),
             }
         }
         for e in &report.errors {
             output::print_error(e);
         }
-        for w in &report.warnings {
-            output::print_warn(w);
-        }
         output::print_diagnostics(&diagnostics, true);
         if !clean {
             println!();
             println!("  {} error(s) found", errors.len());
-        } else if report.warnings.is_empty()
-            && !report
-                .findings
-                .iter()
-                .any(|finding| finding.severity == Severity::Warning)
+        } else if !report
+            .findings
+            .iter()
+            .any(|finding| finding.severity == Severity::Warning)
             && !diagnostics.iter().any(|diag| diag.shown(false))
         {
             output::print_success("all checks passed");
@@ -333,28 +333,27 @@ fn requires_mars_shortfall(
     mars_schema::package::requires_mars_shortfall(package.requires_mars.as_deref(), floor)
 }
 
-fn plugin_warnings(
+fn report_plugin_state(
     base: &Path,
     lens: &crate::resolve::PublishLens,
     diag: &mut crate::diagnostic::DiagnosticCollector,
-) -> Result<Vec<String>, MarsError> {
+) -> Result<(), MarsError> {
     let Some(config) = lens.manifest.as_ref() else {
-        return Ok(Vec::new());
+        return Ok(());
     };
     if config.plugin.is_none() {
-        return Ok(Vec::new());
+        return Ok(());
     }
-    let mut warnings = Vec::new();
     let metadata = match crate::build::plugin::validate_plugin_build(config) {
         Ok(metadata) => Some(metadata),
         Err(error) => {
-            warnings.push(error.to_string());
+            diag.warn("plugin-metadata", error.to_string());
             None
         }
     };
 
     let Some(metadata) = metadata else {
-        return Ok(warnings);
+        return Ok(());
     };
     let state = crate::build::plugin::inspect_validated(base, &metadata)?;
     if let Some(message) = state.directory.message() {
@@ -364,15 +363,20 @@ fn plugin_warnings(
         ) {
             diag.info("plugin-output-missing", message);
         } else {
-            warnings.push(message);
+            diag.warn("plugin-output", message);
         }
     }
-    warnings.extend(state.inputs.iter().filter_map(|state| state.message()));
-    warnings.extend(state.builder.iter().filter_map(|state| state.message()));
-    warnings.extend(state.version.iter().filter_map(|state| state.message()));
-    warnings.extend(state.root_files.iter().filter_map(|state| state.message()));
-
-    Ok(warnings)
+    let messages = state
+        .inputs
+        .iter()
+        .filter_map(|state| state.message())
+        .chain(state.builder.iter().filter_map(|state| state.message()))
+        .chain(state.version.iter().filter_map(|state| state.message()))
+        .chain(state.root_files.iter().filter_map(|state| state.message()));
+    for message in messages {
+        diag.warn("plugin-output", message);
+    }
+    Ok(())
 }
 
 fn lossiness_diagnostics_for_check(
@@ -486,7 +490,6 @@ fn examine(
         skills: count(DefinitionKind::Skill),
         findings: file_findings(&result, base, diag),
         errors,
-        warnings: Vec::new(),
     };
     Ok((lens, prepared, report))
 }
@@ -529,7 +532,7 @@ fn file_findings(
         }
         // One note per unknown key, across the files that carry it.
         let line = if diagnostic.code == "field.unknown" {
-            diag.schema(diagnostic, &label, false);
+            diag.schema(diagnostic, &label, crate::diagnostic::Owner::Own);
             None
         } else {
             Some(format!("[{}] {label}: {message}", diagnostic.code))
@@ -568,11 +571,10 @@ pub(crate) fn check_dir(base: &Path) -> Result<CheckReport, MarsError> {
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let (_, _, mut report) = examine(base, &mut diag)?;
     for diagnostic in diag.drain() {
-        let rendered = format!("[{}] {}", diagnostic.code, diagnostic.message);
         if diagnostic.level == crate::diagnostic::DiagnosticLevel::Error {
-            report.errors.push(rendered);
-        } else if diagnostic.level == crate::diagnostic::DiagnosticLevel::Warning {
-            report.warnings.push(rendered);
+            report
+                .errors
+                .push(format!("[{}] {}", diagnostic.code, diagnostic.message));
         }
     }
     Ok(report)

@@ -25,6 +25,13 @@ pub struct KeyedSection {
     pub format: SectionFormat,
 }
 
+impl KeyedSection {
+    /// What names one entry of this file for `DiagnosticCollector::hold`.
+    pub(crate) fn entry_key(&self, name: &str) -> String {
+        format!("{}#{name}", self.path)
+    }
+}
+
 /// What differs between users of the engine. Diagnostic codes are
 /// `<code>-divergent`, `<code>-unmanaged-adopted` and `<code>-unmanaged-collision`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,6 +266,8 @@ fn try_reconcile(
         if write {
             if existing.as_ref() != Some(&entry.value) {
                 open.insert(name, entry.value.clone());
+                // A loss reported while rendering is news once the entry is written.
+                diag.release(&section.entry_key(name));
             }
             records.insert(entry.key(kind), entry.record());
         } else if let Some(record) = recorded {

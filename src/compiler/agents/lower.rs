@@ -11,8 +11,8 @@ pub use lower_policy::{NativeModel, lower_for_harness_with_model};
 #[cfg(test)]
 #[cfg(test)]
 pub use lower_policy::{
-    lower_to_antigravity, lower_to_claude, lower_to_codex, lower_to_cursor_with_model,
-    lower_to_opencode, lower_to_pi,
+    lower_to_agy, lower_to_claude, lower_to_codex, lower_to_cursor_with_model, lower_to_opencode,
+    lower_to_pi,
 };
 
 #[cfg(test)]
@@ -313,16 +313,16 @@ mod tests {
 
     // --- Antigravity lowering ---
 
-    fn antigravity(content: &str) -> (String, Vec<crate::compiler::lossiness::LossyField>) {
+    fn agy(content: &str) -> (String, Vec<crate::compiler::lossiness::LossyField>) {
         let (profile, fm, _) = profile_from(content);
-        let out = lower_to_antigravity(&profile, fm.body(), &NativeModel::Inherit);
+        let out = lower_to_agy(&profile, fm.body(), &NativeModel::Inherit);
         (String::from_utf8(out.bytes).unwrap(), out.lossy_fields)
     }
 
     #[test]
-    fn antigravity_agent_without_rules_gets_every_tool_and_no_role_keys() {
+    fn agy_agent_without_rules_gets_every_tool_and_no_role_keys() {
         let (text, lossy) =
-            antigravity("---\nname: r\ndescription: d\nmodel: opus\neffort: high\n---\n# body");
+            agy("---\nname: r\ndescription: d\nmodel: opus\neffort: high\n---\n# body");
         assert!(
             !text.contains("'*'") && !text.contains("mainAgent"),
             "{text}"
@@ -343,8 +343,8 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_allowlist_lists_native_names_and_no_mcp_name() {
-        let (text, lossy) = antigravity(
+    fn agy_allowlist_lists_native_names_and_no_mcp_name() {
+        let (text, lossy) = agy(
             "---\nname: r\nmode: subagent\ntools:\n  \"*\": deny\n  read: allow\n  bash: allow\n  mcp(srv/ping): allow\n---\n# body",
         );
         assert!(
@@ -369,9 +369,8 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_lists_every_tool_and_reports_a_deny_it_cannot_write() {
-        let (text, lossy) =
-            antigravity("---\nname: r\nmode: primary\ntools:\n  bash: deny\n---\n# body");
+    fn agy_lists_every_tool_and_reports_a_deny_it_cannot_write() {
+        let (text, lossy) = agy("---\nname: r\nmode: primary\ntools:\n  bash: deny\n---\n# body");
         assert!(
             text.contains("- run_command\n") && !text.contains("'*'"),
             "{text}"
@@ -383,8 +382,8 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_never_lists_view_file_beside_read_file() {
-        let (text, _) = antigravity(
+    fn agy_never_lists_view_file_beside_read_file() {
+        let (text, _) = agy(
             "---\nname: r\ntools:\n  \"*\": deny\n  read: allow\n  edit: allow\n  ls: allow\n---\n# body",
         );
         assert!(

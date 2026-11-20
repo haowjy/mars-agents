@@ -31,7 +31,7 @@ impl Host {
                 | HarnessId::Pi
                 | HarnessId::Cursor,
             ) => true,
-            Self::Harness(HarnessId::Antigravity) | Self::MeridianFlow => false,
+            Self::Harness(HarnessId::Agy) | Self::MeridianFlow => false,
         }
     }
 
@@ -57,7 +57,7 @@ impl Host {
                 Err("Codex per-tool MCP gating lives in server config, not the tool list")
             }
             Self::Harness(HarnessId::Pi) => Err("Harness has no MCP tool surface"),
-            Self::Harness(HarnessId::Antigravity) => {
+            Self::Harness(HarnessId::Agy) => {
                 unreachable!("agy's MCP refs lower in `project_agy_mcp`")
             }
             Self::MeridianFlow => {
@@ -274,7 +274,7 @@ fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule 
         capability if host == Host::MeridianFlow && capability.names_mcp() => {
             project_flow_connection_tools(rule.action, restricted)
         }
-        capability if host == Host::Harness(HarnessId::Antigravity) && capability.names_mcp() => {
+        capability if host == Host::Harness(HarnessId::Agy) && capability.names_mcp() => {
             project_agy_mcp(rule.action)
         }
         Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {

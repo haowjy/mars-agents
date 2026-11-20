@@ -355,7 +355,7 @@ pub(crate) fn move_harness_only_keys(
         HarnessId::Pi => "Pi",
         HarnessId::OpenCode => "OpenCode",
         HarnessId::Cursor => "Cursor",
-        HarnessId::Antigravity => "Antigravity",
+        HarnessId::Agy => "Antigravity",
     };
     let present = fm
         .keys()

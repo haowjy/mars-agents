@@ -81,7 +81,7 @@ export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | 
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
 export type Network = "allow" | "deny" | "allowlist";
-export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor" | "antigravity";
+export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor" | "agy";
 
 export interface ToolRule {
   /** A canonical capability, `*`, `mcp`, or the author's spelling of an unknown name. */

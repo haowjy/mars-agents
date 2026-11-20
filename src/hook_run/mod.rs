@@ -1,5 +1,5 @@
 //! `mars hook run`: the command a translated hook's `hooks.json` entry runs
-//! (`mars_schema::hooks::antigravity`). It reads `agy`'s payload on stdin, builds Claude's,
+//! (`mars_schema::hooks::agy`). It reads `agy`'s payload on stdin, builds Claude's,
 //! runs the hook's matching commands with Claude's rules (`logic`) and answers in the form
 //! `agy` reads for that event. Hidden: only a `hooks.json` Mars wrote names it.
 //!
@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
 use mars_schema::hooks::HOOK_DIR_TOKEN;
-use mars_schema::hooks::antigravity::{
-    DATA_VERSION, RUNNER_HARNESS, agy_args, claude_arg, claude_tool,
-};
+use mars_schema::hooks::agy::{DATA_VERSION, RUNNER_HARNESS, agy_args, claude_arg, claude_tool};
 use serde_json::{Map, Value, json};
 
 use logic::{Data, Handler, Moment, Outcome, Permission, fire};

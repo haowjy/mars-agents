@@ -348,13 +348,13 @@ mars link <target> [--force]
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
-- A target is named by its directory (`.agy`) or its harness (`antigravity`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
+- A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
 mars link .cursor            # Copy skills/MCP into .cursor
-mars link antigravity        # Write an `agy` plugin into .agy and list it in .agents/plugins.json
+mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
 
@@ -855,7 +855,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `antigravity`). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `agy`). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |

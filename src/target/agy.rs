@@ -9,11 +9,11 @@ use super::{KeyedSection, McpDirs, McpFile, McpServerEntry, SectionFormat, Targe
 /// `agy` reads nothing from `.agy/` itself: the project's `.agents/plugins.json` points at it
 /// as a plugin, which carries the skills, agents, hooks and MCP servers.
 #[derive(Debug)]
-pub struct AntigravityAdapter;
+pub struct AgyAdapter;
 
-impl TargetAdapter for AntigravityAdapter {
+impl TargetAdapter for AgyAdapter {
     fn harness(&self) -> Option<HarnessId> {
-        Some(HarnessId::Antigravity)
+        Some(HarnessId::Agy)
     }
 
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn the_hook_file_is_where_the_hook_table_places_keyed_hooks() {
-        let adapter = AntigravityAdapter;
+        let adapter = AgyAdapter;
         let file = mars_schema::hooks::targets::target(adapter.name())
             .and_then(|target| target.keyed_file())
             .expect("the hook table has a keyed row for .agy");

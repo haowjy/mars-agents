@@ -23,7 +23,7 @@ pub fn lower_skill_for_harness(
         HarnessId::OpenCode => lower_skill_to_opencode(profile, body),
         HarnessId::Pi => lower_skill_to_pi(profile, body),
         HarnessId::Cursor => lower_skill_to_cursor(profile, body),
-        HarnessId::Antigravity => lower_skill_to_antigravity(profile, body),
+        HarnessId::Agy => lower_skill_to_agy(profile, body),
     }
 }
 
@@ -47,8 +47,8 @@ pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutpu
     lower_policy::lower_skill_with_policy(HarnessId::Cursor, profile, body)
 }
 
-pub fn lower_skill_to_antigravity(profile: &SkillProfile, body: &str) -> LoweredOutput {
-    lower_policy::lower_skill_with_policy(HarnessId::Antigravity, profile, body)
+pub fn lower_skill_to_agy(profile: &SkillProfile, body: &str) -> LoweredOutput {
+    lower_policy::lower_skill_with_policy(HarnessId::Agy, profile, body)
 }
 
 #[cfg(test)]
@@ -154,8 +154,8 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_hides_the_slash_command_for_user_invocable_false() {
-        let lowered = lower_skill_to_antigravity(&user_invocable_false_profile(), "Body\n");
+    fn agy_hides_the_slash_command_for_user_invocable_false() {
+        let lowered = lower_skill_to_agy(&user_invocable_false_profile(), "Body\n");
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(out.contains("disable-slash-command: true"), "{out}");
         assert!(!out.contains("user-invocable"), "{out}");
@@ -166,7 +166,7 @@ mod tests {
     fn model_invocable_false_is_a_lost_restriction_where_no_switch_exists() {
         for (lower, target) in [
             (
-                lower_skill_to_antigravity as fn(&SkillProfile, &str) -> LoweredOutput,
+                lower_skill_to_agy as fn(&SkillProfile, &str) -> LoweredOutput,
                 "Antigravity",
             ),
             (lower_skill_to_opencode, "OpenCode"),

@@ -47,7 +47,7 @@ An installed `.mars/` tree is read by the same readers, with one exception: an A
 |---|---|---|
 | `name` | non-empty string | Optional. The file name is the Agent's identity when omitted. |
 | `description` | string | Shown in listings and written to native files. |
-| `harness` | `claude`, `codex`, `opencode`, `cursor`, `pi`, `antigravity` | Optional routing hint. An unknown name is an error. |
+| `harness` | `claude`, `codex`, `opencode`, `cursor`, `pi`, `agy` | Optional routing hint. An unknown name is an error. |
 | `model` | string | An alias from `[models]` or a concrete model ID. |
 | `mode` | `primary`, `subagent` | |
 | `model-invocable` | boolean, default `true` | Whether another model can invoke this Agent. |
@@ -119,7 +119,7 @@ Removed: `package.visibility`, with nothing to replace it.
 | Pi | every level (`none` is `--thinking off`) |
 | OpenCode | any: it reads models.dev's `reasoning_options` itself |
 | Cursor | the effort suffixes the model's probe slugs list; the bare slug is `medium` |
-| Antigravity | the effort suffixes the model's `agy models` slugs list (`gemini-3.8-flash-low`); a bare slug stands for no level |
+| Agy | the effort suffixes the model's `agy models` slugs list (`gemini-3.8-flash-low`); a bare slug stands for no level |
 | Meridian Flow (WASM only) | `none`, `low`, `medium`, `high`, `max` |
 
 A requested level in both sets is kept. Otherwise it moves to the nearest level on the ladder that both take, below or above, and a tie goes up, and Mars warns: "`max` → `high`: `o3` takes low, medium, high". When both sets limit the request, the warning names both. A move never lands on `none` unless `none` was asked, because off is not less thinking. What the model takes comes from its row: the effort values it lists, plus `none` when it has a toggle. A model that reasons but lists no values (toggle only, budget only, or no control) takes every level, less `none` when it cannot be switched off, so `none` moves up to `minimal` or `low` there. A model with no row is unknown and takes any level. A model that does not reason gets none, with a warning when a level other than `none` was asked. The row is the one for the provider the harness calls: `openai/o3` takes `low`, `medium` and `high`, while `openrouter/openai/o3` is toggle only. A provider-qualified model (`openai/o3` pinned by an alias) and a Cursor slug that carries its tier (`gpt-5.5-high`) find the row of the model behind them. On a machine whose catalog still comes from a build before 0.35, no row has reasoning data: `mars sync` and `mars build launch-bundle` say so, and send the effort as written until the first refresh succeeds.
@@ -135,7 +135,7 @@ What each harness's native file or launch carries for the resolved level:
 | Claude Code | `effort: <level>` in the native file |
 | Codex | `model_reasoning_effort = "<level>"` in the native file |
 | OpenCode, Pi | no effort field is written; the bundle carries the level for the launcher |
-| Antigravity | as Cursor: the level is folded into the slug (`gemini-3.8-flash-low`); the native agent file carries no effort |
+| Agy | as Cursor: the level is folded into the slug (`gemini-3.8-flash-low`); the native agent file carries no effort |
 | Cursor | the level is folded into the model slug (`gpt-5.5-high`) and the bundle carries none; if Cursor's list is unavailable, or has no slug for the model, a launch with an effort fails with `invalid_execution_policy` |
 
 The launcher reads the bundle's `effort` and passes it through; it never interprets it. `mars build launch-bundle --effort none` overrides the Agent from the command line, and `--config-effort` carries the caller's own configuration (Meridian's `primary.effort`), which sits above the model alias's `default_effort` and below the Agent and model policies.

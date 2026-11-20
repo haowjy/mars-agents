@@ -154,7 +154,7 @@ Mars compiles universal frontmatter fields to each target's native field names d
 
 ### Field mapping table
 
-| Field | `.mars/` | Claude | Codex | OpenCode | Pi | Cursor | Antigravity |
+| Field | `.mars/` | Claude | Codex | OpenCode | Pi | Cursor | Agy |
 |---|---|---|---|---|---|---|---|
 | `name` | preserved | `name` | `name` | `name` | `name` | `name` | `name` |
 | `description` | preserved | `description` | `description` | `description` | `description` | `description` | `description` |
@@ -195,7 +195,7 @@ skills/<name>/
       gpt55/SKILL.md                # body override for Codex + gpt55 model
 ```
 
-Recognized harness keys: `claude`, `codex`, `opencode`, `pi`, `cursor`, `antigravity`.
+Recognized harness keys: `claude`, `codex`, `opencode`, `pi`, `cursor`, `agy`.
 
 Model-level directories (`variants/<harness>/<model>/`) are indexed and validated but never selected: neither sync nor the launch bundle chooses a body by model.
 

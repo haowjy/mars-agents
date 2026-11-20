@@ -6,7 +6,7 @@ use super::command::{probe_timeout, run_command, strip_ansi};
 
 /// Result of probing `agy models`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AntigravityProbeResult {
+pub struct AgyProbeResult {
     /// The slugs `agy models` lists, effort tier included (`gemini-3.8-flash-low`).
     pub slugs: Vec<String>,
     /// Whether the model list probe succeeded.
@@ -16,14 +16,14 @@ pub struct AntigravityProbeResult {
 }
 
 /// Probe `agy` with the configured timeout.
-pub fn probe() -> AntigravityProbeResult {
+pub fn probe() -> AgyProbeResult {
     probe_with_timeout(probe_timeout())
 }
 
-impl super::cache::CachedProbe for AntigravityProbeResult {
-    const HARNESS: &'static str = "antigravity";
-    const CACHE_FILE: &'static str = "antigravity-probe.json";
-    const LOCK_FILE: &'static str = ".antigravity-probe.lock";
+impl super::cache::CachedProbe for AgyProbeResult {
+    const HARNESS: &'static str = "agy";
+    const CACHE_FILE: &'static str = "agy-probe.json";
+    const LOCK_FILE: &'static str = ".agy-probe.lock";
     const SCHEMA_VERSION: u32 = 1;
 
     fn probe() -> Self {
@@ -52,8 +52,8 @@ impl super::cache::CachedProbe for AntigravityProbeResult {
 /// Probe `agy models` with a specific timeout. A non-zero exit or an empty list is a failed
 /// probe; `agy` printing nothing when logged out was not observed, so both read as "no
 /// evidence" rather than as a listing.
-pub fn probe_with_timeout(timeout: Duration) -> AntigravityProbeResult {
-    let mut result = AntigravityProbeResult::default();
+pub fn probe_with_timeout(timeout: Duration) -> AgyProbeResult {
+    let mut result = AgyProbeResult::default();
     match run_command("agy", &["models"], timeout) {
         Ok(stdout) => {
             result.slugs = parse_models_output(&stdout);

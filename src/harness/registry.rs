@@ -1,6 +1,5 @@
 use crate::models::probes::{
-    AntigravityProbeResult, CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver,
-    cursor,
+    AgyProbeResult, CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver, cursor,
 };
 use mars_schema::HarnessId;
 use mars_schema::agent::EffortLevel;
@@ -144,12 +143,12 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         }),
     },
     HarnessDescriptor {
-        id: HarnessId::Antigravity,
+        id: HarnessId::Agy,
         display_name: "Antigravity",
         binary: "agy",
         default_target: ".agy",
         class: HarnessClass::ProbeBacked(ProbeSpec {
-            probe: ProbeDriver::of::<AntigravityProbeResult>(),
+            probe: ProbeDriver::of::<AgyProbeResult>(),
             listing: ListingAuth::Gated,
             slugs: SlugShape::Bare,
             tiers: Some(SlugTiers {
@@ -242,7 +241,7 @@ mod tests {
             (Pi, Some(ListingAuth::Gated)),
             (Cursor, Some(ListingAuth::Gated)),
             (OpenCode, Some(ListingAuth::Ungated)),
-            (Antigravity, Some(ListingAuth::Gated)),
+            (Agy, Some(ListingAuth::Gated)),
         ] {
             let listing = match descriptor(harness).class {
                 HarnessClass::Native { .. } => None,

@@ -1,5 +1,5 @@
 pub mod agents;
-pub mod antigravity;
+pub mod agy;
 pub mod claude;
 pub mod codex;
 mod config_doc;
@@ -147,7 +147,7 @@ impl TargetRegistry {
                 Box::new(opencode::OpencodeAdapter),
                 Box::new(pi::PiAdapter),
                 Box::new(cursor::CursorAdapter),
-                Box::new(antigravity::AntigravityAdapter),
+                Box::new(agy::AgyAdapter),
             ],
         }
     }

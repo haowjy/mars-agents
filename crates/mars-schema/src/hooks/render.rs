@@ -114,7 +114,7 @@ impl PortableHooks {
                 super::typescript::render(&events, profile, harness, tokens)
             }
             Rules::Translated(translation) => {
-                super::antigravity::render(&events, profile, translation, tokens, cfg!(windows))
+                super::agy::render(&events, profile, translation, tokens, cfg!(windows))
             }
         };
         if !unknown.is_empty() {

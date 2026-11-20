@@ -1159,7 +1159,7 @@ fn native_acceptance_policy(
         }
         mars_schema::HarnessId::OpenCode
         | mars_schema::HarnessId::Cursor
-        | mars_schema::HarnessId::Antigravity
+        | mars_schema::HarnessId::Agy
         | mars_schema::HarnessId::Pi => {
             crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }

@@ -186,7 +186,7 @@
     }
   ],
   "natives": {
-    "antigravity": {
+    "agy": {
       "agent": {
         "kind": "no-switch",
         "note": "agy's subagent tool (`invoke_subagent`) is not a verified `tools` name"

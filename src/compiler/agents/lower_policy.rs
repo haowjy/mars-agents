@@ -295,7 +295,7 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     ],
 };
 
-const ANTIGRAVITY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
+const AGY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     description: DescriptionPolicy::Preserve,
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
@@ -1039,14 +1039,14 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
 }
 
 /// Lower an agent profile to an `agy` plugin agent (markdown, `tools` always written).
-pub fn lower_to_antigravity(
+pub fn lower_to_agy(
     profile: &AgentProfile,
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
     lower_markdown_agent(
-        HarnessId::Antigravity,
-        &ANTIGRAVITY_AGENT_POLICY,
+        HarnessId::Agy,
+        &AGY_AGENT_POLICY,
         profile,
         body,
         model_field,
@@ -1069,6 +1069,6 @@ pub fn lower_for_harness_with_model(
         HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
         HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
         HarnessId::Pi => lower_to_pi(profile, body, model_field),
-        HarnessId::Antigravity => lower_to_antigravity(profile, body, model_field),
+        HarnessId::Agy => lower_to_agy(profile, body, model_field),
     }
 }

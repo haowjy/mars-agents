@@ -971,7 +971,7 @@ reorder its file-mode artifact.
 
 | Code | Level | When |
 |---|---|---|
-| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook, or links a target, that takes none of the hook (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
+| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook, or adds a target, that takes none of the hook (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
 | `hook-answer-unsupported` | warning; reported like `hook-event-skipped` | the event renders, but some portable answers do not carry over to that target |
 | `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
 | `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |

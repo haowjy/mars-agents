@@ -98,8 +98,14 @@ pub struct LoweredOutput {
     pub siblings: Vec<LoweredSibling>,
 }
 
-pub(crate) fn target_label(target: &str) -> String {
-    format!(".{}", target.to_lowercase())
+/// The target directory of the harness named `harness`.
+pub(crate) fn target_label(harness: &str) -> String {
+    match mars_schema::harness::parse(harness) {
+        Some(id) => crate::harness::registry::descriptor(id)
+            .default_target
+            .to_string(),
+        None => format!(".{}", harness.to_lowercase()),
+    }
 }
 
 /// Record that project `[settings]` network keys reach no native file of `target`: the settings

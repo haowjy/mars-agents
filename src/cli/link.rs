@@ -50,10 +50,7 @@ fn link_target(
         });
     }
 
-    if !json
-        && !super::WELL_KNOWN.contains(&target_name)
-        && !super::TOOL_DIRS.contains(&target_name)
-    {
+    if !json && !super::is_recognized_target(target_name) {
         output::print_warn(&format!(
             "`{target_name}` is not a recognized tool directory — managing anyway"
         ));

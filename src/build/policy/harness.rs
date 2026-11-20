@@ -174,5 +174,5 @@ fn route_source_for_policy_source(source: PolicySource) -> routing::RouteSource 
 }
 
 pub(super) fn harness_kind_to_str(harness: &HarnessId) -> &'static str {
-    crate::compiler::harness_descriptor::descriptor(*harness).canonical_id
+    harness.as_str()
 }

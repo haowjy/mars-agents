@@ -8,10 +8,14 @@ pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
 
+use crate::harness::registry;
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 pub use mcp_file::{McpFile, McpLocation};
+
+const AGENTS_TARGET: &str = ".agents";
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
@@ -40,14 +44,21 @@ impl HookEntry {
 }
 
 pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
-    fn name(&self) -> &str;
+    /// The harness this target is the native directory of; `None` for the
+    /// full-fidelity `.agents` target.
+    fn harness(&self) -> Option<HarnessId>;
 
-    /// Skill variant harness key used when projecting skills to this target.
-    ///
-    /// Native harness targets return the `variants/<key>/` directory name they
-    /// consume. Full-fidelity targets that should not select skill variants
-    /// return `None`.
-    fn skill_variant_key(&self) -> Option<&str>;
+    /// The target directory name (`.claude`).
+    fn name(&self) -> &str {
+        self.harness()
+            .map_or(AGENTS_TARGET, |id| registry::descriptor(id).default_target)
+    }
+
+    /// The `variants/<key>/` skill directory this target consumes: the
+    /// harness name. `.agents` selects no variants.
+    fn skill_variant_key(&self) -> Option<&str> {
+        self.harness().map(HarnessId::as_str)
+    }
 
     /// Returns `None` if this target does not accept the item kind. The
     /// compiler MUST skip items for which this returns `None`.

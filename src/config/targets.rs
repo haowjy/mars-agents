@@ -125,7 +125,10 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 
     let bare = trimmed.strip_prefix('.').unwrap_or(trimmed);
-    if let Some(harness) = mars_schema::harness::parse(bare) {
+    // A link names a harness by its name or by its target directory.
+    let harness = mars_schema::harness::parse(bare)
+        .or_else(|| crate::harness::registry::harness_for_target(&format!(".{bare}")));
+    if let Some(harness) = harness {
         return NormalizedLink {
             raw: raw.to_string(),
             target: crate::harness::registry::descriptor(harness)
@@ -180,6 +183,14 @@ pub fn effective_links(settings: &Settings) -> EffectiveLinks {
 /// (the older spelling), else none (`.mars/` stays the canonical compiled store).
 pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
+}
+
+/// Harnesses that would receive native agent artifacts during sync for these settings.
+pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessId> {
+    managed_targets(settings)
+        .iter()
+        .filter_map(|target| crate::harness::registry::harness_for_target(target))
+        .collect()
 }
 
 /// The known harnesses the configured links name; generic targets are ignored.

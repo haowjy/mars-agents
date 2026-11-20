@@ -89,7 +89,7 @@ fn warn_hooks_without_tree_native_hook(
     accepted_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
 ) {
-    let target_dir = built.profile.descriptor().target_dir;
+    let target_dir = built.profile.descriptor().default_target;
     let tree_name = target_dir.trim_start_matches('.');
     let affected = selected_harnesses(harnesses)
         .filter(|harness| harness.tree.key == built.profile.key)

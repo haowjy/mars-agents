@@ -175,7 +175,7 @@ fn index_harness_variant(
 }
 
 fn is_known_harness_variant_key(key: &str) -> bool {
-    crate::compiler::harness_descriptor::descriptor_for_variant_key(key).is_some()
+    mars_schema::harness::parse(key).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

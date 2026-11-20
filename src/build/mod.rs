@@ -16,7 +16,6 @@ use policy::{PolicyInput, resolve_policy};
 use prompt::compile_prompt_surface;
 
 use crate::cli::MarsContext;
-use crate::compiler::harness_descriptor::CompilerHarnessDescriptor;
 use crate::config::EffectiveProjectConfig;
 use crate::diagnostic::Diagnostic;
 use crate::error::{ConfigError, MarsError};
@@ -256,8 +255,8 @@ pub(crate) fn resolve_bundle_tools(
     profile: &mars_schema::agent::AgentProfile,
     harness: &str,
 ) -> Result<ToolsSpec, MarsError> {
-    let descriptor = parse_harness_descriptor(harness)?;
-    let projection = project(&profile.tools, descriptor.kind);
+    let harness = parse_harness(harness)?;
+    let projection = project(&profile.tools, harness);
 
     let rules = projection
         .rules()
@@ -282,7 +281,7 @@ pub(crate) fn resolve_bundle_tools(
     let capability_natives = ["agent", "task"]
         .into_iter()
         .map(|capability| {
-            let projected = project_platform_capability(capability, descriptor.kind.into());
+            let projected = project_platform_capability(capability, harness.into());
             let status = projected
                 .status
                 .expect("a builtin capability always has a native status");
@@ -305,7 +304,7 @@ pub(crate) fn resolve_bundle_tools(
         allowed: projection.natives(ToolAction::Allow, RuleKind::Builtin),
         disallowed: projection.natives(ToolAction::Deny, RuleKind::All),
         mcp: projection.natives(ToolAction::Allow, RuleKind::Mcp),
-        opencode_permission: (descriptor.kind == HarnessId::OpenCode).then(|| {
+        opencode_permission: (harness == HarnessId::OpenCode).then(|| {
             // The notes about what the file cannot hold are for `mars sync`, not a launch.
             opencode_permission::build(
                 &profile.tools,
@@ -318,16 +317,12 @@ pub(crate) fn resolve_bundle_tools(
     })
 }
 
-fn parse_harness_descriptor(
-    harness: &str,
-) -> Result<&'static CompilerHarnessDescriptor, MarsError> {
-    crate::compiler::harness_descriptor::descriptor_for_canonical_id(harness).ok_or_else(|| {
+fn parse_harness(harness: &str) -> Result<HarnessId, MarsError> {
+    mars_schema::harness::parse(harness).ok_or_else(|| {
         MarsError::Config(ConfigError::Invalid {
             message: format!(
                 "invalid harness `{harness}` for launch bundle resolution; expected one of: {}",
-                crate::compiler::harness_descriptor::known_canonical_ids()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                mars_schema::harness::names()
             ),
         })
     })

@@ -1,0 +1,300 @@
+{
+  "kind": "marketplace",
+  "packages": [
+    {
+      "id": "all",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "marketplace": {
+          "plugin": "all",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/alpha/SKILL.md",
+          "skills/beta/SKILL.md",
+          "skills/gamma/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json",
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "collection"
+              ],
+              [
+                "version",
+                "1.0.0"
+              ]
+            ],
+            "fields": {
+              "name": "collection",
+              "version": "1.0.0",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "alpha",
+            "source_path": "skills/alpha/SKILL.md",
+            "output_path": "skills/alpha/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "alpha"
+                ],
+                [
+                  "description",
+                  "alpha skill"
+                ]
+              ],
+              "fields": {
+                "name": "alpha",
+                "description": "alpha skill",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Body.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "beta",
+            "source_path": "skills/beta/SKILL.md",
+            "output_path": "skills/beta/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "beta"
+                ],
+                [
+                  "description",
+                  "beta skill"
+                ]
+              ],
+              "fields": {
+                "name": "beta",
+                "description": "beta skill",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Body.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          },
+          {
+            "kind": "skill",
+            "slug": "gamma",
+            "source_path": "skills/gamma/SKILL.md",
+            "output_path": "skills/gamma/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "gamma"
+                ],
+                [
+                  "description",
+                  "gamma skill"
+                ]
+              ],
+              "fields": {
+                "name": "gamma",
+                "description": "gamma skill",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Body.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "alpha",
+              "output_path": "skills/alpha/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "beta",
+              "output_path": "skills/beta/SKILL.md",
+              "skills": []
+            },
+            {
+              "kind": "skill",
+              "slug": "gamma",
+              "output_path": "skills/gamma/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
+        "diagnostics": {}
+      }
+    },
+    {
+      "id": "just-alpha",
+      "provenance": {
+        "translator": "{version}",
+        "dialect": "claude",
+        "source": {},
+        "marketplace": {
+          "plugin": "just-alpha",
+          "plugin_source": {
+            "kind": "local",
+            "path": ""
+          }
+        },
+        "selected_items": [
+          "skills/alpha/SKILL.md"
+        ]
+      },
+      "prepared": {
+        "classification": {
+          "kind": "foreign",
+          "dialect": "claude",
+          "evidence": {
+            "source": "predicted",
+            "paths": [
+              ".claude-plugin/plugin.json",
+              ".claude-plugin/marketplace.json"
+            ]
+          }
+        },
+        "manifest": {
+          "output_path": "mars.toml",
+          "reading": {
+            "frontmatter": [
+              [
+                "schema",
+                1
+              ],
+              [
+                "name",
+                "collection"
+              ],
+              [
+                "version",
+                "1.0.0"
+              ]
+            ],
+            "fields": {
+              "name": "collection",
+              "version": "1.0.0",
+              "schema": 1
+            },
+            "body": null,
+            "diagnostics": []
+          },
+          "change": {
+            "kind": "generated"
+          }
+        },
+        "definitions": [
+          {
+            "kind": "skill",
+            "slug": "alpha",
+            "source_path": "skills/alpha/SKILL.md",
+            "output_path": "skills/alpha/SKILL.md",
+            "reading": {
+              "frontmatter": [
+                [
+                  "name",
+                  "alpha"
+                ],
+                [
+                  "description",
+                  "alpha skill"
+                ]
+              ],
+              "fields": {
+                "name": "alpha",
+                "description": "alpha skill",
+                "model-invocable": true,
+                "user-invocable": true,
+                "license": null,
+                "compatibility": null,
+                "metadata": null
+              },
+              "body": "Body.\n",
+              "diagnostics": []
+            },
+            "change": {
+              "kind": "none"
+            }
+          }
+        ],
+        "payload": [],
+        "selection": {
+          "definitions": [
+            {
+              "kind": "skill",
+              "slug": "alpha",
+              "output_path": "skills/alpha/SKILL.md",
+              "skills": []
+            }
+          ],
+          "edges": [],
+          "uses_providers": []
+        },
+        "diagnostics": {}
+      }
+    }
+  ],
+  "diagnostics": {}
+}

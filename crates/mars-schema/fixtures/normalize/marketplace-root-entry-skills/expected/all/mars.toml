@@ -1,0 +1,4 @@
+[package]
+schema = 1
+name = "collection"
+version = "1.0.0"

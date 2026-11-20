@@ -456,20 +456,54 @@ pub struct PluginSpec {
     pub version: Option<String>,
     pub description: Option<String>,
     pub skills: SkillSources,
-    /// `None` reads the default `agents/` folder.
-    pub agents: Option<Vec<String>>,
-    /// `None` reads the default `commands/` folder; commands are only reported.
-    pub commands: Option<Vec<String>>,
+    pub agents: Component,
+    /// Commands are only reported, never imported.
+    pub commands: Component,
     pub hooks: bool,
     pub mcp: bool,
+}
+
+/// Where one kind of component comes from: its default folder, and the paths a manifest or
+/// entry lists. Every kind is read through this; what differs between kinds is only the rule
+/// that fills it in ([`Component::combine`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Component {
+    /// Whether the default folder (`skills/`, `agents/`, `commands/`) is read.
+    pub default: bool,
+    pub listed: Vec<String>,
+}
+
+impl Component {
+    fn default_only() -> Self {
+        Self {
+            default: true,
+            listed: Vec::new(),
+        }
+    }
+
+    /// Claude appends the entry's list to the manifest's. A list in either one also decides the
+    /// default folder: `skills` adds to it, `agents` and `commands` replace it.
+    fn combine(
+        manifest: &Option<Vec<String>>,
+        entry: &Option<Vec<String>>,
+        adds_to_default: bool,
+    ) -> Self {
+        if manifest.is_none() && entry.is_none() {
+            return Self::default_only();
+        }
+        Self {
+            default: adds_to_default,
+            listed: manifest.iter().chain(entry).flatten().cloned().collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSources {
     /// No manifest: every `SKILL.md` directory within five levels of the root.
     Walk,
-    /// A manifest: the default `skills/<name>/SKILL.md` (unless `default` is off) plus `listed`.
-    Declared { default: bool, listed: Vec<String> },
+    /// A manifest or entry: the default `skills/<name>/SKILL.md` plus what is listed.
+    Declared(Component),
 }
 
 impl PluginSpec {
@@ -484,8 +518,8 @@ impl PluginSpec {
             version: None,
             description: None,
             skills: SkillSources::Walk,
-            agents: None,
-            commands: None,
+            agents: Component::default_only(),
+            commands: Component::default_only(),
             hooks: false,
             mcp: false,
         }
@@ -510,52 +544,38 @@ pub(crate) fn resolve_spec(
         .or_else(|| entry.and_then(|entry| entry.description.clone()));
     let empty = ComponentLists::default();
     let entry_lists = entry.map_or(&empty, |entry| &entry.lists);
+    let own_lists = manifest.map_or(&empty, |manifest| &manifest.lists);
+    if manifest.is_some()
+        && entry.is_some_and(|entry| entry.strict == Some(false))
+        && entry_lists.has_components()
+    {
+        return Err("conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components".to_owned());
+    }
 
-    let (lists, default_skills) = match manifest {
-        None => (
-            entry_lists.clone(),
-            // Only the marketplace-root entry with a `skills` list narrows the default scan.
-            !(entry_at_root && entry_lists.skills.is_some()),
-        ),
-        Some(manifest) => {
-            if entry.is_some_and(|entry| entry.strict == Some(false))
-                && entry_lists.has_components()
-            {
-                return Err("conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components".to_owned());
-            }
-            // A non-strict entry with no components adds nothing, so appending is uniform.
-            let append = |own: &Option<Vec<String>>, entry: &Option<Vec<String>>| {
-                (own.is_some() || entry.is_some()).then(|| {
-                    own.iter()
-                        .flatten()
-                        .chain(entry.iter().flatten())
-                        .cloned()
-                        .collect()
-                })
-            };
-            (
-                ComponentLists {
-                    skills: append(&manifest.lists.skills, &entry_lists.skills),
-                    agents: append(&manifest.lists.agents, &entry_lists.agents),
-                    commands: append(&manifest.lists.commands, &entry_lists.commands),
-                    hooks: manifest.lists.hooks || entry_lists.hooks,
-                    mcp: manifest.lists.mcp,
-                },
-                true,
-            )
+    // An entry at the marketplace root with a `skills` list is the whole skill list: Claude reads
+    // neither the default `skills/` nor the manifest's own `skills` beside it.
+    // With no manifest `own_lists` is empty and the entry's lists alone apply: `combine` takes
+    // the two separately.
+    let skills = if entry_at_root && entry_lists.skills.is_some() {
+        Component {
+            default: false,
+            listed: entry_lists.skills.clone().unwrap_or_default(),
         }
+    } else {
+        Component::combine(&own_lists.skills, &entry_lists.skills, true)
     };
     Ok(PluginSpec {
         name,
         version,
         description,
-        skills: SkillSources::Declared {
-            default: default_skills,
-            listed: lists.skills.unwrap_or_default(),
+        skills: SkillSources::Declared(skills),
+        agents: Component::combine(&own_lists.agents, &entry_lists.agents, false),
+        commands: Component::combine(&own_lists.commands, &entry_lists.commands, false),
+        hooks: own_lists.hooks || entry_lists.hooks,
+        mcp: if manifest.is_some() {
+            own_lists.mcp
+        } else {
+            entry_lists.mcp
         },
-        agents: lists.agents,
-        commands: lists.commands,
-        hooks: lists.hooks,
-        mcp: lists.mcp,
     })
 }

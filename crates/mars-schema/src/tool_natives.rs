@@ -437,8 +437,7 @@ pub(crate) const CURSOR: Table = &[
 
 /// Antigravity CLI (`agy`) 1.5.12.
 ///
-/// Source: live probes of plugin agents (`antigravity-mars/evidence/probe-agent-frontmatter.md`
-/// §1, §2, §10). An agent's `tools` list loaded with `find_by_name`, `grep_search`,
+/// Source: live probes of plugin agents. An agent's `tools` list loaded with `find_by_name`, `grep_search`,
 /// `list_dir`, `multi_replace_file_content`, `read_file`, `replace_file_content`,
 /// `run_command`, `search_web` and `write_to_file` together, and a shell call ran;
 /// `view_file` is the same tool as `read_file`: listing both
@@ -494,11 +493,12 @@ pub(crate) const AGY: Table = &[
     ("image", Absent),
 ];
 
-/// Every tool name Mars writes into an `agy` agent file, sorted. `agy` 1.5.13 has no wildcard
-/// (`*` and `all` fail the agent at its first prompt) and gives an agent with no `tools` key no
-/// write or shell, so an agent that restricts nothing lists all of them.
-pub fn agy_every_tool() -> Vec<&'static str> {
-    let mut names: Vec<&'static str> = AGY
+/// Every native tool name Mars knows for `host`, sorted.
+pub fn every_tool(host: impl Into<Host>) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = host
+        .into()
+        .spec()
+        .tools
         .iter()
         .flat_map(|(_, native)| native.native_tools().iter().copied())
         .collect();

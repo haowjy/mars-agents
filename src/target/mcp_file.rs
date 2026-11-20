@@ -34,7 +34,7 @@ pub(super) fn cursor_render(server: &McpServerEntry) -> McpRender {
 }
 
 pub(super) fn agy_render(server: &McpServerEntry) -> McpRender {
-    render(&server.transport, Flavor::Agy)
+    mars_schema::mcp_servers::render_agy(&server.transport)
 }
 
 pub(crate) fn render_all(

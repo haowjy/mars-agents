@@ -505,7 +505,10 @@ impl<'a> AgentLoweringCtx<'a> {
         let tools = if self.eff.tools.is_allowlist() {
             projection.available()
         } else {
-            mars_schema::tool_natives::agy_every_tool()
+            // `agy` has no wildcard (`*` and `all` fail the agent at its first prompt) and gives
+            // an agent with no `tools` key no write or shell, so an agent that restricts
+            // nothing lists every tool.
+            mars_schema::tool_natives::every_tool(self.harness)
                 .into_iter()
                 .map(str::to_owned)
                 .collect()

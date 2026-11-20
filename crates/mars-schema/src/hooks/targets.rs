@@ -311,7 +311,7 @@ const PI_EVENTS: &[Event] = &[
 ];
 
 // `agy` reads these six from a plugin's `hooks.json`; the first four take handler objects,
-// the last two `{matcher, hooks}` groups (`probe-agent-frontmatter.md` §9).
+// the last two `{matcher, hooks}` groups.
 const AGY_EVENTS: &[Event] = &[
     // The runner gives a SessionStart matcher `startup`, the one source `agy` fires it for.
     matched("SessionStart", "source"),

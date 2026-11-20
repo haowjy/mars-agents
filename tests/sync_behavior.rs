@@ -6,7 +6,6 @@ use predicates::prelude::*;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::*;
 
@@ -907,30 +906,30 @@ fn sync_detects_and_repairs_diverged_native_agent_output() {
 }
 
 #[test]
-fn sync_cursor_native_agent_target_emits_cursor_markdown_and_lossiness_warning() {
+fn sync_opencode_native_agent_target_emits_opencode_markdown_and_lossiness_warning() {
     let dir = TempDir::new().unwrap();
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
+    let opencode_agent = r#"---
+name: opencode-worker
+description: OpenCode worker
+harness: opencode
 model: gpt55
 tools:
-  mcp(plugin:cursor): allow
+  mcp(plugin:opencode): allow
 model-policies:
   - match: {model: gpt-6}
     override: {effort: low}
 harness-overrides:
+  codex:
+    codex-only: true
   opencode:
-    opencode-only: true
-  cursor:
-    mcp-tools: [plugin:cursor]
+    mcp-tools: [plugin:opencode]
     native-config:
-      cursor.only: true
+      opencode.only: true
 ---
-# Cursor body
-Use Cursor-native markdown.
+# OpenCode body
+Use OpenCode-native markdown.
 "#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
+    let source = create_source(&dir, "base", &[("opencode-worker", opencode_agent)], &[]);
 
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -938,7 +937,7 @@ Use Cursor-native markdown.
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies.base]
@@ -953,190 +952,30 @@ path = "{}"
         .assert()
         .success();
 
-    assert!(project.child(".mars/agents/cursor-worker.md").exists());
-    assert!(project.child(".cursor/agents/cursor-worker.md").exists());
-    assert!(!project.child(".opencode/agents/cursor-worker.md").exists());
-    assert!(!project.child(".codex/agents/cursor-worker.toml").exists());
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(cursor_native.contains("name: cursor-worker"));
+    assert!(project.child(".mars/agents/opencode-worker.md").exists());
     assert!(
-        !cursor_native.contains("model:"),
-        "unresolved cursor model should be cleared in EmitAll mode: {cursor_native}"
+        project
+            .child(".opencode/agents/opencode-worker.md")
+            .exists()
     );
-    assert!(cursor_native.contains("# Cursor body"));
+    assert!(!project.child(".pi/agents/opencode-worker.md").exists());
+    assert!(!project.child(".codex/agents/opencode-worker.toml").exists());
+
+    let opencode_native =
+        fs::read_to_string(project.child(".opencode/agents/opencode-worker.md").path()).unwrap();
+    assert!(opencode_native.contains("name: opencode-worker"));
     assert!(
-        cursor_native.contains("mcp-tools") && cursor_native.contains("cursor.only"),
-        "the cursor override block is written to the Cursor file: {cursor_native}"
+        !opencode_native.contains("model:"),
+        "unresolved opencode model should be cleared in EmitAll mode: {opencode_native}"
     );
+    assert!(opencode_native.contains("# OpenCode body"));
     assert!(
-        !cursor_native.contains("opencode-only"),
-        "another harness's override block must not reach Cursor: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_maps_alias_to_internal_cursor_model_slug() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-low"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-schema = 1
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-high"),
-        "cursor model should be internally adapted: {cursor_native}"
+        opencode_native.contains("mcp-tools") && opencode_native.contains("opencode.only"),
+        "the opencode override block is written to the OpenCode file: {opencode_native}"
     );
     assert!(
-        !cursor_native.contains("model: gpt55"),
-        "alias token should not leak into cursor native file when mapping exists: {cursor_native}"
-    );
-}
-
-#[test]
-fn sync_cursor_native_agent_uses_mars_local_model_overlay_for_native_slug_mapping() {
-    let dir = TempDir::new().unwrap();
-    let cache_root = dir.child("mars-cache");
-    write_cursor_probe_cache(cache_root.path(), &["gpt-5.5-high", "gpt-5.5-turbo-high"]);
-    let cursor_agent = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
-model: gpt55
----
-# Cursor body
-Use Cursor-native markdown.
-"#;
-    let source = create_source(&dir, "base", &[("cursor-worker", cursor_agent)], &[]);
-    fs::write(
-        source.join("mars.toml"),
-        r#"[package]
-schema = 1
-name = "base"
-version = "0.1.0"
-
-[models.gpt55]
-harness = "codex"
-model = "gpt-5.5"
-default_effort = "high"
-"#,
-    )
-    .unwrap();
-
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    write_cache(
-        project.path(),
-        vec![
-            json!({
-                "id": "gpt-5.5",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-            json!({
-                "id": "gpt-5.5-turbo",
-                "provider": "OpenAI",
-                "release_date": "2026-01-01"
-            }),
-        ],
-        &fresh_fetched_at(),
-    );
-    project
-        .child("mars.toml")
-        .write_str(&format!(
-            r#"[settings]
-targets = [".cursor"]
-agent_emission = "always"
-
-[dependencies.base]
-path = "{}"
-"#,
-            source.display().to_string().replace('\\', "/")
-        ))
-        .unwrap();
-    project
-        .child("mars.local.toml")
-        .write_str(
-            r#"[models.gpt55]
-harness = "codex"
-model = "gpt-5.5-turbo"
-default_effort = "high"
-"#,
-        )
-        .unwrap();
-
-    mars()
-        .args([
-            "sync",
-            "--no-refresh-models",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .env("MARS_CACHE_DIR", cache_root.path())
-        .assert()
-        .success();
-
-    let cursor_native =
-        fs::read_to_string(project.child(".cursor/agents/cursor-worker.md").path()).unwrap();
-    assert!(
-        cursor_native.contains("model: gpt-5.5-turbo-high"),
-        "local model overlay should drive cursor slug mapping: {cursor_native}"
-    );
-    assert!(
-        !cursor_native.contains("model: gpt-5.5-high"),
-        "dependency alias model should be overridden by mars.local.toml: {cursor_native}"
+        !opencode_native.contains("codex-only"),
+        "another harness's override block must not reach OpenCode: {opencode_native}"
     );
 }
 
@@ -1324,29 +1163,6 @@ path = "{}"
         Some("gpt-b"),
         "the dependency declared first in mars.toml should win persisted alias conflicts: {stdout}"
     );
-}
-
-fn write_cursor_probe_cache(cache_root: &Path, slugs: &[&str]) {
-    let cache_path = cache_root.join("availability").join("cursor-probe.json");
-    if let Some(parent) = cache_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_secs();
-    let payload = json!({
-        "schema_version": 1,
-        "fetched_at": now,
-        "last_attempt_at": now,
-        "last_error": null,
-        "result": {
-            "slugs": slugs,
-            "model_probe_success": true,
-            "error": null
-        }
-    });
-    fs::write(cache_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 #[test]
@@ -1699,7 +1515,7 @@ fn lock_dependency_version(project_root: &Path, source_name: &str) -> Option<Str
 }
 
 #[test]
-fn sync_preserves_handwritten_cursor_agents_when_lock_only_tracks_mars() {
+fn sync_preserves_handwritten_opencode_agents_when_lock_only_tracks_mars() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
         &dir,
@@ -1714,7 +1530,7 @@ fn sync_preserves_handwritten_cursor_agents_when_lock_only_tracks_mars() {
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "never"
 
 [dependencies.base]
@@ -1729,14 +1545,16 @@ path = "{}"
         .assert()
         .success();
 
-    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".opencode/agents").path()).unwrap();
     fs::write(
-        project.child(".cursor/agents/cursor-only-test.md").path(),
+        project
+            .child(".opencode/agents/opencode-only-test.md")
+            .path(),
         "# custom\n",
     )
     .unwrap();
     fs::write(
-        project.child(".cursor/agents/design-lead.md").path(),
+        project.child(".opencode/agents/design-lead.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1746,16 +1564,20 @@ path = "{}"
         .assert()
         .success();
 
-    assert!(project.child(".cursor/agents/cursor-only-test.md").exists());
-    assert!(project.child(".cursor/agents/design-lead.md").exists());
+    assert!(
+        project
+            .child(".opencode/agents/opencode-only-test.md")
+            .exists()
+    );
+    assert!(project.child(".opencode/agents/design-lead.md").exists());
     assert_eq!(
-        fs::read_to_string(project.child(".cursor/agents/design-lead.md").path()).unwrap(),
+        fs::read_to_string(project.child(".opencode/agents/design-lead.md").path()).unwrap(),
         "# hand-written\n"
     );
 }
 
 #[test]
-fn sync_preserves_handwritten_cursor_agent_with_agent_emission_always() {
+fn sync_preserves_handwritten_opencode_agent_with_agent_emission_always() {
     let dir = TempDir::new().unwrap();
     let source = create_source(
         &dir,
@@ -1770,7 +1592,7 @@ fn sync_preserves_handwritten_cursor_agent_with_agent_emission_always() {
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies.base]
@@ -1789,9 +1611,9 @@ path = "{}"
     // Under full-coverage EmitAll, mars owns every *source* agent name on every
     // configured target, so an edit to design-lead.md is managed drift that sync
     // restores. Unmanaged-collision protection only guards non-source names.
-    fs::create_dir_all(project.child(".cursor/agents").path()).unwrap();
+    fs::create_dir_all(project.child(".opencode/agents").path()).unwrap();
     fs::write(
-        project.child(".cursor/agents/handwritten-only.md").path(),
+        project.child(".opencode/agents/handwritten-only.md").path(),
         "# hand-written\n",
     )
     .unwrap();
@@ -1802,10 +1624,10 @@ path = "{}"
         .success();
 
     assert_eq!(
-        fs::read_to_string(project.child(".cursor/agents/handwritten-only.md").path()).unwrap(),
+        fs::read_to_string(project.child(".opencode/agents/handwritten-only.md").path()).unwrap(),
         "# hand-written\n"
     );
-    assert!(project.child(".cursor/agents/design-lead.md").exists());
+    assert!(project.child(".opencode/agents/design-lead.md").exists());
 }
 
 #[test]
@@ -2042,4 +1864,327 @@ fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
 
     user_copy.assert("user content");
     assert!(!project.child(".claude/mcp/plain/mcp.toml").exists());
+}
+
+/// A project with a local MCP server and hook, synced to `targets`.
+fn project_with_config_entries(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!("[settings]\ntargets = {targets}\n"))
+        .unwrap();
+    project
+        .child("mcp/srv/mcp.toml")
+        .write_str("command = \"node\"\n")
+        .unwrap();
+    project
+        .child("hooks/audit/hook.toml")
+        .write_str("[targets.\".claude\"]\n")
+        .unwrap();
+    project
+        .child("hooks/audit/claude.json")
+        .write_str(r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#)
+        .unwrap();
+    project
+}
+
+fn sync_project(
+    dir: &TempDir,
+    project: &assert_fs::fixture::ChildPath,
+) -> assert_cmd::assert::Assert {
+    offline_mars(dir.path())
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+}
+
+#[test]
+fn sync_leaves_a_target_the_config_no_longer_names_until_unlink() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    let mcp = fs::read(project.child(".mcp.json").path()).unwrap();
+    let settings = fs::read(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    let mut lock_after_each = Vec::new();
+    for _ in 0..2 {
+        sync_project(&dir, &project).stderr(
+            predicate::str::contains("`.claude` is not in `targets`")
+                .and(predicate::str::contains("mars unlink .claude")),
+        );
+        lock_after_each.push(fs::read(project.child("mars.lock").path()).unwrap());
+    }
+    assert_eq!(
+        lock_after_each[0], lock_after_each[1],
+        "a sync rewrites no record of an unnamed target"
+    );
+    assert_eq!(fs::read(project.child(".mcp.json").path()).unwrap(), mcp);
+    assert_eq!(
+        fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
+        settings
+    );
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("target_root = \".claude\""), "{lock}");
+
+    offline_mars(dir.path())
+        .args([
+            "unlink",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(!project.child(".claude/hooks/audit").exists());
+    assert!(!project.child(".mcp.json").exists());
+    sync_project(&dir, &project).stderr(predicate::str::contains("mars unlink").not());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(!lock.contains("target_root = \".claude\""), "{lock}");
+}
+
+#[test]
+fn link_after_a_hand_removal_finds_the_hook_in_place() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    sync_project(&dir, &project);
+
+    offline_mars(dir.path())
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(settings.contains("SessionStart"), "{settings}");
+    sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
+}
+
+#[test]
+fn unlink_keeps_the_records_of_hooks_other_targets_cannot_run() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.claude', '.codex', '.pi', '.opencode']\n")
+        .unwrap();
+    project
+        .child("hooks/audit/run.sh")
+        .write_str("#!/bin/sh\n")
+        .unwrap();
+    project
+        .child("hooks/audit/hook.toml")
+        .write_str(
+            "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
+        )
+        .unwrap();
+    sync_project(&dir, &project);
+    let records = |lock: &str| lock.matches("outputs = []").count();
+    let before = records(&fs::read_to_string(project.child("mars.lock").path()).unwrap());
+    assert!(
+        before >= 2,
+        "the hook only `.claude` can run leaves records"
+    );
+
+    offline_mars(dir.path())
+        .args([
+            "unlink",
+            ".opencode",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let after = records(&fs::read_to_string(project.child("mars.lock").path()).unwrap());
+    assert_eq!(
+        after,
+        before - 1,
+        "unlink drops only the unlinked target's record"
+    );
+}
+
+fn lock_outputs(project: &assert_fs::fixture::ChildPath) -> Vec<(String, Vec<(String, String)>)> {
+    let lock: toml::Value =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    lock["items"]
+        .as_table()
+        .unwrap()
+        .iter()
+        .map(|(key, item)| {
+            let outputs = item["outputs"].as_array().into_iter().flatten();
+            let pairs = outputs.map(|o| {
+                (
+                    o["target_root"].as_str().unwrap().to_string(),
+                    o["dest_path"].as_str().unwrap().to_string(),
+                )
+            });
+            (key.clone(), pairs.collect())
+        })
+        .collect()
+}
+
+fn project_with_skills(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!("[settings]\ntargets = {targets}\n"))
+        .unwrap();
+    for name in ["review", "extra"] {
+        project
+            .child(format!(".mars-src/skills/{name}/SKILL.md"))
+            .write_str(&format!("---\nname: {name}\ndescription: d\n---\nBody\n"))
+            .unwrap();
+    }
+    project
+}
+
+#[test]
+fn a_deleted_item_repeats_no_warning_while_a_target_is_unnamed() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude', '.codex']");
+    project
+        .child(".mars-src/agents/coder.md")
+        .write_str("---\nname: coder\ndescription: d\nskills: [nosuch]\n---\nBody\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.codex']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
+    for _ in 0..2 {
+        sync_project(&dir, &project).stderr(
+            predicate::str::contains("is not in `targets`")
+                .and(predicate::str::contains("nosuch").not()),
+        );
+    }
+    assert!(
+        lock_outputs(&project)
+            .iter()
+            .all(|(_, outputs)| !outputs.is_empty()),
+        "no item is left without an output"
+    );
+}
+
+#[test]
+fn link_drops_an_item_whose_last_output_it_removes() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude', '.codex']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.codex']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
+    sync_project(&dir, &project);
+
+    offline_mars(dir.path())
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let items = lock_outputs(&project);
+    assert!(items.iter().all(|(_, o)| !o.is_empty()), "{items:?}");
+    assert!(!items.iter().any(|(key, _)| key == "skill/extra"));
+}
+
+#[test]
+fn doctor_warns_once_about_an_unnamed_target_without_the_mars_copies() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    for copies in [".mars/hooks", ".mars/mcp"] {
+        let _ = fs::remove_dir_all(project.child(copies).path());
+    }
+
+    let out = offline_mars(dir.path())
+        .args(["doctor", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(all.matches("is not in `targets`").count(), 1, "{all}");
+    assert!(!all.contains("item-missing"), "{all}");
+}
+
+#[test]
+fn resolve_updates_the_mars_output_and_outputs_stay_sorted() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.opencode', '.claude']");
+    sync_project(&dir, &project);
+    for (key, outputs) in lock_outputs(&project) {
+        let mut sorted = outputs.clone();
+        sorted.sort();
+        assert_eq!(
+            outputs, sorted,
+            "{key}: outputs are written in sorted order"
+        );
+    }
+    let checksums = || {
+        let lock: toml::Value =
+            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
+                .unwrap();
+        lock["items"]["skill/review"]["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                (
+                    o["target_root"].as_str().unwrap().to_string(),
+                    o["installed_checksum"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = checksums();
+
+    project
+        .child(".mars/skills/review/SKILL.md")
+        .write_str("---\nname: review\ndescription: d\n---\nEdited\n")
+        .unwrap();
+    offline_mars(dir.path())
+        .args(["resolve", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let after = checksums();
+    for ((root, old), (_, new)) in before.iter().zip(&after) {
+        assert_eq!(
+            root != ".mars",
+            old == new,
+            "{root}: {before:?} -> {after:?}"
+        );
+    }
 }

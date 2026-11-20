@@ -1,5 +1,5 @@
 //! Hook config files: a JSON file whose `hooks` object maps a native event to
-//! an array of entries (Claude `settings.local.json`, Codex and Cursor
+//! an array of entries (Claude `settings.local.json` and Codex
 //! `hooks.json`, the plugin tree's `hooks/hooks.json`).
 //!
 //! Loaded, edited and saved through [`JsonDoc`], so a rewrite keeps the file's
@@ -49,15 +49,10 @@ pub(crate) fn validate(path: &Path) -> Result<(), MarsError> {
     load(path).map(|_| ())
 }
 
-/// Append `hooks` to the file at `path`, creating it if needed, after setting
-/// the top-level `top_level` keys (Cursor's `version`).
-pub(crate) fn write(
-    path: &Path,
-    hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
-) -> Result<(), MarsError> {
+/// Append `hooks` to the file at `path`, creating it if needed.
+pub(crate) fn write(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
-    append(&mut doc, path, hooks, top_level)?;
+    append(&mut doc, path, hooks)?;
     doc.save(path)
 }
 
@@ -69,24 +64,15 @@ pub(crate) fn replace(
     records: &BTreeMap<String, ConfigEntryRecord>,
     target: &str,
     hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
     strip(&mut doc, path, records, target, diag);
-    append(&mut doc, path, hooks, top_level)?;
+    append(&mut doc, path, hooks)?;
     doc.save(path)
 }
 
-fn append(
-    doc: &mut JsonDoc,
-    path: &Path,
-    hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
-) -> Result<(), MarsError> {
-    for (key, value) in top_level {
-        doc.set_top_level(key, Value::from(*value));
-    }
+fn append(doc: &mut JsonDoc, path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let section = doc.section_mut();
     for hook in hooks.iter().filter(|hook| !hook.entries.is_empty()) {
         let slot = section

@@ -1,5 +1,5 @@
-//! Keys Mars moved off, each with the page that says how to fix it. A reader that meets one
-//! warns once (`field.retired`) and does not read it. Delete this module and every key here
+//! Keys and target directories Mars moved off, each with the page that says how to fix it. A
+//! reader that meets a key warns once (`field.retired`) and does not read it. Delete this module and every key here
 //! falls back to the ordinary `field.unknown`.
 
 use crate::diagnostic::{DOCS, PathSegment, SchemaDiagnostic, Severity};
@@ -52,7 +52,128 @@ const RETIRED: &[(Scope, &str, &str)] = &[
     (Scope::Package, "visibility", "package-visibility"),
     (Scope::Namespace, "flow", "host-namespaces"),
     (Scope::Namespace, "meridian", "host-namespaces"),
+    (Scope::Namespace, "cursor", "cursor"),
 ];
+
+/// A target directory Mars no longer writes. Sync leaves it and what it recorded there alone;
+/// `mars unlink` removes what the lock records, which for the config files below is the
+/// entries Mars added, not the files.
+pub struct RetiredTarget {
+    pub dir: &'static str,
+    /// The anchor on `retired-keys.md`.
+    pub anchor: &'static str,
+    /// The JSON file, from the project root, that held MCP servers, and the object in it.
+    pub mcp_path: &'static str,
+    pub mcp_section: &'static str,
+    /// The file under `dir` that held hook entries, under a `hooks` object.
+    pub hook_file: &'static str,
+}
+
+pub const RETIRED_TARGETS: &[RetiredTarget] = &[RetiredTarget {
+    dir: ".cursor",
+    anchor: "cursor",
+    mcp_path: ".cursor/mcp.json",
+    mcp_section: "mcpServers",
+    hook_file: "hooks.json",
+}];
+
+/// The retired target `name` (`cursor`, `.Cursor`) names, if any.
+pub fn retired_target(name: &str) -> Option<&'static RetiredTarget> {
+    let name = name
+        .trim()
+        .trim_end_matches(['/', '\\'])
+        .to_ascii_lowercase();
+    let dir = if name.starts_with('.') {
+        name
+    } else {
+        format!(".{name}")
+    };
+    RETIRED_TARGETS.iter().find(|target| target.dir == dir)
+}
+
+/// The warning for a harness name at `path` when `name` is a harness Mars retired; naming it
+/// has no effect.
+pub(crate) fn harness_diagnostic(name: &str, path: Vec<PathSegment>) -> Option<SchemaDiagnostic> {
+    let retired = retired_target(name)?;
+    let at = path
+        .iter()
+        .filter_map(|segment| match segment {
+            PathSegment::Key(key) => Some(key.as_str()),
+            PathSegment::Index(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join(".");
+    Some(SchemaDiagnostic::new(
+        "field.retired",
+        Severity::Warning,
+        path,
+        format!(
+            "`{at}` names `{}`, a harness Mars no longer supports, so naming it has no effect; remove it: {DOCS}/retired-keys.md#{}",
+            name.trim(),
+            retired.anchor
+        ),
+    ))
+}
+
+/// The warnings for a retired harness named in a config file's `settings.default_harness`,
+/// `settings.harness_order` or a `[models.<alias>] harness`.
+pub(crate) fn config_harness_diagnostics(table: &toml::Table) -> Vec<SchemaDiagnostic> {
+    let key = |part: &str| PathSegment::Key(part.to_owned());
+    let mut diagnostics = Vec::new();
+    let mut check = |value: Option<&toml::Value>, path: Vec<PathSegment>| {
+        if let Some(name) = value.and_then(toml::Value::as_str) {
+            diagnostics.extend(harness_diagnostic(name, path));
+        }
+    };
+    let settings = table.get("settings").and_then(toml::Value::as_table);
+    check(
+        settings.and_then(|settings| settings.get("default_harness")),
+        vec![key("settings"), key("default_harness")],
+    );
+    let order = settings
+        .and_then(|settings| settings.get("harness_order"))
+        .and_then(toml::Value::as_array);
+    for (index, name) in order.into_iter().flatten().enumerate() {
+        check(
+            Some(name),
+            vec![
+                key("settings"),
+                key("harness_order"),
+                PathSegment::Index(index),
+            ],
+        );
+    }
+    diagnostics.extend(model_harness_diagnostics(table));
+    diagnostics
+}
+
+/// The warnings for a retired harness a `[models.<alias>] harness` names: the one place a
+/// dependent reads a package's harness choice.
+pub fn model_harness_diagnostics(table: &toml::Table) -> Vec<SchemaDiagnostic> {
+    table
+        .get("models")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flatten()
+        .filter_map(|(alias, entry)| {
+            let name = entry.get("harness")?.as_str()?;
+            let path = ["models", alias, "harness"]
+                .map(|part| PathSegment::Key(part.to_owned()))
+                .to_vec();
+            harness_diagnostic(name, path)
+        })
+        .collect()
+}
+
+impl RetiredTarget {
+    /// What a project that links this target is told; `unlink` is the command that removes it.
+    pub fn message(&self, unlink: &str) -> String {
+        format!(
+            "`{}` is a target Mars no longer writes: nothing is synced to it. Run `{unlink}` to remove what earlier syncs installed there: {DOCS}/retired-keys.md#{}",
+            self.dir, self.anchor
+        )
+    }
+}
 
 fn anchor(scope: Scope, key: &str) -> Option<&'static str> {
     let listed = RETIRED

@@ -21,7 +21,6 @@ use super::references::{qualify_body_references, qualify_document};
 use super::spec::{Finish, TreeProfile};
 
 pub(in crate::build::plugin) mod claude;
-pub(in crate::build::plugin) mod cursor;
 pub(in crate::build::plugin) mod opencode;
 
 /// An agent after native lowering, plugin policy and body qualification, before any
@@ -522,7 +521,6 @@ fn lower_agent(
         &crate::build::policy::EffortRoute {
             harness: tree_profile.harness,
             catalog: &crate::models::catalog::Catalog::default(),
-            listing: None,
         },
     );
     effective = resolved.profile;

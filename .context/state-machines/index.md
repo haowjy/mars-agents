@@ -68,7 +68,6 @@ it:
 | Plugin publication order | One plugin build across the tree swap, the root files and the marker | [build](../../src/build/.context/state-machines.md) |
 | Skill resolution in a launch | One skill the agent profile asks for | [build](../../src/build/.context/state-machines.md) |
 | Launch policy | One launch request's model and harness | [build/policy](../../src/build/policy/.context/state-machines.md) |
-| Slug tier effort | Whether a requested effort level reached the model slug of a harness that folds tiers into its slugs (Cursor, Antigravity) | [build/policy](../../src/build/policy/.context/state-machines.md) |
 
 ## CLI and targets
 

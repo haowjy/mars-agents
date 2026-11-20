@@ -608,9 +608,11 @@ pub fn merge_with_root(
     let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    diagnostics.extend(targets::target_advisories(&targets::managed_targets(
-        &merged_settings,
-    )));
+    let links = targets::effective_links(&merged_settings);
+    diagnostics.extend(targets::target_advisories(
+        &links.managed_targets(),
+        &links.retired_targets(),
+    ));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
@@ -816,7 +818,6 @@ mod tests {
             ("claude", "bad:name", "Claude names"),
             ("codex", "bad--name", "Codex names"),
             ("grok", "bad/name", "Grok reads the Claude tree"),
-            ("cursor", "Bad_name", "Cursor names"),
             ("opencode", "_bad-name", "OpenCode names"),
         ] {
             let dir = TempDir::new().unwrap();
@@ -961,7 +962,7 @@ path = "../local-agents"
 exclude = ["experimental"]
 
 [settings]
-targets = [".claude", ".cursor"]
+targets = [".claude", ".opencode"]
 harness_order = ["pi", "opencode", "codex"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
@@ -985,7 +986,7 @@ harness_order = ["pi", "opencode", "codex"]
         );
         assert_eq!(
             reloaded.settings.targets,
-            Some(vec![".claude".to_string(), ".cursor".to_string()])
+            Some(vec![".claude".to_string(), ".opencode".to_string()])
         );
         assert_eq!(
             reloaded.settings.harness_order,
@@ -1334,14 +1335,14 @@ override = { effort = "high" }
         };
         let local = LocalConfig {
             settings: LocalSettings {
-                default_harness: Some("cursor".to_string()),
+                default_harness: Some("opencode".to_string()),
                 default_model: Some("gpt-5".to_string()),
                 default_network: Some(NetworkPolicy::Allowlist),
                 network_allow: Some(vec!["local.example".parse().unwrap()].into()),
                 network_deny: Some(PermissionSet::Replace {
                     replace: vec!["blocked.local.example".parse().unwrap()],
                 }),
-                harness_order: Some(vec!["cursor".to_string(), "pi".to_string()]),
+                harness_order: Some(vec!["opencode".to_string(), "pi".to_string()]),
                 provider_order: Some(vec!["openai".to_string()]),
                 model_policies: None,
                 ..LocalSettings::default()
@@ -1350,7 +1351,7 @@ override = { effort = "high" }
         };
 
         let merged = local.settings.overlay_settings(&settings).0;
-        assert_eq!(merged.default_harness.as_deref(), Some("cursor"));
+        assert_eq!(merged.default_harness.as_deref(), Some("opencode"));
         assert_eq!(merged.default_model.as_deref(), Some("gpt-5"));
         assert_eq!(merged.default_network, Some(NetworkPolicy::Allowlist));
         assert!(merged.network_allow.replaces());
@@ -1375,7 +1376,7 @@ override = { effort = "high" }
         );
         assert_eq!(
             merged.harness_order,
-            Some(vec!["cursor".to_string(), "pi".to_string()])
+            Some(vec!["opencode".to_string(), "pi".to_string()])
         );
         assert_eq!(merged.provider_order, Some(vec!["openai".to_string()]));
     }
@@ -1392,14 +1393,18 @@ override = { effort = "high" }
         .unwrap();
 
         let effective = load_effective_project_config(dir.path()).unwrap();
+        // The user's own `config.toml` is read too, and what it says is not this test's.
+        let notes: Vec<_> = effective
+            .diagnostics
+            .iter()
+            .filter(|note| note.code == "field.unknown")
+            .collect();
         assert!(
-            effective
-                .diagnostics
+            notes
                 .iter()
                 .all(|note| note.level == DiagnosticLevel::Info && !note.shown(false))
         );
-        let warnings = effective
-            .diagnostics
+        let warnings = notes
             .iter()
             .map(|note| note.message.as_str())
             .collect::<Vec<_>>()
@@ -1419,7 +1424,7 @@ override = { effort = "high" }
                 "missing {file} {table}{key}: {warnings}"
             );
         }
-        assert_eq!(effective.diagnostics.len(), 6, "{warnings}");
+        assert_eq!(notes.len(), 6, "{warnings}");
 
         // Saving changes only what the command changed.
         let (mut config, _) = load_config_with_local(dir.path()).unwrap();

@@ -7,7 +7,7 @@ index of all machines is [state-machines/index.md](../../../.context/state-machi
 
 ## Keyed entry (MCP server, plugin entry, plugin manifest key, plugin hook)
 
-One entry in a target's keyed config file (`.mcp.json`, `.codex/config.toml`, `.cursor/mcp.json`;
+One entry in a target's keyed config file (`.mcp.json`, `.codex/config.toml`;
 an `agy` plugin's `.agents/plugins.json`, `.agy/plugin.json`, `.agy/hooks.json`
 and `.agy/mcp_config.json`), and whether Mars may overwrite or remove it. The diagrams spell the
 codes with `mcp`; each kind's own code replaces it (`plugin-pointer`, `plugin-manifest`,
@@ -49,7 +49,7 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 ## Hook entry
 
 One entry in a hook config file (the `hooks` object of `.claude/settings.local.json`,
-`.codex/hooks.json`, `.cursor/hooks.json` or the plugin tree). Hooks are unkeyed array elements,
+`.codex/hooks.json` or the plugin tree). Hooks are unkeyed array elements,
 so ownership is content equality against the recorded array, and writing is remove-then-append
 instead of keyed replace. Defined by `load`, `write`, `replace`, `holds_recorded` and `remove_recorded` in
 `hook_file.rs`; the single-use removal that reports what it could not confirm is in

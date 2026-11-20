@@ -969,12 +969,12 @@ mod tests {
     fn sync_preserves_handwritten_collision_when_lock_only_tracks_mars() {
         let dir = TempDir::new().unwrap();
         let mars_dir = dir.path().join(".mars");
-        let target = dir.path().join(".cursor");
+        let target = dir.path().join(".opencode");
 
         std::fs::create_dir_all(mars_dir.join("agents")).unwrap();
         std::fs::write(mars_dir.join("agents/design-lead.md"), "# Canonical").unwrap();
         std::fs::create_dir_all(target.join("agents")).unwrap();
-        std::fs::write(target.join("agents/cursor-only-test.md"), "# custom").unwrap();
+        std::fs::write(target.join("agents/opencode-only-test.md"), "# custom").unwrap();
         std::fs::write(target.join("agents/design-lead.md"), "# hand-written").unwrap();
 
         let mut lock = LockFile::empty();
@@ -1000,14 +1000,14 @@ mod tests {
         let results = sync_managed_targets(
             dir.path(),
             &mars_dir,
-            &[".cursor".to_string()],
+            &[".opencode".to_string()],
             &outcomes,
             &target_sync_ctx(&lock, false),
             &mut diag,
         );
 
         assert_eq!(results[0].items_removed, 0);
-        assert!(target.join("agents/cursor-only-test.md").exists());
+        assert!(target.join("agents/opencode-only-test.md").exists());
         assert!(target.join("agents/design-lead.md").exists());
         assert_eq!(
             std::fs::read_to_string(target.join("agents/design-lead.md")).unwrap(),

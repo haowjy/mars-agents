@@ -411,30 +411,6 @@ pub(crate) const PI: Table = &[
     ("image", NoSwitch("pi views images through read; no switch")),
 ];
 
-/// Cursor. Unmaintained: these rows are carried over unchanged from Mars 0.16's
-/// overrides and PascalCase convention, not re-verified against a current Cursor. Cursor
-/// `edit` has always named only `StrReplace`, so it does not cover `Write`. Anything the old
-/// convention guessed beyond these rows is now `unknown`.
-pub(crate) const CURSOR: Table = &[
-    ("bash", Tools(&["Shell"])),
-    ("ls", Absent),
-    ("work", Absent),
-    ("read", Tools(&["Read"])),
-    ("write", Tools(&["Write"])),
-    ("edit", Tools(&["StrReplace"])),
-    ("notebook", Tools(&["EditNotebook"])),
-    ("agent", Tools(&["Task"])),
-    ("skill", Tools(&["Skill"])),
-    ("glob", Tools(&["Glob"])),
-    ("grep", Tools(&["Grep"])),
-    ("web", Tools(&["WebSearch", "WebFetch"])),
-    ("web_search", Tools(&["WebSearch"])),
-    ("web_fetch", Tools(&["WebFetch"])),
-    ("ask_user", Tools(&["AskQuestion"])),
-    ("task", Tools(&["TodoWrite"])),
-    ("plan_mode", Tools(&["SwitchMode"])),
-];
-
 /// Antigravity CLI (`agy`) 1.5.12.
 ///
 /// Source: live probes of plugin agents. An agent's `tools` list loaded with `find_by_name`, `grep_search`,
@@ -687,23 +663,6 @@ mod tests {
                 "run_command",
                 "search_web",
                 "write_to_file",
-            ],
-            // Mars 0.16 table; not re-verified (target unmaintained).
-            HarnessId::Cursor => &[
-                "AskQuestion",
-                "EditNotebook",
-                "Glob",
-                "Grep",
-                "Read",
-                "Shell",
-                "Skill",
-                "StrReplace",
-                "SwitchMode",
-                "Task",
-                "TodoWrite",
-                "WebFetch",
-                "WebSearch",
-                "Write",
             ],
         }
     }

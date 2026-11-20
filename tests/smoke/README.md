@@ -58,7 +58,7 @@ For example:
 - Prefer `--json` where available and record the actual output shape.
 - Treat any panic, traceback, hang, or unexpected non-zero exit as failure.
 - Do not require git unless the guide explicitly says it needs git.
-- Do not mutate the developer's real `.mars/`, `.codex/`, `.claude/`, `.cursor/`, `.opencode/`, or `.pi/` directories.
+- Do not mutate the developer's real `.mars/`, `.codex/`, `.claude/`, `.opencode/`, or `.pi/` directories.
 - When testing installed/native harness detection, record which harness CLIs are present with `command -v` before interpreting the result.
 
 ## First Guides to Add

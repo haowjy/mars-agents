@@ -19,7 +19,7 @@ fn user_invocation_disabled(profile: &SkillProfile) -> bool {
     !profile.user_invocable
 }
 
-/// Explicit `model-invocable: false`: Cursor's Manual mode, and the loss elsewhere.
+/// Explicit `model-invocable: false`.
 fn model_invocation_explicitly_off(profile: &SkillProfile) -> bool {
     profile.had_model_invocable_field && !profile.model_invocable
 }
@@ -130,17 +130,6 @@ fn record_model_invocation_loss(
     }
 }
 
-fn apply_cursor_rule_mode(yaml: &mut Mapping, profile: &SkillProfile) {
-    if !profile.has_frontmatter {
-        return;
-    }
-    // Cursor's Manual and Intelligent modes both require alwaysApply:false.
-    yaml.insert(yk("alwaysApply"), Value::Bool(false));
-    if model_invocation_explicitly_off(profile) {
-        yaml.remove(yk("description"));
-    }
-}
-
 fn codex_openai_yaml_sibling() -> LoweredSibling {
     #[derive(serde::Serialize)]
     struct Policy {
@@ -184,7 +173,6 @@ pub fn lower_skill_for_harness(
             }
         }
         ModelOff::Lost => record_model_invocation_loss(&mut lossy_fields, profile, target_name),
-        ModelOff::CursorManual => apply_cursor_rule_mode(&mut yaml, profile),
     }
     match keys.user_off {
         UserOff::Key(key, value) => {
@@ -310,15 +298,6 @@ mod tests {
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(!out.contains("user-invocable"));
         assert!(is_quiet(&lowered.lossy_fields, "user-invocable", "Pi"));
-    }
-
-    #[test]
-    fn cursor_drops_user_invocable_false() {
-        let lowered =
-            lower_skill_for_harness(HarnessId::Cursor, &user_invocable_false_profile(), "Body\n");
-        let out = String::from_utf8(lowered.bytes).unwrap();
-        assert!(!out.contains("user-invocable"));
-        assert!(is_quiet(&lowered.lossy_fields, "user-invocable", "Cursor"));
     }
 
     #[test]

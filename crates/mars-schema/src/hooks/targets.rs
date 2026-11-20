@@ -64,8 +64,6 @@ const fn matched(name: &'static str, field: &'static str) -> Event {
 pub struct MergeFile {
     /// Under the target root.
     pub file: &'static str,
-    /// Keys set at the top of the file before appending (Cursor's `version`).
-    pub top_level: &'static [(&'static str, i64)],
     /// The harness skips hooks it has not been told to trust, keyed on their position in
     /// `file` (Codex): a sync that moves or adds one says so.
     pub trust_gated: bool,
@@ -100,8 +98,6 @@ pub enum Rules {
     /// Translated for the harness's own events and answers by a `mars hook run` command
     /// (`hooks::agy`).
     Translated(&'static agy::Translation),
-    /// Nothing is rendered for the target, as a whole; `reason` says why.
-    Withheld { reason: &'static str },
 }
 
 /// What a renderer needs of a target: the events it accepts and the rules its parser applies.
@@ -130,11 +126,6 @@ impl Profile {
             Rules::Translated(translation) => translation.serves(native_event).to_vec(),
             _ => vec![native_event],
         }
-    }
-
-    /// Whether the rules render `[hooks]` at all.
-    pub fn renders(&self) -> bool {
-        !matches!(self.rules, Rules::Withheld { .. })
     }
 }
 
@@ -265,30 +256,6 @@ const CODEX_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason"),
 ];
 
-const CURSOR_EVENTS: &[Event] = &[
-    event("beforeShellExecution"),
-    event("beforeMCPExecution"),
-    event("afterShellExecution"),
-    event("afterMCPExecution"),
-    event("beforeReadFile"),
-    event("afterFileEdit"),
-    event("beforeTabFileRead"),
-    event("afterTabFileEdit"),
-    event("stop"),
-    event("beforeSubmitPrompt"),
-    event("afterAgentResponse"),
-    event("afterAgentThought"),
-    event("sessionStart"),
-    event("sessionEnd"),
-    event("preCompact"),
-    event("subagentStart"),
-    event("subagentStop"),
-    event("preToolUse"),
-    event("postToolUse"),
-    event("postToolUseFailure"),
-    event("workspaceOpen"),
-];
-
 // OpenCode's compaction callback does not identify its trigger.
 const OPENCODE_EVENTS: &[Event] = &[
     matched("PreToolUse", "tool_name"),
@@ -339,7 +306,6 @@ const CLAUDE: Target = Target {
     // `settings.local.json` rather than the committed `settings.json`.
     placement: Placement::Merge(MergeFile {
         file: "settings.local.json",
-        top_level: &[],
         trust_gated: false,
     }),
     profile: Profile {
@@ -354,7 +320,6 @@ const CODEX: Target = Target {
     root: ".codex",
     placement: Placement::Merge(MergeFile {
         file: "hooks.json",
-        top_level: &[],
         trust_gated: true,
     }),
     profile: Profile {
@@ -363,24 +328,6 @@ const CODEX: Target = Target {
         rules: Rules::Codex,
     },
     other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
-};
-
-const CURSOR: Target = Target {
-    root: ".cursor",
-    // Cursor's `hooks.json` is a flat entry array and requires the version wrapper.
-    placement: Placement::Merge(MergeFile {
-        file: "hooks.json",
-        top_level: &[("version", 1)],
-        trust_gated: false,
-    }),
-    profile: Profile {
-        events: CURSOR_EVENTS,
-        verified_against: Some("cursor-agent 2026.07.16"),
-        rules: Rules::Withheld {
-            reason: "mars renders no generated hooks for Cursor before 0.26",
-        },
-    },
-    other_events: &[],
 };
 
 const OPENCODE: Target = Target {
@@ -426,7 +373,6 @@ fn row(harness: HarnessId) -> &'static Target {
         HarnessId::Claude => &CLAUDE,
         HarnessId::Codex => &CODEX,
         HarnessId::OpenCode => &OPENCODE,
-        HarnessId::Cursor => &CURSOR,
         HarnessId::Pi => &PI,
         HarnessId::Agy => &AGY,
     }

@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use mars_schema::HarnessId;
+use mars_schema::retired::RetiredTarget;
 
 use super::Settings;
 
@@ -43,6 +44,8 @@ pub enum LinkKind {
     KnownHarness,
     GenericTarget,
     PathLike,
+    /// A target Mars no longer writes (`mars_schema::retired::RETIRED_TARGETS`).
+    Retired,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -85,12 +88,32 @@ impl EffectiveLinks {
     pub fn managed_targets(&self) -> Vec<String> {
         let mut seen = BTreeSet::new();
         let mut targets = Vec::new();
-        for link in &self.links {
+        for link in self
+            .links
+            .iter()
+            .filter(|link| link.kind != LinkKind::Retired)
+        {
             if seen.insert(link.target.clone()) {
                 targets.push(link.target.clone());
             }
         }
         targets
+    }
+
+    /// The retired targets the links name, each once.
+    pub fn retired_targets(&self) -> Vec<&'static RetiredTarget> {
+        let mut found: Vec<&'static RetiredTarget> = Vec::new();
+        for retired in self
+            .links
+            .iter()
+            .filter(|link| link.kind == LinkKind::Retired)
+            .filter_map(|link| mars_schema::retired::retired_target(&link.target))
+        {
+            if !found.iter().any(|seen| seen.dir == retired.dir) {
+                found.push(retired);
+            }
+        }
+        found
     }
 
     pub fn linked_harnesses(&self) -> Vec<HarnessId> {
@@ -118,6 +141,15 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
             target: trimmed.to_string(),
             harness: None,
             kind: LinkKind::PathLike,
+        };
+    }
+
+    if let Some(retired) = mars_schema::retired::retired_target(trimmed) {
+        return NormalizedLink {
+            raw: raw.to_string(),
+            target: retired.dir.to_string(),
+            harness: None,
+            kind: LinkKind::Retired,
         };
     }
 
@@ -187,34 +219,82 @@ pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
 }
 
-/// The advisories about the targets in `managed`: one line each, whatever the number of items.
-pub(crate) fn target_advisories(managed: &[String]) -> Vec<crate::diagnostic::Diagnostic> {
+/// The advisories about the targets in `managed` and the `retired` ones the configuration still
+/// names: one line each, whatever the number of items.
+pub(crate) fn target_advisories(
+    managed: &[String],
+    retired: &[&RetiredTarget],
+) -> Vec<crate::diagnostic::Diagnostic> {
     agents_target_diagnostic(managed)
         .into_iter()
-        .chain(cursor_target_diagnostic(managed))
+        .chain(
+            retired
+                .iter()
+                .map(|retired| retired_target_diagnostic(retired)),
+        )
         .collect()
 }
 
-/// Cursor support is removed in the minor after 0.37.0. Until then it works, so this is the one
-/// notice that tells the user to unlink it.
-fn cursor_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
+/// Nothing is synced to a retired target; its files stay until `mars unlink` removes them.
+fn retired_target_diagnostic(retired: &RetiredTarget) -> crate::diagnostic::Diagnostic {
     use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 
-    let cursor = managed.iter().find(|target| {
-        crate::harness::registry::harness_for_target(target) == Some(HarnessId::Cursor)
-    })?;
-    let unlink = format!("mars unlink {cursor}");
-    let unlink = crate::types::managed_cmd(&unlink);
-    Some(Diagnostic {
+    let unlink = crate::types::managed_cmd(&format!("mars unlink {}", retired.dir)).into_owned();
+    Diagnostic {
         category: Some(DiagnosticCategory::Advisory),
         ..Diagnostic::new(
             DiagnosticLevel::Warning,
-            "deprecated-cursor-target",
-            format!(
-                "Cursor support is deprecated and goes away in the next minor release, so `{cursor}` will stop being written. Run `{unlink}` to remove it."
-            ),
+            "retired-target",
+            retired.message(&unlink),
         )
-    })
+    }
+}
+
+/// The targets a project file or `mars.local.toml` names on this machine, retired spellings
+/// included. The local file's `targets` replaces the project's when merging, so a target can be
+/// named here and not managed.
+fn named_targets(config: &super::Config, local: &super::LocalConfig) -> BTreeSet<String> {
+    let (project, local) = (&config.settings, &local.settings);
+    project
+        .targets
+        .iter()
+        .flatten()
+        .chain(&project.managed_root)
+        .chain(local.targets.iter().flatten())
+        .chain(&local.managed_root)
+        .map(|raw| normalize_link(raw).target)
+        .collect()
+}
+
+/// What sync and `doctor` say about the targets `rest` (the records of a lock that serve targets
+/// outside the command) holds records for and no configuration file names: one line each. Sync
+/// does nothing about such a target, so what it installed there stays until `mars unlink`
+/// removes it or `targets` names the target again.
+pub(crate) fn unnamed_target_diagnostics(
+    rest: &crate::lock::LockFile,
+    config: &super::Config,
+    local: &super::LocalConfig,
+) -> Vec<crate::diagnostic::Diagnostic> {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+
+    let named = named_targets(config, local);
+    rest.recorded_targets()
+        .iter()
+        .filter(|target| !named.contains(*target))
+        .map(|target| {
+            let unlink = crate::types::managed_cmd(&format!("mars unlink {target}")).into_owned();
+            Diagnostic {
+                category: Some(DiagnosticCategory::Advisory),
+                ..Diagnostic::new(
+                    DiagnosticLevel::Warning,
+                    "unnamed-target",
+                    format!(
+                        "`{target}` is not in `targets`, so sync no longer updates what it installed there. Run `{unlink}` to remove it, or add `{target}` to `targets`."
+                    ),
+                )
+            }
+        })
+        .collect()
 }
 
 /// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.

@@ -58,6 +58,12 @@ impl PackageDir {
         }
     }
 
+    /// The copy a lock item key (`hook/guard@claude`) names.
+    pub(crate) fn from_lock_key(kind: ItemKind, key: &str) -> Option<Self> {
+        let (name, target) = key.strip_prefix(&format!("{kind}/"))?.rsplit_once('@')?;
+        Self::new(kind, target, name)
+    }
+
     pub(crate) fn from_native(kind: ItemKind, target: &str, dest: &str) -> Option<Self> {
         let (found, name) = dest.split_once('/')?;
         if found != surface(kind)? || name.contains('/') {

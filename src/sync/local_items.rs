@@ -127,6 +127,7 @@ impl LocalMerge<'_> {
                         item.outputs.iter().map(|output| output.target_root.clone())
                     }),
                 );
+                targets.extend(self.loaded().unscoped.recorded_targets());
                 targets.sort();
                 targets.dedup();
                 crate::local_source::flat_skill_excluded_paths(

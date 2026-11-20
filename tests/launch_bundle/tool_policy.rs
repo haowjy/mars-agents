@@ -199,9 +199,9 @@ Review code changes."#;
 }
 
 #[test]
-fn build_launch_bundle_cursor_and_pi_unknown_tools_are_left_out_with_a_note() {
+fn build_launch_bundle_pi_unknown_tools_are_left_out_with_a_note() {
     let temp = TempDir::new().unwrap();
-    let bin_dir = install_fake_harnesses(temp.path(), &["cursor", "pi"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi"]);
     let agent_content = r#"---
 name: reviewer
 model: claude-opus-4-6
@@ -212,24 +212,6 @@ Review code changes."#;
 
     let (server, project_root) =
         setup_bundle_project(&temp, "bundle-source", agent_content, &[], "");
-
-    let mut cursor_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
-    cursor_cmd.args([
-        "build",
-        "launch-bundle",
-        "--agent",
-        "reviewer",
-        "--harness",
-        "cursor",
-    ]);
-    cursor_cmd.env("PATH", replace_path_with(&bin_dir));
-    let cursor_output = cursor_cmd.assert().success().get_output().clone();
-    let cursor_bundle: Value = serde_json::from_slice(&cursor_output.stdout).unwrap();
-    assert_eq!(cursor_bundle["tools"]["allowed"], serde_json::json!([]));
-    let cursor_rule = rule(&cursor_bundle, "custom_tool", None);
-    assert_eq!(cursor_rule["native_status"], "unknown");
-    assert!(cursor_rule["note"].is_string(), "{cursor_rule}");
-    assert_eq!(cursor_bundle["warnings"], serde_json::json!([]));
 
     let mut pi_cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     pi_cmd.args([

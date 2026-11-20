@@ -235,6 +235,22 @@ pub(crate) fn report_dependency(
             );
         }
     }
+    // The installer reads a dependency's `[models]` and nothing else of its `mars.toml`, so the
+    // alias that names a retired harness is only reported here.
+    if let Some(table) = prepared
+        .manifest
+        .as_ref()
+        .and_then(|manifest| std::str::from_utf8(&manifest.normalized_bytes).ok())
+        .and_then(|text| text.parse::<toml::Table>().ok())
+    {
+        for diagnostic in mars_schema::retired::model_harness_diagnostics(&table) {
+            diag.schema(
+                &diagnostic,
+                &format!("{source_name}: mars.toml"),
+                Owner::Dependency(source_name.as_str()),
+            );
+        }
+    }
     let package_name = dependency_name(prepared, source_name);
     // Only a git source is a tree the consumer cannot edit; a path source or an override is
     // theirs, and `mars upgrade` would leave it unchanged. A source the consumer's own config

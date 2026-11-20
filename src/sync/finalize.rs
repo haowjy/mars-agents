@@ -93,6 +93,16 @@ pub(crate) fn finalize(
             ),
         )?);
         diag.settle(old_lock, &new_lock);
+        new_lock.merge_targets(
+            state
+                .applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .unscoped
+                .clone(),
+        );
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }

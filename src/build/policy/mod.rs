@@ -8,7 +8,6 @@ use crate::build::bundle::ExecutionPolicy;
 use crate::config::{AgentOverlay, EffectiveProjectConfig};
 use crate::error::MarsError;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
-use crate::harness::registry;
 use crate::models::{self, ModelAlias};
 use crate::routing;
 use mars_schema::agent::{AgentProfile, EffortRequest};
@@ -20,7 +19,6 @@ mod harness;
 mod model;
 mod runnable;
 use crate::models::reasoning;
-use crate::models::slug_tiers::TierFailure;
 
 pub struct PolicyInput<'a> {
     pub project_root: &'a Path,
@@ -515,9 +513,6 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let tiered_harness = mars_schema::harness::parse(&selected_harness)
-        .filter(|harness| registry::slug_tiers(*harness).is_some());
-    let listing = tiered_harness.and_then(|harness| capability_session.listing(harness));
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
         model_token: resolved_model.model_token.clone(),
@@ -536,59 +531,10 @@ pub fn resolve_policy(
         provider_for_order: resolved_model.provider_for_order.as_deref(),
         effort: execution_resolution.effort.value,
         catalog: &cache.catalog,
-        listing: listing.as_ref(),
         route_report: report,
     });
 
     warnings.extend(routing_resolution.warnings);
-    if routing_resolution.effort_consumed {
-        provenance.insert(
-            "effort_applied_to_harness_model".to_string(),
-            "true".to_string(),
-        );
-    }
-    if let (Some(failure), Some(requested)) = (
-        routing_resolution.tier_failure,
-        execution_resolution.effort.value,
-    ) {
-        let actor = input
-            .agent
-            .map(|agent| format!("agent {agent}"))
-            .unwrap_or_else(|| "requested model".to_string());
-        let requested = requested.as_str();
-        let harness = tiered_harness
-            .expect("a tier failure comes from a harness with tiers")
-            .display_name();
-        let message = match failure {
-            TierFailure::ListingUnavailable => format!(
-                "{actor} selected effort {requested}; {harness} model list was unavailable; rerun without --no-refresh-models or with --refresh-models."
-            ),
-            TierFailure::ListingFailed { error } => {
-                let detail = error
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| format!(" ({value})"))
-                    .unwrap_or_default();
-                format!(
-                    "{actor} selected effort {requested}; {harness} model list probe failed{detail}."
-                )
-            }
-            TierFailure::ListingEmpty => format!(
-                "{actor} selected effort {requested}; {harness} model list returned no model slugs; rerun without --no-refresh-models or with --refresh-models."
-            ),
-            TierFailure::NoModelPrefixMatch => format!(
-                "{actor} selected effort {requested}; {harness} model catalog has no matching model slug for `{}`.",
-                resolved_model.model
-            ),
-        };
-        return Err(MarsError::Selection {
-            code: "invalid_execution_policy",
-            message,
-            report: Box::new(routing_resolution.routing.route_trace),
-        });
-    }
-
     Ok(ResolvedPolicy {
         routing: routing_resolution.routing,
         execution_policy: ExecutionPolicy {
@@ -621,9 +567,6 @@ pub(crate) struct EffortRoute<'a> {
     pub harness: mars_schema::HarnessId,
     /// Every provider's rows; empty when there is no catalog (a package build).
     pub catalog: &'a crate::models::catalog::Catalog,
-    /// The harness's listing, whose tiers are its levels for the model; read only by a harness
-    /// that folds tiers into its slugs.
-    pub listing: Option<&'a crate::models::probes::Listing>,
 }
 
 /// A profile resolved for one model and harness, and the warning its effort earned.
@@ -631,8 +574,6 @@ pub(crate) struct ModelProfile {
     pub profile: AgentProfile,
     /// Names the model, both levels and why, when the requested effort moved.
     pub effort_moved: Option<reasoning::EffortWarning>,
-    /// The slug that carries the resolved effort, for a harness that folds tiers into its slugs.
-    pub tier_slug: Option<String>,
 }
 
 /// The profile as it launches on one model: effort, approval, sandbox and network resolved
@@ -668,7 +609,6 @@ pub(crate) fn profile_for_model(
     let alias = model.as_ref().and_then(|model| model.alias);
     let mut resolved = profile.clone();
     let mut effort_moved = None;
-    let mut tier_slug = None;
     resolved.effort =
         execution::effort_layer(None, None, profile, alias, overlay, matched.as_ref())
             .value
@@ -679,9 +619,7 @@ pub(crate) fn profile_for_model(
                     route.harness,
                     model.as_ref().map_or("", |model| model.canonical_id),
                     "",
-                    route.listing,
                 );
-                tier_slug = effort.tier_slug().map(str::to_string);
                 effort_moved = effort.warning;
                 effort.resolution.level.map(EffortRequest::Level)
             });
@@ -711,7 +649,6 @@ pub(crate) fn profile_for_model(
     ModelProfile {
         profile: resolved,
         effort_moved,
-        tier_slug,
     }
 }
 

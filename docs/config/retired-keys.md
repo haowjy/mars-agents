@@ -1,6 +1,6 @@
 # Retired keys
 
-Mars 0.34.0 dropped support for the format packages used before [schema v1](schema-v1.md), and with it `mars migrate`. A key an old Mars read and this one does not is reported once as a `field.retired` warning that links here, and it stays in the file. The warning is a warning because what the key set is lost: a `disallowed-tools` entry no longer denies a tool, a `permission` no longer restricts the Agent. Fix it by hand, using the entry below.
+Mars 0.34.0 dropped support for the format packages used before [schema v1](schema-v1.md), and with it `mars migrate`. A key an old Mars read and this one does not, is reported once as a `field.retired` warning that links here, and it stays in the file. A target directory it no longer writes (`.cursor`) is a `retired-target` warning on each sync. The warning is a warning because what the key set is lost: a `disallowed-tools` entry no longer denies a tool, a `permission` no longer restricts the Agent. Fix it by hand, using the entry below.
 
 The list lives in one file, `crates/mars-schema/src/retired.rs`. A key that is not in it, or that was never Mars's, is a `field.unknown` `Info` instead.
 
@@ -91,6 +91,21 @@ A skill carries no tool policy of Mars's own, so `tools` and `allowed_tools` hav
 ## Skill invocation
 
 `disable-model-invocation: true` became `model-invocable: false`. `invocation` and `allow_implicit_invocation` have no replacement; delete them.
+
+## Cursor
+
+Mars no longer supports Cursor: `cursor` is not a harness and `.cursor` is not a target. What a project that names it gets:
+
+- `cursor` or `.cursor` in `[settings] targets` (or `managed_root`) is warned about on every sync (`retired-target`) and not synced to. Neither copied skills nor generated files are written there, and the files earlier syncs wrote stay where they are.
+- `mars link cursor` fails. `mars unlink .cursor` removes exactly what `mars.lock` records for it: the skills, agents and hook directories Mars copied, the MCP servers it added to `.cursor/mcp.json` and the hook entries it added to `.cursor/hooks.json`. A server or hook entry you wrote, and any other file in `.cursor/`, stays. An entry you edited after Mars wrote it also stays. If `.cursor/hooks.json` held only Mars's entries, it is left holding `{"version": 1}`: delete it by hand.
+- `cursor` as `[models.<alias>] harness`, `default_harness` or an entry of `harness_order` is a `field.retired` warning on every sync: naming it has no effect, so delete it. A sync also leaves what it installed in a `.cursor` that `targets` no longer names, as for any target the config does not name (`unnamed-target`), until `mars unlink .cursor`.
+- `harness-overrides.cursor` is a retired key (`field.retired`): the block has no effect.
+- `variants/cursor/` in a skill is an unknown harness variant, which Mars reports and does not read.
+- A hook's `[targets.".cursor"]` table and a `cursor.json` native hook name a target that is not managed, so they are ignored like any target the project does not link.
+- A `cursor` entry in `harness_order` or `provider_order` is reported and skipped.
+- `harness: cursor` in an Agent profile is a retired value (`field.retired`): the Agent pins no harness. `harness = "cursor"` in a `[models.<alias>]` table is read as no harness, so the alias routes as if it named none, and a `[[show]]` or `[[hide]]` rule in `mars.curated.toml` for harness `cursor` is dropped, because it can match no model.
+- `mars models --harness cursor`, `mars build launch-bundle --harness cursor` and `harnesses = ["cursor"]` in `[plugin]` are errors: `cursor` is an unknown harness name.
+- `dialect = "cursor"` still reads a package laid out as a Cursor repository (`.cursor/rules/*.mdc`, `.cursor-plugin/`); the keys it rejects are dropped, since no harness reads them.
 
 ## Values that changed
 

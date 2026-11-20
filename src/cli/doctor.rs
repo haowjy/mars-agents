@@ -31,6 +31,22 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     };
 
+    // Judge the half of the lock that sync maintains. A target the configuration does not name
+    // keeps its records and its `.mars/<surface>/<target>/` copies, which nothing reinstalls.
+    let lock = match &project_config {
+        Some(loaded) => {
+            let managed = crate::config::targets::managed_targets(&loaded.effective.settings);
+            let (kept, rest) = lock.split_targets(|target| managed.iter().any(|m| m == target));
+            diag.extend(crate::config::targets::unnamed_target_diagnostics(
+                &rest,
+                &loaded.config,
+                &loaded.local,
+            ));
+            kept
+        }
+        None => lock,
+    };
+
     let mars_dir = ctx.project_root.join(".mars");
     for (dest_path_str, item) in lock.canonical_flat_items() {
         let disk_path = dest_path_str.resolve(&mars_dir);

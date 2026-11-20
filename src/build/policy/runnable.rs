@@ -1,11 +1,8 @@
 use crate::build::bundle::{CatalogRow, Routing};
-use crate::models::availability::{RunnableConfidence, RunnablePathSource};
 use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
-use crate::models::probes::Listing;
 use crate::models::reasoning;
-use crate::models::slug_tiers::TierFailure;
-use crate::routing::{MatchEvidence, report::RouteDecisionReport};
+use crate::routing::report::RouteDecisionReport;
 use mars_schema::agent::{EffortLevel, EffortRequest};
 
 pub(super) struct RoutingInput<'a> {
@@ -20,21 +17,14 @@ pub(super) struct RoutingInput<'a> {
     pub(super) effort: Option<EffortRequest>,
     /// Every provider's rows, for the model's reasoning and the bundle's `catalog_row`.
     pub(super) catalog: &'a Catalog,
-    /// The selected harness's listing, read when it folds effort tiers into its slugs.
-    pub(super) listing: Option<&'a Listing>,
     pub(super) route_report: RouteDecisionReport,
 }
 
 pub(super) struct RoutingResolution {
     pub(super) routing: Routing,
-    /// The level the harness is launched with; `None` sends no effort, including when the level
-    /// was folded into `harness_model`.
+    /// The level the harness is launched with; `None` sends no effort.
     pub(super) effort: Option<EffortLevel>,
-    /// The effort was folded into `harness_model`.
-    pub(super) effort_consumed: bool,
     pub(super) warnings: Vec<String>,
-    /// The harness could not say which slug carries the requested effort.
-    pub(super) tier_failure: Option<TierFailure>,
 }
 
 pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
@@ -48,7 +38,6 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         provider_for_order,
         effort,
         catalog,
-        listing,
         route_report,
     } = input;
 
@@ -76,9 +65,8 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         harness_id,
         &model,
         &runnable.harness_model_id,
-        listing,
     );
-    let mut routing = Routing {
+    let routing = Routing {
         model,
         model_token,
         provider_constraint: provider_constraint.map(str::to_string),
@@ -92,33 +80,19 @@ pub(super) fn resolve_routing(input: RoutingInput<'_>) -> RoutingResolution {
         catalog_row: route.row.map(CatalogRow::from),
         route_trace: route_report,
     };
-    let mut resolved = RoutingResolution {
-        routing: routing.clone(),
-        effort: route.resolution.level,
-        effort_consumed: false,
-        warnings: route.warning.iter().map(|w| w.message.clone()).collect(),
-        tier_failure: route.tier_failure.clone(),
-    };
+    let mut warnings: Vec<String> = route.warning.iter().map(|w| w.message.clone()).collect();
     if route.reasoning_data_missing
         && let Some(EffortRequest::Level(level)) = effort
     {
-        resolved.warnings.push(format!(
+        warnings.push(format!(
             "effort `{}` sent as written without checking `{}`: the models catalog has no reasoning data until it refreshes",
             level.as_str(),
             routing.model
         ));
     }
-    if let Some(slug) = route.tier_slug()
-        && let Some(tiers) = &route.tiers
-    {
-        routing.harness_model = slug.to_string();
-        routing.harness_model_source = RunnablePathSource::CachedProbe.label().to_string();
-        routing.harness_model_confidence = RunnableConfidence::Confirmed.label().to_string();
-        routing.candidate_slugs = tiers.candidate_slugs.clone();
-        routing.match_evidence = MatchEvidence::Confirmed.label().to_string();
-        resolved.effort = None;
-        resolved.effort_consumed = true;
+    RoutingResolution {
+        routing,
+        effort: route.resolution.level,
+        warnings,
     }
-    resolved.routing = routing;
-    resolved
 }

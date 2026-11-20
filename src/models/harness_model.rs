@@ -57,7 +57,7 @@ pub fn resolve_harness_model(
         };
     }
 
-    // Pi and OpenCode accept provider/model in constrained passthrough. Cursor
+    // Pi and OpenCode accept provider/model in constrained passthrough. Antigravity
     // takes an unqualified model/effort slug even when its provider is known.
     if crate::harness::registry::qualifies_slugs(harness)
         && !requested.contains('/')

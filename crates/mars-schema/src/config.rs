@@ -264,7 +264,7 @@ pub struct Settings {
     ///
     /// When set, replaces built-in provider preference ordering for candidate
     /// selection. First installed candidate wins. When unset, Mars uses the
-    /// built-in default (`claude`, `pi`, `codex`, `opencode`, `cursor`).
+    /// built-in default (`claude`, `pi`, `codex`, `opencode`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_order: Option<Vec<String>>,
     /// Ordered provider preference for model-first routing tie-breaks.
@@ -430,11 +430,14 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     let value = serde_ignored::deserialize(toml::Deserializer::new(content), |at| {
         ignored.push(segments(&at));
     })?;
-    let unknown_keys = unknown_notes(ignored, &[]);
-    let floor = content
-        .parse::<toml::Table>()
-        .ok()
-        .and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
+    let mut unknown_keys = unknown_notes(ignored, &[]);
+    let table = content.parse::<toml::Table>().ok();
+    unknown_keys.extend(
+        table
+            .iter()
+            .flat_map(crate::retired::config_harness_diagnostics),
+    );
+    let floor = table.and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
     Ok(Read {
         value,
         unknown_keys,

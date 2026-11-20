@@ -1,6 +1,6 @@
 # mars
 
-A package manager for AI agent profiles and skills. Install agents and skills from git sources into Claude Code, Codex, OpenCode, Cursor, and other agent harness config directories.
+A package manager for AI agent profiles and skills. Install agents and skills from git sources into Claude Code, Codex, OpenCode, and other agent harness config directories.
 
 ## Target Status
 
@@ -11,13 +11,14 @@ Mars materializes harness-native artifacts for multiple targets:
 | `.claude` | First-class | Claude Code agents, skills, MCP, hooks, and settings surfaces. |
 | `.codex` | First-class | Codex project instruction and agent-facing surfaces, MCP servers, and hooks. |
 | `.opencode` | First-class | OpenCode agent and permission surfaces, MCP servers, and hooks. |
-| `.cursor` | Deprecated | Still works, untested and not extended. Mars warns (`deprecated-cursor-target`) on every sync while it is a target, and drops Cursor in the minor after 0.37.0. Run `mars unlink .cursor`. |
 | `.agy` | New | Antigravity (`agy`): written as an `agy` plugin (skills, agents, hooks, MCP servers) that the project's `.agents/plugins.json` points at. Portable `[hooks]` are not translated yet; a native `agy.json` hook is. |
 | `.pi` | Future first-class | Receives MCP servers and hooks today. The Meridian-owned Pi flavor and extension surface is under active design/development. |
 
+Mars no longer supports Cursor. A project that still links `.cursor` keeps syncing its other targets, and `mars unlink .cursor` removes what earlier syncs installed there; see [Retired keys](docs/config/retired-keys.md#cursor).
+
 ## Plugin Distribution
 
-Packages can commit installable plugin artifacts for Claude, Codex, Grok, Cursor, and
+Packages can commit installable plugin artifacts for Claude, Codex, Grok, and
 OpenCode. See [Authoring harness plugins](docs/plugin-authoring.md) for configuration,
 build, verification, and release guidance.
 
@@ -28,24 +29,24 @@ where a cell explicitly says docs-only.
 <!-- BEGIN GENERATED PLUGIN SUPPORT -->
 ### Component support
 
-| | Claude | Codex | Grok | Cursor | OpenCode |
-|---|---|---|---|---|---|
-| Tree | claude | claude | claude | cursor | opencode |
-| Skills | supported | supported | supported | supported | supported (registered by `index.mjs`) |
-| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported | supported (registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning) |
-| Hooks | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning | supported for hooks with the `cursor` native hook; `[hooks]` and others dropped with warning | supported for `[hooks]` (generated adapter) and hooks with the `opencode` native hook; other targets' native hooks dropped with warning (each native hook needs a default `{id, setup}` export) |
-| MCP | supported | supported (same file as Claude) | supported (same file as Claude) | supported | supported (registered by `index.mjs`) |
-| Bootstrap docs | impossible | impossible | impossible | impossible | impossible |
+| | Claude | Codex | Grok | OpenCode |
+|---|---|---|---|---|
+| Tree | claude | claude | claude | opencode |
+| Skills | supported | supported | supported | supported (registered by `index.mjs`) |
+| Agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning | **impossible**: Codex plugins don't load agents | supported; `hooks`, `mcpServers`, `permissionMode`, `initialPrompt` dropped with warning (same file as Claude) | supported (registered by `index.mjs` as `<plugin>:<agent>` subagents; preloaded skills become body guidance; `harness-overrides.opencode` keys other than `permission` are dropped with warning) |
+| Hooks | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning (reads the Claude tree's `hooks/hooks.json`) | supported for `[hooks]` (rendered to what Codex also parses) and hooks with the `claude` native hook; other targets' native hooks dropped with warning | supported for `[hooks]` (generated adapter) and hooks with the `opencode` native hook; other targets' native hooks dropped with warning (each native hook needs a default `{id, setup}` export) |
+| MCP | supported | supported (same file as Claude) | supported (same file as Claude) | supported (registered by `index.mjs`) |
+| Bootstrap docs | impossible | impossible | impossible | impossible |
 
 ### Verification level
 
-| | Claude | Codex | Grok | Cursor | OpenCode |
-|---|---|---|---|---|---|
-| Install from catalog | live (local marketplace) | live (local marketplace) | live (local marketplace) | docs-only (account required) | live (`git+file://`) |
-| Skills | live (own and dependency skills) | live (own and dependency skills) | live, with `resources/` | docs-only (schema validation only) | live, with `resources/` |
-| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | docs-only (schema validation only) | live (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny) |
-| Hooks | live (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script) | live (built tree, CommonJS script) | live (`CLAUDE_PLUGIN_ROOT`) | docs-only (schema validation only) | live (git install, CommonJS script) |
-| MCP | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`env_vars` pass-through) | docs-only (schema validation only) | live (`<plugin>:<server>`) |
+| | Claude | Codex | Grok | OpenCode |
+|---|---|---|---|---|
+| Install from catalog | live (local marketplace) | live (local marketplace) | live (local marketplace) | live (`git+file://`) |
+| Skills | live (own and dependency skills) | live (own and dependency skills) | live, with `resources/` | live, with `resources/` |
+| Agents | live (subagent preload) | n/a (impossible) | live (subagent with native skill preload) | live (`<plugin>:<agent>` spawned as a subagent; `task: deny` resolved as `subagent` deny) |
+| Hooks | live (`${CLAUDE_PLUGIN_ROOT}`, CommonJS script) | live (built tree, CommonJS script) | live (`CLAUDE_PLUGIN_ROOT`) | live (git install, CommonJS script) |
+| MCP | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`env_vars` pass-through) | live (`<plugin>:<server>`) |
 <!-- END GENERATED PLUGIN SUPPORT -->
 
 ### Install commands
@@ -58,7 +59,6 @@ where a cell explicitly says docs-only.
 | Claude | `claude plugin marketplace add <owner>/<repo>` then `claude plugin install <name>@<marketplace>` | Local directory and local Git checkout. GitHub shorthand is documented, not run pending a pushed plugin release. |
 | Codex | `codex plugin marketplace add <owner>/<repo>` then `codex plugin add <name>@<marketplace>` | Local directory; Codex selects the Claude catalog. GitHub shorthand is documented, not run pending a pushed plugin release. |
 | Grok | `grok plugin marketplace add <repo-url>` then `grok plugin install <name> --trust` | Local directory and `file://` Git. |
-| Cursor | `agent plugin marketplace add <repo-git-url>`, then install from Cursor's Customize UI; local development: `agent --plugin-dir <checkout>/<dir>/cursor` | Documented only; an account is required. |
 | OpenCode | `opencode plugin add git+https://github.com/<owner>/<repo>.git` | `git+file://` verified. `git+https` is documented, not run pending a pushed plugin release. |
 
 ## Install
@@ -127,7 +127,6 @@ flowchart TD
 
     claude[".claude/"]
     codex[".codex/"]
-    cursor[".cursor/"]
     opencode[".opencode/"]
     pi[".pi/"]
 
@@ -141,7 +140,6 @@ flowchart TD
 
     canonical --> |mars link| claude
     canonical --> |mars link| codex
-    canonical --> |mars link| cursor
     canonical --> |mars link| opencode
     canonical --> |mars link| pi
 ```

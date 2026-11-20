@@ -30,10 +30,6 @@ pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
     render(&server.transport, Flavor::Claude)
 }
 
-pub(super) fn cursor_render(server: &McpServerEntry) -> McpRender {
-    render(&server.transport, Flavor::Cursor)
-}
-
 pub(super) fn agy_render(server: &McpServerEntry) -> McpRender {
     mars_schema::mcp_servers::render_agy(&server.transport)
 }
@@ -212,14 +208,14 @@ mod tests {
     #[test]
     fn a_same_named_entry_the_lock_does_not_own_survives_until_forced() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let path = tmp.path().join(".cursor/mcp.json");
+        let path = tmp.path().join(".pi/mcp.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"mcpServers":{"srv":{"command":"mine"}}}"#).unwrap();
         let entry = server("srv", &[]);
         let none = BTreeMap::new();
 
         let (records, codes) = reconcile_with(
-            ".cursor",
+            ".pi",
             tmp.path(),
             &none,
             std::slice::from_ref(&entry),
@@ -229,7 +225,7 @@ mod tests {
         assert_eq!(codes, ["mcp-unmanaged-collision"]);
         assert_eq!(read(&path)["mcpServers"]["srv"]["command"], "mine");
 
-        let (records, codes) = reconcile_with(".cursor", tmp.path(), &none, &[entry], true);
+        let (records, codes) = reconcile_with(".pi", tmp.path(), &none, &[entry], true);
         assert_eq!(records.len(), 1);
         assert_eq!(codes, ["mcp-unmanaged-adopted"]);
         assert_eq!(read(&path)["mcpServers"]["srv"]["command"], "node");
@@ -239,16 +235,16 @@ mod tests {
     fn removal_leaves_an_entry_the_user_edited() {
         let tmp = tempfile::TempDir::new().unwrap();
         let entry = server("srv", &[]);
-        write(".cursor", tmp.path(), std::slice::from_ref(&entry));
-        let path = tmp.path().join(".cursor/mcp.json");
+        write(".pi", tmp.path(), std::slice::from_ref(&entry));
+        let path = tmp.path().join(".pi/mcp.json");
         let mut json = read(&path);
         json["mcpServers"]["srv"]["command"] = "edited".into();
         std::fs::write(&path, json.to_string()).unwrap();
 
         let codes = remove(
-            ".cursor",
+            ".pi",
             tmp.path(),
-            BTreeMap::from([("mcp:srv".to_owned(), record_of(".cursor", &entry))]),
+            BTreeMap::from([("mcp:srv".to_owned(), record_of(".pi", &entry))]),
         );
         assert!(codes.contains(&"mcp-divergent".to_owned()));
         assert_eq!(read(&path)["mcpServers"]["srv"]["command"], "edited");

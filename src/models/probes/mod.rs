@@ -7,7 +7,6 @@ use cache::{CachedProbe, CachedProbeOutcome};
 pub mod agy;
 pub mod cache;
 mod command;
-pub mod cursor;
 pub mod opencode;
 pub mod pi;
 pub mod probe_refresh;
@@ -15,7 +14,6 @@ pub mod probe_refresh;
 pub use probe_refresh::ProbeRefreshMode;
 
 pub use agy::AgyProbeResult;
-pub use cursor::CursorProbeResult;
 pub use opencode::OpenCodeProbeResult;
 pub use pi::PiProbeResult;
 
@@ -30,7 +28,7 @@ pub struct Listing {
     /// The harness cannot be driven at all, even when its listing completed. Pi sets this when
     /// its help surface lacks a flag Mars needs.
     pub incompatible: bool,
-    /// A completed but empty listing is no evidence of support or credentials (Cursor).
+    /// A completed but empty listing is no evidence of support or credentials (Antigravity).
     pub empty_is_failure: bool,
 }
 

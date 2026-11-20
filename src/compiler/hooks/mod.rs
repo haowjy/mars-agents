@@ -469,9 +469,7 @@ pub(crate) fn check_hooks(
                 ),
             );
         }
-        // Cursor renders nothing before 0.26, so its one blanket skip is no reason an author
-        // can act on.
-        for target in mars_schema::hooks::targets::all().filter(|target| target.profile.renders()) {
+        for target in mars_schema::hooks::targets::all() {
             for skip in item.def.skips_for(target.root) {
                 diag.warn(
                     "hook-skipped",

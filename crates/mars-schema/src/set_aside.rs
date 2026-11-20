@@ -45,18 +45,21 @@ pub(crate) const RESTRICTION_LOST: &str = "field.restriction-lost";
 pub(crate) const EXECUTION_IGNORED: &str = "field.execution-ignored";
 
 /// Execution fields (in a profile, or in a model policy's `override`) and what each accepts.
-fn execution_allowed(key: &str) -> Option<&'static str> {
+fn execution_allowed(key: &str) -> Option<String> {
     use crate::agent::{ApprovalMode, EffortRequest, SandboxMode};
     use crate::network::NetworkPolicy;
-    Some(match key {
-        "harness" => "claude, codex, opencode, cursor, pi",
-        "mode" => "primary, subagent",
-        "effort" => EffortRequest::ALLOWED,
-        "approval" => ApprovalMode::ALLOWED,
-        "sandbox" => SandboxMode::ALLOWED,
-        "network" => NetworkPolicy::ALLOWED,
-        _ => return None,
-    })
+    Some(
+        match key {
+            "harness" => return Some(crate::harness::names()),
+            "mode" => "primary, subagent",
+            "effort" => EffortRequest::ALLOWED,
+            "approval" => ApprovalMode::ALLOWED,
+            "sandbox" => SandboxMode::ALLOWED,
+            "network" => NetworkPolicy::ALLOWED,
+            _ => return None,
+        }
+        .to_owned(),
+    )
 }
 
 /// Keys that restrict what an agent may do; losing one widens the agent.
@@ -90,8 +93,7 @@ impl Destination<'_> {
             Dialect::Claude => Destination::Overrides(HarnessId::Claude.as_str()),
             Dialect::Codex => Destination::Overrides(HarnessId::Codex.as_str()),
             Dialect::OpenCode => Destination::Overrides(HarnessId::OpenCode.as_str()),
-            Dialect::Cursor => Destination::Overrides(HarnessId::Cursor.as_str()),
-            Dialect::AgentSkills | Dialect::MarsNative => Destination::Nowhere,
+            Dialect::AgentSkills | Dialect::Cursor | Dialect::MarsNative => Destination::Nowhere,
         }
     }
 }
@@ -312,7 +314,7 @@ impl Report<'_> {
         };
         let allowed = allowed.map(|allowed| match allowed.rsplit_once(", ") {
             Some((rest, last)) => format!("{rest} or {last}"),
-            None => allowed.to_owned(),
+            None => allowed.clone(),
         });
         let (code, message) = match (lost, allowed) {
             (Some(lost), allowed) => (

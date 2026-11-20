@@ -1,6 +1,6 @@
 # Mars Documentation
 
-Mars is a package manager for AI agent profiles. Install agents and skills from git and local sources into Claude Code, Cursor, Codex, OpenCode — any tool that reads from a config directory.
+Mars is a package manager for AI agent profiles. Install agents and skills from git and local sources into Claude Code, Codex, OpenCode — any tool that reads from a config directory.
 
 Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, and copies managed content from `.mars/` into the tool directories you link (`.claude/`, `.codex/`, and so on). With nothing linked it writes only to `.mars/`; `.agents` is a target older versions created and Mars now only warns about.
 
@@ -12,13 +12,13 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` and `.cursor` are deprecated ones; a sync warns (`deprecated-cursor-target`) while `.cursor` is a target, because Mars drops Cursor in the minor after 0.37.0.
+**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` is a deprecated one. `.cursor` is retired: a sync warns (`retired-target`) while it is a target and writes nothing there; `mars unlink .cursor` removes what earlier syncs installed.
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
 **Lock file** (`mars.lock`) records every managed item with its source, version,
 and per-output lifecycle. Lock v3 tracks installed and pending-deletion outputs
-per `(target_root, dest_path)` — ownership in `.cursor` is independent from the
+per `(target_root, dest_path)` — ownership in `.claude` is independent from the
 same path under `.mars/`. Dependency model-alias winners are also persisted in
 committed lock state (`dependency_model_aliases`). See
 [internals/lock-file.md](internals/lock-file.md) for format details.

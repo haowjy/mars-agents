@@ -9,6 +9,23 @@ mod table;
 
 pub use table::{TargetSpec, for_harness, spec};
 
+/// The keyed sections Mars writes entries into for `name`. A retired target has none a sync
+/// writes; `mars unlink` reads the MCP file earlier syncs wrote there to remove its entries.
+pub fn keyed_sections(name: &str) -> Vec<(KeyedKind, KeyedSection)> {
+    if let Some(retired) = mars_schema::retired::retired_target(name) {
+        return vec![(
+            mcp_file::MCP_KIND,
+            KeyedSection {
+                path: retired.mcp_path,
+                format: SectionFormat::JsonSection(retired.mcp_section),
+            },
+        )];
+    }
+    spec(name)
+        .map(TargetSpec::keyed_sections)
+        .unwrap_or_default()
+}
+
 pub use config_doc::SectionFormat;
 pub use keyed_entries::{KeyedKind, KeyedSection};
 pub use mcp_file::McpFile;

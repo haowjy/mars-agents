@@ -1046,6 +1046,9 @@ name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" 
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
 off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are
 written as Claude's are; env headers are left out the same way.
+`agy` starts one server per process during the first prompted turn, so a plugin server's tools
+are not available to the model until the second prompt (seen in the TUI and over ACP, `agy`
+1.5.13). Every `agy` agent reaches every server, whatever its `tools` list says.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
 A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,

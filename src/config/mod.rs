@@ -575,9 +575,9 @@ pub fn merge_with_root(
     let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    diagnostics.extend(targets::agents_target_diagnostic(
-        &targets::managed_targets(&merged_settings),
-    ));
+    diagnostics.extend(targets::target_advisories(&targets::managed_targets(
+        &merged_settings,
+    )));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.

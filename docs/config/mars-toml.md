@@ -369,7 +369,7 @@ include_fanout = false
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `targets` | string[] | unset | Managed target directories copied from `.mars/` |
+| `targets` | string[] | unset | Managed target directories copied from `.mars/`. `.cursor` is deprecated: a sync warns (`deprecated-cursor-target`) while it is listed, and Mars drops Cursor in the minor after 0.37.0 |
 | `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |

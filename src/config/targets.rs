@@ -173,13 +173,41 @@ pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
 }
 
+/// The advisories about the targets in `managed`: one line each, whatever the number of items.
+pub(crate) fn target_advisories(managed: &[String]) -> Vec<crate::diagnostic::Diagnostic> {
+    agents_target_diagnostic(managed)
+        .into_iter()
+        .chain(cursor_target_diagnostic(managed))
+        .collect()
+}
+
+/// Cursor support is removed in the minor after 0.37.0. Until then it works, so this is the one
+/// notice that tells the user to unlink it.
+fn cursor_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+
+    let cursor = managed.iter().find(|target| {
+        crate::harness::registry::harness_for_target(target) == Some(HarnessId::Cursor)
+    })?;
+    let unlink = format!("mars unlink {cursor}");
+    let unlink = crate::types::managed_cmd(&unlink);
+    Some(Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(
+            DiagnosticLevel::Warning,
+            "deprecated-cursor-target",
+            format!(
+                "Cursor support is deprecated and goes away in the next minor release, so `{cursor}` will stop being written. Run `{unlink}` to remove it."
+            ),
+        )
+    })
+}
+
 /// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
 /// `.agents` is deprecated, which loses nothing; but a harness that also reads `.agents/skills`
 /// (`agy`) then sees every skill twice under one name, and only unlinking `.agents` fixes that.
 /// Neither says the sync fell short of what it wanted.
-pub(crate) fn agents_target_diagnostic(
-    managed: &[String],
-) -> Option<crate::diagnostic::Diagnostic> {
+fn agents_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
     use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
     use crate::target::{AGENTS_TARGET, TargetRegistry};
 

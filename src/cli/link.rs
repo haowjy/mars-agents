@@ -129,9 +129,7 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    diagnostics.extend(crate::config::targets::agents_target_diagnostic(
-        &runtime_targets,
-    ));
+    diagnostics.extend(crate::config::targets::target_advisories(&runtime_targets));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 

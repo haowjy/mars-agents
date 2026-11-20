@@ -349,11 +349,12 @@ mars link <target> [--force]
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
+- Linking `.cursor` warns (`deprecated-cursor-target`), and so does every sync while it is a target: Cursor support goes away in the minor after 0.37.0. Run `mars unlink .cursor` to remove it
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
-mars link .cursor            # Copy skills/MCP into .cursor
+mars link .cursor            # Copy skills/MCP into .cursor (deprecated, see below)
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```

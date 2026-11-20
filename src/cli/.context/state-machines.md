@@ -76,7 +76,7 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 ## Target teardown
 
 One target directory going from managed to not managed, plus removal of every file Mars recorded
-there. `mars unlink` (`unlink.rs`). `remove_owned_target_content` removes recorded paths
+there. `mars unlink` (`unlink.rs`) and a sync that finds a target no config file names (`finalize`) both call `target_sync::removal::remove_served`, which removes recorded paths
 deepest first, treats `NotFound` as success, removes empty ancestors, and reconciles hooks
 through the `RemovalPlan` and keyed entries through `reconcile_keyed` (one pass per keyed kind
 the target declares), the paths sync uses.
@@ -94,7 +94,7 @@ stateDiagram-v2
   Unlinked --> [*]
 ```
 
-- **Order is files, then config, then lock.** A kill between files and lock leaves records for
+- **Order is files, then config, then lock.** (A sync's removal has no settings step: the config no longer names the target, and a kill before the lock write leaves records the next sync removes the same way.) A kill between files and lock leaves records for
   paths that no longer exist; `cleanup_orphans` counts an absent recorded path as a confirmed
   deletion, so the next sync drops them. A kill between `config.save` and `lock::write` leaves a
   target out of settings that still has lock records, the mirror of what `link`'s crash leaves;

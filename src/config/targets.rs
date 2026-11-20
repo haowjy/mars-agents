@@ -237,7 +237,10 @@ fn retired_target_diagnostic(retired: &RetiredTarget) -> crate::diagnostic::Diag
 /// The targets a project file or `mars.local.toml` names on this machine, retired spellings
 /// included. The local file's `targets` replaces the project's when merging, so a target can be
 /// named here and not managed.
-fn named_targets(config: &super::Config, local: &super::LocalConfig) -> BTreeSet<String> {
+pub(crate) fn named_targets(
+    config: &super::Config,
+    local: &super::LocalConfig,
+) -> BTreeSet<String> {
     let (project, local) = (&config.settings, &local.settings);
     project
         .targets
@@ -246,45 +249,6 @@ fn named_targets(config: &super::Config, local: &super::LocalConfig) -> BTreeSet
         .chain(local.targets.iter().flatten())
         .map(|raw| normalize_link(raw).target)
         .collect()
-}
-
-/// What sync and `doctor` say about the targets `rest` (the records of a lock that serve targets
-/// outside the command) holds records for and no configuration file names: one line each. Sync
-/// does nothing about such a target, so what it installed there stays until `mars unlink`
-/// removes it or `targets` names the target again.
-pub(crate) fn unnamed_target_diagnostics(
-    rest: &crate::lock::LockFile,
-    config: &super::Config,
-    local: &super::LocalConfig,
-) -> Vec<crate::diagnostic::Diagnostic> {
-    let named = named_targets(config, local);
-    rest.recorded_targets()
-        .iter()
-        .filter(|target| !named.contains(*target))
-        .map(|target| unsynced_target_diagnostic(target))
-        .collect()
-}
-
-/// The advice for a target that has records and that sync does not update. A target `mars link`
-/// refuses gets the retired wording, whether or not `targets` names it; any other may be named
-/// in `targets` again.
-fn unsynced_target_diagnostic(target: &str) -> crate::diagnostic::Diagnostic {
-    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
-
-    if let Some(retired) = mars_schema::retired::retired_target(target) {
-        return retired_target_diagnostic(retired);
-    }
-    let unlink = crate::types::managed_cmd(&format!("mars unlink {target}")).into_owned();
-    Diagnostic {
-        category: Some(DiagnosticCategory::Advisory),
-        ..Diagnostic::new(
-            DiagnosticLevel::Warning,
-            "unnamed-target",
-            format!(
-                "`{target}` is not in `targets`, so sync no longer updates what it installed there. Run `{unlink}` to remove it, or add `{target}` to `targets`."
-            ),
-        )
-    }
 }
 
 /// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
@@ -337,23 +301,4 @@ pub fn linked_harnesses(settings: &Settings) -> Vec<String> {
         .into_iter()
         .map(|harness| harness.to_string())
         .collect()
-}
-
-#[cfg(test)]
-mod unsynced_target_tests {
-    use super::unsynced_target_diagnostic;
-
-    #[test]
-    fn a_retired_target_is_never_offered_back_and_any_other_is() {
-        let retired = unsynced_target_diagnostic(".cursor");
-        assert_eq!(retired.code, "retired-target");
-        assert!(!retired.message.contains("add `.cursor`"), "{retired:?}");
-
-        let other = unsynced_target_diagnostic(".claude");
-        assert_eq!(other.code, "unnamed-target");
-        assert!(
-            other.message.contains("add `.claude` to `targets`"),
-            "{other:?}"
-        );
-    }
 }

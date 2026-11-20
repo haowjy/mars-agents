@@ -371,7 +371,7 @@ mars unlink <target>
 
 **Behavior:**
 - Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
-- Is how Mars content leaves a target the config no longer names: a sync leaves what it installed in such a target (files, MCP servers, hook entries) as it is, and warns (`unnamed-target`) on every sync until you run this or add the target back to `targets`
+- Runs the removal a sync runs for a target you took out of `targets` by hand: the next `mars sync` removes what Mars installed there the same way, so `unlink` is for removing it now and for a retired target the config still names
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
 - Removes only outputs and config entries owned by the target's lock records, which includes a hook's or MCP server's copy under `.mars/<surface>/<target>/` and its record on a target that takes none of it. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays
@@ -658,7 +658,7 @@ Checks:
 - Each locked item of a managed target and of `.mars`: file exists on disk, no conflict markers, checksum computability
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
-- Targets the config does not name: one `unnamed-target` warning each, as in `mars sync`; their records and `.mars/<surface>/<target>/` copies are not checked
+- Targets the sync does not manage (a retired one, or one `mars.local.toml`'s `targets` leaves out): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 

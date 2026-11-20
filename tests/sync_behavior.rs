@@ -1900,57 +1900,82 @@ fn sync_project(
 }
 
 #[test]
-fn sync_leaves_a_target_the_config_no_longer_names_until_unlink() {
+fn sync_removes_what_a_target_the_config_no_longer_names_had() {
     let dir = TempDir::new().unwrap();
     let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
     sync_project(&dir, &project);
-    let mcp = fs::read(project.child(".mcp.json").path()).unwrap();
-    let settings = fs::read(project.child(".claude/settings.local.json").path()).unwrap();
     assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    // The user's own keys sit beside Mars's in both shared files.
+    project
+        .child(".mcp.json")
+        .write_str(r#"{"mcpServers":{"mine":{"command":"x"},"srv":{"command":"node","args":[]}}}"#)
+        .unwrap();
+    let settings = project.child(".claude/settings.local.json");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(settings.path()).unwrap()).unwrap();
+    value["theme"] = "mine".into();
+    settings.write_str(&value.to_string()).unwrap();
 
     project
         .child("mars.toml")
         .write_str("[settings]\ntargets = ['.opencode']\n")
         .unwrap();
-    let mut lock_after_each = Vec::new();
-    for _ in 0..2 {
-        sync_project(&dir, &project).stderr(
-            predicate::str::contains("`.claude` is not in `targets`")
-                .and(predicate::str::contains("mars unlink .claude")),
-        );
-        lock_after_each.push(fs::read(project.child("mars.lock").path()).unwrap());
-    }
-    assert_eq!(
-        lock_after_each[0], lock_after_each[1],
-        "a sync rewrites no record of an unnamed target"
-    );
-    assert_eq!(fs::read(project.child(".mcp.json").path()).unwrap(), mcp);
-    assert_eq!(
-        fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
-        settings
-    );
-    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
-    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-    assert!(lock.contains("target_root = \".claude\""), "{lock}");
-
-    offline_mars(dir.path())
-        .args([
-            "unlink",
-            ".claude",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success();
+    sync_project(&dir, &project).stdout(predicate::str::contains(
+        "what Mars installed in .claude, which `targets` no longer names",
+    ));
     assert!(!project.child(".claude/hooks/audit").exists());
-    assert!(!project.child(".mcp.json").exists());
-    sync_project(&dir, &project).stderr(predicate::str::contains("mars unlink").not());
+    let mcp = fs::read_to_string(project.child(".mcp.json").path()).unwrap();
+    assert!(
+        mcp.contains("\"mine\"") && !mcp.contains("\"srv\""),
+        "{mcp}"
+    );
+    let settings = fs::read_to_string(settings.path()).unwrap();
+    assert!(
+        settings.contains("\"theme\"") && !settings.contains("SessionStart"),
+        "{settings}"
+    );
     let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
-    assert!(!lock.contains("target_root = \".claude\""), "{lock}");
+    assert!(!lock.contains("\".claude\""), "{lock}");
+    sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
 }
 
 #[test]
-fn link_after_a_hand_removal_finds_the_hook_in_place() {
+fn sync_keeps_a_hook_entry_the_user_edited_in_a_dropped_target() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    let settings = project.child(".claude/settings.local.json");
+    let edited = fs::read_to_string(settings.path())
+        .unwrap()
+        .replace("\"true\"", "\"edited\"");
+    settings.write_str(&edited).unwrap();
+
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    sync_project(&dir, &project).stderr(predicate::str::contains("config-divergence"));
+    assert_eq!(fs::read_to_string(settings.path()).unwrap(), edited);
+    sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
+}
+
+#[test]
+fn a_retired_target_the_config_still_names_keeps_its_records() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude']");
+    sync_project(&dir, &project);
+    let lock = fs::read(project.child("mars.lock").path()).unwrap();
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.claude', '.cursor']\n")
+        .unwrap();
+    sync_project(&dir, &project).stderr(predicate::str::contains("a target Mars no longer writes"));
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    assert_eq!(fs::read(project.child("mars.lock").path()).unwrap(), lock);
+}
+
+#[test]
+fn frozen_sync_refuses_to_remove_a_dropped_target() {
     let dir = TempDir::new().unwrap();
     let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
     sync_project(&dir, &project);
@@ -1958,22 +1983,16 @@ fn link_after_a_hand_removal_finds_the_hook_in_place() {
         .child("mars.toml")
         .write_str("[settings]\ntargets = ['.opencode']\n")
         .unwrap();
-    sync_project(&dir, &project);
-    sync_project(&dir, &project);
-
     offline_mars(dir.path())
         .args([
-            "link",
-            ".claude",
+            "sync",
+            "--frozen",
             "--root",
             project.path().to_str().unwrap(),
         ])
         .assert()
-        .success();
+        .failure();
     assert!(project.child(".claude/hooks/audit/hook.toml").exists());
-    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
-    assert!(settings.contains("SessionStart"), "{settings}");
-    sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
 }
 
 #[test]
@@ -2039,6 +2058,15 @@ fn lock_outputs(project: &assert_fs::fixture::ChildPath) -> Vec<(String, Vec<(St
         .collect()
 }
 
+/// `.claude` stays in `mars.toml` while this machine's `mars.local.toml` manages only `.codex`:
+/// named, not managed.
+fn leave_claude_unmanaged(project: &assert_fs::fixture::ChildPath) {
+    project
+        .child("mars.local.toml")
+        .write_str("[settings]\ntargets = ['.codex']\n")
+        .unwrap();
+}
+
 fn project_with_skills(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -2056,7 +2084,7 @@ fn project_with_skills(dir: &TempDir, targets: &str) -> assert_fs::fixture::Chil
 }
 
 #[test]
-fn a_deleted_item_repeats_no_warning_while_a_target_is_unnamed() {
+fn a_deleted_item_repeats_no_warning_while_a_target_is_unmanaged() {
     let dir = TempDir::new().unwrap();
     let project = project_with_skills(&dir, "['.claude', '.codex']");
     project
@@ -2064,17 +2092,11 @@ fn a_deleted_item_repeats_no_warning_while_a_target_is_unnamed() {
         .write_str("---\nname: coder\ndescription: d\nskills: [nosuch]\n---\nBody\n")
         .unwrap();
     sync_project(&dir, &project);
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = ['.codex']\n")
-        .unwrap();
+    leave_claude_unmanaged(&project);
     sync_project(&dir, &project);
     fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
     for _ in 0..2 {
-        sync_project(&dir, &project).stderr(
-            predicate::str::contains("is not in `targets`")
-                .and(predicate::str::contains("nosuch").not()),
-        );
+        sync_project(&dir, &project).stderr(predicate::str::contains("nosuch").not());
     }
     assert!(
         lock_outputs(&project)
@@ -2089,10 +2111,7 @@ fn link_drops_an_item_whose_last_output_it_removes() {
     let dir = TempDir::new().unwrap();
     let project = project_with_skills(&dir, "['.claude', '.codex']");
     sync_project(&dir, &project);
-    project
-        .child("mars.toml")
-        .write_str("[settings]\ntargets = ['.codex']\n")
-        .unwrap();
+    leave_claude_unmanaged(&project);
     sync_project(&dir, &project);
     fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
     sync_project(&dir, &project);
@@ -2112,12 +2131,12 @@ fn link_drops_an_item_whose_last_output_it_removes() {
 }
 
 #[test]
-fn doctor_warns_once_about_an_unnamed_target_without_the_mars_copies() {
+fn doctor_skips_the_mars_copies_of_an_unmanaged_target() {
     let dir = TempDir::new().unwrap();
     let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
     sync_project(&dir, &project);
     project
-        .child("mars.toml")
+        .child("mars.local.toml")
         .write_str("[settings]\ntargets = ['.opencode']\n")
         .unwrap();
     sync_project(&dir, &project);
@@ -2136,7 +2155,6 @@ fn doctor_warns_once_about_an_unnamed_target_without_the_mars_copies() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(all.matches("is not in `targets`").count(), 1, "{all}");
     assert!(!all.contains("item-missing"), "{all}");
 }
 

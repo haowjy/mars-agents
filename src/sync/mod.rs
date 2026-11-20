@@ -48,6 +48,11 @@ pub struct SyncReport {
     pub dependency_moves: Vec<upgrades::VersionStep>,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub dry_run: bool,
+    /// The targets no config file names, whose Mars-installed content this run removed (in a
+    /// dry run, would remove), and the `(target_root, dest_path)` of each output in them. Config
+    /// entries and the canonical-store copies of per-target items are not listed.
+    pub dropped_targets: Vec<String>,
+    pub dropped_outputs: Vec<(String, String)>,
     /// Native harness agent outputs emitted this run that are new or content-changed
     /// vs the previous lock, as `(target_root, dest_path)`. Surfaced so native
     /// emission is not silent in the summary.
@@ -117,8 +122,11 @@ pub(crate) struct LoadedConfig {
     pub local: LocalConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
-    /// The records of `mars.lock` that serve targets outside this sync, merged back on write.
-    pub unscoped: LockFile,
+    /// The records that serve a target the config names but this sync does not manage (a retired
+    /// one, or one `mars.local.toml`'s `targets` leaves out), merged back on write.
+    pub carried: LockFile,
+    /// The records that serve a target no config file names: the sync removes what they record.
+    pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
@@ -190,6 +198,8 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             dependency_moves: Vec::new(),
             target_outcomes: Vec::new(),
             dry_run: request.options.dry_run,
+            dropped_targets: Vec::new(),
+            dropped_outputs: Vec::new(),
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
@@ -335,10 +345,10 @@ pub(crate) fn load_config(
     }
 
     let managed = crate::config::targets::managed_targets(&effective.settings);
-    let (old_lock, unscoped) = old_lock.split_targets(|target| managed.iter().any(|m| m == target));
-    diag.extend(crate::config::targets::unnamed_target_diagnostics(
-        &unscoped, &config, &local,
-    ));
+    let (old_lock, unmanaged) =
+        old_lock.split_targets(|target| managed.iter().any(|m| m == target));
+    let named = crate::config::targets::named_targets(&config, &local);
+    let (carried, dropped) = unmanaged.split_targets(|target| named.contains(target));
     let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
 
     Ok(LoadedConfig {
@@ -346,7 +356,8 @@ pub(crate) fn load_config(
         local,
         effective,
         old_lock,
-        unscoped,
+        carried,
+        dropped,
         provided,
         dependency_changes,
         sync_lock,
@@ -713,6 +724,12 @@ pub(crate) fn create_plan(
 /// they never trip the gate: a CI machine without the host has none, and one with it is not
 /// asking for a lock change.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
+    let dropped = &planned.targeted.resolved.loaded.dropped;
+    if !dropped.recorded_targets().is_empty() {
+        return Err(MarsError::FrozenViolation {
+            message: "sync would remove what Mars installed in a target `targets` no longer names, but --frozen is set".into(),
+        });
+    }
     let has_changes = planned.plan.actions.iter().any(|a| {
         !crate::provided::is_provided_source(a.source_name().as_ref())
             && !matches!(

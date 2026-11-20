@@ -135,7 +135,7 @@ mars sync [--force] [--diff] [--frozen]
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key or table Mars does not read in the project's own `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key it does read (`target` → `targets`, `[setting]` → `[settings]`), because a misspelt `targets` leaves no targets and the sync removes what Mars installed in them. In a dependency or the user config it is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
-A target that no `mars.toml` or `mars.local.toml` names any longer has what Mars installed in it removed by the next sync, as `mars unlink` does. An output that no longer matches what Mars wrote (an edited skill, a file you added inside a skill's directory) stays, loses its record, and the sync warns once per target (`output-kept`), so a second sync is quiet. A path that cannot be deleted (`output-remove-failed`) keeps its record and does not stop the sync; the next one retries it. `--diff` lists only what it would delete.
+A target that no `mars.toml` or `mars.local.toml` names any longer has what Mars installed in it removed by the next sync, as `mars unlink` does. An output that no longer matches what Mars wrote (an edited skill, a file you added inside a skill's directory) stays, loses its record, and the sync warns once per target (`output-kept`), so a second sync is quiet. A path that cannot be deleted (`output-remove-failed`) keeps its record and does not stop the sync; the next one retries it. `--diff` lists what it would delete and, with the same warning, what it would keep.
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
@@ -346,7 +346,7 @@ mars link <target> [--force] [--local]
 
 | Flag | Description |
 |---|---|
-| `--force` | Adopt collisions without an installed-content claim (overwrite + record in lock) |
+| `--force` | Same as `mars sync --force`: adopt colliding paths in every target, not only this one, and reset local edits to managed items under `.mars/` |
 | `--local` | Add the target to `mars.local.toml` instead of `mars.toml`: only this machine syncs it, and its lock records go to `.mars/machine.lock`, so `mars.toml` and the committed `mars.lock` do not change |
 
 **Behavior:**
@@ -361,7 +361,7 @@ mars link <target> [--force] [--local]
 mars link .claude            # Copy managed content into .claude/
 mars link .opencode          # Copy skills/MCP into .opencode
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
-mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
+mars link .claude --force    # Same as `mars sync --force`: adopts collisions in every target
 mars link .agy --local       # Sync .agy on this machine only
 ```
 

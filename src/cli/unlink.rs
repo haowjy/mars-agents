@@ -33,7 +33,9 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if !args.local && crate::config::targets::unset_target(&mut config.settings.targets, &target_name) {
+    if !args.local
+        && crate::config::targets::unset_target(&mut config.settings.targets, &target_name)
+    {
         settings_updated = true;
         target_was_managed = true;
     }

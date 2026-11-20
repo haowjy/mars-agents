@@ -312,7 +312,7 @@ fn try_reconcile(
     let changed = open.changed;
     if changed && !dry_run {
         if open.existed && open.doc.is_empty() {
-            std::fs::remove_file(&open.path)?;
+            crate::target::remove_emptied_file(&open.path)?;
         } else {
             open.doc.save(&open.path)?;
         }

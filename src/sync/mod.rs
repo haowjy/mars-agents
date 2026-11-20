@@ -177,7 +177,7 @@ pub(crate) struct SyncedState {
     pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
-    pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
+    pub native_removals: crate::compiler::NativeRemovals,
     /// The provided skills this sync projected into targets (`provided::skill_outcomes`).
     pub provided_skills: Vec<apply::ActionOutcome>,
 }
@@ -804,7 +804,7 @@ pub(crate) fn sync_targets(
             config_files_changed: Vec::new(),
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
-            removed_native_outputs: Vec::new(),
+            native_removals: Default::default(),
             provided_skills: Vec::new(),
         };
     }
@@ -820,7 +820,6 @@ pub(crate) fn sync_targets(
         &agent_surface_policy,
         &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.force,
-        crate::surface_ownership::CollisionAdoptHint::SyncForce,
         diag,
     );
 
@@ -833,7 +832,7 @@ pub(crate) fn sync_targets(
         config_files_changed: Vec::new(),
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
-        removed_native_outputs: Vec::new(),
+        native_removals: Default::default(),
         provided_skills,
     }
 }

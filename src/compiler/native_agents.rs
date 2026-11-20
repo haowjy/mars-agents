@@ -14,11 +14,24 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::lock::RecordRef;
 use crate::models::{ModelAlias, ModelSpec, ModelsCache};
+use crate::target_sync::removal::Removal;
 use mars_schema::model_policy::ModelPolicyMatchType;
 use mars_schema::tool_rule_map::ToolRuleMap;
 
-/// Lock output paths removed by native agent reconcile (target_root, dest_path).
-pub(crate) type RemovedNativeOutput = (String, String);
+/// What native agent reconcile did to the outputs of agents no longer wanted, as
+/// `(target_root, dest_path)`. Both lose their lock record.
+#[derive(Debug, Default)]
+pub(crate) struct NativeRemovals {
+    pub deleted: Vec<(String, String)>,
+    /// Changed by the user after Mars wrote them, so left in place.
+    pub kept: Vec<(String, String)>,
+}
+
+impl NativeRemovals {
+    pub(crate) fn dropped_records(&self) -> impl Iterator<Item = &(String, String)> {
+        self.deleted.iter().chain(&self.kept)
+    }
+}
 
 pub use crate::lock::CompiledNativeOutput;
 
@@ -31,7 +44,6 @@ pub(crate) struct NativeAgentReconcileCtx<'a> {
 
 pub(crate) struct NativeAgentSurfaceCompileOptions {
     pub force: bool,
-    pub collision_hint: crate::surface_ownership::CollisionAdoptHint,
     pub dry_run: bool,
     /// `sync --diff`: a dry run that reports what a real sync would change, such as a diverged
     /// native agent it would repair. Every other dry run stays quiet about it.
@@ -488,13 +500,14 @@ pub(crate) fn scan_mars_agents(mars_dir: &Path, diag: &mut DiagnosticCollector) 
     }
 }
 
-/// Reconcile native harness agent artifacts written outside target sync.
+/// Reconcile native harness agent artifacts written outside target sync. An output the user
+/// changed stays and loses its record, as in `remove_recorded`.
 pub(crate) fn reconcile_native_agent_surfaces(
     ctx: &NativeAgentReconcileCtx<'_>,
     desired: &HashSet<(String, String)>,
     diag: &mut DiagnosticCollector,
-) -> Vec<RemovedNativeOutput> {
-    let mut removed = Vec::new();
+) -> NativeRemovals {
+    let mut removed = NativeRemovals::default();
     for item in ctx
         .old_lock
         .items
@@ -515,25 +528,28 @@ pub(crate) fn reconcile_native_agent_surfaces(
             }
             let dest_rel = output.dest_path.as_str().to_string();
             let native_path = ctx.project_root.join(&output.target_root).join(&dest_rel);
-            let absent = !native_path.exists() && native_path.symlink_metadata().is_err();
-            if absent {
-                removed.push((output.target_root.clone(), dest_rel));
+            if ctx.dry_run && native_path.symlink_metadata().is_ok() {
                 continue;
             }
-            if ctx.dry_run {
-                continue;
-            }
-            match crate::platform::fs::safe_remove(&native_path) {
-                Ok(()) => removed.push((output.target_root.clone(), dest_rel)),
-                Err(error) => diag.warn(
+            match crate::target_sync::removal::remove_recorded(&native_path, item.kind, output) {
+                Removal::Absent | Removal::Removed => {
+                    removed.deleted.push((output.target_root.clone(), dest_rel));
+                }
+                Removal::Kept => {
+                    crate::target_sync::removal::report_kept(&output.target_root, &dest_rel, diag);
+                    removed.kept.push((output.target_root.clone(), dest_rel));
+                }
+                Removal::Failed(error) => diag.warn(
                     "native-agent-remove",
                     format!("could not remove {}: {error}", native_path.display()),
                 ),
             }
         }
     }
-    removed.sort();
-    removed.dedup();
+    removed.deleted.sort();
+    removed.deleted.dedup();
+    removed.kept.sort();
+    removed.kept.dedup();
     removed
 }
 
@@ -906,7 +922,6 @@ fn emit_lowered_native_agent(
         &dest_rel,
         surface_ownership::DestState::new(dest_exists, unchanged),
         ctx.options.force,
-        ctx.options.collision_hint,
         diag,
     ) {
         return None;
@@ -1071,7 +1086,7 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
     mut model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
     diag: &mut DiagnosticCollector,
-) -> (Vec<CompiledNativeOutput>, Vec<RemovedNativeOutput>) {
+) -> (Vec<CompiledNativeOutput>, NativeRemovals) {
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
     // compile qualify against identical state without each re-deriving it (and without
     // threading the overlay map through their contexts).

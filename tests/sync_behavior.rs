@@ -1983,7 +1983,7 @@ fn give_cursor_the_claude_skills(project: &assert_fs::fixture::ChildPath) {
                 ));
         }
     }
-    mars_agents::lock::write(project.path(), &lock).unwrap();
+    mars_agents::lock::write(project.path(), &lock, &lock.recorded_targets()).unwrap();
 }
 
 #[test]

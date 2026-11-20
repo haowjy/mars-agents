@@ -105,7 +105,6 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
             configured_emit_harnesses: &[HarnessId::Claude],
             options: NativeAgentSurfaceCompileOptions {
                 force: false,
-                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: false,
                 preview_warnings: false,
             },
@@ -194,7 +193,6 @@ fn compile_with_policy(
         configured_emit_harnesses: configured_harnesses,
         options: NativeAgentSurfaceCompileOptions {
             force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
             preview_warnings: false,
         },

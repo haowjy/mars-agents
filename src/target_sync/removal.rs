@@ -88,22 +88,34 @@ fn describe_kept(target: &str, count: usize, names: &str) -> String {
     )
 }
 
-/// The `(target root, dest path)` of each output of `served` that `remove_served` would delete,
-/// by root then path: still there, and what Mars wrote. Includes the `.mars/<surface>/<target>/`
-/// copies of per-target items.
-pub(crate) fn removable_outputs(project_root: &Path, served: &LockFile) -> Vec<(String, String)> {
-    let mut outputs = BTreeSet::new();
+/// What `remove_served` would do to `served`, by `(target root, dest path)` in root then path
+/// order: the outputs it would delete (still there, and what Mars wrote, including the
+/// `.mars/<surface>/<target>/` copies of per-target items) and the ones it would keep.
+pub(crate) struct RemovalPreview {
+    pub removed: Vec<(String, String)>,
+    pub kept: Vec<(String, String)>,
+}
+
+pub(crate) fn preview_removal(project_root: &Path, served: &LockFile) -> RemovalPreview {
+    let mut removed = BTreeSet::new();
+    let mut kept = BTreeSet::new();
     for item in served.items.values() {
         for record in &item.outputs {
             let path = project_root
                 .join(&record.target_root)
                 .join(record.dest_path.as_str());
-            if matches!(check(&path, item.kind, record), Ok(Check::Own)) {
-                outputs.insert((record.target_root.clone(), record.dest_path.to_string()));
-            }
+            let pair = (record.target_root.clone(), record.dest_path.to_string());
+            match check(&path, item.kind, record) {
+                Ok(Check::Own) => removed.insert(pair),
+                Ok(Check::Changed) => kept.insert(pair),
+                _ => false,
+            };
         }
     }
-    outputs.into_iter().collect()
+    RemovalPreview {
+        removed: removed.into_iter().collect(),
+        kept: kept.into_iter().collect(),
+    }
 }
 
 /// What `remove_served` did: the `(target root, dest path)` of each output it deleted, by

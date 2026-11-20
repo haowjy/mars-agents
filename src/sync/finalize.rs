@@ -24,7 +24,7 @@ pub(crate) fn finalize(
     let graph = &state.applied.planned.targeted.resolved.graph;
     // Native-agent surface deltas for the summary: removals are unambiguous; emits
     // are filtered to new/changed outputs so steady-state re-emits stay quiet.
-    let native_removed: Vec<(String, String)> = state.removed_native_outputs.clone();
+    let native_removed: Vec<(String, String)> = state.native_removals.deleted.clone();
     let native_emitted: Vec<(String, String)> = state
         .compiled_native_outputs
         .iter()
@@ -35,7 +35,16 @@ pub(crate) fn finalize(
     let dropped = &state.applied.planned.targeted.resolved.loaded.dropped;
     let dropped_targets: Vec<String> = dropped.recorded_targets().into_iter().collect();
     // A dry run names what a real run would delete; a real run, what it did.
-    let mut dropped_outputs = crate::target_sync::removal::removable_outputs(project_root, dropped);
+    let mut dropped_outputs = Vec::new();
+    if request.options.dry_run {
+        let preview = crate::target_sync::removal::preview_removal(project_root, dropped);
+        dropped_outputs = preview.removed;
+        if request.options.preview_warnings {
+            for (root, dest_path) in &preview.kept {
+                crate::target_sync::removal::report_kept(root, dest_path, diag);
+            }
+        }
+    }
 
     // Write lock file (regardless of target sync outcome).
     if !request.options.dry_run {
@@ -72,7 +81,7 @@ pub(crate) fn finalize(
             })
             .collect();
         confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
-        confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
+        confirmed_output_removals.extend(state.native_removals.dropped_records().cloned());
         crate::lock::record_provided_skills(
             &mut new_lock,
             old_lock,
@@ -85,7 +94,10 @@ pub(crate) fn finalize(
             &state.removed_config_entry_outputs,
         );
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.config_entry_outputs)?;
-        crate::lock::apply_removed_native_outputs(&mut new_lock, &state.removed_native_outputs);
+        crate::lock::apply_removed_native_outputs(
+            &mut new_lock,
+            state.native_removals.dropped_records(),
+        );
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
         confirmed_output_removals.extend(retry_tombstone_removals(
             project_root,

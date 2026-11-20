@@ -107,7 +107,6 @@ pub(super) fn write_file_hook_outputs(
             &relative,
             crate::surface_ownership::DestState::new(dest_exists, unchanged),
             force,
-            crate::surface_ownership::CollisionAdoptHint::SyncForce,
             diag,
         ) {
             continue;

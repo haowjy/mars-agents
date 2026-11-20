@@ -44,11 +44,6 @@ use crate::diagnostic::{DiagnosticCollector, ItemGroup};
 use crate::lock::LockFile;
 use crate::types::managed_cmd;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CollisionAdoptHint {
-    SyncForce,
-}
-
 pub fn target_dest_exists(dest: &Path) -> bool {
     dest.exists() || dest.symlink_metadata().is_ok()
 }
@@ -88,7 +83,6 @@ pub fn resolve_copy(
     dest_path: &str,
     dest: DestState,
     force: bool,
-    hint: CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) -> bool {
     if dest != DestState::Present
@@ -99,26 +93,23 @@ pub fn resolve_copy(
         return true;
     }
     if force {
-        warn_no_installed_claim_adopted(target_root, dest_path, hint, diag);
+        warn_no_installed_claim_adopted(target_root, dest_path, diag);
         return true;
     }
-    warn_no_installed_claim_collision(target_root, dest_path, hint, diag);
+    warn_no_installed_claim_collision(target_root, dest_path, diag);
     false
 }
 
 pub fn warn_no_installed_claim_collision(
     target_name: &str,
     dest_rel: &str,
-    hint: CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) {
     diag.warn_each(
         ItemGroup {
             code: "target-unmanaged-collision",
             subject: target_name,
-            describe: match hint {
-                CollisionAdoptHint::SyncForce => describe_unclaimed_by_sync,
-            },
+            describe: describe_unclaimed_by_sync,
         },
         format!("`{dest_rel}`"),
     );
@@ -174,10 +165,8 @@ fn describe_diverged(target: &str, count: usize, names: &str) -> String {
 pub fn warn_no_installed_claim_adopted(
     target_name: &str,
     dest_rel: &str,
-    hint: CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) {
-    let _ = hint;
     diag.warn(
         "target-unmanaged-adopted",
         format!(
@@ -226,7 +215,6 @@ mod tests {
             "agents/coder.md",
             DestState::new(true, identical),
             force,
-            CollisionAdoptHint::SyncForce,
             &mut diag,
         );
         (copy, diag)

@@ -103,7 +103,10 @@ fn link_target(
         if let Some(object) = value.as_object_mut() {
             object.extend([
                 ("target".to_string(), target_name.into()),
-                ("settings_updated".to_string(), (settings_changed || local_changed).into()),
+                (
+                    "settings_updated".to_string(),
+                    (settings_changed || local_changed).into(),
+                ),
                 ("local".to_string(), local_only.into()),
                 ("synced".to_string(), synced.into()),
                 ("removed".to_string(), removed.into()),

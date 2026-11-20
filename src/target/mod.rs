@@ -122,6 +122,16 @@ pub fn validate_agent_filename(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Delete a config file Mars's change emptied, and its directory if that leaves it empty (Mars
+/// made `.agents/` for `plugins.json`).
+pub(crate) fn remove_emptied_file(path: &std::path::Path) -> Result<(), crate::error::MarsError> {
+    std::fs::remove_file(path)?;
+    if let Some(parent) = path.parent() {
+        crate::target_sync::removal::remove_empty_ancestors(parent, parent)?;
+    }
+    Ok(())
+}
+
 pub fn dest_paths_equivalent(a: &str, b: &str) -> bool {
     a.replace('\\', "/") == b.replace('\\', "/")
 }

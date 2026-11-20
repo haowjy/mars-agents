@@ -14,7 +14,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
-use crate::surface_ownership::{self, CollisionAdoptHint};
+use crate::surface_ownership;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 
@@ -39,7 +39,6 @@ pub struct TargetSyncOutcome {
 pub struct TargetSyncContext<'a> {
     pub old_lock: &'a LockFile,
     pub force: bool,
-    pub collision_hint: CollisionAdoptHint,
     /// Managed native agent paths to exempt from orphan cleanup (selective mode).
     pub orphan_preserve_paths: Option<&'a HashMap<String, HashSet<String>>>,
 }
@@ -207,7 +206,6 @@ fn sync_one_target(
 ) -> Result<TargetSyncOutcome, MarsError> {
     let old_lock = ctx.old_lock;
     let force = ctx.force;
-    let collision_hint = ctx.collision_hint;
     let mut items_synced = 0;
     let mut items_removed = 0;
     let mut errors = Vec::new();
@@ -240,31 +238,11 @@ fn sync_one_target(
         if outcome.item_id.kind == mars_schema::item::ItemKind::Agent
             && !target_accepts_canonical_agents
         {
-            if matches!(outcome.action, ActionTaken::Removed) {
-                items_removed += remove_dropped_output(
-                    target_root,
-                    target_name,
-                    dest_rel,
-                    old_lock,
-                    &mut removed_dest_paths,
-                    &mut errors,
-                    diag,
-                );
-            }
             continue;
         }
         match &outcome.action {
-            ActionTaken::Removed => {
-                items_removed += remove_dropped_output(
-                    target_root,
-                    target_name,
-                    dest_rel,
-                    old_lock,
-                    &mut removed_dest_paths,
-                    &mut errors,
-                    diag,
-                );
-            }
+            // The orphan pass below removes what a dropped item recorded.
+            ActionTaken::Removed => {}
             ActionTaken::Skipped => {
                 expected_paths.insert(dest_rel.to_string());
                 let source = mars_dir.join(canonical_dest_rel);
@@ -441,7 +419,6 @@ fn sync_one_target(
                             surface_ownership::warn_no_installed_claim_collision(
                                 target_name,
                                 dest_rel,
-                                collision_hint,
                                 diag,
                             );
                         } else if let Some(expected_checksum) = &outcome.installed_checksum {
@@ -550,7 +527,6 @@ fn should_copy_to_target(
         dest_rel,
         surface_ownership::DestState::new(surface_ownership::target_dest_exists(dest), identical),
         ctx.force,
-        ctx.collision_hint,
         diag,
     )
 }
@@ -611,30 +587,6 @@ fn dest_matches_recorded_or_desired(
                 && recorded.installed_checksum() == Some(actual)
         })
     })
-}
-
-/// An output of an item the source dropped: removed when Mars recorded it.
-fn remove_dropped_output(
-    target_root: &Path,
-    target_name: &str,
-    dest_rel: &str,
-    old_lock: &LockFile,
-    removed_dest_paths: &mut Vec<String>,
-    errors: &mut Vec<String>,
-    diag: &mut DiagnosticCollector,
-) -> usize {
-    match old_lock.output_record(target_name, dest_rel) {
-        Some((kind, record)) => remove_recorded_output(
-            target_root,
-            target_name,
-            kind,
-            record,
-            removed_dest_paths,
-            errors,
-            diag,
-        ),
-        None => 0,
-    }
 }
 
 fn hash_target_dest(
@@ -764,7 +716,6 @@ mod tests {
     use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
     use crate::lock::{LockFile, LockedItemV2, OutputRecord};
-    use crate::surface_ownership::CollisionAdoptHint;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::DestPath;
     use mars_schema::names::ItemName;
@@ -811,7 +762,6 @@ mod tests {
         TargetSyncContext {
             old_lock,
             force,
-            collision_hint: CollisionAdoptHint::SyncForce,
             orphan_preserve_paths: None,
         }
     }
@@ -878,7 +828,6 @@ mod tests {
             &TargetSyncContext {
                 old_lock: &old_lock,
                 force: false,
-                collision_hint: CollisionAdoptHint::SyncForce,
                 orphan_preserve_paths: Some(&preserve),
             },
             &mut diag,

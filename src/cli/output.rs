@@ -402,10 +402,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         }
     }
     if target_written > 0 {
-        let _ = writeln!(stdout, "  wrote       {target_written} target files");
+        let noun = if target_written == 1 { "file" } else { "files" };
+        let _ = writeln!(stdout, "  wrote       {target_written} target {noun}");
     }
     if target_removed > 0 {
-        let _ = writeln!(stdout, "  removed     {target_removed} target files");
+        let noun = if target_removed == 1 { "file" } else { "files" };
+        let _ = writeln!(stdout, "  removed     {target_removed} target {noun}");
     }
     if config_files > 0 {
         let noun = if config_files == 1 { "file" } else { "files" };

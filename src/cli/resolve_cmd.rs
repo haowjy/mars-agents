@@ -62,7 +62,9 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
         'outer: for item_v2 in lock.items.values_mut() {
             for output in &mut item_v2.outputs {
-                if &output.dest_path == dest_path_str {
+                if output.target_root == crate::lock::CANONICAL_TARGET_ROOT
+                    && &output.dest_path == dest_path_str
+                {
                     let new_hash = hash::compute_hash(&disk_path, item_v2.kind)?;
                     if output
                         .installed_checksum()

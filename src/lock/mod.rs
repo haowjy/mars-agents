@@ -718,6 +718,13 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     normalized.dependencies.sort_keys();
     normalized.items.sort_keys();
     normalized.dependency_model_aliases.sort_keys();
+    for item in normalized.items.values_mut() {
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+    }
 
     let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
@@ -1299,11 +1306,6 @@ fn upsert_target_output(
             dest,
             installed_checksum.clone(),
         ));
-        item.outputs.sort_by(|a, b| {
-            a.target_root
-                .cmp(&b.target_root)
-                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
-        });
         return;
     }
 }
@@ -1341,11 +1343,6 @@ fn upsert_native_output_on_owner(
             native_dest,
             installed_checksum.clone(),
         ));
-        item.outputs.sort_by(|a, b| {
-            a.target_root
-                .cmp(&b.target_root)
-                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
-        });
         return true;
     }
     false

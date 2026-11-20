@@ -84,8 +84,16 @@ fn link_target(
     let settings_changed = config.settings.targets.as_ref() != Some(&persisted_targets);
 
     let lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
-    let outcomes = lock_items_as_sync_outcomes(&lock);
+    let mut outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
+    let taken = outcomes
+        .iter()
+        .filter(|outcome| outcome.item_id.kind == ItemKind::Skill)
+        .map(|outcome| outcome.item_id.name.to_string())
+        .collect();
+    let provided = crate::provided::ProvidedNames::load(&ctx.project_root, &mut diag)?;
+    let provided_skills = crate::provided::skill_outcomes(&provided, &mars_dir, &taken, &mut diag);
+    outcomes.extend(provided_skills.iter().cloned());
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
         effective.settings.meridian_agent_copy(),
         &runtime_targets,
@@ -157,7 +165,8 @@ fn link_target(
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
-    let mut new_lock = lock;
+    let mut new_lock = lock.clone();
+    crate::lock::record_provided_skills(&mut new_lock, &lock, &provided_skills, &target_outcomes);
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
     crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
     crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs)?;

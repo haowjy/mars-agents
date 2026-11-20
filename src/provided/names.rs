@@ -19,10 +19,15 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use mars_schema::item::ItemKind;
+use mars_schema::provider::provider_of;
+
 use super::lock::ProvidedLock;
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::types::DestPath;
+use crate::lock::ItemId;
+use crate::sync::apply::{ActionOutcome, ActionTaken};
+use crate::types::{ContentHash, DestPath};
 
 #[derive(Debug, Default)]
 pub(crate) struct ProvidedNames {
@@ -70,4 +75,52 @@ impl ProvidedNames {
             .strip_prefix("skills/")
             .is_some_and(|name| self.recorded.contains(name))
     }
+}
+
+/// The provided skills a target sync projects, as outcomes with no `.mars` action: the copy in
+/// `.mars/skills/` is `mars provide`'s, so nothing here installs, updates or removes it.
+/// A skill in `taken` (a package or the project holds the same name) is left out, so one lock
+/// key has one outcome. Sync and `link` both read this, which is why it is the one place that
+/// turns the record into outcomes.
+pub(crate) fn skill_outcomes(
+    names: &ProvidedNames,
+    mars_dir: &Path,
+    taken: &HashSet<String>,
+    diag: &mut DiagnosticCollector,
+) -> Vec<ActionOutcome> {
+    let mut installed: Vec<&String> = names
+        .installed
+        .iter()
+        .filter(|name| !taken.contains(*name))
+        .collect();
+    installed.sort();
+    let mut outcomes = Vec::new();
+    for name in installed {
+        let Some(provider) = provider_of(name) else {
+            continue;
+        };
+        let hash =
+            match crate::hash::compute_hash(&mars_dir.join("skills").join(name), ItemKind::Skill) {
+                Ok(hash) => ContentHash::from(hash),
+                Err(error) => {
+                    diag.warn(
+                        "provided-skill-unreadable",
+                        format!("provided skill `{name}` is not copied to targets: {error}"),
+                    );
+                    continue;
+                }
+            };
+        outcomes.push(ActionOutcome {
+            item_id: ItemId {
+                kind: ItemKind::Skill,
+                name: name.as_str().into(),
+            },
+            action: ActionTaken::Skipped,
+            dest_path: DestPath::from(format!("skills/{name}")),
+            source_name: super::source::source_name(provider).into(),
+            source_checksum: Some(hash.clone()),
+            installed_checksum: Some(hash),
+        });
+    }
+    outcomes
 }

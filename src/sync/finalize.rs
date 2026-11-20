@@ -60,6 +60,12 @@ pub(crate) fn finalize(
             .collect();
         confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
         confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
+        crate::lock::record_provided_skills(
+            &mut new_lock,
+            old_lock,
+            &state.provided_skills,
+            &state.target_outcomes,
+        );
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_removed_native_outputs(
             &mut new_lock,
@@ -218,6 +224,12 @@ fn retry_tombstone_removals(
             .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
     }) {
         for output in &item.outputs {
+            // A provided skill has no `.mars` output by design: its target outputs are live.
+            if crate::provided::is_provided_source(item.source.as_ref())
+                && output.installed_checksum().is_some()
+            {
+                continue;
+            }
             let current_pass_owns_output = current_lock.items.values().any(|current_item| {
                 current_item.outputs.iter().any(|current_output| {
                     current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT

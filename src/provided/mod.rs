@@ -27,7 +27,7 @@ mod spec;
 
 use serde::Serialize;
 
-pub(crate) use names::ProvidedNames;
+pub(crate) use names::{ProvidedNames, skill_outcomes};
 pub(crate) use reconcile::reconcile;
 pub(crate) use source::is_provided_source;
 use spec::ProvideSpec;

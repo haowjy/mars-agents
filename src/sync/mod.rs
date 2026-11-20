@@ -168,6 +168,8 @@ pub(crate) struct SyncedState {
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
+    /// The provided skills this sync projected into targets (`provided::skill_outcomes`).
+    pub provided_skills: Vec<apply::ActionOutcome>,
 }
 
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
@@ -768,6 +770,7 @@ pub(crate) fn sync_targets(
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
             removed_native_outputs: Vec::new(),
+            provided_skills: Vec::new(),
         };
     }
 
@@ -795,6 +798,7 @@ pub(crate) fn sync_targets(
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),
+        provided_skills: Vec::new(),
     }
 }
 

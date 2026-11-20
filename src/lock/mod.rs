@@ -1167,6 +1167,68 @@ pub fn apply_compiled_native_outputs(
 /// linked-target artifacts can outlive that removal when filesystem deletion
 /// fails, so the unresolved linked outputs must remain owned until removal
 /// succeeds.
+/// Records the provided skills a target sync projected. They have no `.mars` output in the lock
+/// (`mars provide` owns that copy), so [`upsert_target_output`] has no owner to attach a target
+/// output to: the item is built here from what the last sync recorded plus the outputs this one
+/// wrote. Call it before [`apply_target_sync_outputs`], which drops the outputs a sync removed.
+pub(crate) fn record_provided_skills(
+    lock: &mut LockFile,
+    old_lock: &LockFile,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) {
+    for outcome in outcomes {
+        let key = item_key(&outcome.item_id);
+        let mut outputs = old_lock
+            .items
+            .get(&key)
+            .map(|item| item.outputs.clone())
+            .unwrap_or_default();
+        for target in target_outcomes {
+            let Some(dest_rel) = crate::target_sync::target_dest_rel(outcome, &target.target)
+            else {
+                continue;
+            };
+            for synced in target
+                .synced_outputs
+                .iter()
+                .filter(|synced| synced.dest_path == dest_rel)
+            {
+                let record = OutputRecord::installed(
+                    target.target.clone(),
+                    DestPath::from(dest_rel.as_str()),
+                    synced.installed_checksum.clone(),
+                );
+                match outputs.iter_mut().find(|output| {
+                    output.target_root == target.target && output.dest_path == record.dest_path
+                }) {
+                    Some(existing) => *existing = record,
+                    None => outputs.push(record),
+                }
+            }
+        }
+        outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+        lock.items.insert(
+            key,
+            LockedItemV2 {
+                source: outcome.source_name.clone(),
+                kind: outcome.item_id.kind,
+                version: None,
+                source_checksum: outcome
+                    .source_checksum
+                    .clone()
+                    .expect("a provided skill outcome carries its checksum"),
+                source_path: None,
+                outputs,
+            },
+        );
+    }
+}
+
 pub fn retain_unremoved_noncanonical_outputs(
     lock: &mut LockFile,
     old_lock: &LockFile,

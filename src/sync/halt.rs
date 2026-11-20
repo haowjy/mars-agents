@@ -151,6 +151,11 @@ pub(super) fn persist_pending_config_mutation(
         Some(ConfigMutation::SetOverride { .. }) => {
             crate::config::save_local(&ctx.project_root, &loaded.local)?;
         }
+        Some(ConfigMutation::LinkTarget { local: true, .. }) => {
+            if loaded.local_changed {
+                crate::config::save_local(&ctx.project_root, &loaded.local)?;
+            }
+        }
         Some(
             ConfigMutation::UpsertDependency { .. }
             | ConfigMutation::BatchUpsert(..)
@@ -158,6 +163,12 @@ pub(super) fn persist_pending_config_mutation(
             | ConfigMutation::SetRename { .. },
         ) => {
             crate::config::save(&ctx.project_root, &loaded.config)?;
+        }
+        Some(ConfigMutation::LinkTarget { local: false, .. }) => {
+            crate::config::save(&ctx.project_root, &loaded.config)?;
+            if loaded.local_changed {
+                crate::config::save_local(&ctx.project_root, &loaded.local)?;
+            }
         }
         None if bump_changed => {
             crate::config::save(&ctx.project_root, &loaded.config)?;

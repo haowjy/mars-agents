@@ -26,7 +26,7 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
         }
         Err(source) => return Err(super::read_error(&path, source)),
     };
-    let mut local = super::parse_local(&content, &path)?;
+    let mut local = super::parse_local(&content, &path, mars_schema::keys::Document::Consumer)?;
     // A user-wide `targets` or override would apply to every project unseen, and ignoring either
     // loses no restriction: this layer does not read them, like any other key it has no use for.
     let unread = [

@@ -47,8 +47,7 @@ pub(crate) fn warn_unknown_visibility(
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub use native_agents::native_agent_orphan_preserve_paths;
 pub(crate) use native_agents::{
-    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, ToolConfig, effective_native_profile,
-    installed_agent_tools, materialize_native_agents_after_link,
+    NativeRemovals, ToolConfig, effective_native_profile, installed_agent_tools,
 };
 
 use crate::config::AgentEmission;
@@ -232,7 +231,6 @@ fn compile_inner(
         project_root: &ctx.project_root,
         old_lock,
         dry_run: request.options.dry_run,
-        selective_harness_scope: None,
     };
     let native_compile_ctx = if agent_surface_policy.emits_nothing() {
         None
@@ -240,32 +238,28 @@ fn compile_inner(
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
             old_lock: native_ownership_lock,
-            harness_scope: None,
             configured_emit_harnesses: &configured_emit_harnesses,
             options: native_agents::NativeAgentSurfaceCompileOptions {
                 force: request.options.force,
-                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: request.options.dry_run,
                 preview_warnings: request.options.preview_warnings,
             },
             fanout_agents,
         })
     };
-    (
-        synced.compiled_native_outputs,
-        synced.removed_native_outputs,
-    ) = native_agents::run_native_agent_post_sync_lifecycle(
-        &native_reconcile_ctx,
-        &agent_surface_policy,
-        &mars_agent_scan,
-        native_agents::ToolConfig {
-            agent_overlays: &loaded.effective.agents,
-            project_tools: &loaded.effective.settings.tools,
-        },
-        native_compile_ctx.as_ref(),
-        native_model_router.as_mut(),
-        diag,
-    );
+    (synced.compiled_native_outputs, synced.native_removals) =
+        native_agents::run_native_agent_post_sync_lifecycle(
+            &native_reconcile_ctx,
+            &agent_surface_policy,
+            &mars_agent_scan,
+            native_agents::ToolConfig {
+                agent_overlays: &loaded.effective.agents,
+                project_tools: &loaded.effective.settings.tools,
+            },
+            native_compile_ctx.as_ref(),
+            native_model_router.as_mut(),
+            diag,
+        );
 
     finalize(ctx, synced, request, diag)
 }
@@ -363,7 +357,6 @@ pub(crate) fn sync_targets_under_policy(
     policy: &AgentSurfacePolicy,
     old_lock: &crate::lock::LockFile,
     force: bool,
-    collision_hint: crate::surface_ownership::CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) -> (
     Vec<crate::target_sync::TargetSyncOutcome>,
@@ -385,7 +378,6 @@ pub(crate) fn sync_targets_under_policy(
     let ctx = crate::target_sync::TargetSyncContext {
         old_lock,
         force,
-        collision_hint,
         orphan_preserve_paths: (!preserve.is_empty()).then_some(&preserve),
     };
     let target_outcomes = targets

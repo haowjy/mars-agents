@@ -5,7 +5,7 @@ machines here are the commands that carry a multi-step change of their own: whic
 command runs against, claiming and releasing a target, adopting a file, resolving conflicts,
 releasing and scaffolding. Two authorities sit outside this page and are named once: the lock
 (`OutputState`, `ConfigEntryRecord.emitted_json`; see [lock](../../lock/.context/state-machines.md))
-and surface ownership (`may_delete`, `resolve_copy`; see
+and surface ownership (`resolve_copy`; see
 [surface ownership](../../surface_ownership/.context/CONTEXT.md)). The index of all machines is
 [state-machines/index.md](../../../.context/state-machines/index.md).
 
@@ -44,40 +44,34 @@ stateDiagram-v2
 ## Target claim
 
 One target directory going from "not managed" to "managed by Mars": a settings entry, files in the
-target and lock records. `mars link` (`link.rs`). The order of writes in `link_target` is files
-(`sync_managed_targets`), native agent materialization, the lock (`apply_target_sync_outputs`,
-`persist_lock_then_native_agent_manifest`), then `settings.targets`. The collision check runs
-twice, before and after native materialization.
+target and lock records. `mars link` (`link.rs`) is `ConfigMutation::LinkTarget { target, local }` plus the sync
+pipeline, as `mars add` is: the target joins `targets` under the sync lock (`mutation.rs`), and the one sync installs
+everything a sync installs there: files, native agents, hooks and MCP servers. `link` has no install code of its own.
+`--local` writes `mars.local.toml` where this says `targets`, and the lock publish files the records in `.mars/machine.lock` for a target `mars.toml` does not name; plain `link` also removes the target from `mars.local.toml`.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Unlinked: target absent from settings.targets
   Unlinked --> Refused: no mars.toml
-  Unlinked --> Colliding: matching destination files mars has no claim for
-  Colliding --> Linked: --force adopts them and records checksums
-  Colliding --> Refused: unmanaged collision, nothing to do by hand but --force
-  Unlinked --> Linked: copy all canonical items, record outputs, then add to settings
-  Linked --> Linked: plain sync again
+  Unlinked --> Linked: named in targets, then the sync installs and records each output
+  Linked --> Linked: a destination Mars has no claim for is kept and warned (--force adopts it)
 ```
 
 An instance of [an ownership record](../../../.context/state-machines/ownership-record.md).
 
-- **A kill after the copies and before the lock write** leaves files the lock does not claim. The
-  next `mars link` or `mars sync` adopts those whose content is what it would write, silently, and
-  warns `target-unmanaged-collision` on the rest, which the user has to `--force` to adopt.
-- **A kill after the lock write and before `config.save`** leaves the lock claiming outputs for a
-  target that settings do not list. `unlink` treats a target the lock claims as managed
-  (`target::lock_claims`) and cleans it up; `link` finds the claim installed and finishes it.
-  The kill after the copies is repaired by the next write: bytes equal to what Mars would write
-  are adopted, not treated as the user's.
-- `--force` also decides adoption diagnostics: `warn_no_installed_claim_adopted` fires only when a
-  claim is missing, so re-linking an already linked target is silent.
+- **A kill after the config save and before the lock write** leaves a target `targets` names with
+  no records: the next sync installs it. The files left by a kill after the copies are adopted
+  when their content is what Mars would write, silently; the rest warn
+  `target-unmanaged-collision`, which `--force` adopts.
+- `--force` is the sync's `--force`: it also overwrites a divergent installed file in every
+  managed target, not only the new one.
+- `warn_no_installed_claim_adopted` fires only when a claim is missing, so re-linking an already
+  linked target is silent.
 
 ## Target teardown
 
 One target directory going from managed to not managed, plus removal of every file Mars recorded
-there. `mars unlink` (`unlink.rs`). `remove_owned_target_content` removes recorded paths
-deepest first, treats `NotFound` as success, removes empty ancestors, and reconciles hooks
+there. `mars unlink` (`unlink.rs`) and a sync that finds a target no config file names (`finalize`) both call `target_sync::removal::remove_served`, and `cleanup_orphans` and the removal of an item the source dropped use the same `remove_recorded`. It removes an output only while it is what Mars wrote: the hash of the whole output (a file, or a skill, hook or MCP tree) equals the record's `installed_checksum`. An output that differs (an edit, a file the user added inside a recorded directory, a tree that cannot be hashed) stays, loses its record and is reported once per target (`output-kept`). A failed delete keeps its record as a pending deletion, is reported with its path, and does not stop the rest; a pending deletion is removed without the comparison. Removal goes deepest first, treats an absent path as removed, removes empty ancestors, and reconciles hooks
 through the `RemovalPlan` and keyed entries through `reconcile_keyed` (one pass per keyed kind
 the target declares), the paths sync uses.
 
@@ -94,7 +88,7 @@ stateDiagram-v2
   Unlinked --> [*]
 ```
 
-- **Order is files, then config, then lock.** A kill between files and lock leaves records for
+- **Order is files, then config, then lock.** (A sync's removal has no settings step: the config no longer names the target, and a kill before the lock write leaves records the next sync removes the same way.) A kill between files and lock leaves records for
   paths that no longer exist; `cleanup_orphans` counts an absent recorded path as a confirmed
   deletion, so the next sync drops them. A kill between `config.save` and `lock::write` leaves a
   target out of settings that still has lock records, the mirror of what `link`'s crash leaves;
@@ -155,7 +149,7 @@ stateDiagram-v2
 
 - **Mars never creates a conflicted item.** No writer emits conflict markers; the state comes from
   a git merge in the user's repository. Mars observes and resolves it, and does not drive it.
-- `mars resolve` re-stamps `OutputRecord::mark_installed` for each item whose markers are gone and
+- `mars resolve` (deprecated in 0.39.0, removed in the next minor) re-stamps `OutputRecord::mark_installed` for each item whose markers are gone and
   whose hash differs from the record, then writes the lock once if anything changed. Killed
   before that, nothing changed.
 - `list --status`, `doctor` (`TargetDivergence`) and `target_sync` (`resolve_copy`) each

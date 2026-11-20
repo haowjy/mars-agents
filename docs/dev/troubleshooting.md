@@ -129,7 +129,7 @@ mars repair    # Full rebuild if sync doesn't fix it
 
 Current sync behavior is source-wins: `mars sync` overwrites local modifications with upstream content rather than producing conflict markers. Conflict markers in managed files would only come from manual edits or legacy state from an older mars version.
 
-If conflict markers are present, edit the file to remove them, then:
+If conflict markers are present, run `mars sync` to reinstall the source, or keep a change with an overlay ([`mars resolve`](../config/retired-keys.md#mars-resolve) is deprecated). Until `mars resolve` is removed, it still clears the markers after you edit them out:
 
 ```bash
 mars resolve                     # Resolve all

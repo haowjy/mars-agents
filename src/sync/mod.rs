@@ -48,6 +48,13 @@ pub struct SyncReport {
     pub dependency_moves: Vec<upgrades::VersionStep>,
     pub target_outcomes: Vec<crate::target_sync::TargetSyncOutcome>,
     pub dry_run: bool,
+    /// The targets no config file names, whose Mars-installed content this run removed (in a
+    /// dry run, would remove), and the `(target_root, dest_path)` of each output in them. Config
+    /// entries and the canonical-store copies of per-target items are not listed.
+    pub dropped_targets: Vec<String>,
+    /// Dropped targets Mars could not finish removing: it keeps their records and retries.
+    pub pending_targets: Vec<String>,
+    pub dropped_outputs: Vec<(String, String)>,
     /// Native harness agent outputs emitted this run that are new or content-changed
     /// vs the previous lock, as `(target_root, dest_path)`. Surfaced so native
     /// emission is not silent in the summary.
@@ -115,10 +122,15 @@ pub enum ResolutionMode {
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
+    /// The mutation changed `mars.local.toml`, so persisting it writes that file too.
+    pub local_changed: bool,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
-    /// The records of `mars.lock` that serve targets outside this sync, merged back on write.
-    pub unscoped: LockFile,
+    /// The records that serve a target the config names but this sync does not manage (a retired
+    /// one), merged back on write.
+    pub carried: LockFile,
+    /// The records that serve a target no config file names: the sync removes what they record.
+    pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
@@ -167,7 +179,7 @@ pub(crate) struct SyncedState {
     pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
-    pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
+    pub native_removals: crate::compiler::NativeRemovals,
     /// The provided skills this sync projected into targets (`provided::skill_outcomes`).
     pub provided_skills: Vec<apply::ActionOutcome>,
 }
@@ -190,6 +202,9 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             dependency_moves: Vec::new(),
             target_outcomes: Vec::new(),
             dry_run: request.options.dry_run,
+            dropped_targets: Vec::new(),
+            pending_targets: Vec::new(),
+            dropped_outputs: Vec::new(),
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
@@ -263,12 +278,14 @@ pub(crate) fn load_config(
         Vec::new()
     };
 
-    let mut local = crate::config::load_local(project_root)?;
-    if let Some(m) = &request.mutation {
-        mutation::apply_local_mutation(&mut local, m);
-    }
-
     let user = crate::config::load_user_config()?;
+    let mut local = crate::config::load_local(project_root)?;
+    let local_before = local.clone();
+    if let Some(m) = &request.mutation {
+        mutation::apply_local_mutation(&mut local, &config, &user, project_root, m)?;
+    }
+    let local_changed = local != local_before;
+
     let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
@@ -335,18 +352,20 @@ pub(crate) fn load_config(
     }
 
     let managed = crate::config::targets::managed_targets(&effective.settings);
-    let (old_lock, unscoped) = old_lock.split_targets(|target| managed.iter().any(|m| m == target));
-    diag.extend(crate::config::targets::unnamed_target_diagnostics(
-        &unscoped, &config, &local,
-    ));
+    let (old_lock, unmanaged) =
+        old_lock.split_targets(|target| managed.iter().any(|m| m == target));
+    let named = crate::config::targets::named_targets(&config, &local);
+    let (carried, dropped) = unmanaged.split_targets(|target| named.contains(target));
     let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
 
     Ok(LoadedConfig {
         config,
         local,
+        local_changed,
         effective,
         old_lock,
-        unscoped,
+        carried,
+        dropped,
         provided,
         dependency_changes,
         sync_lock,
@@ -717,6 +736,12 @@ pub(crate) fn create_plan(
 /// they never trip the gate: a CI machine without the host has none, and one with it is not
 /// asking for a lock change.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
+    let dropped = &planned.targeted.resolved.loaded.dropped;
+    if !dropped.recorded_targets().is_empty() {
+        return Err(MarsError::FrozenViolation {
+            message: "sync would remove what Mars installed in a target `targets` no longer names, but --frozen is set".into(),
+        });
+    }
     let lock_index = crate::lock::LockIndex::new(&planned.targeted.resolved.loaded.old_lock);
     let has_changes = planned.plan.actions.iter().any(|a| {
         if crate::provided::is_provided_source(a.source_name().as_ref()) {
@@ -799,7 +824,7 @@ pub(crate) fn sync_targets(
             config_files_changed: Vec::new(),
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
-            removed_native_outputs: Vec::new(),
+            native_removals: Default::default(),
             provided_skills: Vec::new(),
         };
     }
@@ -815,7 +840,6 @@ pub(crate) fn sync_targets(
         &agent_surface_policy,
         &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.force,
-        crate::surface_ownership::CollisionAdoptHint::SyncForce,
         diag,
     );
 
@@ -828,7 +852,7 @@ pub(crate) fn sync_targets(
         config_files_changed: Vec::new(),
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
-        removed_native_outputs: Vec::new(),
+        native_removals: Default::default(),
         provided_skills,
     }
 }

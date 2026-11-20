@@ -19,6 +19,7 @@ use crate::target::keyed_entries::{self, KeyedKind};
 use crate::target::mcp_file::{self, MCP_KIND};
 use crate::target::plugin::HOOK_ENTRY_KIND;
 use crate::target::{HOOK_KEY_PREFIX, HookEntry, McpDirs, McpServerEntry};
+use crate::target_sync::removal::Removal;
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
 use mars_schema::hooks::HookOutput;
@@ -415,16 +416,23 @@ pub(crate) fn compile_config_entries(
             if desired_file_outputs.contains(&pair) {
                 continue;
             }
-            if !crate::surface_ownership::may_delete(old_lock, &target_root, &dest_path) {
+            let Some((kind, record)) =
+                old_lock
+                    .output_records_for_target(&target_root)
+                    .find(|(_, record)| {
+                        crate::target::dest_paths_equivalent(record.dest_path.as_str(), &dest_path)
+                    })
+            else {
                 continue;
-            }
+            };
             let path = ctx.project_root.join(&target_root).join(&dest_path);
-            match std::fs::remove_file(&path) {
-                Ok(()) => removed_outputs.push(pair),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    removed_outputs.push(pair)
+            match crate::target_sync::removal::remove_recorded(&path, kind, record) {
+                Removal::Absent | Removal::Removed => removed_outputs.push(pair),
+                Removal::Kept => {
+                    crate::target_sync::removal::report_kept(&target_root, &dest_path, diag);
+                    removed_outputs.push(pair);
                 }
-                Err(error) => diag.warn(
+                Removal::Failed(error) => diag.warn(
                     "config-entry-remove",
                     format!("failed to remove `{}`: {error}", path.display()),
                 ),

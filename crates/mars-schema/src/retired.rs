@@ -198,7 +198,7 @@ fn managed_root_note(managed_root: Option<&str>) -> Option<SchemaDiagnostic> {
             PathSegment::Key("managed_root".to_owned()),
         ],
         format!(
-            "`settings.managed_root` is a key Mars no longer reads, so it has no effect. Write `targets = [\"{managed_root}\"]` under `[settings]` if you still want `{managed_root}`, and delete `managed_root`. Without `targets`, routing is no longer limited to the harnesses the project named: {DOCS}/retired-keys.md#managed_root"
+            "`settings.managed_root` is a key Mars no longer reads, so it has no effect, and a sync removes what Mars installed in `{managed_root}` unless `targets` names it. To keep `{managed_root}`, write `targets = [\"{managed_root}\"]` under `[settings]` (`mars link {managed_root}` writes it and installs again) and delete `managed_root`. Without `targets`, routing is no longer limited to the harnesses the project named: {DOCS}/retired-keys.md#managed_root"
         ),
     ))
 }

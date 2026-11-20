@@ -12,7 +12,7 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` is a deprecated one. `.cursor` is retired: a sync warns (`retired-target`) while it is a target and writes nothing there; `mars unlink .cursor` removes what earlier syncs installed.
+**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` is a deprecated one. `.cursor` is retired: a sync warns (`retired-target`) while it is a target and writes nothing there; `mars unlink .cursor`, or taking `.cursor` out of `targets`, removes what earlier syncs installed.
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 
@@ -90,7 +90,7 @@ Mars accepts several source forms:
 | Document | Contents |
 |---|---|
 | [config/schema-v1.md](config/schema-v1.md) | The schema v1 contract: agent, skill and manifest keys, effort, model-policy precedence, tool capabilities, fixtures |
-| [config/retired-keys.md](config/retired-keys.md) | Keys Mars stopped reading, what each became, and a package with no `schema` |
+| [config/retired-keys.md](config/retired-keys.md) | Keys Mars stopped reading, what each became, the deprecated `mars resolve`, and a package with no `schema` |
 | [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: dependencies (marketplace plugins, dialect), settings, overlays, model aliases |
 | [config/mars-curated.md](config/mars-curated.md) | `mars.curated.toml`: the display-only model rules `mars models list` layers and merges |
 | [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, tools, harness-overrides, model-policies, examples |

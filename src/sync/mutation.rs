@@ -24,6 +24,9 @@ pub enum ConfigMutation {
         source_name: SourceName,
         local_path: PathBuf,
     },
+    /// Name a target in `settings.targets` of mars.toml, or of mars.local.toml when `local`, so
+    /// the sync that follows installs into it.
+    LinkTarget { target: String, local: bool },
     /// Set or update a rename mapping for one managed item.
     SetRename {
         source_name: SourceName,
@@ -94,6 +97,20 @@ pub(crate) fn apply_mutation(
             Ok(Vec::new())
         }
         ConfigMutation::SetOverride { .. } => Ok(Vec::new()),
+        ConfigMutation::LinkTarget {
+            target,
+            local: false,
+        } => {
+            let mut targets = crate::config::targets::managed_targets(&config.settings);
+            if !targets.contains(target) {
+                targets.push(target.clone());
+            }
+            // The key is retired; leaving it beside the `targets` just written would only warn.
+            config.settings.managed_root = None;
+            config.settings.targets = Some(targets);
+            Ok(Vec::new())
+        }
+        ConfigMutation::LinkTarget { local: true, .. } => Ok(Vec::new()),
         ConfigMutation::SetRename {
             source_name,
             from,
@@ -114,7 +131,44 @@ pub(crate) fn apply_mutation(
     }
 }
 
-pub(crate) fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMutation) {
+/// The first Mars where a local `targets` list adds to the project's. Mars 0.38.0 reads it as
+/// the whole list and, under its advised `--force`, rewrites the shared lock to match. A build
+/// before it is a development build of it, which must not stop itself.
+fn adding_targets_floor() -> semver::Version {
+    let running =
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver");
+    running.min(semver::Version::new(0, 39, 0))
+}
+
+/// Which files `mars link` changes: `(mars.toml, mars.local.toml)`. The project file is the
+/// target's home unless `--local` asked for this machine only; a target `mars.toml` already
+/// names stays there, and a copy in `mars.local.toml` goes.
+pub(crate) fn link_changes(
+    config: &Config,
+    local: &LocalConfig,
+    target: &str,
+    local_only: bool,
+) -> (bool, bool) {
+    use crate::config::targets::{names_target, project_targets};
+    if local_only {
+        let add = !project_targets(config).contains(target)
+            && !names_target(local.settings.targets.as_deref(), target);
+        (false, add)
+    } else {
+        (
+            !project_targets(config).contains(target),
+            names_target(local.settings.targets.as_deref(), target),
+        )
+    }
+}
+
+pub(crate) fn apply_local_mutation(
+    local: &mut LocalConfig,
+    config: &Config,
+    user: &crate::config::UserConfig,
+    project_root: &std::path::Path,
+    mutation: &ConfigMutation,
+) -> Result<(), MarsError> {
     match mutation {
         ConfigMutation::SetOverride {
             source_name,
@@ -127,11 +181,43 @@ pub(crate) fn apply_local_mutation(local: &mut LocalConfig, mutation: &ConfigMut
                 },
             );
         }
+        ConfigMutation::LinkTarget {
+            target,
+            local: false,
+        } => {
+            crate::config::targets::unset_target(&mut local.settings.targets, target);
+        }
+        ConfigMutation::LinkTarget {
+            target,
+            local: true,
+        } => {
+            if link_changes(config, local, target, true).1 {
+                let floor = adding_targets_floor();
+                let (effective, _) = crate::config::merge_with_root(
+                    config.clone(),
+                    local.clone(),
+                    user,
+                    project_root,
+                )?;
+                if !mars_schema::package::requirement_has_floor(
+                    effective.settings.min_mars_version.as_deref(),
+                    &floor,
+                ) {
+                    local.settings.min_mars_version = Some(floor.to_string());
+                }
+                local
+                    .settings
+                    .targets
+                    .get_or_insert_with(Vec::new)
+                    .push(target.clone());
+            }
+        }
         ConfigMutation::UpsertDependency { .. }
         | ConfigMutation::BatchUpsert(..)
         | ConfigMutation::RemoveDependency { .. }
         | ConfigMutation::SetRename { .. } => {}
     }
+    Ok(())
 }
 
 fn apply_dependency_upsert(

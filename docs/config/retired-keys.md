@@ -94,7 +94,7 @@ A skill carries no tool policy of Mars's own, so `tools` and `allowed_tools` hav
 
 ## managed_root
 
-`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0, and Mars 0.37.0 read it as `targets` while no file set `targets`. Mars no longer reads it, so a project that relied on it has no targets: a sync writes nothing to `.claude/`, and the project's routing is no longer limited to the harnesses it named. What earlier syncs installed there (copied skills, MCP servers, hook entries) stays until `mars unlink .claude`, and every sync warns about it (`unnamed-target`). Each file that still has the key warns (`field.retired`) with the `targets` to write if you still want its target. `mars link` and `mars init <target>` remove the key from `mars.toml` when they write `targets`; `mars unlink` leaves it. Replace it with the same directory in `targets`:
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0, and Mars 0.37.0 read it as `targets` while no file set `targets`. Mars no longer reads it, so a project that relied on it has no targets, and the project's routing is no longer limited to the harnesses it named. The first sync removes what earlier syncs installed in `.claude/` (copied skills, MCP servers, hook entries), as `mars unlink .claude` would; your own entries stay. `mars link .claude` installs it again. Each file that still has the key warns (`field.retired`) with the `targets` to write if you still want its target. `mars link` and `mars init <target>` remove the key from `mars.toml` when they write `targets`; `mars unlink` leaves it. Replace it with the same directory in `targets`:
 
 ```toml
 # before
@@ -110,8 +110,8 @@ targets = [".claude"]
 Mars no longer supports Cursor: `cursor` is not a harness and `.cursor` is not a target. What a project that names it gets:
 
 - `cursor` or `.cursor` in `[settings] targets` is warned about on every sync (`retired-target`) and not synced to. Neither copied skills nor generated files are written there, and the files earlier syncs wrote stay where they are.
-- `mars link cursor` fails. `mars unlink .cursor` removes exactly what `mars.lock` records for it: the skills, agents and hook directories Mars copied, the MCP servers it added to `.cursor/mcp.json` and the hook entries it added to `.cursor/hooks.json`. A server or hook entry you wrote, and any other file in `.cursor/`, stays. An entry you edited after Mars wrote it also stays. If `.cursor/hooks.json` held only Mars's entries, it is left holding `{"version": 1}`: delete it by hand.
-- `cursor` as `[models.<alias>] harness`, `default_harness` or an entry of `harness_order` is a `field.retired` warning on every sync: naming it has no effect, so delete it. A sync also leaves what it installed in a `.cursor` that `targets` no longer names, as for any target the config does not name (`unnamed-target`), until `mars unlink .cursor`.
+- `mars link cursor` fails. `mars unlink .cursor` (or taking `.cursor` out of `targets` and syncing) removes exactly what `mars.lock` records for it: the skills, agents and hook directories Mars copied, the MCP servers it added to `.cursor/mcp.json` and the hook entries it added to `.cursor/hooks.json`. A server or hook entry you wrote, and any other file in `.cursor/`, stays. An entry you edited after Mars wrote it also stays. If `.cursor/hooks.json` held only Mars's entries, it is left holding `{"version": 1}`: delete it by hand.
+- `cursor` as `[models.<alias>] harness`, `default_harness` or an entry of `harness_order` is a `field.retired` warning on every sync: naming it has no effect, so delete it. A sync removes what it installed in a `.cursor` that `targets` no longer names, as for any target the config does not name.
 - `harness-overrides.cursor` is a retired key (`field.retired`): the block has no effect.
 - `variants/cursor/` in a skill is an unknown harness variant, which Mars reports and does not read.
 - A hook's `[targets.".cursor"]` table and a `cursor.json` native hook name a target that is not managed, so they are ignored like any target the project does not link.
@@ -119,6 +119,18 @@ Mars no longer supports Cursor: `cursor` is not a harness and `.cursor` is not a
 - `harness: cursor` in an Agent profile is a retired value (`field.retired`): the Agent pins no harness. `harness = "cursor"` in a `[models.<alias>]` table is read as no harness, so the alias routes as if it named none, and a `[[show]]` or `[[hide]]` rule in `mars.curated.toml` for harness `cursor` is dropped, because it can match no model.
 - `mars models --harness cursor`, `mars build launch-bundle --harness cursor` and `harnesses = ["cursor"]` in `[plugin]` are errors: `cursor` is an unknown harness name.
 - `dialect = "cursor"` still reads a package laid out as a Cursor repository (`.cursor/rules/*.mdc`, `.cursor-plugin/`); the keys it rejects are dropped, since no harness reads them.
+
+## `mars resolve`
+
+`mars resolve` is deprecated in 0.39.0 and removed in the next minor release. Until then it works as before and warns on each run (`command.deprecated`).
+
+It set an installed item's recorded hash to what is on disk, to mark a hand edit as resolved. A sync no longer writes conflict markers: when the installed item differs from its source, the next `mars sync` reinstalls the source, so the edit `mars resolve` recorded is replaced anyway. To keep a change to an installed item:
+
+- an overlay: `[agents.<name>]` or `[skills.<name>]` in `mars.toml` ([agents](mars-toml.md#agentsname-overlay), [skills](mars-toml.md#skillsname-overlay));
+- an item of your own in `.mars-src/`, which takes the place of the dependency's item of that name;
+- or edit the dependency's source, and `mars override` to point at your checkout.
+
+To clear conflict markers a legacy sync left in an installed file, run `mars sync`: it reinstalls the source.
 
 ## Values that changed
 

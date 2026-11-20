@@ -63,61 +63,6 @@ fn lock_with_target_outputs(targets: &[&str], dest: &str, checksum: &str) -> Loc
     lock
 }
 
-#[test]
-fn link_suppress_all_reconciles_selective_native_target() {
-    let dir = TempDir::new().unwrap();
-
-    let mars_agents_dir = dir.path().join(".mars").join("agents");
-    std::fs::create_dir_all(&mars_agents_dir).unwrap();
-    std::fs::write(
-        mars_agents_dir.join("coder.md"),
-        "---\nname: coder\n---\n# Coder\n",
-    )
-    .unwrap();
-
-    let claude_agents = dir.path().join(".claude").join("agents");
-    std::fs::create_dir_all(&claude_agents).unwrap();
-    std::fs::write(claude_agents.join("coder.md"), "# Claude native\n").unwrap();
-
-    let codex_agents = dir.path().join(".codex").join("agents");
-    std::fs::create_dir_all(&codex_agents).unwrap();
-    std::fs::write(codex_agents.join("coder.toml"), "old = true\n").unwrap();
-
-    let mut diag = DiagnosticCollector::new();
-    let mut lock =
-        lock_with_target_outputs(&[".claude", ".codex"], "agents/coder.md", "sha256:coder");
-    lock.items
-        .get_mut("agent/coder")
-        .unwrap()
-        .outputs
-        .push(OutputRecord::installed(
-            ".codex".to_string(),
-            "agents/coder.toml".into(),
-            "sha256:coder-toml".into(),
-        ));
-    let removed = reconcile_native_agent_surfaces(
-        &NativeAgentReconcileCtx {
-            project_root: dir.path(),
-            old_lock: &lock,
-            dry_run: false,
-            selective_harness_scope: Some(&[HarnessId::Claude]),
-        },
-        &HashSet::new(),
-        &mut diag,
-    );
-
-    assert!(!dir.path().join(".claude/agents/coder.md").exists());
-    assert!(
-        dir.path().join(".codex/agents/coder.toml").exists(),
-        "scoped suppress-all link must not remove unrelated native targets"
-    );
-    assert!(
-        removed.iter().all(|(target, _)| target == ".claude"),
-        "removals must stay within the linked harness scope"
-    );
-    assert!(!removed.is_empty());
-}
-
 fn parse_mars_agent(content: &str, stem: &str) -> MarsCanonicalAgent {
     let reading = mars_schema::agent::read(content);
     let (profile, body) = (reading.fields.unwrap(), reading.body.unwrap());
@@ -157,11 +102,9 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
         &NativeAgentCompileCtx {
             project_root: dir.path(),
             old_lock: &lock,
-            harness_scope: None,
             configured_emit_harnesses: &[HarnessId::Claude],
             options: NativeAgentSurfaceCompileOptions {
                 force: false,
-                collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
                 dry_run: false,
                 preview_warnings: false,
             },
@@ -247,11 +190,9 @@ fn compile_with_policy(
     let ctx = NativeAgentCompileCtx {
         project_root: dir,
         old_lock: &LockFile::empty(),
-        harness_scope: None,
         configured_emit_harnesses: configured_harnesses,
         options: NativeAgentSurfaceCompileOptions {
             force: false,
-            collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
             dry_run: false,
             preview_warnings: false,
         },

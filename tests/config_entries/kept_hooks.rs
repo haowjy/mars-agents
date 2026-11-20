@@ -472,3 +472,24 @@ fn a_hook_whose_name_line_stops_reading_is_found_by_its_directory() {
         installed
     );
 }
+
+#[test]
+fn a_dependency_hook_whose_toml_stops_parsing_at_the_first_line_is_kept() {
+    let dir = TempDir::new().unwrap();
+    let (project, source) = project_with_dependency(&dir, "\".codex\"");
+    write_renamed_guard(&source, RENAMED);
+    sync(&project).success();
+    let installed = fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap();
+    assert!(installed.contains("printf guard"));
+
+    write_renamed_guard(&source, "[[[broken\nvisibility = \"exported\"\n");
+    for _ in 0..2 {
+        sync(&project).success().stderr(predicate::str::contains(
+            "keeping what the last sync installed",
+        ));
+        assert_eq!(
+            fs::read_to_string(project.child(".codex/hooks.json").path()).unwrap(),
+            installed
+        );
+    }
+}

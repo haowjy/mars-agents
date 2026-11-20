@@ -998,6 +998,8 @@ stays. Mars writes no `.gitignore`: ignoring `.agy/` and committing `.agents/plu
 usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` carries a
 `version` because `agy plugin validate --strict` warns on a plugin without one.
 
+**Provided by a host.** A host that runs [`mars provide`](../cli/commands.md#mars-provide) (Meridian) gets its skills, hooks and MCP servers installed here, as it does for no other target Meridian launches. They go through the same readers and keyed entries as a package's. Their records are in `.mars/machine.lock`, not `mars.lock`. A package's hook or MCP server of the same name wins, with a `provided-shadowed` warning.
+
 **Skills.** Linking `.agents` too puts the neutral copy and the `agy` copy of each skill in front
 of `agy` under one name; Mars warns (`deprecated-agents-target`) and says to run
 `mars unlink .agents`. With no harness that reads `.agents/skills` linked, the same code is

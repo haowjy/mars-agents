@@ -163,6 +163,13 @@ pub fn harness_for_target(target: &str) -> Option<HarnessId> {
         .find(|id| id.as_str() == name)
 }
 
+/// Whether `target` takes the content a host provides (`mars provide`): a native directory of a
+/// harness Meridian does not launch, so nothing else installs a host's skills, hooks and MCP
+/// servers there. `.agents` and a custom directory take none.
+pub fn takes_provided(target: &str) -> bool {
+    harness_for_target(target).is_some_and(|id| !launched_by_meridian(id))
+}
+
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     let normalized = provider.trim().to_ascii_lowercase();
     mars_schema::harness::ALL.iter().copied().find(|id| {

@@ -1,8 +1,9 @@
-//! `mars provide <provider>@<version>=<directory>` — install a host's own skills.
+//! `mars provide <provider>@<version>=<directory>` — install a host's own skills, hooks and
+//! MCP servers.
 //!
-//! A host (Meridian today) ships skills with its binary and runs this on every launch, so the
+//! A host (Meridian today) ships them with its binary and runs this on every launch, so the
 //! command must be quiet, fast and side-effect free when the bundle is already current. It
-//! writes only `.mars/skills/` and `.mars/provided.lock`; `mars.toml`, `mars.lock` and every
+//! writes only `.mars/skills/`, `.mars/provided/` and `.mars/provided.lock`; `mars.toml`, `mars.lock` and every
 //! harness target are untouched, which is why it needs no sync and no config.
 
 use std::path::Path;
@@ -17,7 +18,7 @@ use super::output;
 pub struct ProvideArgs {
     /// What the host provides: `<provider>@<version>=<directory>`.
     ///
-    /// The directory holds a `skills/` directory; each entry is `<skill>__<provider>`.
+    /// The directory holds any of `skills/` (entries are `<skill>__<provider>`), `hooks/` and `mcp/`.
     pub spec: String,
 }
 

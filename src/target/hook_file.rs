@@ -14,8 +14,8 @@ use indexmap::IndexMap;
 use mars_schema::ordered::OrderedValue;
 use serde_json::Value;
 
+use super::HookEntry;
 use super::config_doc::{JsonDoc, to_ordered};
-use super::{HOOK_KEY_PREFIX, HookEntry};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::lock::ConfigEntryRecord;
@@ -209,10 +209,7 @@ fn strip(
     }
     let mut changed = false;
     for (key, record) in records {
-        let Some((event, name)) = key
-            .strip_prefix(HOOK_KEY_PREFIX)
-            .and_then(|rest| rest.split_once(':'))
-        else {
+        let Some((event, name)) = HookEntry::parse_key(key) else {
             continue;
         };
         let Ok(expected) = serde_json::from_str::<Vec<Value>>(&record.emitted_json) else {

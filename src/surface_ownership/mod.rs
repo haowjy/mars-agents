@@ -220,6 +220,7 @@ mod tests {
                 },
             )]),
             config_entries: Default::default(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         }
     }

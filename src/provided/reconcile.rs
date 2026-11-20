@@ -1,5 +1,9 @@
 //! The reconcile loop: design steps 2-8 of `mars provide`.
 //!
+//! Skills are planned name by name against the files in `.mars/skills/`. Hooks and MCP servers
+//! are one tree, staged whole at `.mars/provided/<provider>/`: it is current when the staged
+//! directory's digest equals the validated tree's, and removed when the bundle has none.
+//!
 //! The fast path runs before the lock because hosts launch in parallel and during long syncs;
 //! taking the lock first would turn every no-op into `busy` and a fallback read. It is safe
 //! unlocked because `.mars/provided.lock` and `mars.lock` are only ever written by tmp + rename.
@@ -40,10 +44,13 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             warnings,
         ));
     }
+    let staged_dir = staged_dir(root, &spec.provider);
     let unlocked = assess(root, &spec)?;
     if matches_source(&unlocked.previous, &spec, &entries) {
         let plan = plan_against_disk(root, &entries, &unlocked.previous, &skills_dir)?;
-        if plan.writes_nothing(&entries, &unlocked.previous, &spec) {
+        if plan.writes_nothing(&entries, &unlocked.previous, &spec)
+            && staged_is_current(&staged_dir, &entries)
+        {
             return Ok(current_report(&spec, &unlocked.previous, &plan, warnings));
         }
     }
@@ -68,9 +75,14 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     let mut assessed = assess(root, &spec)?;
     warnings.extend(assessed.warning.take());
     let plan = plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?;
-    if plan.writes_nothing(&entries, &assessed.previous, &spec) {
+    if plan.writes_nothing(&entries, &assessed.previous, &spec)
+        && staged_is_current(&staged_dir, &entries)
+    {
         return Ok(current_report(&spec, &assessed.previous, &plan, warnings));
     }
+
+    // Validate before anything is written: a bundle sync would reject fails here.
+    let staged = entries.stage(&spec, &mut warnings)?;
 
     // Record planned writes first so a crash retains authority to remove them.
     let mut pre_record: BTreeSet<String> = assessed.previous.skills.iter().cloned().collect();
@@ -91,6 +103,10 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     }
     for name in &plan.removals {
         crate::platform::fs::safe_remove(&skills_dir.join(name))?;
+    }
+    match &staged {
+        Some(tree) => crate::fs::atomic_install_dir(tree.path(), &staged_dir)?,
+        None => crate::platform::fs::safe_remove(&staged_dir)?,
     }
 
     let skills = plan.recorded(&entries);
@@ -138,6 +154,20 @@ fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
         previous,
         warning,
     })
+}
+
+/// `.mars/provided/<provider>/`: the hooks and MCP servers sync reads as the provider's node.
+pub(super) fn staged_dir(root: &Path, provider: &str) -> std::path::PathBuf {
+    root.join(".mars").join("provided").join(provider)
+}
+
+/// A staged directory that was removed or edited by hand is restaged, whatever the record says.
+fn staged_is_current(staged_dir: &Path, entries: &ProvidedEntries) -> bool {
+    let on_disk = staged_dir
+        .is_dir()
+        .then(|| entries::tree_digest(staged_dir).ok())
+        .flatten();
+    on_disk == entries.staged_digest
 }
 
 /// [`PENDING_DIGEST`] never equals a computed digest, so a record left by a crashed run always

@@ -168,6 +168,8 @@ pub(crate) struct SyncedState {
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
+    /// The provided skills this sync projected into targets (`provided::skill_outcomes`).
+    pub provided_skills: Vec<apply::ActionOutcome>,
 }
 
 pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, MarsError> {
@@ -267,9 +269,18 @@ pub(crate) fn load_config(
     }
 
     let user = crate::config::load_user_config()?;
-    let (effective, config_diagnostics) =
+    let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
+    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: a
+    // host's content belongs to this machine's sync and to nothing it builds or publishes.
+    if crate::provided::takes_provided_any(&crate::config::targets::managed_targets(
+        &effective.settings,
+    )) {
+        effective
+            .dependencies
+            .extend(crate::provided::staged_dependencies(project_root)?);
+    }
     diag.extend(
         crate::diagnostic::compatibility_preflight(effective.settings.min_mars_version.as_deref())
             .map_err(|message| crate::error::ConfigError::Invalid { message })?
@@ -698,12 +709,16 @@ pub(crate) fn create_plan(
     })
 }
 
+/// A host's hooks and MCP servers change with the host, not with the lock a team commits, so
+/// they never trip the gate: a CI machine without the host has none, and one with it is not
+/// asking for a lock change.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
     let has_changes = planned.plan.actions.iter().any(|a| {
-        !matches!(
-            a,
-            plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
-        )
+        !crate::provided::is_provided_source(a.source_name().as_ref())
+            && !matches!(
+                a,
+                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+            )
     });
     if has_changes {
         return Err(MarsError::FrozenViolation {
@@ -768,16 +783,18 @@ pub(crate) fn sync_targets(
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
             removed_native_outputs: Vec::new(),
+            provided_skills: Vec::new(),
         };
     }
 
     let targets = crate::config::targets::managed_targets(
         &applied.planned.targeted.resolved.loaded.effective.settings,
     );
-    let target_outcomes = crate::compiler::sync_targets_under_policy(
+    let (target_outcomes, provided_skills) = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
         &targets,
         &applied.applied.outcomes,
+        &applied.planned.targeted.resolved.loaded.provided,
         &agent_surface_policy,
         &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.force,
@@ -795,6 +812,7 @@ pub(crate) fn sync_targets(
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),
+        provided_skills,
     }
 }
 

@@ -930,4 +930,5 @@ See [local-development.md](../dev/local-development.md) for workflows.
 
 ## Reserved Names
 
+- `_provided-<provider>` is reserved: it is the source name the records of a host's provided hooks, MCP servers and skills carry (see [`mars provide`](../cli/commands.md#mars-provide)). A `[dependencies]` or `[local-dependencies]` name starting `_provided-` is a config error.
 - `_self` is reserved for project-local items, including `.mars-src/` and the declared package's own agents and skills. `_self` is the synthetic source name used in the lock file and in `mars list --status` output for these items.

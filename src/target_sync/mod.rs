@@ -95,7 +95,12 @@ pub fn sync_managed_targets(
 }
 
 /// Where `outcome` lands inside `target_name`; `None` when it belongs to another target.
-fn target_dest_rel(outcome: &ActionOutcome, target_name: &str) -> Option<String> {
+pub(crate) fn target_dest_rel(outcome: &ActionOutcome, target_name: &str) -> Option<String> {
+    if crate::provided::is_provided_source(outcome.source_name.as_ref())
+        && !crate::harness::registry::takes_provided(target_name)
+    {
+        return None;
+    }
     match crate::sync::package_dir::PackageDir::parse_canonical(
         outcome.item_id.kind,
         &outcome.dest_path,

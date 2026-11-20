@@ -88,7 +88,10 @@ pub(crate) fn discover_mcp_items(
             unknown_visibility,
         } = parse_mcp_toml(&raw).map_err(|e| {
             MarsError::Config(ConfigError::Invalid {
-                message: format!("failed to parse {}: {e}", toml_path.display()),
+                message: format!(
+                    "failed to parse {}: {e}",
+                    crate::provided::display_path(source_name, package_root, &toml_path)
+                ),
             })
         })?;
         let resolved_name = def.name.as_deref().unwrap_or(&server_name).to_string();
@@ -97,7 +100,7 @@ pub(crate) fn discover_mcp_items(
                 "mcp-ignored-field",
                 format!(
                     "{}: `{field}` does not apply to this server's transport and is ignored",
-                    toml_path.display()
+                    crate::provided::display_path(source_name, package_root, &toml_path)
                 ),
             );
         }
@@ -117,7 +120,8 @@ pub(crate) fn discover_mcp_items(
             diag.warn(
                 NAME_INVALID,
                 format!(
-                    "MCP server `{resolved_name}` in `{source_name}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name may use only {NAME_RULE}; skipping this server",
+                    "MCP server `{resolved_name}` in `{}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name may use only {NAME_RULE}; skipping this server",
+                    crate::provided::provider_label(source_name),
                     relative.display()
                 ),
             );
@@ -215,7 +219,8 @@ pub fn check_env_refs(
                 let msg = format!(
                     "MCP server `{}` (from `{}`): env var `{var_name}` (referenced by `{key}`) \
                      is not set — the server may fail at runtime",
-                    item.name, item.source_name
+                    item.name,
+                    crate::provided::provider_label(&item.source_name)
                 );
                 if strict {
                     return Err(MarsError::Config(ConfigError::Invalid { message: msg }));

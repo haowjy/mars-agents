@@ -490,8 +490,15 @@ fn local_modification_preserved() {
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
     let result = apply::execute(fixture.mars_dir(), &sync_plan, &options).unwrap();
-    let first_lock =
-        crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
+    let first_lock = crate::lock::build(
+        &graph,
+        &result,
+        &lock,
+        std::collections::BTreeMap::new(),
+        Default::default(),
+        &Default::default(),
+    )
+    .unwrap();
 
     fs::write(
         fixture.mars_dir().join("agents/coder.md"),

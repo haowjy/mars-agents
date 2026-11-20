@@ -171,6 +171,17 @@ fn remove_owned_target_content(
             .or_default()
             .extend(records);
     }
+    // A record put back stays in the file it came from.
+    let restored: Vec<_> = served
+        .provided_entries
+        .into_iter()
+        .filter(|(target, key)| {
+            lock.config_entries
+                .get(target)
+                .is_some_and(|records| records.contains_key(key))
+        })
+        .collect();
+    lock.provided_entries.extend(restored);
 
     Ok((removed, diagnostics.drain()))
 }

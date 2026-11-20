@@ -1082,7 +1082,7 @@ file of a version this `mars` does not read is settled the same way, with a mess
 |---|---|---|
 | `PreToolUse` | `PreToolUse` | `deny`, `ask`, `allow` and `updatedInput` (as `overwrite`, top-level keys only) answers and exit 2; no opinion is empty output, which leaves the call to `agy`'s own permission flow. `additionalContext` is dropped |
 | `PostToolUse`, `PostToolUseFailure` | `PostToolUse` | `agy` passes no tool output and reads no answer: the hook runs, its answers are dropped; the failure event is the call's `error` being set |
-| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, not on resume, so `source` is always `startup` |
+| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, on its first prompt rather than when the TUI opens, and not on resume, so `source` is always `startup` |
 | `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`), including a failing hook's `onFailure = "block"`; `stop_hook_active` is true from the turn's second Stop (`executionNum` above 0), because `agy`'s `continuationActive` is false on every Stop |
 | `UserPromptSubmit` | `PreInvocation` | runs on the first invocation of a prompt (`invocationNum` 0); a `block` answer ends the turn with the reason as an error message; context becomes a system message |
 

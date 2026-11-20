@@ -544,7 +544,6 @@ pub(crate) fn resolve_spec(
         .or_else(|| entry.and_then(|entry| entry.description.clone()));
     let empty = ComponentLists::default();
     let entry_lists = entry.map_or(&empty, |entry| &entry.lists);
-    // With no manifest the entry is the manifest.
     let own_lists = manifest.map_or(&empty, |manifest| &manifest.lists);
     if manifest.is_some()
         && entry.is_some_and(|entry| entry.strict == Some(false))
@@ -555,6 +554,8 @@ pub(crate) fn resolve_spec(
 
     // An entry at the marketplace root with a `skills` list is the whole skill list: Claude reads
     // neither the default `skills/` nor the manifest's own `skills` beside it.
+    // With no manifest `own_lists` is empty and the entry's lists alone apply: `combine` takes
+    // the two separately.
     let skills = if entry_at_root && entry_lists.skills.is_some() {
         Component {
             default: false,

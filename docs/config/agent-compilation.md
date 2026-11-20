@@ -477,12 +477,12 @@ frontmatter keys it does not know.
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 
 `tools` is always written, because an `agy` agent with no `tools` key has no write and no shell.
-`agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::agy_every_tool`). With an allowlist (`"*": deny` plus allows)
+`agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::every_tool`). With an allowlist (`"*": deny` plus allows)
 it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: an agent whose
 `tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
 `tools` says. `agy`'s agent file has no deny list and `*` minus a name cannot be
-written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction;
-Meridian enforces it through `agy`'s permission requests. An allowlist that names no tool Mars
+written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction:
+nothing enforces it in `agy` (Meridian runs `agy` only interactively, never as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
 
 ### `.cursor/agents/<name>.md`

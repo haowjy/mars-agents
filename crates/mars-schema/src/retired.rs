@@ -143,18 +143,26 @@ pub(crate) fn config_harness_diagnostics(table: &toml::Table) -> Vec<SchemaDiagn
             ],
         );
     }
-    for (alias, entry) in table
+    diagnostics.extend(model_harness_diagnostics(table));
+    diagnostics
+}
+
+/// The warnings for a retired harness a `[models.<alias>] harness` names: the one place a
+/// dependent reads a package's harness choice.
+pub fn model_harness_diagnostics(table: &toml::Table) -> Vec<SchemaDiagnostic> {
+    table
         .get("models")
         .and_then(toml::Value::as_table)
         .into_iter()
         .flatten()
-    {
-        check(
-            entry.get("harness"),
-            vec![key("models"), key(alias), key("harness")],
-        );
-    }
-    diagnostics
+        .filter_map(|(alias, entry)| {
+            let name = entry.get("harness")?.as_str()?;
+            let path = ["models", alias, "harness"]
+                .map(|part| PathSegment::Key(part.to_owned()))
+                .to_vec();
+            harness_diagnostic(name, path)
+        })
+        .collect()
 }
 
 impl RetiredTarget {

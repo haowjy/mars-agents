@@ -684,17 +684,20 @@ and leaves the corrupt lock untouched.
 
 ## `mars provide`
 
-Install a host program's own skills into `.mars/skills/`.
+Install a host program's own skills, hooks and MCP servers.
 
 ```bash
 mars provide <provider>@<version>=<directory> [--root <dir>] [--json]
 ```
 
-A host ships skills with its binary and hands Mars the directory holding them
+A host ships its content with its binary and hands Mars the directory holding it
 (Meridian runs this on every launch). Mars copies `<directory>/skills/*` into
 `.mars/skills/` and records the names in `.mars/provided.lock`, which no other
-command writes. It never touches `mars.toml`, `mars.lock` or a managed target,
-and provided skills are never projected into targets. `--root <dir>` must hold
+command writes. It also validates `<directory>/hooks/*` and `<directory>/mcp/*` and
+stages them at `.mars/provided/<provider>/`. It never touches `mars.toml`, `mars.lock`
+or a managed target: the next `mars sync` installs provided skills, hooks and MCP servers
+into the linked targets whose harness Meridian does not launch (`.agy` today) and into no
+other. A launched harness reads `.mars/skills/` itself. `--root <dir>` must hold
 its own `mars.toml`; a directory without one is refused rather than walked up
 from, so a host always fills the root it named.
 
@@ -702,10 +705,13 @@ from, so a host always fills the root it named.
 |---|---|
 | `<provider>` | The host's own namespace, separate from dependency keys. `[a-z0-9][a-z0-9-]*` |
 | `<version>` | Opaque, non-empty; recorded for display and change detection (host versions need not be semver) |
-| `<directory>` | Holds `skills/`; each entry is a directory named `<skill>__<provider>` whose `SKILL.md` has the same `name` |
+| `<directory>` | Must exist. Holds any of `skills/`, `hooks/` and `mcp/`. A skill is a directory named `<skill>__<provider>` whose `SKILL.md` has the same `name`; a hook is `hooks/<name>/hook.toml` with `visibility = "exported"`; an MCP server is `mcp/<name>/mcp.toml` |
 
-`skills/` entries starting with `_` or `.` are ignored, as are top-level files, so
-a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not skills.
+Entries starting with `_` or `.` are ignored, as are top-level files, so
+a Python package's `__init__.py`, `__pycache__/` and `AGENTS.md` are not entries.
+A directory with none of the three provides nothing: it removes every skill the provider
+recorded and its staged hooks and MCP servers, and the next sync removes what they installed.
+That is how a host retracts; there is no `--remove`.
 
 A skill is compared by each file's bytes and executable bit, since an installed copy
 is `0o644` plus the source's execute bits. Every installed file gets that mode, so
@@ -722,9 +728,11 @@ after the run), `installed`, `replaced`, `adopted`, `removed`, `shadowed`,
 | `busy` | Another Mars process holds `.mars/sync.lock`; nothing was written |
 | `sync-pending` | An interrupted sync owns canonical destinations; run `mars repair` (or `mars sync`) to recover, then provide again |
 
-All four exit 0. Validation failures exit 2: `provided-name-invalid` (a name or
-`SKILL.md` `name` that is not `<skill>__<provider>`) and `provided-skill-invalid`
-(a missing `skills/` directory, a missing `SKILL.md`, or one the schema rejects).
+All four exit 0. Validation failures exit 2 before anything is written:
+`provided-name-invalid` (a name or `SKILL.md` `name` that is not `<skill>__<provider>`),
+`provided-skill-invalid` (a missing directory or `SKILL.md`, or one the schema rejects),
+`provided-hook-invalid` (a `hook.toml` the reader rejects, including one without
+`visibility = "exported"`) and `provided-mcp-invalid`.
 
 Mars only deletes names its own record lists. A directory it did not create is
 adopted when its bytes match the source and reported as `collisions` otherwise; a
@@ -733,6 +741,13 @@ to the package. Both are reported on every run while they last, from the fast
 path and the locked one alike, not only on the run that first saw them. Plain
 text prints source diagnostics (schema warnings) only for `applied`; `--json`
 carries them in `warnings` on every status.
+
+Mars's records of what sync installed from a host are machine-local too, in
+`.mars/provided-outputs.lock` (the schema of `mars.lock`), never in `mars.lock`. A provided hook, MCP
+server or skill whose name a package or `.mars-src/` also provides is skipped with a
+`provided-shadowed` warning, and the package's is installed. A provided hook in a hook
+schema this Mars retired keeps what the last sync installed and warns; it never fails
+`sync`, `upgrade` or `remove`, and `--frozen` ignores provided content.
 
 `.mars/provided.lock` is machine-local (`version = 1`, one `[providers.<name>]`
 table per provider with `version`, `digest` and `skills`). `digest` is `pending`

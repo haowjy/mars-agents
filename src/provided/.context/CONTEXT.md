@@ -1,6 +1,10 @@
-# Provided skills
+# Provided skills, hooks and MCP servers
 
-A host can install its own skills into `.mars/skills/` without adding dependencies or changing the package lock. Sync recognizes provided ownership so a package can replace a provided skill; reference validation separately checks whether a declared provided skill is available on disk.
+A host can install its own skills into `.mars/skills/` without adding dependencies or changing the package lock. It can also provide hooks and MCP servers, which `provide` validates with the readers sync uses and stages whole at `.mars/provided/<provider>/`.
+
+**One owner per path.** `provide` is the only writer of `.mars/skills/<name>__<provider>`; sync never writes, replaces or removes it. Sync projects it into the targets that take provided content (`takes_provided`: a harness Meridian does not launch, `.agy` today) and records only those target outputs, in `.mars/provided-outputs.lock` (`lock/provided_split.rs` is the one place that decides which records go there). Hooks and MCP servers are different: nothing launched reads them, so sync owns them whole. When a staged directory exists and a managed target takes provided content, `sync::load_config` adds it as the path dependency `_provided-<provider>` (the prefix is reserved in config), and every later step is the ordinary dependency path with three rules: the node's content is offered only to targets that take it (`provided::offered_to`); a package's item of the same key beats a provided one with a `provided-shadowed` warning; and a hook schema this Mars retired is kept as installed with a warning instead of halting, because the user cannot upgrade or remove a host.
+
+Config entries a host's hooks and MCP servers wrote cannot be told from a package's by the record itself, so `sync::finalize` marks them from the selection (`LockFile::provided_entries`); an entry no selection names keeps the file it was in. Sync recognizes provided ownership so a package can replace a provided skill; reference validation separately checks whether a declared provided skill is available on disk.
 
 The unlocked fast path and the locked pass use the same reconciliation plan. It checks every source skill and hashes installed trees: a package sync may have replaced a recorded directory before publishing its lock, and a formerly blocked skill may now be installable. Files are compared as authored, including executable bits.
 

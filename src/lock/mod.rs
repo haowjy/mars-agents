@@ -11,7 +11,7 @@ use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
-mod provided_split;
+mod machine;
 mod targets;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -26,10 +26,10 @@ pub struct LockFile {
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
-    /// `(target, record key)` of the config entries a host's provided content wrote. They are not
-    /// a field of the file: [`write`] saves exactly these records in `machine.lock`, and
-    /// [`load_with_diagnostics`] rebuilds the set from the keys it finds there.
-    #[serde(skip)]
+    /// `(target, record key)` of the config entries a host's provided content wrote. Only
+    /// `machine.lock` holds the field: a provided entry stays there when its target joins
+    /// `mars.toml`, and a local-only target's own entries are not in it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub provided_entries: std::collections::BTreeSet<(String, String)>,
 }
 
@@ -39,19 +39,31 @@ pub struct LockFile {
 impl<'de> serde::Deserialize<'de> for LockFile {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = LockFileWire::deserialize(deserializer)?;
-        Ok(LockFile::from_wire(wire).0)
+        Ok(LockFile::from_wire(wire, false).0)
     }
 }
 
 impl LockFile {
-    fn from_wire(wire: LockFileWire) -> (Self, Vec<(String, String)>) {
+    /// `machine` is whether the wire is `machine.lock`. Mars 0.38.0 wrote that file with provided
+    /// content only and no `provided_entries`, so there every config entry is provided.
+    fn from_wire(wire: LockFileWire, machine: bool) -> (Self, Vec<(String, String)>) {
         let (config_entries, orphaned) = split_unrecorded(wire.config_entries);
+        let provided_entries = match wire.provided_entries {
+            Some(entries) => entries,
+            None if machine => config_entries
+                .iter()
+                .flat_map(|(target, records)| {
+                    records.keys().map(|key| (target.clone(), key.clone()))
+                })
+                .collect(),
+            None => Default::default(),
+        };
         let lock = LockFile {
             version: wire.version,
             dependencies: wire.dependencies,
             items: wire.items,
             config_entries,
-            provided_entries: Default::default(),
+            provided_entries,
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
@@ -394,7 +406,8 @@ mod lock_kind {
 }
 
 const LOCK_FILE: &str = "mars.lock";
-/// The records of provided content (`mars provide`): machine-local, beside `provided.lock`.
+/// The records only this machine has: provided content (`mars provide`) and the targets
+/// `mars.toml` does not name. See `machine.rs`.
 const MACHINE_LOCK_FILE: &str = ".mars/machine.lock";
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
@@ -410,6 +423,7 @@ struct LockFileWire {
     config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecordWire>>,
     #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
+    provided_entries: Option<std::collections::BTreeSet<(String, String)>>,
 }
 
 /// The parts of a v2 lock (mars 0.11 and earlier) that still mean something: the
@@ -477,20 +491,27 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 }
 
 /// The lock of a project: `mars.lock` with the machine-local `machine.lock` merged in,
-/// so every reader sees one lock. A key held by both files takes the machine-local value, which
-/// [`write`] saves first and is therefore the newer after a crash between the two writes.
+/// so every reader sees one lock. A record both files hold takes the machine-local value; see
+/// [`write`] for how that happens.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE))?;
+    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE), false)?;
     let local_path = root.join(MACHINE_LOCK_FILE);
     if !local_path.exists() {
         return Ok((committed, diagnostics));
     }
-    let (local, local_diagnostics) = read_lock_file(&local_path)?;
+    let (local, local_diagnostics) = read_lock_file(&local_path, true)?;
     diagnostics.extend(local_diagnostics);
-    Ok((provided_split::merge(committed, local), diagnostics))
+    Ok((
+        {
+            let mut joined = committed;
+            joined.join(local);
+            joined
+        },
+        diagnostics,
+    ))
 }
 
-fn read_lock_file(path: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -516,7 +537,7 @@ fn read_lock_file(path: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError>
                     path.display()
                 ),
             })?;
-            let (lock, orphaned) = LockFile::from_wire(wire);
+            let (lock, orphaned) = LockFile::from_wire(wire, machine);
             Ok((lock, orphaned_entries_warning(&orphaned).into_iter().collect()))
         }
         2 => {
@@ -664,20 +685,38 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
     true
 }
 
-/// Saves the machine-local records first, then `mars.lock`: a crash between the two leaves target
-/// outputs owned, where the reverse order would leave them unowned.
-pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
-    let (committed, local) = provided_split::split(lock);
+/// Saves the lock in the two files, `project_targets` being the targets `mars.toml` names. Every
+/// writer passes the same set, so a record lands in the same file whoever writes it.
+///
+/// A crash must leave a record in at least one file, because a record in neither leaves its
+/// files unowned. The machine file is first written as the union of its old and new records, then
+/// `mars.lock`, then the machine file as it should be: a record moving either way is in both
+/// files for a while, and loading takes the machine-local copy.
+pub fn write(
+    root: &Path,
+    lock: &LockFile,
+    project_targets: &std::collections::BTreeSet<String>,
+) -> Result<(), MarsError> {
+    let (committed, local) = machine::split(lock.clone(), project_targets);
     let local_path = root.join(MACHINE_LOCK_FILE);
+    let (old_local, _) = read_lock_file(&local_path, true)?;
+    let mut widened = old_local;
+    widened.join(local.clone());
+    if !widened.is_empty() {
+        write_lock_file(&local_path, &widened, true)?;
+    }
+    write_lock_file(&root.join(LOCK_FILE), &committed, false)?;
     if local.is_empty() {
         crate::platform::fs::safe_remove(&local_path)?;
-    } else {
-        write_lock_file(&local_path, &local)?;
+    } else if widened != local {
+        write_lock_file(&local_path, &local, true)?;
     }
-    write_lock_file(&root.join(LOCK_FILE), &committed)
+    Ok(())
 }
 
-fn write_lock_file(path: &Path, lock: &LockFile) -> Result<(), MarsError> {
+/// The machine file always names `provided_entries`, even empty: a file without it is one Mars
+/// 0.38.0 wrote, where every config entry is provided.
+fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), MarsError> {
     let mut normalized = lock.clone();
     normalized.version = LOCK_VERSION;
     normalized.dependencies.sort_keys();
@@ -691,9 +730,19 @@ fn write_lock_file(path: &Path, lock: &LockFile) -> Result<(), MarsError> {
         });
     }
 
-    let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
+    let corrupt = |e: toml::ser::Error| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
-    })?;
+    };
+    let content = if machine {
+        let mut table = toml::Table::try_from(&normalized).map_err(corrupt)?;
+        table
+            .entry("provided_entries")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        toml::to_string_pretty(&table)
+    } else {
+        toml::to_string_pretty(&normalized)
+    }
+    .map_err(corrupt)?;
     crate::fs::atomic_write_if_changed(path, content.as_bytes()).map(|_| ())
 }
 
@@ -1604,7 +1653,7 @@ mod tests {
         );
         // `mars.lock` cannot be written: the machine-local file, saved first, already is.
         std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
-        write(dir.path(), &lock).unwrap_err();
+        write(dir.path(), &lock, &lock.recorded_targets()).unwrap_err();
         std::fs::remove_dir(dir.path().join(LOCK_FILE)).unwrap();
 
         let recovered = load(dir.path()).unwrap();
@@ -1612,7 +1661,7 @@ mod tests {
         assert!(!recovered.items.contains_key("agent/coder"));
 
         // The next write puts each record in its own file.
-        write(dir.path(), &lock).unwrap();
+        write(dir.path(), &lock, &lock.recorded_targets()).unwrap();
         let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
         assert!(committed.contains("agent/coder") && !committed.contains("probe__meridian"));
         assert_eq!(load(dir.path()).unwrap().items, lock.items);

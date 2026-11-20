@@ -122,7 +122,8 @@ pub(crate) fn finalize(
             &mut new_lock,
             loaded.dropped.clone(),
         )?);
-        if let Some(warning) = recovery::publish(project_root, &new_lock)? {
+        let project_targets = crate::config::targets::project_targets(&loaded.config);
+        if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
             diag.warn("native-agent-manifest-write", warning);
         }
     }

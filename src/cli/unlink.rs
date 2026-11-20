@@ -10,6 +10,10 @@ use super::output;
 pub struct UnlinkArgs {
     /// Target directory to remove (e.g. `.agents`).
     pub target: String,
+    /// Remove the target from `mars.local.toml` only. A target `mars.toml` names stays linked
+    /// and keeps its files.
+    #[arg(long)]
+    pub local: bool,
 }
 
 /// Run `mars unlink`.
@@ -29,7 +33,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if unset_target(&mut config.settings.targets, &target_name) {
+    if !args.local && unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
         target_was_managed = true;
     }
@@ -43,6 +47,10 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if super::target::lock_claims(&lock, &target_name) {
         target_was_managed = true;
     }
+
+    // `--local` leaves the project's own link, and what it installed, alone.
+    let project_keeps = crate::config::targets::project_targets(&config).contains(&target_name);
+    let target_was_managed = target_was_managed && !project_keeps;
 
     let target_dir = ctx.project_root.join(&target_name);
     let had_dir = target_dir.exists();
@@ -69,7 +77,11 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         crate::config::save_local(&ctx.project_root, &local)?;
     }
     if target_was_managed
-        && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
+        && let Some(warning) = crate::sync::recovery::publish(
+            &ctx.project_root,
+            &lock,
+            &crate::config::targets::project_targets(&config),
+        )?
     {
         output::warn("recovery-publish", warning);
     }
@@ -89,6 +101,10 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             if removed_outputs == 1 { "" } else { "s" }
         ));
         output::print_diagnostics(&diagnostics, false);
+    } else if project_keeps && local_updated {
+        output::print_success(&format!(
+            "removed `{target_name}` from mars.local.toml; mars.toml still links it"
+        ));
     } else {
         output::print_info(&format!(
             "`{target_name}` is not a managed target; no changes made"
@@ -98,7 +114,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     Ok(0)
 }
 
-fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
+pub(super) fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
     let Some(list) = targets.as_mut() else {
         return false;
     };

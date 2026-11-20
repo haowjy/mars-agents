@@ -185,12 +185,19 @@ impl LocalSettings {
             path: None,
         };
 
+        // A layer's `targets` adds to the layers below it: `mars link --local .agy` must not stop
+        // the machine syncing the project's `.claude`.
         if let Some(value) = &self.targets {
-            merged.targets = Some(value.clone());
-        }
-        if self.targets.is_some() {
-            target_source.field = LinkSource::Targets;
-            target_source.origin = TargetOrigin::Local;
+            let all = merged.targets.get_or_insert_with(Vec::new);
+            for target in value {
+                if !all.contains(target) {
+                    all.push(target.clone());
+                }
+            }
+            if !value.is_empty() || field == LinkSource::None {
+                target_source.field = LinkSource::Targets;
+                target_source.origin = TargetOrigin::Local;
+            }
         }
         if let Some(value) = self.models_cache_ttl_hours {
             merged.models_cache_ttl_hours = Some(value);

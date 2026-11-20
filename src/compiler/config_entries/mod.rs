@@ -489,6 +489,7 @@ pub(crate) fn compile_config_entries(
     }
     warn_untrusted(&trust_before, &trust_snapshots(ctx, &target_roots), diag);
     release_written_hooks(&installed_hook_outputs, previous_records, &compiled, diag);
+    release_unplaced_hooks(applied, &target_roots, diag);
     compiled
 }
 
@@ -528,6 +529,31 @@ fn release_written_hooks(
                 != entries_of(previous.get(target), name)
         {
             diag.release(&render::hook_entry_key(target, name));
+        }
+    }
+}
+
+/// A hook no managed target takes writes nothing, so its loss is news when its own lock
+/// record (source, checksum) is new or changed.
+fn release_unplaced_hooks(
+    applied: &AppliedState,
+    target_roots: &[String],
+    diag: &mut DiagnosticCollector,
+) {
+    let targeted = &applied.planned.targeted;
+    let old_items = &targeted.resolved.loaded.old_lock.items;
+    for hook in targeted.target.unplaced_hooks(target_roots) {
+        let unchanged = old_items
+            .get(&crate::lock::unplaced_hook_key(&hook.def.name))
+            .is_some_and(|old| {
+                old.source.as_ref() == hook.source_name
+                    && crate::sync::target::hook_checksum(hook)
+                        .is_ok_and(|now| now == old.source_checksum)
+            });
+        if !unchanged {
+            for target in target_roots {
+                diag.release(&render::hook_entry_key(target, &hook.def.name));
+            }
         }
     }
 }

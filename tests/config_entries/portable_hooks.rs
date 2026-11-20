@@ -411,19 +411,20 @@ fn a_deleted_entry_shared_by_two_hooks_is_restored() {
 }
 
 #[test]
-fn a_portable_hook_that_renders_on_no_managed_target_is_listed_by_verbose() {
+fn a_portable_hook_that_renders_on_no_managed_target_is_reported_once() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".codex\", \".pi\"");
-    write_hook(
-        &project,
-        "notify",
-        "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
-    );
-    // It writes no entry anywhere, so no sync has a write to report it with.
+    let notify = |command: &str| {
+        write_hook(
+            &project,
+            "notify",
+            &format!(
+                "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"{command}\"\n"
+            ),
+        );
+    };
+    notify("echo n");
     sync(&project)
-        .success()
-        .stderr(predicate::str::contains("does not run").not());
-    sync_verbose(&project)
         .success()
         .stderr(predicate::str::contains(
             "hook `notify`: `.codex` does not run `Notification`",
@@ -431,6 +432,13 @@ fn a_portable_hook_that_renders_on_no_managed_target_is_listed_by_verbose() {
         .stderr(predicate::str::contains(
             "hook `notify`: `.pi` does not run `Notification`: Pi has no such event",
         ));
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("does not run").not());
+    notify("echo changed");
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("does not run"));
 }
 
 #[test]

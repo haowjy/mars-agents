@@ -54,8 +54,8 @@ unchanged sync is silent (`record_lossy_fields(.., written)` for a native file;
 `hold_until_written` for what a package's install loses: `SchemaDiagnostic::lost`, a skill's
 `missing-skill`; `hold`, keyed to a native entry, for MCP and hook-event losses, released when
 the entry is written or changes). `--verbose`, `mars check` and `mars validate` list it every
-time. A hook that renders no entry on a target has nothing to write there, so only those
-commands show what it loses. A text meant for an installer names the installer's own fix (`mars upgrade
+time. A hook that renders on no managed target writes nothing; its loss is released when its own
+lock record (`hook/<name>`, no outputs) is new or changed. A text meant for an installer names the installer's own fix (`mars upgrade
 <source>`, or set the variable). One cause is one line: findings that arise once per item share a
 `warn_each` group, and what follows from an item that was not installed is not reported again.
 

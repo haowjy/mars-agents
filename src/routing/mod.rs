@@ -228,8 +228,9 @@ pub struct RoutingInput<'a> {
     pub catalog_model_slugs: Option<&'a [String]>,
 }
 
-/// Permission is checked before installation, authentication, or support evidence.
-/// Keep caller exclusions separate from configured scope for diagnostics.
+/// Why a candidate cannot be routed to, whoever named it: configured scope, caller exclusion,
+/// or a harness Meridian does not launch. Checked before installation, authentication, or
+/// support evidence; this is the one place candidates are filtered.
 pub fn permission_denial(
     scope: &HarnessScope,
     excluded: &[HarnessId],
@@ -239,10 +240,17 @@ pub fn permission_denial(
         Some("disabled_target")
     } else if mars_schema::harness::parse(harness).is_some_and(|id| excluded.contains(&id)) {
         Some("excluded_by_caller")
+    } else if mars_schema::harness::parse(harness)
+        .is_some_and(|id| !registry::launched_by_meridian(id))
+    {
+        Some(NOT_LAUNCHED)
     } else {
         None
     }
 }
+
+/// `permission_denial` reason for a harness whose registry row says Meridian does not launch it.
+pub const NOT_LAUNCHED: &str = "not_launched_by_meridian";
 
 /// The probe-backed harnesses' listings, read lazily.
 pub trait ProbeResolver {
@@ -333,7 +341,10 @@ where
     let constrained = !matches!(input.harness_scope, HarnessScope::Unrestricted)
         || !input.excluded_harnesses.is_empty();
     if default_harness.as_ref().is_some_and(|harness| {
-        permission_denial(&input.harness_scope, input.excluded_harnesses, harness).is_some()
+        matches!(
+            permission_denial(&input.harness_scope, input.excluded_harnesses, harness),
+            Some("disabled_target" | "excluded_by_caller")
+        )
     }) {
         diagnostics.push("settings.default_harness is excluded by known linked harness constraints; ignoring fallback".to_string());
     }
@@ -369,12 +380,16 @@ where
     candidates.extend(
         mars_schema::harness::ALL
             .iter()
+            .filter(|id| registry::launched_by_meridian(**id))
             .map(|id| (id.as_str().to_string(), None, RouteSource::Provider)),
     );
     let mut seen = HashSet::new();
     candidates.retain(|(harness, _, _)| {
-        permission_denial(&input.harness_scope, input.excluded_harnesses, harness).is_none()
-            && seen.insert(harness.clone())
+        let denial = permission_denial(&input.harness_scope, input.excluded_harnesses, harness);
+        if denial == Some(NOT_LAUNCHED) && seen.insert(format!("{harness}:{NOT_LAUNCHED}")) {
+            diagnostics.push(format!("Meridian does not launch {harness}; skipping it"));
+        }
+        denial.is_none() && seen.insert(harness.clone())
     });
 
     let mut trace = RoutingTrace {
@@ -1060,5 +1075,17 @@ mod tests {
                 .contains("PRIVATE_AUTH_DETAIL")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod launch_filter_tests {
+    use super::*;
+
+    #[test]
+    fn denies_a_harness_meridian_does_not_launch() {
+        let scope = HarnessScope::Unrestricted;
+        assert_eq!(permission_denial(&scope, &[], "agy"), Some(NOT_LAUNCHED));
+        assert_eq!(permission_denial(&scope, &[], "claude"), None);
     }
 }

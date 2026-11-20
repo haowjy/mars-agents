@@ -323,27 +323,38 @@ pub fn resolve_policy(
                 first_unverified.get_or_insert(attempt);
             }
             Ok(harness::HarnessAttempt::Exhausted(trace)) => {
-                let excluded_pin = input.harness_override.is_some()
-                    && trace.assessments.iter().any(|assessment| {
-                        matches!(
-                            assessment.skip_reason,
-                            Some("disabled_target" | "excluded_by_caller")
-                        )
-                    });
+                let pin_denial = input.harness_override.and_then(|_| {
+                    trace.assessments.iter().find_map(|assessment| {
+                        assessment.skip_reason.filter(|reason| {
+                            matches!(
+                                *reason,
+                                "disabled_target" | "excluded_by_caller" | routing::NOT_LAUNCHED
+                            )
+                        })
+                    })
+                });
                 report.push(
                     &candidate.model_token,
                     &candidate.model,
                     candidate.model_source.label(),
                     &trace,
                 );
-                if excluded_pin {
+                if let Some(reason) = pin_denial {
                     report.outcome = routing::report::SelectionOutcome::ExplicitConstraintError;
                     return Err(MarsError::Selection {
                         code: "explicit_harness_excluded",
-                        message: format!(
-                            "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
-                            input.harness_override.unwrap()
-                        ),
+                        message: {
+                            let harness = input.harness_override.unwrap();
+                            if reason == routing::NOT_LAUNCHED {
+                                format!(
+                                    "explicit_harness_excluded: Meridian does not launch `{harness}`"
+                                )
+                            } else {
+                                format!(
+                                    "explicit_harness_excluded: harness `{harness}` is not permitted by configured targets and caller exclusions"
+                                )
+                            }
+                        },
                         report: Box::new(report),
                     });
                 }

@@ -74,8 +74,8 @@ pub struct HarnessDescriptor {
 }
 
 /// Default launch-bundle harness try order when `settings.harness_order` is unset. A harness
-/// joins it only when Meridian can launch it; Antigravity is reached through `harness_order` or
-/// an alias that names it.
+/// joins it only when Meridian can launch it. Routing never picks a harness whose row has
+/// `launched_by_meridian: false`, whoever names it (`routing::permission_denial`).
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,

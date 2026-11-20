@@ -39,7 +39,9 @@ pub(crate) fn render_all(
     if let Some(unreached) = file.unreached
         && !servers.is_empty()
     {
-        diag.warn(
+        // Advisory: a fixed fact about `agy`, not a sync that fell short, so it must not
+        // withhold "already up to date" on every run.
+        diag.warn_advisory(
             "mcp-unreached",
             format!("MCP servers in `{}`: {unreached}", file.at.path),
         );

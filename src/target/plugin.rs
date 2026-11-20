@@ -73,22 +73,22 @@ impl PluginTarget {
     }
 }
 
-/// `mars-` and the project directory's name, narrowed to `[a-z0-9-]`. `agy` hides the hooks of a
+/// `mars-` and the project directory's name as kebab-case words of `[a-z0-9]`, or `mars` when
+/// it has none. `agy` hides the hooks of a
 /// second plugin with the same name, so projects Mars manages inside one another must differ.
 fn plugin_name(project_root: &Path) -> String {
     let dir = project_root
         .file_name()
         .map(|name| name.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let narrowed: String = dir
-        .chars()
-        .map(|c| {
-            if c.is_ascii_lowercase() || c.is_ascii_digit() {
-                c
-            } else {
-                '-'
-            }
-        })
+    // `agy plugin validate --strict` wants strict kebab-case: no repeated or trailing hyphen.
+    let words: Vec<&str> = dir
+        .split(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit()))
+        .filter(|word| !word.is_empty())
         .collect();
-    format!("mars-{narrowed}")
+    if words.is_empty() {
+        "mars".to_string()
+    } else {
+        format!("mars-{}", words.join("-"))
+    }
 }

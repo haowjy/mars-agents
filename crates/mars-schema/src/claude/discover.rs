@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::manifest::{PLUGIN_MANIFEST, PluginSpec, SkillSources};
+use super::manifest::{Component, PLUGIN_MANIFEST, PluginSpec, SkillSources};
 use crate::diagnostic::{PathSegment, SchemaDiagnostic, Severity};
 use crate::discover::{
     Boundary, Discovery, DroppedItem, RECURSIVE_SKIP_DIRS, SelectedDefinition, basename, file_stem,
@@ -28,11 +28,11 @@ pub(crate) fn discover_claude(
     let mut skills = BTreeSet::new();
     match &spec.skills {
         SkillSources::Walk => generated.extend(walk_skills(source, &boundary, &mut skills)),
-        SkillSources::Declared { default, listed } => {
-            if *default {
+        SkillSources::Declared(component) => {
+            if component.default {
                 default_skills(source, &boundary, &mut generated, &mut skills);
             }
-            for raw in listed {
+            for raw in &component.listed {
                 listed_skills(
                     source,
                     &boundary,
@@ -65,7 +65,7 @@ pub(crate) fn discover_claude(
     for path in markdown_files(
         source,
         &boundary,
-        spec.agents.as_deref(),
+        &spec.agents,
         "agents",
         &mut generated,
         &mut diagnostics,
@@ -84,7 +84,7 @@ pub(crate) fn discover_claude(
     let dropped = markdown_files(
         source,
         &boundary,
-        spec.commands.as_deref(),
+        &spec.commands,
         "commands",
         &mut generated,
         &mut diagnostics,
@@ -172,52 +172,44 @@ fn listed_skills(
     }
 }
 
-/// `folder/*.md`, replaced by a manifest list of `.md` files.
+/// `folder/*.md` when the default folder is read, plus each listed `.md` file.
 fn markdown_files(
     source: &impl TreeSource,
     boundary: &Boundary,
-    listed: Option<&[String]>,
+    component: &Component,
     folder: &str,
     generated: &mut Vec<String>,
     diagnostics: &mut Diagnostics,
 ) -> Vec<String> {
     let mut files = Vec::new();
-    match listed {
-        None => {
-            if !boundary.excludes(source, folder, generated) {
-                for child in source.children(folder) {
-                    if source.is_file(&child) && child.ends_with(".md") {
-                        files.push(child);
-                    }
-                }
+    if component.default && !boundary.excludes(source, folder, generated) {
+        for child in source.children(folder) {
+            if source.is_file(&child) && child.ends_with(".md") {
+                files.push(child);
             }
         }
-        Some(listed) => {
-            for raw in listed {
-                let Some(path) = declared_path(raw, folder, diagnostics) else {
-                    continue;
-                };
-                if boundary.excludes(source, &path, generated) {
-                    continue;
-                }
-                if source.is_file(&path) && path.ends_with(".md") {
-                    files.push(path);
-                } else if source.is_dir(&path) {
-                    diagnostics
-                        .entry(PLUGIN_MANIFEST.to_owned())
-                        .or_default()
-                        .push(SchemaDiagnostic::new(
-                            "source-manifest.path-not-file",
-                            Severity::Warning,
-                            vec![PathSegment::Key(folder.to_owned())],
-                            format!(
-                                "`{raw}` is a directory; `{folder}` entries must be `.md` files"
-                            ),
-                        ));
-                } else {
-                    missing_path(diagnostics, folder, raw);
-                }
-            }
+    }
+    for raw in &component.listed {
+        let Some(path) = declared_path(raw, folder, diagnostics) else {
+            continue;
+        };
+        if boundary.excludes(source, &path, generated) {
+            continue;
+        }
+        if source.is_file(&path) && path.ends_with(".md") {
+            files.push(path);
+        } else if source.is_dir(&path) {
+            diagnostics
+                .entry(PLUGIN_MANIFEST.to_owned())
+                .or_default()
+                .push(SchemaDiagnostic::new(
+                    "source-manifest.path-not-file",
+                    Severity::Warning,
+                    vec![PathSegment::Key(folder.to_owned())],
+                    format!("`{raw}` is a directory; `{folder}` entries must be `.md` files"),
+                ));
+        } else {
+            missing_path(diagnostics, folder, raw);
         }
     }
     files

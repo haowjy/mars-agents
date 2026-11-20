@@ -243,9 +243,7 @@ fn named_targets(config: &super::Config, local: &super::LocalConfig) -> BTreeSet
         .targets
         .iter()
         .flatten()
-        .chain(&project.managed_root)
         .chain(local.targets.iter().flatten())
-        .chain(&local.managed_root)
         .map(|raw| normalize_link(raw).target)
         .collect()
 }

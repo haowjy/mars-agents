@@ -109,34 +109,34 @@ fn a_hosts_content_is_recorded_beside_mars_lock_not_in_it() {
 }
 
 #[test]
-fn provided_records_of_an_unnamed_target_stay_in_the_machine_lock_across_syncs() {
+fn dropping_a_target_removes_its_provided_records_from_the_machine_lock() {
     let dir = TempDir::new().unwrap();
     let root = project(&dir);
     let bundle = dir.child("bundle");
     write_bundle(bundle.path(), false);
     provide(&root, bundle.path());
     sync(&root);
+    let local = fs::read_to_string(root.join(".mars/machine.lock")).unwrap();
+    assert!(local.contains("mcp:meridian"), "{local}");
 
     fs::write(
         root.join("mars.toml"),
         "[settings]\ntargets = [\".claude\"]\n",
     )
     .unwrap();
-    let warned = sync(&root);
-    let local = fs::read_to_string(root.join(".mars/machine.lock")).unwrap();
-    assert!(warned.contains(".agy"), "{warned}");
-    for kept in ["mcp:meridian", "hook-entry:guard", "skill/probe__meridian"] {
-        assert!(local.contains(kept), "machine.lock lost `{kept}`:\n{local}");
+    sync(&root);
+    let local = fs::read_to_string(root.join(".mars/machine.lock")).unwrap_or_default();
+    for gone in ["mcp:meridian", "hook-entry:guard", "skill/probe__meridian"] {
+        assert!(
+            !local.contains(gone),
+            "machine.lock kept `{gone}`:\n{local}"
+        );
     }
+    assert!(!root.join(".agy/skills").exists());
     let committed = fs::read_to_string(root.join("mars.lock")).unwrap();
     assert!(
         !committed.contains("mcp:") && !committed.contains("hook-entry:"),
         "{committed}"
-    );
-    sync(&root);
-    assert_eq!(
-        fs::read_to_string(root.join(".mars/machine.lock")).unwrap(),
-        local
     );
 }
 

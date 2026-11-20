@@ -1,6 +1,7 @@
 //! `mars unlink <target>` — remove Mars-owned content from a managed target.
 
 use crate::error::MarsError;
+use crate::target_sync::removal::{remove_empty_ancestors, remove_served, served_outputs};
 
 use super::output;
 
@@ -44,12 +45,22 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     let target_dir = ctx.project_root.join(&target_name);
+    let had_dir = target_dir.exists();
     let (removed_outputs, diagnostics) = if target_was_managed {
-        remove_owned_target_content(ctx, &target_name, &mut lock)?
+        let (kept, served) = lock.split_targets(|target| target != target_name);
+        lock = kept;
+        let outputs = served_outputs(&served).len();
+        (
+            outputs,
+            remove_served(&ctx.project_root, &mut lock, served)?,
+        )
     } else {
         (0, Vec::new())
     };
-    let removed_dir = target_was_managed && remove_empty_ancestors(&target_dir, &target_dir)?;
+    if target_was_managed {
+        remove_empty_ancestors(&target_dir, &target_dir)?;
+    }
+    let removed_dir = target_was_managed && had_dir && !target_dir.exists();
 
     if settings_updated {
         crate::config::save(&ctx.project_root, &config)?;
@@ -98,131 +109,4 @@ fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
         *targets = None;
     }
     removed
-}
-
-fn remove_owned_target_content(
-    ctx: &super::MarsContext,
-    target_name: &str,
-    lock: &mut crate::lock::LockFile,
-) -> Result<(usize, Vec<crate::diagnostic::Diagnostic>), MarsError> {
-    let (kept, served) = std::mem::replace(lock, crate::lock::LockFile::empty())
-        .split_targets(|target| target != target_name);
-    *lock = kept;
-    let mut owned_paths: Vec<(String, String)> = served
-        .items
-        .values()
-        .flat_map(|item| item.outputs.iter())
-        .map(|output| (output.target_root.clone(), output.dest_path.to_string()))
-        .collect();
-    owned_paths.sort_by_key(|(_, path)| std::cmp::Reverse(path.matches('/').count()));
-
-    let mut removed = 0;
-    for (root, dest_path) in owned_paths {
-        let root_dir = ctx.project_root.join(&root);
-        let path = root_dir.join(&dest_path);
-        match remove_owned_path(&path) {
-            Ok(()) => {
-                removed += 1;
-                if let Some(parent) = path.parent() {
-                    remove_empty_ancestors(parent, &root_dir)?;
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                removed += 1;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    let previous = served
-        .config_entries
-        .get(target_name)
-        .cloned()
-        .unwrap_or_default();
-    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let retention = crate::surface_ownership::retention::RemovalPlan::build(
-        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
-        &std::collections::BTreeMap::new(),
-    )
-    .execute(
-        |operation, diagnostics| {
-            crate::compiler::config_entries::remove_hooks(operation, &ctx.project_root, diagnostics)
-        },
-        &mut diagnostics,
-    );
-    let reconciled = crate::compiler::config_entries::reconcile_all_keyed(
-        &ctx.project_root,
-        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
-        &std::collections::BTreeMap::new(),
-        false,
-        false,
-        &mut diagnostics,
-    );
-    crate::compiler::config_entries::report_removed(
-        retention.removed_keys(),
-        &reconciled.removed,
-        &mut diagnostics,
-    );
-    lock.config_entries
-        .extend(retention.into_retained_records());
-    for (target, records) in reconciled.records {
-        lock.config_entries
-            .entry(target)
-            .or_default()
-            .extend(records);
-    }
-    // A record put back stays in the file it came from.
-    let restored: Vec<_> = served
-        .provided_entries
-        .into_iter()
-        .filter(|(target, key)| {
-            lock.config_entries
-                .get(target)
-                .is_some_and(|records| records.contains_key(key))
-        })
-        .collect();
-    lock.provided_entries.extend(restored);
-
-    Ok((removed, diagnostics.drain()))
-}
-
-fn remove_owned_path(path: &std::path::Path) -> std::io::Result<()> {
-    let metadata = path.symlink_metadata()?;
-    if metadata.file_type().is_symlink() || metadata.is_file() {
-        std::fs::remove_file(path)
-    } else {
-        std::fs::remove_dir_all(path)
-    }
-}
-
-fn remove_empty_ancestors(
-    start: &std::path::Path,
-    target_dir: &std::path::Path,
-) -> std::io::Result<bool> {
-    let mut current = Some(start);
-    let mut removed_target = false;
-    while let Some(path) = current {
-        if !path.starts_with(target_dir) {
-            break;
-        }
-        match std::fs::remove_dir(path) {
-            Ok(()) => {
-                removed_target |= path == target_dir;
-                current = path.parent();
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                current = path.parent();
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                break;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(removed_target)
 }

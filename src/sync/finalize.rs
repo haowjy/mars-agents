@@ -32,6 +32,14 @@ pub(crate) fn finalize(
         .map(|out| (out.target_root.clone(), out.dest_path.clone()))
         .collect();
 
+    let dropped = &state.applied.planned.targeted.resolved.loaded.dropped;
+    let dropped_targets: Vec<String> = dropped.recorded_targets().into_iter().collect();
+    let dropped_outputs: Vec<(String, String)> =
+        crate::target_sync::removal::served_outputs(dropped)
+            .into_iter()
+            .filter(|(root, _)| root != crate::lock::CANONICAL_TARGET_ROOT)
+            .collect();
+
     // Write lock file (regardless of target sync outcome).
     if !request.options.dry_run {
         let dep_models = crate::models::declaration_ordered_dep_models(
@@ -107,16 +115,13 @@ pub(crate) fn finalize(
             ),
         )?);
         diag.settle(old_lock, &new_lock);
-        new_lock.merge_targets(
-            state
-                .applied
-                .planned
-                .targeted
-                .resolved
-                .loaded
-                .unscoped
-                .clone(),
-        );
+        let loaded = &state.applied.planned.targeted.resolved.loaded;
+        new_lock.merge_targets(loaded.carried.clone());
+        diag.extend(crate::target_sync::removal::remove_served(
+            project_root,
+            &mut new_lock,
+            loaded.dropped.clone(),
+        )?);
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
@@ -155,6 +160,8 @@ pub(crate) fn finalize(
         dependency_moves,
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
+        dropped_targets,
+        dropped_outputs,
         native_emitted,
         native_removed,
         hook_files_rewritten: state.rewritten_hook_files,

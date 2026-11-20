@@ -18,6 +18,8 @@ use crate::surface_ownership::{self, CollisionAdoptHint};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 
+pub(crate) mod removal;
+
 #[derive(Debug, Clone)]
 pub struct TargetSyncedOutput {
     pub dest_path: String,

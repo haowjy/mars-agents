@@ -205,6 +205,8 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         removed: usize,
         kept: usize,
         skipped: usize,
+        dropped_targets: &'a [String],
+        dropped_outputs: Vec<String>,
         native_emitted: usize,
         native_removed: usize,
         hook_files_rewritten: usize,
@@ -254,6 +256,12 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         removed,
         kept,
         skipped,
+        dropped_targets: &report.dropped_targets,
+        dropped_outputs: report
+            .dropped_outputs
+            .iter()
+            .map(|(root, dest)| format!("{root}/{dest}"))
+            .collect(),
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
@@ -328,6 +336,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         }
     }
 
+    for (target_root, dest_path) in &report.dropped_outputs {
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+        let _ = write!(stdout, "  - ");
+        let _ = stdout.reset();
+        let _ = writeln!(stdout, "{target_root}/{dest_path}");
+    }
     let native_emitted = report.native_emitted.len();
     let native_removed = report.native_removed.len();
     for (target_root, dest_path) in &report.native_removed {
@@ -380,6 +394,14 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             let _ = writeln!(stdout, "  removed     {removed} orphans");
         }
     }
+    if !report.dropped_targets.is_empty() {
+        let targets = report.dropped_targets.join(", ");
+        let verb = if dry { "would remove" } else { "removed    " };
+        let _ = writeln!(
+            stdout,
+            "  {verb} what Mars installed in {targets}, which `targets` no longer names"
+        );
+    }
     if native_emitted > 0 {
         if dry {
             let _ = writeln!(stdout, "  would emit   {native_emitted} native agents");
@@ -429,6 +451,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && updated == 0
         && removed == 0
         && kept == 0
+        && report.dropped_targets.is_empty()
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
@@ -717,6 +740,8 @@ mod tests {
             dependency_moves: Vec::new(),
             target_outcomes: Vec::new(),
             dry_run: false,
+            dropped_targets: Vec::new(),
+            dropped_outputs: Vec::new(),
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),

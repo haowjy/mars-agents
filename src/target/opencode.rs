@@ -4,7 +4,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
 use mars_schema::mcp_servers::{McpRender, env_map, header_map};
 
-use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
 
 const MCP_SECTION: &str = "mcp";
 
@@ -42,7 +42,7 @@ impl TargetAdapter for OpencodeAdapter {
 
     fn mcp_file(&self) -> Option<McpFile> {
         Some(McpFile {
-            at: McpLocation {
+            at: KeyedSection {
                 path: ".opencode/opencode.json",
                 format: SectionFormat::JsonSection(MCP_SECTION),
             },

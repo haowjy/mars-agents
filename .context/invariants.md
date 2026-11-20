@@ -10,7 +10,7 @@ current choices, open to rewriting; the rule is what they serve.
 `.mars/provided.lock` lists it (`src/sync/ownership.rs`, `Ownership::owns`). In linked
 targets, a copy proceeds only with an installed checksum claim or `--force`, and a
 delete needs a matching record (`src/surface_ownership/mod.rs`). MCP and hook entries
-are removed or replaced only when recorded and unchanged (`src/target/mcp_file.rs`,
+are removed or replaced only when recorded and unchanged (`src/target/keyed_entries.rs`,
 `hook_file.rs`). A pre-write journal (`.mars/pending-canonical.json`) publishes
 ownership to the lock before it is removed. An installed file you edited is a current
 choice, not covered by the invariant: the edit is kept until the package changes that

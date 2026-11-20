@@ -1,58 +1,32 @@
-//! The one MCP spec per adapter, and the one reconcile / validate path driven
-//! by it.
+//! The MCP spec per adapter: where a harness reads MCP servers and how one
+//! [`McpServerEntry`] renders there.
 //!
-//! An adapter declares [`McpFile`]: the project-relative file its harness reads
-//! MCP servers from, the format of the section holding them, and how one
-//! [`McpServerEntry`] renders there. Preflight, the reconcile and the lock
-//! record all derive from that declaration, so a harness's file location or
-//! shape is stated exactly once. Hooks are not part of this: their event-array
-//! semantics differ.
-
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+//! An adapter declares [`McpFile`]; preflight, the reconcile and the lock record
+//! all derive from it, so a harness's file location or shape is stated exactly
+//! once. Ownership and reconcile are the shared keyed-entries engine.
 
 use mars_schema::mcp_servers::{Flavor, McpRender, render};
-use serde_json::Value;
 
-use super::config_doc::{Doc, SectionFormat};
-use super::{MCP_KEY_PREFIX, McpServerEntry};
+use super::McpServerEntry;
+use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
 use crate::diagnostic::DiagnosticCollector;
-use crate::error::MarsError;
-use crate::lock::ConfigEntryRecord;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct McpLocation {
-    pub path: &'static str,
-    pub format: SectionFormat,
-}
+pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
+    key_prefix: "mcp:",
+    code: "mcp",
+    noun: "MCP server",
+    plural: "MCP servers",
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct McpFile {
-    pub at: McpLocation,
+    pub at: KeyedSection,
     pub render: fn(&McpServerEntry) -> McpRender,
 }
 
 /// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
 pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
     render(&server.transport, Flavor::Claude)
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Rendered {
-    pub name: String,
-    pub value: Value,
-}
-
-impl Rendered {
-    pub(crate) fn key(&self) -> String {
-        format!("{MCP_KEY_PREFIX}{}", self.name)
-    }
-
-    pub(crate) fn record(&self) -> ConfigEntryRecord {
-        ConfigEntryRecord {
-            emitted_json: self.value.to_string(),
-        }
-    }
 }
 
 pub(crate) fn render_all(
@@ -75,230 +49,16 @@ pub(crate) fn render_all(
         .collect()
 }
 
-pub(crate) enum Ownership {
-    Unowned,
-    Owned,
-    Edited,
-}
-
-pub(crate) fn ownership(record: Option<&ConfigEntryRecord>, current: &Value) -> Ownership {
-    let Some(record) = record else {
-        return Ownership::Unowned;
-    };
-    if serde_json::from_str::<Value>(&record.emitted_json).is_ok_and(|v| v == *current) {
-        Ownership::Owned
-    } else {
-        Ownership::Edited
-    }
-}
-
-pub(crate) fn validate(location: &McpLocation, path: &Path) -> Result<(), MarsError> {
-    Doc::load(path, location.format).map(|_| ())
-}
-
-struct Open {
-    path: PathBuf,
-    doc: Doc,
-    existed: bool,
-    changed: bool,
-}
-
-impl Open {
-    fn load(project_root: &Path, at: McpLocation) -> Result<Self, MarsError> {
-        let path = project_root.join(at.path);
-        let loaded = Doc::load(&path, at.format)?;
-        Ok(Self {
-            path,
-            existed: loaded.is_some(),
-            doc: loaded.unwrap_or_else(|| Doc::new(at.format)),
-            changed: false,
-        })
-    }
-
-    fn remove(&mut self, name: &str) {
-        self.changed |= self.doc.remove(name);
-    }
-
-    fn insert(&mut self, name: &str, value: Value) {
-        self.doc.insert(name, value);
-        self.changed = true;
-    }
-}
-
-pub(crate) struct Reconciled {
-    pub records: BTreeMap<String, ConfigEntryRecord>,
-    pub removed: Vec<String>,
-    /// Whether this reconcile wrote or deleted the file (or, in a dry run, would).
-    pub changed: bool,
-}
-
-/// On failure nothing is retired: the result is `previous`'s MCP records, so
-/// the next sync retries.
-///
-/// A `dry_run` computes the same result and `changed` without saving or deleting the file.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn reconcile(
-    file: &McpFile,
-    project_root: &Path,
-    target: &str,
-    previous: &BTreeMap<String, ConfigEntryRecord>,
-    desired: &[Rendered],
-    force: bool,
-    dry_run: bool,
-    diag: &mut DiagnosticCollector,
-) -> Reconciled {
-    let prior: BTreeMap<&str, &ConfigEntryRecord> = previous
-        .iter()
-        .filter_map(|(key, record)| Some((key.strip_prefix(MCP_KEY_PREFIX)?, record)))
-        .collect();
-    match try_reconcile(
-        file,
-        project_root,
-        target,
-        &prior,
-        desired,
-        force,
-        dry_run,
-        diag,
-    ) {
-        Ok(reconciled) => reconciled,
-        Err(error) => {
-            diag.warn(
-                "config-entry-write",
-                format!("failed to reconcile MCP servers in `{target}`: {error}"),
-            );
-            Reconciled {
-                records: prior
-                    .into_iter()
-                    .map(|(name, record)| (format!("{MCP_KEY_PREFIX}{name}"), record.clone()))
-                    .collect(),
-                removed: Vec::new(),
-                changed: false,
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn try_reconcile(
-    file: &McpFile,
-    project_root: &Path,
-    target: &str,
-    prior: &BTreeMap<&str, &ConfigEntryRecord>,
-    desired: &[Rendered],
-    force: bool,
-    dry_run: bool,
-    diag: &mut DiagnosticCollector,
-) -> Result<Reconciled, MarsError> {
-    let mut open = Open::load(project_root, file.at)?;
-    let wanted: BTreeSet<&str> = desired.iter().map(|server| server.name.as_str()).collect();
-    let mut kept = BTreeSet::new();
-
-    for (&name, &record) in prior {
-        if wanted.contains(name) {
-            continue;
-        }
-        let Some(current) = open.doc.get(name) else {
-            continue;
-        };
-        match ownership(Some(record), &current) {
-            Ownership::Owned => open.remove(name),
-            _ => {
-                diag.warn(
-                    "mcp-divergent",
-                    format!(
-                        "target `{target}` MCP server `{name}` in `{}` was edited after mars wrote it (left in place; delete it by hand if unwanted)",
-                        file.at.path
-                    ),
-                );
-                kept.insert(name);
-            }
-        }
-    }
-
-    let mut records = BTreeMap::new();
-    for server in desired {
-        let name = server.name.as_str();
-        let recorded = prior.get(name).copied();
-        let existing = open.doc.get(name);
-        let write = match &existing {
-            Some(existing) if *existing == server.value => true,
-            Some(existing) => match ownership(recorded, existing) {
-                Ownership::Owned => true,
-                Ownership::Edited if force => true,
-                Ownership::Edited => {
-                    diag.warn(
-                        "mcp-divergent",
-                        format!(
-                            "target `{target}` MCP server `{name}` in `{}` was edited after mars wrote it (preserved; run `{}` to take it over)",
-                            file.at.path,
-                            crate::types::managed_cmd("mars sync --force")
-                        ),
-                    );
-                    false
-                }
-                Ownership::Unowned if force => {
-                    diag.warn(
-                        "mcp-unmanaged-adopted",
-                        format!(
-                            "target `{target}` MCP server `{name}` in `{}` was not owned by mars; adopting with `--force`",
-                            file.at.path
-                        ),
-                    );
-                    true
-                }
-                Ownership::Unowned => {
-                    diag.warn(
-                        "mcp-unmanaged-collision",
-                        format!(
-                            "target `{target}` MCP server `{name}` in `{}` exists but mars does not own it (preserved; run `{}` to take it over)",
-                            file.at.path,
-                            crate::types::managed_cmd("mars sync --force")
-                        ),
-                    );
-                    false
-                }
-            },
-            None => true,
-        };
-        if write {
-            if existing.as_ref() != Some(&server.value) {
-                open.insert(name, server.value.clone());
-            }
-            records.insert(server.key(), server.record());
-        } else if let Some(record) = recorded {
-            records.insert(server.key(), record.clone());
-        }
-    }
-
-    // Only a file this reconcile changed can be deleted: one mars never touched
-    // may be the user's, empty on purpose.
-    let changed = open.changed;
-    if changed && !dry_run {
-        if open.existed && open.doc.is_empty() {
-            std::fs::remove_file(&open.path)?;
-        } else {
-            open.doc.save(&open.path)?;
-        }
-    }
-
-    let removed = prior
-        .keys()
-        .filter(|name| !wanted.contains(*name) && !kept.contains(*name))
-        .map(|name| format!("{MCP_KEY_PREFIX}{name}"))
-        .collect();
-    Ok(Reconciled {
-        records,
-        removed,
-        changed,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lock::ConfigEntryRecord;
     use crate::target::TargetRegistry;
+    use crate::target::keyed_entries::reconcile;
     use mars_schema::mcp_server::McpTransport;
+    use serde_json::Value;
+    use std::collections::BTreeMap;
+    use std::path::Path;
 
     fn server(name: &str, env: &[(&str, &str)]) -> McpServerEntry {
         McpServerEntry {
@@ -333,7 +93,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         let rendered = render_all(&file, desired, &mut diag);
         let records = reconcile(
-            &file, root, target, previous, &rendered, force, false, &mut diag,
+            &MCP_KIND, &file.at, root, target, previous, &rendered, force, false, &mut diag,
         )
         .records;
         (

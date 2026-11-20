@@ -7,6 +7,33 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-20
+
+### Upgrade notes
+- Mars no longer supports Cursor. A project whose `targets` still names `.cursor` keeps loading and syncing its other targets, and each sync warns once (`retired-target`) that nothing is synced to `.cursor`. Nothing there is written or deleted until you run `mars unlink .cursor`, which removes what earlier syncs installed (hook directories, and the MCP servers and hook entries Mars added to `.cursor/mcp.json` and `.cursor/hooks.json`) and keeps your own entries and files. A dependency's model alias pinned to `cursor` is dropped from `mars.lock` on the first sync. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#cursor).
+- `[settings] managed_root`, which `mars init` wrote before 0.37.0, is no longer read. A project that relied on it now has no targets, so a sync writes nothing to `.claude/` and routing is no longer limited to the harnesses it named. Each file that has the key warns once per sync (`field.retired`) with the line to write instead, such as `targets = [".claude"]`. `mars link .claude` writes it and clears the warning. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#managed_root).
+- A sync now updates only the targets `targets` lists. What it installed in any other target stays on disk and in `mars.lock` until you run `mars unlink <target>`, and each sync warns once per such target (`unnamed-target`). Before, taking a target out of `targets` by hand made the next sync delete that target's MCP servers and hook entries, orphan its hook directories and keep its copied skills. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-unlink).
+- Each item's outputs in `mars.lock` are written in `(target_root, dest_path)` order, so the first sync rewrites a lock written by an older Mars once, and again after an older Mars writes it. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-unlink).
+- Dependency names starting with `_provided-` are reserved and now rejected. See [reserved names](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#reserved-names).
+- Known gap: a target only one person's `mars.local.toml` names. If a teammate commits `mars.lock` with records for such a target, your sync keeps them untouched and warns that the target is not in `targets`. Running `mars unlink` on it removes the owner's records from the shared lock; their next sync reinstalls them, and may ask for `mars sync --force`. Nothing is lost. A machine-local record file will close this. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-unlink).
+
+### Added
+- `mars provide` takes `hooks/<name>/hook.toml` (with `visibility = "exported"`) and `mcp/<name>/mcp.toml` beside `skills/`. `mars sync` installs a host's provided skills, hooks and MCP servers into linked targets whose harness Meridian does not launch (`.agy` today) and into no other. Their records are kept in the machine-local `.mars/machine.lock`, never in `mars.lock`. A provided item whose name a package or `.mars-src/` also uses is skipped, with one `provided-shadowed` warning naming the host, whichever arrived first. A provided hook in a retired schema keeps its last install and warns. A directory with none of `skills/`, `hooks/` or `mcp/` removes everything the host provided, and `mars provide` no longer copies an unchanged bundle again. See [mars provide](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-provide).
+
+### Changed
+- `mars provide` accepts a directory with no `skills/`, and fails with `provided-hook-invalid` or `provided-mcp-invalid` for a broken hook or server.
+- `mars unlink <target>` also removes that target's copies under `.mars/` and its hook records at once; its `removed_outputs` count includes them. `mars doctor` warns about a target `targets` no longer names, as sync does.
+- `harness: cursor` in an agent, `[models.<alias>] harness = "cursor"`, and `default_harness` or `harness_order` naming `cursor` each warn once per sync as retired (`field.retired`). For a dependency's own alias, an installer sees it as `info`. `mars link cursor` fails, `[plugin] harnesses = ["cursor"]` is an error, and the harness lists in errors name every harness, `agy` included.
+- `agy` rows in `mars models list` no longer show effort levels: Meridian does not launch `agy`.
+- The `managed_root` warning is `field.retired`, not `field.deprecated`.
+
+### Removed
+- The `.cursor` target, the `cursor` harness, its model listing, its native agent, skill, MCP and hook files, and the `cursor` plugin tree.
+- Reading `managed_root` as `targets`.
+
+### Fixed
+- A dependency hook whose `hook.toml` is broken from its first line is kept at its last install with a warning, instead of being uninstalled silently.
+
 ## [0.37.4] - 2026-11-20
 
 ### Fixed

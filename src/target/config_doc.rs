@@ -1,7 +1,8 @@
-//! A config file narrowed to one section, for MCP servers (JSON or TOML) and
-//! hook events (JSON).
+//! A config file narrowed to one section, for keyed entries such as MCP servers
+//! (JSON or TOML) and for hook events (JSON). A new section shape is a
+//! [`SectionFormat`] variant and its [`Doc`] accessors.
 //!
-//! MCP entries cross this boundary as JSON values: the one form mars renders,
+//! Keyed entries cross this boundary as JSON values: the one form mars renders,
 //! records in the lock, and compares. A JSON file is held as an [`OrderedValue`]
 //! so the user's key order survives a rewrite. A TOML file is edited in place
 //! with `toml_edit`, so the user's other keys, comments and order survive. A

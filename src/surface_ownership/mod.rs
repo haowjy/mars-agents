@@ -25,7 +25,7 @@
 //! MCP servers are matched by content too: a record's `emitted_json` is the
 //! entry mars wrote, so an entry on disk that still equals it is mars's to
 //! replace or remove, and one that differs was edited and is preserved
-//! (`target::mcp_file::reconcile`, which owns MCP removal and write in one pass).
+//! (`target::keyed_entries::reconcile`, which owns MCP removal and write in one pass).
 //!
 //! [`retention`] enforces the other half of the contract for hooks, which are
 //! removed whole before they are rewritten: each removal is a single-use

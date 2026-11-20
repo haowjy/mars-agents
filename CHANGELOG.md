@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.2] - 2026-11-20
+
+### Fixed
+- A sync that was killed, or whose `mars.lock` write failed (a read-only project root, say), no longer leaves skills, hooks and agents "unmanaged" for good. The next `mars sync` adopts any target file that holds exactly what Mars would write, with no warning, instead of warning `no installed-content claim` on every sync until you ran `mars sync --force`. A file you edited or wrote yourself is still kept and reported.
+
 ## [0.37.1] - 2026-11-20
 
 ### Fixed

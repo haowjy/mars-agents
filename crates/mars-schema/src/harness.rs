@@ -13,7 +13,7 @@ pub enum HarnessId {
     #[serde(rename = "opencode")]
     OpenCode,
     Cursor,
-    Antigravity,
+    Agy,
 }
 
 impl HarnessId {
@@ -24,7 +24,7 @@ impl HarnessId {
             Self::Pi => "pi",
             Self::OpenCode => "opencode",
             Self::Cursor => "cursor",
-            Self::Antigravity => "antigravity",
+            Self::Agy => "agy",
         }
     }
 }
@@ -56,7 +56,7 @@ impl Host {
         Self::Harness(HarnessId::Pi),
         Self::Harness(HarnessId::OpenCode),
         Self::Harness(HarnessId::Cursor),
-        Self::Harness(HarnessId::Antigravity),
+        Self::Harness(HarnessId::Agy),
         Self::MeridianFlow,
     ];
 
@@ -84,7 +84,7 @@ pub const ALL: &[HarnessId] = &[
     HarnessId::Pi,
     HarnessId::OpenCode,
     HarnessId::Cursor,
-    HarnessId::Antigravity,
+    HarnessId::Agy,
 ];
 
 /// The harness names in `ALL`'s order, as error messages list them.

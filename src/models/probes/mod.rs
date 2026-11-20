@@ -14,7 +14,7 @@ pub mod probe_refresh;
 
 pub use probe_refresh::ProbeRefreshMode;
 
-pub use agy::AntigravityProbeResult;
+pub use agy::AgyProbeResult;
 pub use cursor::CursorProbeResult;
 pub use opencode::OpenCodeProbeResult;
 pub use pi::PiProbeResult;

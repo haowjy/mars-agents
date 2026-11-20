@@ -69,7 +69,7 @@ key. The one other place that names a key from outside is a translator from anot
 - The builtin model aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) appear
   only when neither packages nor the project's config provide any.
 - `.claude`, `.codex` and `.opencode` are first-class targets. `.cursor` is unmaintained:
-  it keeps working but isn't tested or extended. `.pi` is still being designed. `.agy` (Antigravity) is a plugin directory that `.agents/plugins.json` points at, not a copy of `.mars/`: its files are written by key (`src/target/AGENTS.md`).
+  it keeps working but isn't tested or extended. `.pi` is still being designed. `.agy` (Agy) is a plugin directory that `.agents/plugins.json` points at, not a copy of `.mars/`: its files are written by key (`src/target/AGENTS.md`).
 - Comments only for what the code can't show and a wrong edit would break silently; no
   decision IDs.
 - A state machine's code and its diagram change in the same commit. Every machine, with the

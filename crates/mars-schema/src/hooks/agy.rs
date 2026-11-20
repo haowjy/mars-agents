@@ -24,7 +24,7 @@ use super::{HOOK_DIR_TOKEN, Tokens};
 pub const DATA_VERSION: u64 = 1;
 
 /// The `--harness` the runner is invoked with.
-pub const RUNNER_HARNESS: &str = "antigravity";
+pub const RUNNER_HARNESS: &str = "agy";
 
 /// Claude events whose answer can block the action: only these honour `onFailure = "block"`.
 /// The same set as `BLOCKING` in `typescript/core.ts`.
@@ -47,7 +47,7 @@ pub struct Translation {
     answer_limits: &'static [(&'static str, &'static str)],
 }
 
-pub(super) const ANTIGRAVITY: Translation = Translation {
+pub(super) const AGY: Translation = Translation {
     events: &[
         Mapping {
             agy: "PreToolUse",
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn every_agy_tool_is_in_the_native_tool_table() {
         let known: Vec<&str> = crate::tool_names::canonical_capabilities()
-            .filter_map(|capability| lookup(capability, HarnessId::Antigravity))
+            .filter_map(|capability| lookup(capability, HarnessId::Agy))
             .flat_map(|native| native.native_tools().iter().copied())
             .collect();
         for (claude, tools) in TOOLS {

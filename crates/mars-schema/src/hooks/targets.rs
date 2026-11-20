@@ -4,7 +4,7 @@
 //! rendered for it (for a TypeScript harness, its glue, limits and native hook contract), and
 //! what its generated files are called. A new target is one row here; the binary only places
 //! what the row describes. Nothing about a target is kept anywhere else.
-use super::antigravity;
+use super::agy;
 use super::typescript::{self, Harness};
 
 /// A hook event of one target and the input field its `matcher` tests.
@@ -97,8 +97,8 @@ pub enum Rules {
     /// Generated TypeScript for the harness (`hooks::typescript`).
     TypeScript(&'static Harness),
     /// Translated for the harness's own events and answers by a `mars hook run` command
-    /// (`hooks::antigravity`).
-    Translated(&'static antigravity::Translation),
+    /// (`hooks::agy`).
+    Translated(&'static agy::Translation),
     /// Nothing is rendered for the target, as a whole; `reason` says why.
     Withheld { reason: &'static str },
 }
@@ -311,7 +311,7 @@ const PI_EVENTS: &[Event] = &[
 
 // `agy` reads these six from a plugin's `hooks.json`; the first four take handler objects,
 // the last two `{matcher, hooks}` groups (`probe-agent-frontmatter.md` §9).
-const ANTIGRAVITY_EVENTS: &[Event] = &[
+const AGY_EVENTS: &[Event] = &[
     // The runner gives a SessionStart matcher `startup`, the one source `agy` fires it for.
     matched("SessionStart", "source"),
     event("PreInvocation"),
@@ -407,9 +407,9 @@ const TARGETS: &[Target] = &[
             dir: "hooks",
         },
         profile: Profile {
-            events: ANTIGRAVITY_EVENTS,
+            events: AGY_EVENTS,
             verified_against: Some("agy 1.5.12"),
-            rules: Rules::Translated(&antigravity::ANTIGRAVITY),
+            rules: Rules::Translated(&agy::AGY),
         },
         other_events: &[],
     },

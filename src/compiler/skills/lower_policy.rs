@@ -199,7 +199,7 @@ pub(super) fn lower_skill_with_policy(
             record_model_invocation_loss(&mut lossy_fields, profile, target_name);
             record_user_invocation_loss(&mut lossy_fields, profile, target_name);
         }
-        HarnessId::Antigravity => {
+        HarnessId::Agy => {
             insert_license_metadata(&mut yaml, profile);
             // `agy` hides the skill from the slash-command list; the model still uses it,
             // which is what `user-invocable: false` means.

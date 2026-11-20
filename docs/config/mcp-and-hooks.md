@@ -1001,7 +1001,7 @@ won't get it. A native hook for another target also reports it.
 
 ### Antigravity (`agy`)
 
-`mars link antigravity` adds the target `.agy`. `agy` reads nothing from `.agy/` by itself, so
+`mars link agy` adds the target `.agy`. `agy` reads nothing from `.agy/` by itself, so
 Mars writes it as an `agy` **plugin** and adds one entry to the project's `.agents/plugins.json`:
 
 ```
@@ -1052,7 +1052,7 @@ A portable `[hooks]` table is **translated**: `agy`'s events, payloads and repli
 Claude's, so each `hooks.json` handler runs `mars hook run` (hidden; `agy` calls it, you do not)
 on the hook's data file, `hooks/mars-<name>.hooks.json`. The runner reads `agy`'s payload,
 builds Claude's (`tool_name` and `tool_input` through the tool and argument tables in
-`mars_schema::hooks::antigravity`, `session_id`, `cwd`, `transcript_path`), runs the hook's
+`mars_schema::hooks::agy`, `session_id`, `cwd`, `transcript_path`), runs the hook's
 commands with Claude's matcher, `if`, timeout and exit-code rules (the same as the generated
 TypeScript for OpenCode and Pi; `crates/mars-schema/fixtures/hook-vectors.json` pins the two),
 and answers in the form `agy` reads for that event. The hook's commands run with the `cwd` `agy`

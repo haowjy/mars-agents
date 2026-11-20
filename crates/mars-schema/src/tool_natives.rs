@@ -137,7 +137,7 @@ fn table(host: Host) -> Table {
         Host::Harness(HarnessId::OpenCode) => OPENCODE,
         Host::Harness(HarnessId::Pi) => PI,
         Host::Harness(HarnessId::Cursor) => CURSOR,
-        Host::Harness(HarnessId::Antigravity) => AGY,
+        Host::Harness(HarnessId::Agy) => AGY,
         Host::MeridianFlow => FLOW,
     }
 }
@@ -686,7 +686,7 @@ mod tests {
                 "write",
             ],
             // `agy` 1.5.12: the names the probes in the `AGY` doc comment loaded as agent tools.
-            HarnessId::Antigravity => &[
+            HarnessId::Agy => &[
                 "find_by_name",
                 "grep_search",
                 "list_dir",
@@ -827,7 +827,7 @@ mod tests {
             HarnessId::Codex,
             HarnessId::OpenCode,
             HarnessId::Pi,
-            HarnessId::Antigravity,
+            HarnessId::Agy,
         ] {
             for capability in crate::tool_names::canonical_capabilities() {
                 assert!(

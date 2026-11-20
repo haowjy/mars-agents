@@ -8,7 +8,7 @@
 //! Nothing here touches the filesystem: the caller reads the bytes and places the result,
 //! and adds the location (a path, or a package and version) to the path-free diagnostics.
 
-pub mod antigravity;
+pub mod agy;
 mod output;
 pub mod portable;
 mod read;

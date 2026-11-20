@@ -466,7 +466,7 @@ default_harness = "claude""#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("pi,opencode,codex,claude,cursor,antigravity")
+        Some("pi,opencode,codex,claude,cursor,agy")
     );
     assert!(bundle["routing"]["route_trace"].is_object());
     assert_eq!(
@@ -1133,7 +1133,7 @@ harness_order = ["pi", "opencode"]"#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,pi,opencode,codex,cursor,antigravity")
+        Some("claude,pi,opencode,codex,cursor,agy")
     );
 }
 
@@ -1526,7 +1526,7 @@ Review code changes."#;
     );
     assert_eq!(
         bundle["provenance"]["candidates_tried"].as_str(),
-        Some("claude,codex,pi,cursor,opencode,antigravity")
+        Some("claude,codex,pi,cursor,opencode,agy")
     );
 }
 

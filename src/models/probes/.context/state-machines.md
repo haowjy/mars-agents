@@ -8,8 +8,8 @@ The module's rules are in [CONTEXT.md](CONTEXT.md).
 One harness's cached model listing: fresh, stale or failed. One machine in `cache.rs` serves
 the four `CachedProbe` impls in `pi.rs`, `opencode.rs`, `cursor.rs` and `agy.rs`; the refresh decision is
 `probe_refresh.rs`. The record is one JSON file per harness in the **global** cache,
-`availability/{pi,cursor-probe,opencode-probe,antigravity-probe}.json`, each beside its own lock
-(`.pi.lock`, `.cursor-probe.lock`, `.opencode-probe.lock`, `.antigravity-probe.lock`):
+`availability/{pi,cursor-probe,opencode-probe,agy-probe}.json`, each beside its own lock
+(`.pi.lock`, `.cursor-probe.lock`, `.opencode-probe.lock`, `.agy-probe.lock`):
 
 | Field | Meaning |
 |---|---|

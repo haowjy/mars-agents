@@ -21,7 +21,7 @@ When native emission selects an agent for a harness, a second artifact is emitte
 | `opencode` | `.opencode/agents/<name>.md` |
 | `cursor` | `.cursor/agents/<name>.md` |
 | `pi` | `.pi/agents/<name>.md` |
-| `antigravity` | `.agy/agents/<name>.md` |
+| `agy` | `.agy/agents/<name>.md` |
 
 Harness-native artifacts are format-translated and field-stripped. They serve as agent discovery surfaces for harness-native invocation (e.g. `codex --agent coder`). Meridian always uses the `.mars/` artifact for its own spawn logic and applies all policy fields through its own projection layer.
 
@@ -200,7 +200,7 @@ harness can do it but has no tool to turn off (`native_status: unknown`, with a 
 *unknown*: Mars has no entry for that harness. The table follows
 `crates/mars-schema/src/tool_natives.rs`, which is the source of truth; change both together.
 
-| Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor | Antigravity |
+| Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor | Agy |
 |---|---|---|---|---|---|---|---|
 | `bash` | shell commands | `Bash` | `exec_command` | `bash` | `bash` | `Shell` | `run_command` |
 | `read` | read a file | `Read` | no switch | `read` | `read` | `Read` | `read_file` |
@@ -689,7 +689,7 @@ These are non-fatal warnings. The sync continues and the native artifact is stil
 
 Compact per-field, per-target classification:
 
-| Field | `.mars/` | Claude | Codex | OpenCode | Cursor | Pi | Antigravity |
+| Field | `.mars/` | Claude | Codex | OpenCode | Cursor | Pi | Agy |
 |---|---|---|---|---|---|---| --- |
 | `name` | preserved | exact | exact | exact | exact | exact | exact |
 | `description` | preserved | exact | exact | exact | exact (one-line normalized) | exact | exact |

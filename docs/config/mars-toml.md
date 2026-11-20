@@ -623,7 +623,7 @@ agent = "deny"
 |---|---|---|
 | `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
-| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `antigravity`) |
+| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `agy`) |
 | `effort` | string | Effort level: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. See [Effort](schema-v1.md#effort) |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
@@ -764,7 +764,7 @@ exclude = ["thinking"]
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `harness` | string | yes | Which harness runs this model (`claude`, `codex`, `opencode`, `antigravity`, etc.) |
+| `harness` | string | yes | Which harness runs this model (`claude`, `codex`, `opencode`, `agy`, etc.) |
 | `model` | string | no | Explicit model ID. If set, skips auto-resolution. |
 | `provider` | string | no | API provider name for auto-resolution filtering |
 | `description` | string | no | Human-readable alias description shown in `mars models aliases` |

@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use mars_schema::hooks::antigravity::{BLOCKING, plain_names};
+use mars_schema::hooks::agy::{BLOCKING, plain_names};
 
 /// A hook's data file, as far as the runner reads it.
 #[derive(Debug, Deserialize)]

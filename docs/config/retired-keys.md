@@ -120,6 +120,18 @@ Mars no longer supports Cursor: `cursor` is not a harness and `.cursor` is not a
 - `mars models --harness cursor`, `mars build launch-bundle --harness cursor` and `harnesses = ["cursor"]` in `[plugin]` are errors: `cursor` is an unknown harness name.
 - `dialect = "cursor"` still reads a package laid out as a Cursor repository (`.cursor/rules/*.mdc`, `.cursor-plugin/`); the keys it rejects are dropped, since no harness reads them.
 
+## `mars resolve`
+
+`mars resolve` is deprecated in 0.39.0 and removed in the next minor release. Until then it works as before and warns on each run (`command.deprecated`).
+
+It set an installed item's recorded hash to what is on disk, to mark a hand edit as resolved. A sync no longer writes conflict markers: when the installed item differs from its source, the next `mars sync` reinstalls the source, so the edit `mars resolve` recorded is replaced anyway. To keep a change to an installed item:
+
+- an overlay: `[agents.<name>]` or `[skills.<name>]` in `mars.toml` ([agents](mars-toml.md#agentsname-overlay), [skills](mars-toml.md#skillsname-overlay));
+- an item of your own in `.mars-src/`, which takes the place of the dependency's item of that name;
+- or edit the dependency's source, and `mars override` to point at your checkout.
+
+To clear conflict markers a legacy sync left in an installed file, run `mars sync`: it reinstalls the source.
+
 ## Values that changed
 
 A value of a key Mars reads is checked against the keys it allows, so these are ordinary errors that list the allowed values: `approval: yolo` is now `approval: never`, and `effort: adaptive` and `effort: disabled` are now `effort: auto` and `effort: none`, in a profile and in a model policy's `override`.

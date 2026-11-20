@@ -122,7 +122,7 @@ Both agents and skills use the same strategy: source wins, no merge attempted.
 
 ### Resolving Conflict Markers
 
-If a file contains conflict markers from a manual edit or a legacy sync, use `mars resolve` to clear them once you've resolved the markers by hand:
+If a file contains conflict markers from a manual edit or a legacy sync, `mars resolve` (deprecated, removed in the next minor release: [what changed](../config/retired-keys.md#mars-resolve)) clears them once you've resolved the markers by hand. Run `mars sync` instead to reinstall the source:
 
 ```bash
 # Edit the file to fix markers

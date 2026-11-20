@@ -14,7 +14,7 @@ The project root is the directory holding `mars.toml` and `mars.lock`.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
+| `1` | `check`: validation errors found; `resolve` (deprecated): unresolved conflict markers remain |
 | `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors, including a definition that breaks [schema v1](../config/schema-v1.md) |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 
@@ -304,6 +304,8 @@ After adoption, the item lives in `.mars-src/` (your editable source) and is tra
 
 ## `mars resolve`
 
+> **Deprecated** in 0.39.0 and removed in the next minor release. It warns (`command.deprecated`) each run. See [what changed](../config/retired-keys.md#mars-resolve).
+
 Mark conflicts as resolved after manually editing conflicted files.
 
 ```bash
@@ -316,7 +318,7 @@ mars resolve [file]
 
 Checks for remaining conflict markers (`<<<<<<<`, `>>>>>>>`). If the file is clean, updates the lock file's `installed_checksum` to match the current disk content.
 
-> **Note:** Current sync behavior is source-wins — `mars sync` overwrites local modifications with upstream content (with a warning) rather than producing conflict markers. Conflict markers would only appear from manual edits to managed files or legacy state from an older mars version. `mars resolve` remains available to clear them when they do exist.
+> **Note:** Current sync behavior is source-wins — `mars sync` overwrites local modifications with upstream content (with a warning) rather than producing conflict markers. Conflict markers would only appear from manual edits to managed files or legacy state from an older mars version. `mars resolve` still clears them until it is removed; to keep a change to an installed item, use an overlay or edit the source instead.
 
 ---
 

@@ -444,7 +444,7 @@ impl CuratedRules {
                     view.diagnostics.push(format!(
                         "{}: {} declaration `{}` cannot have a provider",
                         tier.path.display(),
-                        registry::descriptor(harness).display_name,
+                        harness.display_name(),
                         rule.model
                     ));
                     continue;
@@ -521,7 +521,7 @@ impl Rule {
                 return Some("has a qualified provider incompatible with its native harness");
             }
         }
-        if matches!(harness, HarnessId::Pi | HarnessId::OpenCode)
+        if registry::qualifies_slugs(harness)
             && let (Some(provider), Some(parts)) =
                 (self.provider.as_deref(), slug::parse(&self.model))
             && !slug::providers_match(provider, parts.provider)
@@ -532,13 +532,12 @@ impl Rule {
     }
 
     fn declared_key(&self, harness: HarnessId) -> RowKey {
-        let parsed = if registry::native_provider(harness).is_some()
-            || matches!(harness, HarnessId::Pi | HarnessId::OpenCode)
-        {
-            slug::parse(&self.model)
-        } else {
-            None
-        };
+        let parsed =
+            if registry::native_provider(harness).is_some() || registry::qualifies_slugs(harness) {
+                slug::parse(&self.model)
+            } else {
+                None
+            };
         let provider = registry::native_provider(harness)
             .map(str::to_string)
             .or_else(|| parsed.as_ref().map(|parts| parts.provider.to_string()))

@@ -6,7 +6,6 @@ use crate::compiler::config_entries::render::skip_text;
 use crate::compiler::hooks::{ParsedHookItem, load_plugin_output, report_native_hook};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::target::opencode::OpencodeAdapter;
 use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
 use mars_schema::frontmatter::Frontmatter;
@@ -68,7 +67,7 @@ fn write_config_entries(
     _harnesses: &[&'static super::super::spec::PluginHarnessSpec],
     _diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
-    let servers = super::render_servers(&OpencodeAdapter, mcp);
+    let servers = super::render_servers(crate::target::for_harness(HarnessId::OpenCode), mcp);
     if servers.is_empty() {
         return Ok(());
     }

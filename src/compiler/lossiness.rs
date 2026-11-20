@@ -106,11 +106,11 @@ pub struct LoweredOutput {
 
 /// The target directory of the harness a lossy field names by its display name (`Claude`,
 /// `Antigravity`): lowering labels its target the way a person reads it.
-pub(crate) fn target_label(harness: &str) -> &'static str {
-    crate::harness::registry::descriptors()
+pub(crate) fn target_label(harness: &str) -> String {
+    mars_schema::harness::ALL
         .iter()
-        .find(|descriptor| descriptor.display_name.eq_ignore_ascii_case(harness))
-        .map(|descriptor| descriptor.default_target)
+        .find(|id| id.display_name().eq_ignore_ascii_case(harness))
+        .map(|id| id.target_dir())
         .expect("a lossy field's target is a harness display name")
 }
 

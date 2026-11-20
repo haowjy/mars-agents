@@ -27,9 +27,9 @@ pub struct Listing {
     /// The harness's model listing command completed.
     pub succeeded: bool,
     pub error: Option<String>,
-    /// Why the harness cannot be driven at all (a skip reason code), even when its listing
-    /// completed. Pi sets this when its help surface lacks a flag Mars needs.
-    pub incompatible: Option<&'static str>,
+    /// The harness cannot be driven at all, even when its listing completed. Pi sets this when
+    /// its help surface lacks a flag Mars needs.
+    pub incompatible: bool,
     /// A completed but empty listing is no evidence of support or credentials (Cursor).
     pub empty_is_failure: bool,
 }

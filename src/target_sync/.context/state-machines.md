@@ -66,7 +66,7 @@ enough. `sync_one_target` and `copy_item_to_target` choose the projection by
 
 ```mermaid
 stateDiagram-v2
- [*] --> NoVariant: adapter.skill_variant_key - is None
+ [*] --> NoVariant: spec.skill_variant_key - is None
  [*] --> Absent
  Absent --> Projected: project and read back its installed checksum
  Projected --> Projected: projection still matches, no bytes moved

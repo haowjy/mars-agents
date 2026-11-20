@@ -260,7 +260,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         mcp_files_changed: report
             .config_files_changed
             .iter()
-            .filter(|(_, _, what)| *what == crate::target::mcp_file::MCP_KIND.plural)
+            .filter(|(_, _, kind)| *kind == crate::target::mcp_file::MCP_KIND)
             .count(),
         upgrades_available: report.upgrades.len(),
         upgrades: &report.upgrades,
@@ -345,11 +345,11 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
     }
 
     let config_files = report.config_files_changed.len();
-    for (target_root, file, what) in &report.config_files_changed {
+    for (target_root, file, kind) in &report.config_files_changed {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = write!(stdout, "  ~ ");
         let _ = stdout.reset();
-        let _ = writeln!(stdout, "{file} ({what}, {target_root})");
+        let _ = writeln!(stdout, "{file} ({}, {target_root})", kind.plural);
     }
 
     let _ = writeln!(stdout);

@@ -429,9 +429,9 @@ fn lower_skill_content_for_harness(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     emit_schema_diags: bool,
 ) -> Result<Option<crate::compiler::lossiness::LoweredOutput>, MarsError> {
-    use crate::compiler::skills::lower::{lower_skill_for_harness, skill_harness_from_variant_key};
+    use crate::compiler::skills::lower::lower_skill_for_harness;
 
-    let Some(harness) = skill_harness_from_variant_key(harness_key) else {
+    let Some(harness) = mars_schema::harness::parse(harness_key) else {
         return Ok(None);
     };
     let Some(profile) = mars_schema::skill::read(base_content).fields else {

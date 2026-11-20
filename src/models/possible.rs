@@ -194,7 +194,7 @@ impl<'a> SessionPossibleSource<'a> {
         // policy for every probe-backed harness.
         let spec = registry::probe_spec(harness).expect("native harness handled above");
         let result = self.session.outcome(harness).result();
-        if result.is_some_and(|listing| listing.incompatible.is_some()) {
+        if result.is_some_and(|listing| listing.incompatible) {
             return HarnessPossible::Unlisted(UnlistedReason::Incompatible);
         }
         if !result.is_some_and(|listing| listing.succeeded) {

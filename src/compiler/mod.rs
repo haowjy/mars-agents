@@ -15,6 +15,7 @@ pub mod hooks;
 /// Hook compiler lane: native event discovery, validation, and ordering.
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
+pub(crate) mod lowering;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
 pub(crate) mod native_agent_manifest;

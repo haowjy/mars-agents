@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use mars_schema::HarnessId;
 use serde::{Deserialize, Serialize};
 
 use super::command::{probe_timeout, run_command, strip_ansi};
@@ -21,7 +22,7 @@ pub fn probe() -> OpenCodeProbeResult {
 }
 
 impl super::cache::CachedProbe for OpenCodeProbeResult {
-    const HARNESS: &'static str = "opencode";
+    const HARNESS: HarnessId = HarnessId::OpenCode;
     const CACHE_FILE: &'static str = "opencode-probe.json";
     const LOCK_FILE: &'static str = ".opencode-probe.lock";
     const SCHEMA_VERSION: u32 = 1;
@@ -52,7 +53,7 @@ impl super::cache::CachedProbe for OpenCodeProbeResult {
 pub fn probe_with_timeout(timeout: Duration) -> OpenCodeProbeResult {
     let mut result = OpenCodeProbeResult::default();
 
-    match run_command("opencode", &["models"], timeout) {
+    match run_command(HarnessId::OpenCode.as_str(), &["models"], timeout) {
         Ok(stdout) => {
             result.model_slugs = parse_models_output(&stdout);
             result.model_probe_success = true;

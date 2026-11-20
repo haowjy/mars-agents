@@ -38,12 +38,6 @@ pub enum Flavor {
     /// forwarded name in `env_vars`, a renamed one an `env` `${VAR}` that Codex would pass
     /// through literally (reported in [`McpRender::lossy`]), a remote entry typed `http`.
     Plugin,
-    /// An `agy` plugin's `mcp_config.json`: the server inherits `agy`'s environment, so a
-    /// variable passed through by name is left out and a renamed one cannot be written (a
-    /// `${VAR}` that the plugin does not declare in `variables` is passed literally, and
-    /// declaring one turns the whole plugin off until the user fills it in), and a remote
-    /// entry has no `type`.
-    Agy,
 }
 
 /// Something a harness's native entry could not carry, with the step each reader can take.
@@ -151,13 +145,9 @@ fn braced(var: &str) -> String {
 
 /// Render one server's transport as an `mcpServers` entry.
 pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
-    if flavor == Flavor::Agy {
-        return render_agy(transport);
-    }
     let interpolate = |var: &str| match flavor {
         Flavor::Cursor => format!("${{env:{var}}}"),
         Flavor::Claude | Flavor::Plugin => braced(var),
-        Flavor::Agy => unreachable!("`render_agy` spells agy's entries"),
     };
     let mut lossy = Vec::new();
     let value = match transport {
@@ -220,7 +210,11 @@ fn agy_command(command: &str) -> String {
     }
 }
 
-fn render_agy(transport: &McpTransport) -> McpRender {
+/// An `agy` plugin's `mcp_config.json` entry: the server inherits `agy`'s environment, so a
+/// variable passed through by name is left out and a renamed one cannot be written (a `${VAR}`
+/// that the plugin does not declare in `variables` is passed literally, and declaring one turns
+/// the whole plugin off until the user fills it in), and a remote entry has no `type`.
+pub fn render_agy(transport: &McpTransport) -> McpRender {
     let mut lossy = Vec::new();
     let value = match transport {
         McpTransport::Stdio { command, args, env } => {

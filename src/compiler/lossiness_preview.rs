@@ -26,18 +26,13 @@ use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::models::ModelsCache;
 use crate::resolve::PublishLens;
-use crate::target::TargetRegistry;
 use mars_schema::HarnessId;
 
 /// Native harness variant keys for skill projection on configured managed targets.
 fn native_skill_harness_keys(settings: &Settings) -> Vec<String> {
-    let registry = TargetRegistry::new();
     let mut keys = Vec::new();
     for target in crate::config::targets::managed_targets(settings) {
-        if let Some(key) = registry
-            .get(&target)
-            .and_then(|adapter| adapter.skill_variant_key())
-        {
+        if let Some(key) = crate::target::spec(&target).and_then(|spec| spec.skill_variant_key()) {
             keys.push(key.to_string());
         }
     }
@@ -163,7 +158,7 @@ fn collect_agent_content_lossiness(
         model_router,
     ) {
         codex_emitted |= harness == HarnessId::Codex;
-        let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
+        let lowered = lower_for_harness_with_model(harness, &profile, &body, &model);
         diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields, true);
         if let Some(moved) = effort_moved {
             diag.record_effort_move(agent_name, harness.as_str(), &moved, true);

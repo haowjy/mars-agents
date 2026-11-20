@@ -114,11 +114,9 @@ pub fn preview_native_skill_repairs(
     outcomes: &[ActionOutcome],
     diag: &mut DiagnosticCollector,
 ) {
-    let registry = crate::target::TargetRegistry::new();
     for target_name in targets {
-        let Some(variant_key) = registry
-            .get(target_name)
-            .and_then(|adapter| adapter.skill_variant_key())
+        let Some(variant_key) =
+            crate::target::spec(target_name).and_then(|spec| spec.skill_variant_key())
         else {
             continue;
         };
@@ -182,15 +180,13 @@ fn sync_one_target(
     std::fs::create_dir_all(target_root)?;
 
     let mut expected_paths: HashSet<String> = HashSet::new();
-    let target_registry = crate::target::TargetRegistry::new();
-    let target_adapter = target_registry.get(target_name);
-    let native_skill_variant_key = target_adapter
-        .and_then(|adapter| adapter.skill_variant_key())
+    let target_spec = crate::target::spec(target_name);
+    let native_skill_variant_key = target_spec
+        .and_then(|spec| spec.skill_variant_key())
         .map(str::to_owned);
-    let target_accepts_canonical_agents = target_adapter
-        .map(|adapter| {
-            adapter
-                .default_dest_path(mars_schema::item::ItemKind::Agent, "__mars_probe__")
+    let target_accepts_canonical_agents = target_spec
+        .map(|spec| {
+            spec.default_dest_path(mars_schema::item::ItemKind::Agent, "__mars_probe__")
                 .is_some()
         })
         .unwrap_or(true);

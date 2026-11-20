@@ -89,8 +89,8 @@ fn warn_hooks_without_tree_native_hook(
     accepted_hooks: &[crate::compiler::hooks::ParsedHookItem],
     diag: &mut DiagnosticCollector,
 ) {
-    let target_dir = built.profile.descriptor().default_target;
-    let tree_name = target_dir.trim_start_matches('.');
+    let tree_name = built.profile.harness.as_str();
+    let target_dir = built.profile.harness.target_dir();
     let affected = selected_harnesses(harnesses)
         .filter(|harness| harness.tree.key == built.profile.key)
         .map(harness_display_name)
@@ -98,7 +98,11 @@ fn warn_hooks_without_tree_native_hook(
     let affected = human_list(&affected);
 
     for hook in accepted_hooks {
-        if hook.def.select(&[target_dir.to_owned()]).is_empty() {
+        if hook
+            .def
+            .select(std::slice::from_ref(&target_dir))
+            .is_empty()
+        {
             diag.warn(
                 "plugin-native-hook-dropped",
                 format!(

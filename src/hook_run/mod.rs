@@ -183,10 +183,12 @@ fn translate(data: &Data, agy_event: &str, payload: &Value) -> Option<String> {
             fields.insert("prompt".into(), str_of("lastUserInput").into());
         }
         "Stop" => {
+            // `continuationActive` is false on every Stop, even after a `continue`; the Stop
+            // hooks of one turn are counted from 0 by `executionNum`.
             let active = payload
-                .get("continuationActive")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .get("executionNum")
+                .and_then(Value::as_u64)
+                .is_some_and(|n| n > 0);
             fields.insert("stop_hook_active".into(), active.into());
         }
         _ => {}

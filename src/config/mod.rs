@@ -600,6 +600,15 @@ pub fn merge_with_root(
             .into());
         }
 
+        if crate::provided::is_provided_source(name.as_ref()) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "dependency name `{name}` is reserved: names starting `_provided-` are what a host's provided content is recorded under"
+                ),
+            }
+            .into());
+        }
+
         // Reject duplicate names across sections
         if dependencies.contains_key(name) {
             return Err(ConfigError::Invalid {

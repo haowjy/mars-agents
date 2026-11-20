@@ -33,6 +33,11 @@ impl HarnessId {
 }
 
 impl HarnessId {
+    /// The harness's native directory in a project (`.claude`).
+    pub fn target_dir(self) -> String {
+        format!(".{}", self.as_str())
+    }
+
     pub fn display_name(self) -> &'static str {
         Host::Harness(self).spec().display_name
     }

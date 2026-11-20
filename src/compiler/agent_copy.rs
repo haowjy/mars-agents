@@ -39,8 +39,8 @@ pub fn build_agent_copy_spec(
             );
             continue;
         };
-        let target = crate::harness::registry::descriptor(kind).default_target;
-        if !managed_targets.iter().any(|t| t == target) {
+        let target = kind.target_dir();
+        if !managed_targets.contains(&target) {
             diag.warn_advisory(
                 "agent-copy-harness-not-in-targets",
                 format!(

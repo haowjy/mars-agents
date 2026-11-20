@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use mars_schema::HarnessId;
 use serde::{Deserialize, Serialize};
 
 use super::command::{probe_timeout, run_command, strip_ansi};
@@ -21,7 +22,7 @@ pub fn probe() -> AgyProbeResult {
 }
 
 impl super::cache::CachedProbe for AgyProbeResult {
-    const HARNESS: &'static str = "agy";
+    const HARNESS: HarnessId = HarnessId::Agy;
     const CACHE_FILE: &'static str = "agy-probe.json";
     const LOCK_FILE: &'static str = ".agy-probe.lock";
     const SCHEMA_VERSION: u32 = 1;
@@ -54,7 +55,7 @@ impl super::cache::CachedProbe for AgyProbeResult {
 /// evidence" rather than as a listing.
 pub fn probe_with_timeout(timeout: Duration) -> AgyProbeResult {
     let mut result = AgyProbeResult::default();
-    match run_command("agy", &["models"], timeout) {
+    match run_command(HarnessId::Agy.as_str(), &["models"], timeout) {
         Ok(stdout) => {
             result.slugs = parse_models_output(&stdout);
             result.model_probe_success = true;

@@ -129,9 +129,7 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     if let Some(harness) = harness {
         return NormalizedLink {
             raw: raw.to_string(),
-            target: crate::harness::registry::descriptor(harness)
-                .default_target
-                .to_string(),
+            target: harness.target_dir(),
             harness: Some(harness),
             kind: LinkKind::KnownHarness,
         };

@@ -9,7 +9,11 @@ use mars_schema::agent::EffortLevel;
 pub enum HarnessClass {
     /// Serves one provider directly; support comes from the catalog and auth from a
     /// native status command.
-    Native { provider: &'static str },
+    Native {
+        provider: &'static str,
+        /// The arguments that print the harness's login state; their exit status is the answer.
+        auth_status: &'static [&'static str],
+    },
     /// Support comes from the harness's own model listing.
     ProbeBacked(ProbeSpec),
 }
@@ -58,12 +62,11 @@ pub enum ListingAuth {
 }
 
 #[derive(Debug, Clone, Copy)]
-/// The one row per harness: identity-derived facts (`as_str`, the `.claude`-style variant key)
-/// are not stored. Lowering policy is a match on `HarnessId` in the compiler.
+/// The one row per harness. Facts derived from the id are not stored: the executable is
+/// `id.as_str()`, the target directory `.{id}`, and the skill variant key `id.as_str()`.
+/// Lowering policy is a table in the compiler, so `src/harness` never depends on it.
 pub struct HarnessDescriptor {
     pub id: HarnessId,
-    pub binary: &'static str,
-    pub default_target: &'static str,
     pub class: HarnessClass,
 }
 
@@ -88,22 +91,20 @@ pub fn default_harness_order_names() -> Vec<String> {
 const DESCRIPTORS: &[HarnessDescriptor] = &[
     HarnessDescriptor {
         id: HarnessId::Claude,
-        binary: "claude",
-        default_target: ".claude",
         class: HarnessClass::Native {
             provider: "anthropic",
+            auth_status: &["auth", "status"],
         },
     },
     HarnessDescriptor {
         id: HarnessId::Codex,
-        binary: "codex",
-        default_target: ".codex",
-        class: HarnessClass::Native { provider: "openai" },
+        class: HarnessClass::Native {
+            provider: "openai",
+            auth_status: &["login", "status"],
+        },
     },
     HarnessDescriptor {
         id: HarnessId::Pi,
-        binary: "pi",
-        default_target: ".pi",
         class: HarnessClass::ProbeBacked(ProbeSpec {
             probe: ProbeDriver::of::<PiProbeResult>(),
             listing: ListingAuth::Gated,
@@ -113,8 +114,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::OpenCode,
-        binary: "opencode",
-        default_target: ".opencode",
         class: HarnessClass::ProbeBacked(ProbeSpec {
             probe: ProbeDriver::of::<OpenCodeProbeResult>(),
             listing: ListingAuth::Ungated,
@@ -124,8 +123,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::Cursor,
-        binary: "cursor",
-        default_target: ".cursor",
         class: HarnessClass::ProbeBacked(ProbeSpec {
             probe: ProbeDriver::of::<CursorProbeResult>(),
             listing: ListingAuth::Gated,
@@ -138,8 +135,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::Agy,
-        binary: "agy",
-        default_target: ".agy",
         class: HarnessClass::ProbeBacked(ProbeSpec {
             probe: ProbeDriver::of::<AgyProbeResult>(),
             listing: ListingAuth::Gated,
@@ -171,6 +166,12 @@ pub fn probe_spec(id: HarnessId) -> Option<ProbeSpec> {
     }
 }
 
+/// Whether the harness spells its models `provider/model`, so a provider constraint joins the
+/// model it names.
+pub fn qualifies_slugs(id: HarnessId) -> bool {
+    probe_spec(id).is_some_and(|spec| spec.slugs == SlugShape::Qualified)
+}
+
 /// How the harness folds an effort level into its slugs, or `None` when it does not.
 pub fn slug_tiers(id: HarnessId) -> Option<SlugTiers> {
     probe_spec(id)?.tiers
@@ -178,16 +179,19 @@ pub fn slug_tiers(id: HarnessId) -> Option<SlugTiers> {
 
 pub fn native_provider(id: HarnessId) -> Option<&'static str> {
     match descriptor(id).class {
-        HarnessClass::Native { provider } => Some(provider),
+        HarnessClass::Native { provider, .. } => Some(provider),
         HarnessClass::ProbeBacked(_) => None,
     }
 }
 
+/// The harness whose native directory `target` names (`.claude`); `None` for `.agents` and any
+/// other name.
 pub fn harness_for_target(target: &str) -> Option<HarnessId> {
-    DESCRIPTORS
+    let name = target.strip_prefix('.')?;
+    mars_schema::harness::ALL
         .iter()
-        .find(|descriptor| descriptor.default_target == target)
-        .map(|descriptor| descriptor.id)
+        .copied()
+        .find(|id| id.as_str() == name)
 }
 
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
@@ -195,7 +199,7 @@ pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     DESCRIPTORS
         .iter()
         .find(|descriptor| match descriptor.class {
-            HarnessClass::Native { provider } => provider == normalized,
+            HarnessClass::Native { provider, .. } => provider == normalized,
             HarnessClass::ProbeBacked(_) => false,
         })
         .map(|descriptor| descriptor.id)

@@ -1,3 +1,4 @@
+use mars_schema::HarnessId;
 use std::collections::HashSet;
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -46,7 +47,7 @@ pub fn probe() -> PiProbeResult {
 }
 
 impl super::cache::CachedProbe for PiProbeResult {
-    const HARNESS: &'static str = "pi";
+    const HARNESS: HarnessId = HarnessId::Pi;
     const CACHE_FILE: &'static str = "pi.json";
     const LOCK_FILE: &'static str = ".pi.lock";
     const SCHEMA_VERSION: u32 = 3;
@@ -76,7 +77,7 @@ impl super::cache::CachedProbe for PiProbeResult {
 
 pub fn probe_with_timeout(timeout: Duration) -> PiProbeResult {
     let resolver = PathExecutableResolver;
-    let Some(binary_path) = resolve_binary_path("pi", &resolver) else {
+    let Some(binary_path) = resolve_binary_path(HarnessId::Pi.as_str(), &resolver) else {
         return PiProbeResult {
             compatible: false,
             error: Some("pi binary not found".to_string()),

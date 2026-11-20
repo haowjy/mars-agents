@@ -347,7 +347,7 @@ pub(crate) fn lower_hook_entries(
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
     let Some(target) =
-        mars_schema::hooks::targets::target(adapter.name()).filter(|t| t.merge_file().is_some())
+        mars_schema::hooks::targets::target(&adapter.name()).filter(|t| t.merge_file().is_some())
     else {
         return Vec::new();
     };

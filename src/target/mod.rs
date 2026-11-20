@@ -11,7 +11,6 @@ pub mod opencode;
 pub mod pi;
 pub(crate) mod plugin;
 
-use crate::harness::registry;
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
 use keyed_entries::Rendered;
@@ -81,9 +80,9 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     fn harness(&self) -> Option<HarnessId>;
 
     /// The target directory name (`.claude`).
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         self.harness()
-            .map_or(AGENTS_TARGET, |id| registry::descriptor(id).default_target)
+            .map_or_else(|| AGENTS_TARGET.to_string(), HarnessId::target_dir)
     }
 
     /// The `variants/<key>/` skill directory this target consumes: the
@@ -136,7 +135,7 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     /// Entries the target has whenever it is managed, whatever packages install.
     fn fixed_entries(&self, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
         self.plugin()
-            .map(|plugin| plugin.fixed_entries(self.name(), project_root))
+            .map(|plugin| plugin.fixed_entries(&self.name(), project_root))
             .unwrap_or_default()
     }
 }

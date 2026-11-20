@@ -59,7 +59,7 @@ pub fn resolve_harness_model(
 
     // Pi and OpenCode accept provider/model in constrained passthrough. Cursor
     // takes an unqualified model/effort slug even when its provider is known.
-    if matches!(harness, HarnessId::Pi | HarnessId::OpenCode)
+    if crate::harness::registry::qualifies_slugs(harness)
         && !requested.contains('/')
         && let Some(constraint) = provider_constraint.filter(|value| !value.trim().is_empty())
     {

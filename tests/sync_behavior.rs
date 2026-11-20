@@ -2018,3 +2018,173 @@ fn unlink_keeps_the_records_of_hooks_other_targets_cannot_run() {
         "unlink drops only the unlinked target's record"
     );
 }
+
+fn lock_outputs(project: &assert_fs::fixture::ChildPath) -> Vec<(String, Vec<(String, String)>)> {
+    let lock: toml::Value =
+        toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap()).unwrap();
+    lock["items"]
+        .as_table()
+        .unwrap()
+        .iter()
+        .map(|(key, item)| {
+            let outputs = item["outputs"].as_array().into_iter().flatten();
+            let pairs = outputs.map(|o| {
+                (
+                    o["target_root"].as_str().unwrap().to_string(),
+                    o["dest_path"].as_str().unwrap().to_string(),
+                )
+            });
+            (key.clone(), pairs.collect())
+        })
+        .collect()
+}
+
+fn project_with_skills(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!("[settings]\ntargets = {targets}\n"))
+        .unwrap();
+    for name in ["review", "extra"] {
+        project
+            .child(format!(".mars-src/skills/{name}/SKILL.md"))
+            .write_str(&format!("---\nname: {name}\ndescription: d\n---\nBody\n"))
+            .unwrap();
+    }
+    project
+}
+
+#[test]
+fn a_deleted_item_repeats_no_warning_while_a_target_is_unnamed() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude', '.codex']");
+    project
+        .child(".mars-src/agents/coder.md")
+        .write_str("---\nname: coder\ndescription: d\nskills: [nosuch]\n---\nBody\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.codex']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
+    for _ in 0..2 {
+        sync_project(&dir, &project).stderr(
+            predicate::str::contains("is not in `targets`")
+                .and(predicate::str::contains("nosuch").not()),
+        );
+    }
+    assert!(
+        lock_outputs(&project)
+            .iter()
+            .all(|(_, outputs)| !outputs.is_empty()),
+        "no item is left without an output"
+    );
+}
+
+#[test]
+fn link_drops_an_item_whose_last_output_it_removes() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude', '.codex']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.codex']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    fs::remove_dir_all(project.child(".mars-src/skills/extra").path()).unwrap();
+    sync_project(&dir, &project);
+
+    offline_mars(dir.path())
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let items = lock_outputs(&project);
+    assert!(items.iter().all(|(_, o)| !o.is_empty()), "{items:?}");
+    assert!(!items.iter().any(|(key, _)| key == "skill/extra"));
+}
+
+#[test]
+fn doctor_warns_once_about_an_unnamed_target_without_the_mars_copies() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    for copies in [".mars/hooks", ".mars/mcp"] {
+        let _ = fs::remove_dir_all(project.child(copies).path());
+    }
+
+    let out = offline_mars(dir.path())
+        .args(["doctor", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(all.matches("is not in `targets`").count(), 1, "{all}");
+    assert!(!all.contains("item-missing"), "{all}");
+}
+
+#[test]
+fn resolve_updates_the_mars_output_and_outputs_stay_sorted() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.opencode', '.claude']");
+    sync_project(&dir, &project);
+    for (key, outputs) in lock_outputs(&project) {
+        let mut sorted = outputs.clone();
+        sorted.sort();
+        assert_eq!(
+            outputs, sorted,
+            "{key}: outputs are written in sorted order"
+        );
+    }
+    let checksums = || {
+        let lock: toml::Value =
+            toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
+                .unwrap();
+        lock["items"]["skill/review"]["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                (
+                    o["target_root"].as_str().unwrap().to_string(),
+                    o["installed_checksum"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = checksums();
+
+    project
+        .child(".mars/skills/review/SKILL.md")
+        .write_str("---\nname: review\ndescription: d\n---\nEdited\n")
+        .unwrap();
+    offline_mars(dir.path())
+        .args(["resolve", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let after = checksums();
+    for ((root, old), (_, new)) in before.iter().zip(&after) {
+        assert_eq!(
+            root != ".mars",
+            old == new,
+            "{root}: {before:?} -> {after:?}"
+        );
+    }
+}

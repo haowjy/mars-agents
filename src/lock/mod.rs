@@ -1283,12 +1283,15 @@ fn remove_target_output(
     target_root: &str,
     dest_path: &str,
 ) {
-    for item in items.values_mut() {
+    items.retain(|_, item| {
+        let before = item.outputs.len();
         item.outputs.retain(|output| {
             !(output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
         });
-    }
+        // An item whose last output this removed is gone; a no-output hook record never had one.
+        before == item.outputs.len() || !item.outputs.is_empty()
+    });
 }
 
 fn checksum_is_empty(checksum: &ContentHash) -> bool {
@@ -1320,9 +1323,8 @@ impl LockFile {
     /// it has nothing to write there, and its record (`unplaced`, by item key) is what makes a
     /// change to the hook, or a new target, news.
     ///
-    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and every
-    /// item keeps its `.mars` output, so none is left empty; and only a sync can say which
-    /// hook records stay.
+    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and an item
+    /// they empty is dropped as its last output goes; only a sync can say which hook records stay.
     pub(crate) fn finish(&mut self, unplaced: IndexMap<String, LockedItemV2>) {
         self.items.retain(|_, item| !item.outputs.is_empty());
         self.items.extend(unplaced);

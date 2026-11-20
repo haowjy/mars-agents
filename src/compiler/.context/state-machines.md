@@ -29,7 +29,7 @@ Codex). It lives outside target sync, so only the lock owns it. Defined in `nati
 cannot read; `desired_native_agent_outputs` computes the desired set;
 `run_native_agent_post_sync_lifecycle` resolves overlays once, then runs
 `reconcile_native_agent_surfaces` (removals), then `compile_native_agents` and
-`emit_lowered_native_agent` (writes). On disk, `surface_ownership::copy_decision` gives the pair
+`emit_lowered_native_agent` (writes). On disk, `surface_ownership::resolve_copy` gives the pair
 (file exists, lock has an installed claim). `recorded` is a `CompiledNativeOutput`.
 
 ```mermaid

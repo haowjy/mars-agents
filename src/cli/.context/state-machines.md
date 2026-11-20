@@ -5,7 +5,7 @@ machines here are the commands that carry a multi-step change of their own: whic
 command runs against, claiming and releasing a target, adopting a file, resolving conflicts,
 releasing and scaffolding. Two authorities sit outside this page and are named once: the lock
 (`OutputState`, `ConfigEntryRecord.emitted_json`; see [lock](../../lock/.context/state-machines.md))
-and surface ownership (`may_delete`, `copy_decision`; see
+and surface ownership (`may_delete`, `resolve_copy`; see
 [surface ownership](../../surface_ownership/.context/CONTEXT.md)). The index of all machines is
 [state-machines/index.md](../../../.context/state-machines/index.md).
 
@@ -63,13 +63,13 @@ stateDiagram-v2
 An instance of [an ownership record](../../../.context/state-machines/ownership-record.md).
 
 - **A kill after the copies and before the lock write** leaves files the lock does not claim. The
-  next `mars link` or `mars sync` warns `target-unmanaged-collision` and skips them, and the user
-  has to `--force` to adopt files they never wrote.
+  next `mars link` or `mars sync` adopts those whose content is what it would write, silently, and
+  warns `target-unmanaged-collision` on the rest, which the user has to `--force` to adopt.
 - **A kill after the lock write and before `config.save`** leaves the lock claiming outputs for a
   target that settings do not list. `unlink` treats a target the lock claims as managed
   (`target::lock_claims`) and cleans it up; `link` finds the claim installed and finishes it.
-  The kill after the copies is not repaired: matching bytes are not evidence of ownership, so the
-  claim would have to be published before the copies.
+  The kill after the copies is repaired by the next write: bytes equal to what Mars would write
+  are adopted, not treated as the user's.
 - `--force` also decides adoption diagnostics: `warn_no_installed_claim_adopted` fires only when a
   claim is missing, so re-linking an already linked target is silent.
 
@@ -158,7 +158,7 @@ stateDiagram-v2
 - `mars resolve` re-stamps `OutputRecord::mark_installed` for each item whose markers are gone and
   whose hash differs from the record, then writes the lock once if anything changed. Killed
   before that, nothing changed.
-- `list --status`, `doctor` (`TargetDivergence`) and `target_sync` (`SurfaceCopyDecision`) each
+- `list --status`, `doctor` (`TargetDivergence`) and `target_sync` (`resolve_copy`) each
   classify an item's disk state themselves.
 
 ## Release

@@ -201,7 +201,7 @@ fn a_file_where_the_hook_directory_belongs_warns_and_withholds_the_entry() {
 }
 
 #[test]
-fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
+fn identical_unmanaged_hook_is_adopted_and_then_removed_with_its_source() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -230,18 +230,15 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
 
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("no installed-content claim"))
-        .stderr(predicate::str::contains("`hooks/audit`"))
-        // The collision above is the one cause; the entry it withholds is not reported again.
-        .stderr(predicate::str::contains("not emitting hook").not());
+        .stderr(predicate::str::contains("no installed-content claim").not());
     installed.child("run.sh").assert("#!/bin/sh\n");
     project
         .child(".claude/settings.local.json")
-        .assert(predicate::path::missing());
+        .assert(predicate::path::exists());
 
     fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
     sync(&project).success();
-    installed.child("run.sh").assert("#!/bin/sh\n");
+    installed.assert(predicate::path::missing());
 }
 
 #[cfg(unix)]

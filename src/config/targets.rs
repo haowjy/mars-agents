@@ -126,9 +126,7 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     if let Some(harness) = harness {
         return NormalizedLink {
             raw: raw.to_string(),
-            target: crate::harness::registry::descriptor(harness)
-                .default_target
-                .to_string(),
+            target: harness.target_dir(),
             harness: Some(harness),
             kind: LinkKind::KnownHarness,
         };
@@ -209,18 +207,15 @@ fn cursor_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Dia
 /// Neither says the sync fell short of what it wanted.
 fn agents_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
     use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
-    use crate::target::{AGENTS_TARGET, TargetRegistry};
+    use crate::target::AGENTS_TARGET;
 
     if !managed.iter().any(|target| target == AGENTS_TARGET) {
         return None;
     }
     let unlink = crate::types::managed_cmd("mars unlink .agents");
-    let registry = TargetRegistry::new();
-    let reader = managed.iter().find(|target| {
-        registry
-            .get(target)
-            .is_some_and(|adapter| adapter.reads_agents_skills())
-    });
+    let reader = managed
+        .iter()
+        .find(|target| crate::target::spec(target).is_some_and(|spec| spec.reads_agents_skills));
     let (level, message) = match reader {
         Some(reader) => (
             DiagnosticLevel::Warning,

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 
 use crate::agent::{EffortLevel, EffortRequest};
-use crate::harness::{HarnessId, Host};
+use crate::harness::Host;
 use crate::models::{ModelReasoningRow, ReasoningOption};
 
 /// A set of levels. `Any` is a value, never an empty set: it is "no constraint".
@@ -177,26 +177,12 @@ pub struct EffortResolution {
     pub moved: Option<Move>,
 }
 
-/// The levels a harness takes, as of the versions recorded here. The harness's own default is
-/// always reachable by sending no effort, so no set lists it.
-///
-/// | Host | Levels | Checked against |
-/// |---|---|---|
-/// | Claude | `low`..`max`, no off | Claude Code 2.1.325 `--effort` help: low, medium, high, xhigh, max |
-/// | Codex | every level | Codex 0.167.0 `exec -c model_reasoning_effort=…` sends any value unchecked; the API rejected `minimal` on gpt-5.6-luna and listed none, low, medium, high, xhigh, max. models.dev decides per model: Codex's own presets (`codex debug models`) list low..max, plus `ultra` on six, and never `none`, and models.dev lacks `ultra`, `gpt-reserve` and `codex-auto-review` |
-/// | Pi | every level (`none` as `off`) | Pi 1.5.0 `--thinking` help: off, minimal, low, medium, high, xhigh, max |
-/// | OpenCode | `Any` | OpenCode 2.3.0 decodes models.dev `reasoning_options` itself (the string is in its binary) |
-/// | Cursor | `Any` here; the caller passes the levels its probe slugs list | Cursor probe listing |
-/// | Agy | `Any` here; the caller passes the levels its probe slugs list (`gemini-3.8-flash-low`) | `agy models` 1.5.12 |
-/// | Meridian Flow | `none` (as `off`), `low`, `medium`, `high`, `max` | meridian-runtime `src/gateway/domain/types.ts:63` (`REASONING_EFFORTS`), per Flow's gateway lead |
+/// The levels a host takes, as of the versions recorded on its row in `harness.rs`. The host's
+/// own default is always reachable by sending no effort, so no set lists it.
 pub fn harness_levels(host: Host) -> Levels {
-    use EffortLevel::*;
-    match host {
-        Host::Harness(HarnessId::Claude) => Levels::only([Low, Medium, High, XHigh, Max]),
-        Host::Harness(HarnessId::Codex | HarnessId::Pi) => Levels::only(EffortLevel::LADDER),
-        Host::Harness(HarnessId::OpenCode | HarnessId::Cursor | HarnessId::Agy) => Levels::Any,
-        Host::MeridianFlow => Levels::only([None, Low, Medium, High, Max]),
-    }
+    host.spec()
+        .effort
+        .map_or(Levels::Any, |levels| Levels::only(levels.iter().copied()))
 }
 
 /// Which way a request equally far from two levels moves. The one place the direction is set.
@@ -278,6 +264,7 @@ pub fn resolve_effort(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::HarnessId;
     use EffortLevel::{High, Low, Max, Medium, Minimal, XHigh};
     const OFF: EffortLevel = EffortLevel::None;
 

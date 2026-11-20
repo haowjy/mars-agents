@@ -139,7 +139,7 @@ const TOOLS: &[(&str, &[&str])] = &[
 ];
 
 /// Claude's tool input keys and the argument names `agy` has been seen to use. `Path` and
-/// `CommandLine` are observed payloads (`probe-agent-frontmatter.md` §9); the others are
+/// `CommandLine` are observed payloads; the others are
 /// names from `agy`'s tool schemas that no probe has shown a payload for.
 const ARGS: &[(&str, &[&str])] = &[
     ("command", &["CommandLine"]),

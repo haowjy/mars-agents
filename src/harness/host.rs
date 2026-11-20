@@ -6,7 +6,7 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 use crate::harness::registry;
-use crate::harness::registry::SlugShape;
+use crate::harness::registry::{HarnessClass, SlugShape};
 use crate::models::probes::ProbeRefreshMode;
 use crate::models::probes::cache::CachedProbeOutcome;
 use crate::models::probes::{Listing, ObservedOutcome, ProbeObservation};
@@ -57,15 +57,10 @@ impl CapabilitySession {
         options: &CapabilityCollectionOptions,
         resolver: &dyn ExecutableResolver,
     ) -> Self {
-        let installed = registry::descriptors()
+        let installed = mars_schema::harness::ALL
             .iter()
-            .filter(|descriptor| {
-                matches!(
-                    resolver.resolve(descriptor.binary),
-                    ExecutableState::Found { .. }
-                )
-            })
-            .map(|descriptor| descriptor.id.as_str().to_string())
+            .filter(|id| matches!(resolver.resolve(id.as_str()), ExecutableState::Found { .. }))
+            .map(|id| id.as_str().to_string())
             .collect();
 
         Self {
@@ -142,16 +137,14 @@ impl CapabilitySession {
             return None;
         }
         let mut probes = Vec::new();
-        for descriptor in registry::descriptors() {
-            let Some(spec) = registry::probe_spec(descriptor.id) else {
+        for &id in mars_schema::harness::ALL {
+            let Some(spec) = registry::probe_spec(id) else {
                 continue;
             };
-            if spec.slugs != SlugShape::Qualified
-                || !self.installed.contains(descriptor.id.as_str())
-            {
+            if spec.slugs != SlugShape::Qualified || !self.installed.contains(id.as_str()) {
                 continue;
             }
-            probes.push(match self.loaded_outcome(descriptor.id) {
+            probes.push(match self.loaded_outcome(id) {
                 None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
                 Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
                 Some(outcome) => ProbeListing::Listed(outcome.result()?.slugs.clone()),
@@ -253,7 +246,7 @@ pub fn native_auth_state_for_name(harness: &str) -> AuthState {
     };
 
     let resolver = PathExecutableResolver;
-    let state = resolver.resolve(registry::descriptor(id).binary);
+    let state = resolver.resolve(id.as_str());
     native_auth_state(id, &state, &resolver, auth_probe_timeout())
 }
 
@@ -263,17 +256,15 @@ fn native_auth_state(
     resolver: &dyn ExecutableResolver,
     timeout: Duration,
 ) -> AuthState {
-    let (binary, args) = match id {
-        HarnessId::Codex => ("codex", &["login", "status"][..]),
-        HarnessId::Claude => ("claude", &["auth", "status"][..]),
-        _ => return AuthState::Unchecked,
+    let HarnessClass::Native { auth_status, .. } = registry::descriptor(id).class else {
+        return AuthState::Unchecked;
     };
 
     if !matches!(executable, ExecutableState::Found { .. }) {
         return AuthState::Unauthenticated;
     }
 
-    run_status_command(binary, args, timeout, resolver)
+    run_status_command(id.as_str(), auth_status, timeout, resolver)
 }
 
 pub fn auth_probe_timeout() -> Duration {

@@ -633,9 +633,9 @@ any command lists every item whether it was written or not. The line lists the a
 targets and kinds lost as separate sets, so it stays true for any mix: each listed item loses at
 least one of the listed kinds on at least one of the listed targets. `--verbose` pairs them.
 
-A skill from a dependency is its author's to fix, so its loss (`model-invocable: false` on a
-target with no switch for it) is an `info` line, `N skills from dependencies lose restrictions
-…`, which `--verbose`, `mars validate` and `mars check` print; the project's own skills warn.
+A skill's loss (`model-invocable: false` on a target with no switch for it, so the model can
+pick the skill by itself) is in the same line, whether the skill is yours or a dependency's: the
+installed file does less than the package says.
 
 ```
 warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose restrictions across .codex, .opencode and .pi (shell, tool) that the target does not apply; run `mars sync --verbose` for the rules per item and target

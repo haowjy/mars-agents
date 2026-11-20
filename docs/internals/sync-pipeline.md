@@ -296,7 +296,7 @@ that never names the token has no directory and needs none.
 9. Compare desired entries against the previous lock and remove stale entries
    before writing replacements. Hook removal is ownership-gated. MCP
    servers skip this step: step 10 removes and writes them in one pass.
-10. Write desired entries to target config files: MCP through each adapter's
+10. Write desired entries to target config files: MCP through each target's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
     pass per file (`keyed_entries::reconcile`: stale owned entries removed, desired
     ones written, one save), hooks through the adapter (`settings.local.json`,
@@ -325,7 +325,7 @@ Writes lock and constructs the final `SyncReport`.
 
 - **Lock write**: constructs new `mars.lock` from resolved graph + apply outcomes (checksums). Keys sorted deterministically for clean git diffs. Lock is written **regardless of target sync outcome** — this ensures the lock always reflects what's in `.mars/`, even if a target sync failed.
 - **Model aliases**: persists dependency-only alias winners to committed `mars.lock` (`dependency_model_aliases`). Consumer aliases are not baked into lock state, so `mars models aliases` overlays current consumer config at read time.
-- **Validation warnings**: emits diagnostics for missing skill references in agents.
+- **Validation warnings**: emits diagnostics for missing skill references in agents. A dependency's is held until a sync installs or updates that source's items (`hold_until_written`).
 - **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 
 ## Project-Local Items (`_self`)

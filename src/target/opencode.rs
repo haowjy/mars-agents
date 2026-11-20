@@ -1,14 +1,9 @@
-use crate::types::DestPath;
-use mars_schema::HarnessId;
-use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::McpTransport;
 use mars_schema::mcp_servers::{McpRender, env_map, header_map};
 
-use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
+use super::McpServerEntry;
 
-const MCP_SECTION: &str = "mcp";
-
-fn render(server: &McpServerEntry) -> McpRender {
+pub(super) fn render(server: &McpServerEntry) -> McpRender {
     let interpolate = |var: &str| format!("{{env:{var}}}");
     let entry = match &server.transport {
         McpTransport::Stdio { command, args, env } => {
@@ -30,30 +25,4 @@ fn render(server: &McpServerEntry) -> McpRender {
         }
     };
     McpRender::exact(entry)
-}
-
-#[derive(Debug)]
-pub struct OpencodeAdapter;
-
-impl TargetAdapter for OpencodeAdapter {
-    fn harness(&self) -> Option<HarnessId> {
-        Some(HarnessId::OpenCode)
-    }
-
-    fn mcp_file(&self) -> Option<McpFile> {
-        Some(McpFile {
-            at: KeyedSection {
-                path: ".opencode/opencode.json",
-                format: SectionFormat::JsonSection(MCP_SECTION),
-            },
-            render,
-        })
-    }
-
-    fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
-        match kind {
-            ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),
-            _ => None,
-        }
-    }
 }

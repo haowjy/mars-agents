@@ -181,7 +181,7 @@ pub(crate) fn selection_facts(
 impl Prepared {
     /// The changes that lost a restriction (a `deny` or `ask` tool entry, `permission`,
     /// `sandbox`, `approval`), by source path. Unlike the rest of `changes`, a caller reports
-    /// these on every run: each leaves an agent less restricted than its file says.
+    /// these as lost behaviour: each leaves an agent less restricted than its file says.
     pub fn lost_restrictions(&self) -> impl Iterator<Item = (&str, &SchemaDiagnostic)> {
         self.changes.iter().flat_map(|(path, changes)| {
             changes
@@ -455,12 +455,7 @@ fn report_unconverted(
         diagnostics
             .entry(path.to_owned())
             .or_default()
-            .push(SchemaDiagnostic::new(
-                code,
-                Severity::Warning,
-                Vec::new(),
-                message,
-            ));
+            .push(SchemaDiagnostic::new(code, Severity::Warning, Vec::new(), message).losing());
     };
     if !dispatched.discovery.dropped.is_empty() {
         warn(

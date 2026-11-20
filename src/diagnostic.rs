@@ -79,8 +79,9 @@ impl Diagnostic {
 }
 
 /// Who wrote what a problem is about, and so who can fix it: the project's own file is the
-/// user's to change; a dependency's is its author's. A finding in a dependency's file is `Info`
-/// to the installer, who loses nothing they can get back, and a `Warning` to its author.
+/// user's to change; a dependency's is its author's. When nothing the package declares is lost,
+/// a finding in a dependency's file is `Info` to the installer and a `Warning` to its author.
+/// A loss is a `Warning` to both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Owner<'a> {
     Own,
@@ -98,11 +99,14 @@ impl<'a> Owner<'a> {
         }
     }
 
-    pub(crate) fn dependency(self) -> Option<&'a str> {
-        match self {
-            Self::Own => None,
-            Self::Dependency(source) => Some(source),
-        }
+    /// What `DiagnosticCollector::hold_until_written` keeps a loss under, and a sync's write of
+    /// this owner's files releases.
+    fn written_key(self) -> String {
+        let source = match self {
+            Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
+            Self::Dependency(source) => source.to_owned(),
+        };
+        format!("source {source}")
     }
 }
 
@@ -194,8 +198,10 @@ pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     grouped: Vec<GroupedItems>,
     /// What a native file lacks, by the entry that lacks it, until a write of that entry
-    /// releases it (`hold`); `--verbose` releases all.
+    /// releases it (`hold`).
     held: Vec<(String, Diagnostic)>,
+    /// The `Owner::written_key`s whose files this run wrote, for a loss found after the write.
+    written: std::collections::HashSet<String>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
     /// The command that re-runs this one with `--verbose`, named in the default lossiness line.
@@ -225,6 +231,7 @@ impl DiagnosticCollector {
             diagnostics: Vec::new(),
             grouped: Vec::new(),
             held: Vec::new(),
+            written: std::collections::HashSet::new(),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             rerun_verbose: "mars sync --verbose",
@@ -255,6 +262,14 @@ impl DiagnosticCollector {
             self.note_unknown_field(code, &diagnostic.message, context);
         } else if diagnostic.severity == Severity::Error {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
+        } else if diagnostic.lost {
+            self.hold_until_written(
+                owner,
+                Diagnostic {
+                    category: Some(DiagnosticCategory::Advisory),
+                    ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
+                },
+            );
         } else if diagnostic.severity == Severity::Info || owner != Owner::Own {
             self.info(code, message);
         } else {
@@ -294,13 +309,11 @@ impl DiagnosticCollector {
 
     /// Buffer one lowered item's lossy fields; `drain` renders them by mode. `written` is
     /// whether this run wrote or changed the item's native file; a caller that previews
-    /// passes `true`. `from` names the dependency an item came from, `None` for the
-    /// project's own: only the project's own are the user's to fix.
+    /// passes `true`.
     pub fn record_lossy_fields(
         &mut self,
         item_kind: &'static str,
         item_name: &str,
-        from: Option<&str>,
         fields: &[LossyField],
         written: bool,
     ) {
@@ -312,7 +325,6 @@ impl DiagnosticCollector {
                 item_kind,
                 item_name: item_name.to_string(),
                 field: field.clone(),
-                from: from.map(str::to_owned),
                 written,
             }));
     }
@@ -410,9 +422,30 @@ impl DiagnosticCollector {
     }
 
     /// Keep a loss found while rendering the native entry `entry` until the entry is written:
-    /// a loss on an entry that stays as it was is not news. See [`Self::release`].
+    /// a loss on an entry that stays as it was is not news. See [`Self::release`]. A command
+    /// that lists every loss (`--verbose`, `mars check`) shows it at once; one that hides them
+    /// drops it.
     pub(crate) fn hold(&mut self, entry: String, diagnostic: Diagnostic) {
-        self.held.push((entry, diagnostic));
+        match self.lossiness_mode {
+            LossinessMode::Written | LossinessMode::Hidden => self.held.push((entry, diagnostic)),
+            LossinessMode::Surface | LossinessMode::Verbose => self.diagnostics.push(diagnostic),
+        }
+    }
+
+    /// [`Self::hold`] for a loss as a warning: the user gets less than the item declares.
+    pub(crate) fn hold_warning(
+        &mut self,
+        entry: String,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        self.hold(
+            entry,
+            Diagnostic {
+                category: Some(DiagnosticCategory::Advisory),
+                ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
+            },
+        );
     }
 
     /// Report what `hold` kept for `entry`: this run wrote it.
@@ -423,6 +456,25 @@ impl DiagnosticCollector {
         self.held = held;
         self.diagnostics
             .extend(released.into_iter().map(|(_, diagnostic)| diagnostic));
+    }
+
+    /// A loss in what `owner` installed, reported by the sync that writes its files (`release_written`; a loss found
+    /// after the write is reported at once),
+    /// not by every sync after it. A command that does not write shows it at once.
+    pub(crate) fn hold_until_written(&mut self, owner: Owner<'_>, diagnostic: Diagnostic) {
+        let key = owner.written_key();
+        if self.lossiness_mode == LossinessMode::Written && !self.written.contains(&key) {
+            self.hold(key, diagnostic);
+        } else {
+            self.diagnostics.push(diagnostic);
+        }
+    }
+
+    /// This sync installed or changed `source`'s files: report what `hold_until_written` kept.
+    pub(crate) fn release_written(&mut self, owner: Owner<'_>) {
+        let key = owner.written_key();
+        self.release(&key);
+        self.written.insert(key);
     }
 
     pub(crate) fn warn_once(
@@ -534,10 +586,6 @@ impl DiagnosticCollector {
             self.lossiness_mode,
             self.rerun_verbose,
         ));
-        if self.lossiness_mode.verbose() {
-            self.diagnostics
-                .extend(std::mem::take(&mut self.held).into_iter().map(|(_, d)| d));
-        }
         self.held.clear();
         for group in std::mem::take(&mut self.grouped) {
             let shown = if self.lossiness_mode.verbose() {
@@ -644,7 +692,7 @@ mod tests {
     #[test]
     fn collector_verbose_surfaces_meridian_only_detail() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
-        coll.record_lossy_fields("agent", "coder", None, &[meridian_only("approval")], true);
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")], true);
         let diags = coll.drain();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "agent-field-meridian-only");
@@ -653,7 +701,7 @@ mod tests {
     #[test]
     fn collector_surface_is_silent_about_meridian_only_fields() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.record_lossy_fields("agent", "coder", None, &[meridian_only("approval")], true);
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")], true);
         let diags = coll.drain();
         assert!(diags.is_empty());
     }

@@ -14,7 +14,6 @@ use super::metadata::PackageMetadata;
 use super::tree::{claude, cursor, opencode};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::harness::registry::{HarnessDescriptor, descriptor};
 use crate::sync::target::TargetItem;
 use crate::target::{HookEntry, McpServerEntry};
 use mars_schema::HarnessId;
@@ -182,12 +181,6 @@ pub(super) struct TreeProfile {
     pub(super) check_hook: HookCheck,
     pub(super) write_config: ConfigWriter,
     pub(super) finish: Finish,
-}
-
-impl TreeProfile {
-    pub(super) fn descriptor(&self) -> &'static HarnessDescriptor {
-        descriptor(self.harness)
-    }
 }
 
 pub(crate) struct PluginHarnessSpec {

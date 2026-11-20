@@ -173,7 +173,7 @@ impl HookDef {
         } else {
             let output =
                 self.merge_output(target, &target.profile, native_hook_text, origin, tokens)?;
-            Ok(if target.keyed_file().is_some() {
+            Ok(if target.keyed_path().is_some() {
                 HookOutput::Keyed(output)
             } else {
                 HookOutput::Merge(output)
@@ -326,7 +326,7 @@ impl HookDef {
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
         for (event, entries) in sorted {
-            if event == "enabled" && target.keyed_file().is_some() {
+            if event == "enabled" && target.keyed_path().is_some() {
                 let OrderedValue::Bool(enabled) = entries else {
                     return Err(err("`enabled` must be true or false".into()));
                 };

@@ -441,7 +441,7 @@ fn implicit_consumer_config(
             targets: Some(
                 profiles
                     .iter()
-                    .map(|profile| profile.descriptor().default_target.to_string())
+                    .map(|profile| profile.harness.target_dir())
                     .collect(),
             ),
             ..Settings::default()

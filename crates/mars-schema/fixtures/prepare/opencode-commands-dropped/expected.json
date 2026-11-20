@@ -89,7 +89,8 @@
         "code": "import.commands-dropped",
         "severity": "warning",
         "path": [],
-        "message": "commands are not imported (convert one to a skill): commands/ship.md"
+        "message": "commands are not imported (convert one to a skill): commands/ship.md",
+        "lost": true
       }
     ]
   }

@@ -9,7 +9,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
 use crate::target::plugin::HOOK_ENTRY_KIND;
-use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetAdapter};
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetSpec};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
 use mars_schema::hooks::targets::Profile;
@@ -34,11 +34,9 @@ pub(crate) fn preflight_config_entries(
 ) -> Result<RenderedHooks, crate::error::MarsError> {
     use crate::compiler::hooks::load_output;
     use crate::error::{ConfigError, MarsError};
-    use crate::target::TargetRegistry;
     use mars_schema::hooks::Tokens;
 
     let resolved = &targeted.resolved;
-    let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     let mut rendered = HashMap::new();
     let mut reported: HashMap<(String, String), Vec<Skip>> = HashMap::new();
@@ -48,10 +46,9 @@ pub(crate) fn preflight_config_entries(
     let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for target in &managed {
-        for (kind, _) in registry
-            .get(target)
+        for (kind, _) in crate::target::spec(target)
             .into_iter()
-            .flat_map(|a| a.fixed_entries(&ctx.project_root))
+            .flat_map(|spec| spec.fixed_entries(&ctx.project_root))
         {
             keyed_touched
                 .entry(target.clone())
@@ -60,10 +57,9 @@ pub(crate) fn preflight_config_entries(
         }
     }
     for (target, records) in &resolved.loaded.old_lock.config_entries {
-        for (kind, _) in registry
-            .get(target)
+        for (kind, _) in crate::target::spec(target)
             .into_iter()
-            .flat_map(|adapter| adapter.keyed_sections())
+            .flat_map(|spec| spec.keyed_sections())
         {
             if records.keys().any(|key| key.starts_with(kind.key_prefix)) {
                 keyed_touched
@@ -84,7 +80,7 @@ pub(crate) fn preflight_config_entries(
     }
     for (dir, _) in targeted.target.selected_hooks() {
         let target = dir.target().to_string();
-        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_file().is_some()) {
+        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_path().is_some()) {
             keyed_touched
                 .entry(target.clone())
                 .or_default()
@@ -102,10 +98,10 @@ pub(crate) fn preflight_config_entries(
             errors.push(error);
             continue;
         }
-        let Some(adapter) = registry.get(target_name) else {
+        let Some(spec) = crate::target::spec(target_name) else {
             continue;
         };
-        for (kind, location) in adapter.keyed_sections() {
+        for (kind, location) in spec.keyed_sections() {
             if !keyed_touched
                 .get(target_name)
                 .is_some_and(|kinds| kinds.contains(kind.key_prefix))
@@ -151,7 +147,7 @@ pub(crate) fn preflight_config_entries(
         };
         // A keyed hook's commands run from the plugin directory, so its directory is the
         // relative path there and the file stays valid wherever the target is.
-        let installed = if target.keyed_file().is_some() {
+        let installed = if target.keyed_path().is_some() {
             dir.native()
         } else {
             installed_token(ctx, dir)
@@ -180,7 +176,8 @@ pub(crate) fn preflight_config_entries(
                     }
                 }
                 for limit in &merged.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -195,7 +192,7 @@ pub(crate) fn preflight_config_entries(
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.warn_advisory("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(hook_entry_key(target_name, &item.def.name), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -229,7 +226,8 @@ pub(crate) fn preflight_config_entries(
                     );
                 }
                 for limit in &files.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -274,9 +272,16 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took. The project's own hooks warn, each skip once. A dependency's
-/// hooks are the consumer's to accept, not fix: one summary line per sync.
+/// What names a hook's entry on a target for `DiagnosticCollector::hold`: a loss concerning
+/// the hook's output there is news when the sync writes or changes that output, whoever owns
+/// the hook. `compile_config_entries` releases it.
+pub(super) fn hook_entry_key(target: &str, hook: &str) -> String {
+    format!("{target} hook {hook}")
+}
+
+/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target.
+/// A pair no target took has no entry to write, so nothing releases its line: only a command
+/// that lists every loss shows it.
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -284,7 +289,6 @@ fn report_skips(
     diag: &mut DiagnosticCollector,
 ) {
     let mut seen = BTreeSet::new();
-    let mut from_dependencies = Vec::new();
     for item in targeted.target.accepted_hooks() {
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
@@ -297,32 +301,20 @@ fn report_skips(
                 continue;
             }
             let lines: Vec<String> = skips.iter().map(skip_text).collect();
-            match item.origin {
-                Origin::Local => {
-                    for line in lines {
-                        diag.warn_advisory(
-                            "hook-event-skipped",
-                            format!("hook `{}`: `{target}` {line}", item.def.name),
-                        );
-                    }
-                }
-                Origin::Dependency => from_dependencies.push(format!(
-                    "{}/{} on `{target}` ({} left out)",
-                    item.source_name,
+            let from = match item.origin {
+                Origin::Local => String::new(),
+                Origin::Dependency => format!(" from `{}`", item.source_name),
+            };
+            diag.hold_warning(
+                hook_entry_key(target, &item.def.name),
+                "hook-event-skipped",
+                format!(
+                    "hook `{}`{from}: `{target}` {}",
                     item.def.name,
-                    lines.len()
-                )),
-            }
+                    lines.join("; ")
+                ),
+            );
         }
-    }
-    if !from_dependencies.is_empty() {
-        diag.info(
-            "hook-event-skipped",
-            format!(
-                "some events or handlers of dependency hooks have no counterpart on a managed target: {}",
-                from_dependencies.join(", ")
-            ),
-        );
     }
 }
 
@@ -342,12 +334,13 @@ fn hook_key(item: &ParsedHookItem) -> String {
 /// tree is shared by every harness that reads it.
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
-    adapter: &dyn TargetAdapter,
+    target: &TargetSpec,
     shared: Option<&Profile>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
+    let name = target.name();
     let Some(target) =
-        mars_schema::hooks::targets::target(adapter.name()).filter(|t| t.merge_file().is_some())
+        mars_schema::hooks::targets::target(&name).filter(|t| t.merge_file().is_some())
     else {
         return Vec::new();
     };
@@ -367,7 +360,7 @@ pub(crate) fn lower_hook_entries(
                             "hook `{}` from `{}`: the `{}` plugin tree {}",
                             item.def.name,
                             item.source_name,
-                            adapter.name().trim_start_matches('.'),
+                            name.trim_start_matches('.'),
                             skip_text(skip)
                         ),
                     );

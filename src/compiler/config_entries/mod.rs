@@ -18,7 +18,7 @@ use crate::sync::package_dir::PackageDir;
 use crate::target::keyed_entries::{self, KeyedKind};
 use crate::target::mcp_file::{self, MCP_KIND};
 use crate::target::plugin::HOOK_ENTRY_KIND;
-use crate::target::{HOOK_KEY_PREFIX, HookEntry, McpDirs, McpServerEntry, TargetRegistry};
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, McpDirs, McpServerEntry};
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
 use mars_schema::hooks::HookOutput;
@@ -30,7 +30,7 @@ pub(crate) struct ConfigEntryCompilation {
     pub rewritten_outputs: Vec<(String, String)>,
     /// Keyed-entry config files this run wrote or deleted, as `(target_root, file path, what
     /// it holds)`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -60,7 +60,6 @@ pub(crate) fn compile_config_entries(
     diag: &mut DiagnosticCollector,
 ) -> ConfigEntryCompilation {
     use crate::compiler::mcp::check_env_refs;
-    use crate::target::TargetRegistry;
 
     let effective = &applied.planned.targeted.resolved.loaded.effective;
     let target_roots: Vec<String> = crate::config::targets::managed_targets(&effective.settings);
@@ -82,13 +81,14 @@ pub(crate) fn compile_config_entries(
         diag.warn_advisory("mcp-env", format!("MCP env check failed: {e}"));
     }
 
-    let registry = TargetRegistry::new();
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
     let mut desired_keyed: DesiredKeyed = BTreeMap::new();
     let mut pending_hooks: BTreeMap<String, Vec<HookEntry>> = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     let mut desired_file_outputs = std::collections::BTreeSet::new();
+    // Each installed hook with the files it writes on a target, for releasing its held losses.
+    let mut installed_hook_outputs: Vec<(String, String, Vec<String>)> = Vec::new();
     let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
 
@@ -96,7 +96,7 @@ pub(crate) fn compile_config_entries(
     // is name-based across native events, so it must run before replacement
     // bindings with the same name are written.
     for target_root in &target_roots {
-        let Some(adapter) = registry.get(target_root) else {
+        let Some(spec) = crate::target::spec(target_root) else {
             continue;
         };
         let installed_hooks = applied
@@ -122,7 +122,7 @@ pub(crate) fn compile_config_entries(
             .iter()
             .map(|(dir, item)| {
                 (
-                    adapter.mcp_dirs(&dir.native(), &installed_token(ctx, dir)),
+                    spec.mcp_dirs(&dir.native(), &installed_token(ctx, dir)),
                     *item,
                 )
             })
@@ -133,7 +133,19 @@ pub(crate) fn compile_config_entries(
         let mut keyed_hooks = Vec::new();
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
-            match rendered_hooks.get(dir) {
+            let output = rendered_hooks.get(dir);
+            installed_hook_outputs.push((
+                target_root.clone(),
+                item.def.name.clone(),
+                match output {
+                    HookOutput::Merge(out) | HookOutput::Keyed(out) => &out.files,
+                    HookOutput::File(out) => &out.files,
+                }
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
+            ));
+            match output {
                 HookOutput::Merge(output) => merge_outputs.push((*item, output)),
                 HookOutput::Keyed(output) => {
                     keyed_hooks.push(keyed_entries::Rendered {
@@ -227,8 +239,8 @@ pub(crate) fn compile_config_entries(
 
         // Render each server once. Lossiness warnings come with the render, so
         // they run even on dry runs.
-        let rendered = adapter
-            .mcp_file()
+        let rendered = spec
+            .mcp
             .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
             .unwrap_or_default();
         let mut rendered = rendered;
@@ -257,7 +269,7 @@ pub(crate) fn compile_config_entries(
         let keyed: Vec<(KeyedKind, keyed_entries::Rendered)> = rendered
             .into_iter()
             .map(|server| (MCP_KIND, server))
-            .chain(adapter.fixed_entries(&ctx.project_root))
+            .chain(spec.fixed_entries(&ctx.project_root))
             .chain(keyed_hooks.into_iter().map(|hook| (HOOK_ENTRY_KIND, hook)))
             .collect();
         let target_records: BTreeMap<_, _> = keyed
@@ -372,7 +384,6 @@ pub(crate) fn compile_config_entries(
             &mut scratch
         };
         let config_files_changed = reconcile_all_keyed(
-            &registry,
             &ctx.project_root,
             previous_records,
             &desired_keyed,
@@ -441,7 +452,6 @@ pub(crate) fn compile_config_entries(
         removed: keyed_removed,
         files_changed: config_files_changed,
     } = reconcile_all_keyed(
-        &registry,
         &ctx.project_root,
         previous_records,
         &desired_keyed,
@@ -474,7 +484,74 @@ pub(crate) fn compile_config_entries(
             .extend(records);
     }
     warn_untrusted(&trust_before, &trust_snapshots(ctx, &target_roots), diag);
+    release_written_hooks(&installed_hook_outputs, previous_records, &compiled, diag);
+    release_unplaced_hooks(applied, &target_roots, diag);
     compiled
+}
+
+/// A loss in a hook's output on a target is news when this sync wrote or changed that output:
+/// its config entries differ from the lock's, or one of its files was rewritten.
+fn release_written_hooks(
+    installed: &[(String, String, Vec<String>)],
+    previous: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    compiled: &ConfigEntryCompilation,
+    diag: &mut DiagnosticCollector,
+) {
+    fn entries_of<'a>(
+        records: Option<&'a BTreeMap<String, ConfigEntryRecord>>,
+        name: &str,
+    ) -> BTreeMap<&'a String, &'a ConfigEntryRecord> {
+        records
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| {
+                **key == HOOK_ENTRY_KIND.key(name)
+                    || key
+                        .strip_prefix(HOOK_KEY_PREFIX)
+                        .and_then(|rest| rest.split_once(':'))
+                        .is_some_and(|(_, hook)| hook == name)
+            })
+            .collect()
+    }
+    for (target, name, files) in installed {
+        let rewritten = files.iter().any(|file| {
+            compiled
+                .rewritten_outputs
+                .iter()
+                .any(|(root, path)| root == target && path == file)
+        });
+        if rewritten
+            || entries_of(compiled.records.get(target), name)
+                != entries_of(previous.get(target), name)
+        {
+            diag.release(&render::hook_entry_key(target, name));
+        }
+    }
+}
+
+/// A hook no managed target takes writes nothing, so its loss is news when its own lock
+/// record (source, checksum) is new or changed.
+fn release_unplaced_hooks(
+    applied: &AppliedState,
+    target_roots: &[String],
+    diag: &mut DiagnosticCollector,
+) {
+    let targeted = &applied.planned.targeted;
+    let old_items = &targeted.resolved.loaded.old_lock.items;
+    for hook in targeted.target.unplaced_hooks(target_roots) {
+        let unchanged = old_items
+            .get(&crate::lock::unplaced_hook_key(&hook.def.name))
+            .is_some_and(|old| {
+                old.source.as_ref() == hook.source_name
+                    && crate::sync::target::hook_checksum(hook)
+                        .is_ok_and(|now| now == old.source_checksum)
+            });
+        if !unchanged {
+            for target in target_roots {
+                diag.release(&render::hook_entry_key(target, &hook.def.name));
+            }
+        }
+    }
 }
 
 type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;
@@ -572,13 +649,12 @@ pub(crate) struct KeyedReconciliation {
     pub removed: BTreeMap<String, Vec<String>>,
     /// `(target_root, file path, what the file holds)` of each file written or deleted (or, in
     /// a dry run, to be).
-    pub files_changed: Vec<(String, String, &'static str)>,
+    pub files_changed: Vec<(String, String, crate::target::KeyedKind)>,
 }
 
 /// Reconcile every keyed section each target's adapter declares: a target no longer managed
 /// still gets its recorded entries removed.
 pub(crate) fn reconcile_all_keyed(
-    registry: &TargetRegistry,
     project_root: &Path,
     previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     desired: &DesiredKeyed,
@@ -597,11 +673,11 @@ pub(crate) fn reconcile_all_keyed(
         .chain(desired.keys())
         .collect::<BTreeSet<_>>()
     {
-        let Some(adapter) = registry.get(target_root) else {
+        let Some(spec) = crate::target::spec(target_root) else {
             continue;
         };
         let previous = previous_records.get(target_root).unwrap_or(&no_records);
-        for (kind, section) in adapter.keyed_sections() {
+        for (kind, section) in spec.keyed_sections() {
             let wanted: Vec<_> = desired
                 .get(target_root)
                 .into_iter()
@@ -631,11 +707,8 @@ pub(crate) fn reconcile_all_keyed(
                 .or_default()
                 .extend(reconciled.removed);
             if reconciled.changed {
-                out.files_changed.push((
-                    target_root.clone(),
-                    section.path.to_string(),
-                    kind.plural,
-                ));
+                out.files_changed
+                    .push((target_root.clone(), section.path.to_string(), kind));
             }
         }
     }

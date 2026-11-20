@@ -69,14 +69,14 @@ pub(super) fn pretty_json_bytes(
     Ok(bytes)
 }
 
-/// Render servers through the sync adapter's own MCP spec, keyed by name.
+/// Render servers through the sync target's own MCP spec, keyed by name.
 pub(super) fn render_servers(
-    adapter: &dyn crate::target::TargetAdapter,
+    target: &crate::target::TargetSpec,
     servers: &[McpServerEntry],
 ) -> serde_json::Map<String, serde_json::Value> {
-    let file = adapter
-        .mcp_file()
-        .expect("a plugin tree profile renders through an adapter that takes MCP servers");
+    let file = target
+        .mcp
+        .expect("a plugin tree profile renders through a target that takes MCP servers");
     servers
         .iter()
         .map(|server| (server.name.clone(), (file.render)(server).value))
@@ -222,7 +222,7 @@ pub(super) fn check_sources(
     for profile in profiles {
         for (_, item) in input
             .target
-            .selected_mcp_for_target(profile.descriptor().default_target)
+            .selected_mcp_for_target(&profile.harness.target_dir())
         {
             if seen_mcp.insert(item.source_path.clone()) {
                 let content = std::fs::read_to_string(&item.source_path)?;
@@ -240,7 +240,7 @@ pub(super) fn check_sources(
     for profile in profiles {
         for (_, hook) in input
             .target
-            .selected_hooks_for_target(profile.descriptor().default_target)
+            .selected_hooks_for_target(&profile.harness.target_dir())
         {
             (profile.check_hook)(hook, diag);
         }
@@ -273,7 +273,7 @@ pub(super) fn write_tree(
     profile: &'static TreeProfile,
     diag: &mut DiagnosticCollector,
 ) -> Result<BuiltTree, MarsError> {
-    let descriptor = profile.descriptor();
+    let target_dir = profile.harness.target_dir();
 
     let installed_skills: IndexMap<String, String> = input
         .target
@@ -311,9 +311,9 @@ pub(super) fn write_tree(
     // the generated config points at this tree's copy.
     let hooks = input
         .target
-        .selected_hooks_for_target(descriptor.default_target)
+        .selected_hooks_for_target(&target_dir)
         .map(|(dir, hook)| {
-            let excluded = other_hook_native_hooks(hook, descriptor.default_target);
+            let excluded = other_hook_native_hooks(hook, &target_dir);
             crate::fs::copy_dir_filtered(&hook.hook_dir, &root.join(dir.native()), &excluded)?;
             Ok((
                 profile
@@ -326,7 +326,7 @@ pub(super) fn write_tree(
     // A server whose `command`/`args` name no directory ships no copy.
     let mcp = input
         .target
-        .selected_mcp_for_target(descriptor.default_target)
+        .selected_mcp_for_target(&target_dir)
         .map(|(dir, item)| {
             if item.uses_dir_token() {
                 crate::fs::copy_dir_filtered(item.server_dir(), &root.join(dir.native()), &[])?;
@@ -341,14 +341,11 @@ pub(super) fn write_tree(
             ))
         })
         .collect::<Result<Vec<_>, MarsError>>()?;
-    let registry = crate::target::TargetRegistry::new();
-    let adapter = registry
-        .get(descriptor.default_target)
-        .expect("harness descriptor names a registered target");
+    let target = crate::target::for_harness(profile.harness);
     let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
     let hook_entries = crate::compiler::config_entries::render::lower_hook_entries(
         &hooks,
-        adapter,
+        target,
         profile.shared_hook_profile,
         diag,
     );
@@ -402,7 +399,6 @@ impl ModelFallbackCounts {
 
     fn emit(&self, profile: &TreeProfile, diag: &mut DiagnosticCollector) {
         if !self.via_policy.is_empty() {
-            let descriptor = profile.descriptor();
             let agents = self
                 .via_policy
                 .iter()
@@ -419,7 +415,7 @@ impl ModelFallbackCounts {
                 format!(
                     "{} {noun} {verb} a model-policies fallback model in the {} tree: {agents}",
                     self.via_policy.len(),
-                    descriptor.display_name
+                    profile.harness.display_name()
                 ),
             );
         }
@@ -427,25 +423,24 @@ impl ModelFallbackCounts {
         if total == 0 {
             return;
         }
-        let descriptor = profile.descriptor();
         let agents = if total == 1 { "agent" } else { "agents" };
         let verb = if total == 1 { "uses" } else { "use" };
         let reason = match (self.not_package_alias, self.no_deterministic_id) {
             (0, _) => format!(
                 "configured models have no deterministic {} id",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
             (_, 0) => "configured model tokens are not package aliases".to_string(),
             (not_aliases, no_ids) => format!(
                 "{not_aliases} model tokens are not package aliases and {no_ids} have no deterministic {} id",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
         };
         diag.info(
             "plugin-model-default",
             format!(
                 "{total} {agents} {verb} the {} harness default because {reason}",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
         );
     }
@@ -488,7 +483,9 @@ fn lower_agent(
     effective
         .name
         .get_or_insert_with(|| item.id.name.to_string());
-    if tree_profile.harness == mars_schema::HarnessId::Claude && effective.description.is_none() {
+    if crate::compiler::lowering::lowering(tree_profile.harness).needs_description
+        && effective.description.is_none()
+    {
         diag.warn(
             "native-agent-no-description",
             format!(
@@ -538,14 +535,8 @@ fn lower_agent(
         );
     }
     let lowered =
-        lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
-    diag.record_lossy_fields(
-        "agent",
-        item.id.name.as_str(),
-        None,
-        &lowered.lossy_fields,
-        true,
-    );
+        lower_for_harness_with_model(tree_profile.harness, &effective, &body, &model.native);
+    diag.record_lossy_fields("agent", item.id.name.as_str(), &lowered.lossy_fields, true);
 
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(

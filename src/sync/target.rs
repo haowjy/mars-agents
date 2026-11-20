@@ -83,6 +83,18 @@ impl TargetState {
         &self.accepted_hooks
     }
 
+    /// Accepted hooks no managed target takes. No item installs them, so the lock records
+    /// each one on its own (`hook/<name>`) and a change to that record is what makes a loss
+    /// worth reporting again.
+    pub(crate) fn unplaced_hooks<'a>(
+        &'a self,
+        managed_targets: &'a [String],
+    ) -> impl Iterator<Item = &'a crate::compiler::hooks::ParsedHookItem> {
+        self.accepted_hooks
+            .iter()
+            .filter(|hook| hook.def.select(managed_targets).is_empty())
+    }
+
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
         self.accepted_hooks.push(hook.clone());
     }
@@ -527,16 +539,20 @@ pub(crate) fn build_with_collisions_and_diag(
 }
 
 pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
-    let registry = crate::target::TargetRegistry::new();
     managed_targets
         .iter()
-        .filter(|target| {
-            registry
-                .get(target)
-                .is_some_and(|adapter| adapter.mcp_file().is_some())
-        })
+        .filter(|target| crate::target::spec(target).is_some_and(|spec| spec.mcp.is_some()))
         .cloned()
         .collect()
+}
+
+pub(crate) fn hook_checksum(
+    parsed: &crate::compiler::hooks::ParsedHookItem,
+) -> Result<ContentHash, MarsError> {
+    Ok(ContentHash::from(hash::compute_hash(
+        &parsed.hook_dir,
+        ItemKind::Hook,
+    )?))
 }
 
 pub(crate) fn hook_target_items(
@@ -550,7 +566,7 @@ pub(crate) fn hook_target_items(
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let source_hash = ContentHash::from(hash::compute_hash(&parsed.hook_dir, ItemKind::Hook)?);
+    let source_hash = hook_checksum(parsed)?;
     Ok(target_roots
         .into_iter()
         .map(|target_root| {

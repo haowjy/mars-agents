@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use mars_schema::HarnessId;
 use serde::{Deserialize, Serialize};
 
 use super::command::{probe_timeout, run_command, strip_ansi};
@@ -21,7 +22,7 @@ pub fn probe() -> CursorProbeResult {
 }
 
 impl super::cache::CachedProbe for CursorProbeResult {
-    const HARNESS: &'static str = "cursor";
+    const HARNESS: HarnessId = HarnessId::Cursor;
     const CACHE_FILE: &'static str = "cursor-probe.json";
     const LOCK_FILE: &'static str = ".cursor-probe.lock";
     const SCHEMA_VERSION: u32 = 1;
@@ -53,7 +54,11 @@ impl super::cache::CachedProbe for CursorProbeResult {
 pub fn probe_with_timeout(timeout: Duration) -> CursorProbeResult {
     let mut result = CursorProbeResult::default();
 
-    match run_command("cursor", &["agent", "--list-models"], timeout) {
+    match run_command(
+        HarnessId::Cursor.as_str(),
+        &["agent", "--list-models"],
+        timeout,
+    ) {
         Ok(stdout) => {
             result.slugs = parse_cursor_models_output(&stdout);
             result.model_probe_success = true;

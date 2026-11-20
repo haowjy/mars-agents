@@ -157,7 +157,7 @@ impl CandidateAssessment {
                 _ => "auth_unchecked",
             }),
             Eligibility::Blocked => Some(match self.skip_reason {
-                Some("pi_incompatible" | "unsupported_candidate") => "incompatible_harness",
+                Some("unsupported_candidate") => "incompatible_harness",
                 Some(reason) => reason,
                 None if !self.installed => "not_installed",
                 None if self.auth == Some(crate::harness::host::AuthState::Unauthenticated) => {
@@ -756,7 +756,7 @@ fn qualified_listing_assessment(
     let Some(listing) = listing else {
         return passthrough_assessment(harness);
     };
-    if let Some(reason) = listing.incompatible {
+    if listing.incompatible {
         return CandidateAssessment {
             auth: None,
             harness: harness.to_string(),
@@ -766,7 +766,7 @@ fn qualified_listing_assessment(
             chosen_slug: None,
             chosen_model: None,
             match_evidence: None,
-            skip_reason: Some(reason),
+            skip_reason: Some("incompatible_harness"),
         };
     }
     if !listing.succeeded {

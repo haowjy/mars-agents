@@ -97,8 +97,9 @@ pub(crate) fn classify_skill_ref(
                 }
                 None => String::new(),
             };
+            // The agent runs without a skill it declares, so this is a warning whoever shipped it.
             Diagnostic::new(
-                own_level,
+                DiagnosticLevel::Warning,
                 "missing-skill",
                 format!(
                     "agent `{agent}`{whose} references missing skill `{skill_name}`{suggestion}{fix}"

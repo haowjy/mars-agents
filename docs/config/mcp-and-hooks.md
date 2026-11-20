@@ -43,11 +43,10 @@ covered under [Remote servers](#remote-servers).
 **Codex** forwards an environment variable to the server by name, so
 `env_vars = ["VAR"]` covers an `env` entry whose key equals its variable. A
 renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync leaves that
-variable out and says so (`mcp-lossy`). Only the server's author can rename the key, so
-the line is a warning for the project's own server and an `info` for one from a
-dependency, where it names what the installer does (set `KEY` in the environment Codex
-runs in). Either one prints on the sync that writes the entry, not on a sync that leaves
-it as it was; `--verbose` prints it every time.
+variable out, so the server does not get it, and warns (`mcp-lossy`) whoever wrote the
+server. The text names the reader's own step: the author names the key as the variable, and the
+installer sets `KEY` in the environment Codex runs in. It prints on the sync that writes the
+entry, not on a sync that leaves it as it was; `--verbose` prints it every time.
 
 **Approval and trust are the user's.** Mars writes the entry but does not
 grant trust: Claude lists project `.mcp.json` servers as pending until you
@@ -972,8 +971,8 @@ reorder its file-mode artifact.
 
 | Code | Level | When |
 |---|---|---|
-| `hook-event-skipped` | warning for your own hooks and in `mars check`; info (one summary per sync) for dependencies' hooks | an event, handler type or matcher field has no counterpart on a managed target, whether or not the hook was selected there |
-| `hook-answer-unsupported` | info | the event renders, but some portable answers do not carry over to that target |
+| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook that no managed target takes (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
+| `hook-answer-unsupported` | warning; reported like `hook-event-skipped` | the event renders, but some portable answers do not carry over to that target |
 | `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
 | `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
@@ -1045,8 +1044,7 @@ installed project path in `command`, as for every harness. Every other harness r
 (`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
 name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
-off until the user fills it in, so Mars leaves it out and says so (`mcp-lossy`, a warning for the
-project's own server, an `info` for a dependency's). A remote server's `url` and literal headers are
+off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are
 written as Claude's are; env headers are left out the same way.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.

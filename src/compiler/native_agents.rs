@@ -372,7 +372,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             if crate::routing::acceptance::accept_route(
                 &trace,
                 &self.installed_for_native_targets,
-                native_acceptance_policy(target_harness),
+                native_acceptance_policy(*target_harness),
             )
             .is_err()
             {
@@ -514,11 +514,7 @@ pub fn selective_native_orphan_preserve_paths(
     let targets: Vec<_> = spec
         .harnesses
         .iter()
-        .map(|harness| {
-            crate::harness::registry::descriptor(*harness)
-                .default_target
-                .to_string()
-        })
+        .map(|harness| harness.target_dir())
         .collect();
     native_agent_orphan_preserve_paths(old_lock, &targets)
 }
@@ -686,15 +682,11 @@ fn desired_native_agent_outputs(
             ctx.configured_emit_harnesses,
             model_router,
         ) {
-            let extension = if harness == mars_schema::HarnessId::Codex {
-                "toml"
-            } else {
-                "md"
-            };
+            let extension = crate::compiler::lowering::lowering(harness)
+                .agent
+                .extension();
             desired.insert((
-                crate::harness::registry::descriptor(harness)
-                    .default_target
-                    .to_string(),
+                harness.target_dir(),
                 format!("agents/{}.{extension}", agent.agent_name),
             ));
         }
@@ -991,7 +983,7 @@ impl ProjectLosses {
             if key == opencode_permission::OUTSIDE_RULES_KEY && !outside {
                 continue;
             }
-            diag.record_lossy_fields("project", &key, None, &[field], written);
+            diag.record_lossy_fields("project", &key, &[field], written);
         }
     }
 }
@@ -1008,19 +1000,17 @@ fn emit_lowered_native_agent(
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
     let lowered =
-        lower_for_harness_with_model(agent.harness, agent.profile, agent.body, agent.model);
+        lower_for_harness_with_model(*agent.harness, agent.profile, agent.body, agent.model);
 
-    let harness_dir = ctx
-        .project_root
-        .join(crate::harness::registry::descriptor(*agent.harness).default_target);
+    let harness_dir = ctx.project_root.join(agent.harness.target_dir());
     let native_agents_dir = harness_dir.join("agents");
-    let file_name = match agent.harness {
-        mars_schema::HarnessId::Codex => format!("{}.toml", agent.agent_name),
-        _ => format!("{}.md", agent.agent_name),
-    };
+    let extension = crate::compiler::lowering::lowering(*agent.harness)
+        .agent
+        .extension();
+    let file_name = format!("{}.{extension}", agent.agent_name);
     let native_path = native_agents_dir.join(&file_name);
     let dest_rel = format!("agents/{file_name}");
-    let target_dir = crate::harness::registry::descriptor(*agent.harness).default_target;
+    let target_dir = &agent.harness.target_dir();
     let dest_exists = surface_ownership::target_dest_exists(&native_path);
     match surface_ownership::copy_decision(
         ctx.old_lock,
@@ -1066,20 +1056,16 @@ fn emit_lowered_native_agent(
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report. A
     // file this run leaves as it was reports it only under `--verbose`.
-    diag.record_lossy_fields(
-        "agent",
-        agent.agent_name,
-        None,
-        &lowered.lossy_fields,
-        !unchanged,
-    );
+    diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields, !unchanged);
     if let Some(moved) = agent.effort_moved {
         diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved, !unchanged);
     }
     for loss in lowered.project_losses {
         project_losses.add(loss, !unchanged);
     }
-    if *agent.harness == mars_schema::HarnessId::Claude && agent.profile.description.is_none() {
+    if crate::compiler::lowering::lowering(*agent.harness).needs_description
+        && agent.profile.description.is_none()
+    {
         undescribed.insert(agent.agent_name.to_string());
     }
 
@@ -1167,17 +1153,15 @@ fn provider_constraint_for_alias(alias: &ModelAlias) -> Option<String> {
     .filter(|provider| !provider.is_empty())
 }
 
+/// A native harness serves its provider's models directly; a probe-backed one proves a slug
+/// with its own listing.
 fn native_acceptance_policy(
-    target_harness: &mars_schema::HarnessId,
+    target_harness: mars_schema::HarnessId,
 ) -> crate::routing::acceptance::MatchPolicy {
-    match target_harness {
-        mars_schema::HarnessId::Claude | mars_schema::HarnessId::Codex => {
-            crate::routing::acceptance::MatchPolicy::AllowPassthrough
-        }
-        mars_schema::HarnessId::OpenCode
-        | mars_schema::HarnessId::Cursor
-        | mars_schema::HarnessId::Agy
-        | mars_schema::HarnessId::Pi => {
+    use crate::harness::registry::{self, HarnessClass};
+    match registry::descriptor(target_harness).class {
+        HarnessClass::Native { .. } => crate::routing::acceptance::MatchPolicy::AllowPassthrough,
+        HarnessClass::ProbeBacked(_) => {
             crate::routing::acceptance::MatchPolicy::RequireSlugEvidence
         }
     }

@@ -8,61 +8,37 @@
 //! launch bundle and the WASM export all read that projection; nothing else turns a rule into
 //! native permission names or unscoped harness tool names.
 
+use crate::Host;
+use crate::harness::McpNaming;
 use crate::mcp::{McpRef, McpSegment};
 use crate::tool_cover::covered;
 use crate::tool_names::{Capability, is_mcp_wire_token, render_scoped};
 use crate::tool_natives::{self, Native};
 use crate::tool_policy::{EffectiveToolPolicy, ToolAction, ToolRule};
-use crate::{HarnessId, Host};
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
-/// What a host does with a tool name, which only this module's lowering needs.
-impl Host {
-    /// Whether a tool name can be narrowed to a pattern. A harness spells the scope in the
-    /// permission name (`Bash(git push *)`); Flow's tools and `agy`'s `tools` names take no
-    /// scope. Every host states it, so a new host cannot inherit a default.
-    fn scopes_patterns(self) -> bool {
-        match self {
-            Self::Harness(
-                HarnessId::Claude
-                | HarnessId::Codex
-                | HarnessId::OpenCode
-                | HarnessId::Pi
-                | HarnessId::Cursor,
-            ) => true,
-            Self::Harness(HarnessId::Agy) | Self::MeridianFlow => false,
-        }
-    }
-
-    /// An MCP ref as this host names it. Server and tool segments are kept verbatim, never
-    /// re-cased.
-    fn mcp_token(self, r: &McpRef) -> Result<String, &'static str> {
-        let segment = |segment: &McpSegment| match segment {
-            McpSegment::Any => "*".to_owned(),
-            McpSegment::Named(name) => name.clone(),
-        };
-        let (server, tool) = (segment(&r.server), segment(&r.tool));
-        match self {
-            Self::Harness(HarnessId::Claude) => match (&r.server, &r.tool) {
-                (McpSegment::Any, McpSegment::Named(_)) => {
-                    Err("Claude cannot scope a single MCP tool across all servers")
-                }
-                (McpSegment::Any, McpSegment::Any) => Ok("mcp__*".to_owned()),
-                _ => Ok(format!("mcp__{server}__{tool}")),
-            },
-            Self::Harness(HarnessId::Cursor) => Ok(format!("Mcp({server}:{tool})")),
-            Self::Harness(HarnessId::OpenCode) => Ok(format!("{server}_{tool}")),
-            Self::Harness(HarnessId::Codex) => {
-                Err("Codex per-tool MCP gating lives in server config, not the tool list")
+/// An MCP ref as `mcp` names it. Server and tool segments are kept verbatim, never re-cased.
+/// Only the hosts that name MCP tools in a tool list reach here: `project_rule` routes
+/// [`McpNaming::Ungated`] and [`McpNaming::ConnectionTools`] before.
+fn mcp_token(mcp: McpNaming, r: &McpRef) -> Result<String, &'static str> {
+    let segment = |segment: &McpSegment| match segment {
+        McpSegment::Any => "*".to_owned(),
+        McpSegment::Named(name) => name.clone(),
+    };
+    let (server, tool) = (segment(&r.server), segment(&r.tool));
+    match mcp {
+        McpNaming::Claude => match (&r.server, &r.tool) {
+            (McpSegment::Any, McpSegment::Named(_)) => {
+                Err("Claude cannot scope a single MCP tool across all servers")
             }
-            Self::Harness(HarnessId::Pi) => Err("Harness has no MCP tool surface"),
-            Self::Harness(HarnessId::Agy) => {
-                unreachable!("agy's MCP refs lower in `project_agy_mcp`")
-            }
-            Self::MeridianFlow => {
-                unreachable!("Flow's MCP refs lower in `project_flow_connection_tools`")
-            }
+            (McpSegment::Any, McpSegment::Any) => Ok("mcp__*".to_owned()),
+            _ => Ok(format!("mcp__{server}__{tool}")),
+        },
+        McpNaming::Format(format) => Ok(format(&server, &tool)),
+        McpNaming::NoName(reason) => Err(reason),
+        McpNaming::Ungated | McpNaming::ConnectionTools => {
+            unreachable!("`project_rule` lowers these hosts' MCP refs before naming a token")
         }
     }
 }
@@ -264,6 +240,7 @@ impl ProjectedRule {
 /// `restricted` is whether the policy has a `*` rule that is not `allow`: the Agent lists the
 /// tools it has, so an `allow` or `ask` is what would grant a tool.
 fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule {
+    let mcp = host.spec().mcp;
     match &rule.capability {
         Capability::Any => ProjectedRule {
             bindings: Vec::new(),
@@ -271,13 +248,13 @@ fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule 
             note: None,
             covered_by: None,
         },
-        capability if host == Host::MeridianFlow && capability.names_mcp() => {
+        capability if capability.names_mcp() && matches!(mcp, McpNaming::ConnectionTools) => {
             project_flow_connection_tools(rule.action, restricted)
         }
-        capability if host == Host::Harness(HarnessId::Agy) && capability.names_mcp() => {
+        capability if capability.names_mcp() && matches!(mcp, McpNaming::Ungated) => {
             project_agy_mcp(rule.action)
         }
-        Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {
+        Capability::Mcp(mcp_ref) => match mcp_token(mcp, mcp_ref) {
             Ok(token) => ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None),
             Err(reason) => ProjectedRule::with_status(NativeStatus::Unknown(reason)),
         },
@@ -339,7 +316,7 @@ fn project_builtin_capability(
 ) -> ProjectedRule {
     let row = tool_natives::lookup(capability, host);
     if pattern.is_some()
-        && !host.scopes_patterns()
+        && !host.spec().scopes_patterns
         && matches!(row, Some(Native::Tools(_) | Native::ScopedTools { .. }))
     {
         return ProjectedRule::with_status(NativeStatus::Unscopable);
@@ -566,6 +543,7 @@ fn keep_strictest_per_native(rules: &mut [(&ToolRule, ProjectedRule)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HarnessId;
     use crate::frontmatter::Frontmatter;
     use crate::tool_names::parse_mars_tool_name;
     use crate::tool_policy::append_mcp_server_entries_to_tools;

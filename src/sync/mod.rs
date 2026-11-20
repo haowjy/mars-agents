@@ -26,8 +26,8 @@ use crate::fs::FileLock;
 use crate::lock::LockFile;
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
-use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
+use crate::sync::apply::{ActionTaken, ApplyResult};
 use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
@@ -62,8 +62,8 @@ pub struct SyncReport {
     pub hook_files_rewritten: Vec<(String, String)>,
     /// Config files of keyed entries (`.mcp.json`, `.codex/config.toml`,
     /// `.agents/plugins.json`, ...) this run wrote or deleted, as `(target_root, file path,
-    /// what the file holds)`. Surfaced for the same reason as `hook_files_rewritten`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    /// the kind of entry it holds)`. Surfaced for the same reason as `hook_files_rewritten`.
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
@@ -162,7 +162,7 @@ pub(crate) struct SyncedState {
     pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub rewritten_hook_files: Vec<(String, String)>,
     /// Keyed config files written or deleted this run, as `(target_root, file path, what it holds)`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
@@ -741,6 +741,14 @@ pub(crate) fn sync_targets(
     agent_surface_policy: crate::compiler::AgentSurfacePolicy,
     diag: &mut DiagnosticCollector,
 ) -> SyncedState {
+    for outcome in &applied.applied.outcomes {
+        if matches!(
+            outcome.action,
+            ActionTaken::Installed | ActionTaken::Updated
+        ) {
+            diag.release_written(crate::diagnostic::Owner::of(outcome.source_name.as_str()));
+        }
+    }
     if request.options.dry_run {
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,

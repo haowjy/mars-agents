@@ -1,0 +1,8 @@
+{
+  "name": "collection-marketplace",
+  "owner": { "name": "Example" },
+  "plugins": [
+    { "name": "all", "source": "./", "strict": true, "skills": ["./skills/alpha", "./skills/beta", "./skills/gamma"] },
+    { "name": "just-alpha", "source": "./", "strict": true, "skills": ["./skills/alpha"] }
+  ]
+}

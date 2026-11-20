@@ -1,0 +1,76 @@
+{
+  "kind": "marketplace",
+  "also_found": [],
+  "plugins": [
+    {
+      "entry": {
+        "name": "all",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "strict": true,
+        "lists": {
+          "skills": [
+            "./skills/alpha",
+            "./skills/beta",
+            "./skills/gamma"
+          ]
+        }
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "alpha",
+          "source_path": "skills/alpha/SKILL.md",
+          "skill_root": "skills/alpha",
+          "output_path": "skills/alpha/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "beta",
+          "source_path": "skills/beta/SKILL.md",
+          "skill_root": "skills/beta",
+          "output_path": "skills/beta/SKILL.md"
+        },
+        {
+          "kind": "skill",
+          "slug": "gamma",
+          "source_path": "skills/gamma/SKILL.md",
+          "skill_root": "skills/gamma",
+          "output_path": "skills/gamma/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    },
+    {
+      "entry": {
+        "name": "just-alpha",
+        "source": {
+          "kind": "local",
+          "path": ""
+        },
+        "strict": true,
+        "lists": {
+          "skills": [
+            "./skills/alpha"
+          ]
+        }
+      },
+      "at_marketplace_root": true,
+      "items": [
+        {
+          "kind": "skill",
+          "slug": "alpha",
+          "source_path": "skills/alpha/SKILL.md",
+          "skill_root": "skills/alpha",
+          "output_path": "skills/alpha/SKILL.md"
+        }
+      ],
+      "diagnostics": {}
+    }
+  ],
+  "items": [],
+  "diagnostics": {}
+}

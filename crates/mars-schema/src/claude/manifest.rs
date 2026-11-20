@@ -553,8 +553,9 @@ pub(crate) fn resolve_spec(
         return Err("conflicting manifests: both plugin.json and the marketplace entry (with `strict: false`) specify components".to_owned());
     }
 
-    // Only the marketplace-root entry with a `skills` list narrows the skills to that list.
-    let skills = if manifest.is_none() && entry_at_root && entry_lists.skills.is_some() {
+    // An entry at the marketplace root with a `skills` list is the whole skill list: Claude reads
+    // neither the default `skills/` nor the manifest's own `skills` beside it.
+    let skills = if entry_at_root && entry_lists.skills.is_some() {
         Component {
             default: false,
             listed: entry_lists.skills.clone().unwrap_or_default(),

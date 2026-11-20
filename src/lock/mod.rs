@@ -124,6 +124,19 @@ impl LockFile {
             .collect()
     }
 
+    /// Every record under `target_root`, with the kind of the item it belongs to.
+    pub(crate) fn output_records_for_target<'a>(
+        &'a self,
+        target_root: &'a str,
+    ) -> impl Iterator<Item = (ItemKind, &'a OutputRecord)> {
+        self.items.values().flat_map(move |item| {
+            item.outputs
+                .iter()
+                .filter(move |output| output.target_root == target_root)
+                .map(move |output| (item.kind, output))
+        })
+    }
+
     pub fn contains_output(&self, target_root: &str, dest_path: &str) -> bool {
         self.items.values().any(|item| {
             item.outputs.iter().any(|output| {
@@ -1216,7 +1229,10 @@ pub fn native_output_is_new_or_changed(old: &LockFile, out: &CompiledNativeOutpu
     true
 }
 
-pub fn apply_removed_native_outputs(lock: &mut LockFile, records: &[(String, String)]) {
+pub fn apply_removed_native_outputs<'a>(
+    lock: &mut LockFile,
+    records: impl IntoIterator<Item = &'a (String, String)>,
+) {
     for (target_root, dest_path) in records {
         remove_target_output(&mut lock.items, target_root, dest_path);
     }

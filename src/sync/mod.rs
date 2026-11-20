@@ -120,6 +120,8 @@ pub enum ResolutionMode {
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
+    /// The mutation changed `mars.local.toml`, so persisting it writes that file too.
+    pub local_changed: bool,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     /// The records that serve a target the config names but this sync does not manage (a retired
@@ -175,7 +177,7 @@ pub(crate) struct SyncedState {
     pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
-    pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
+    pub native_removals: crate::compiler::NativeRemovals,
     /// The provided skills this sync projected into targets (`provided::skill_outcomes`).
     pub provided_skills: Vec<apply::ActionOutcome>,
 }
@@ -273,12 +275,14 @@ pub(crate) fn load_config(
         Vec::new()
     };
 
-    let mut local = crate::config::load_local(project_root)?;
-    if let Some(m) = &request.mutation {
-        mutation::apply_local_mutation(&mut local, m);
-    }
-
     let user = crate::config::load_user_config()?;
+    let mut local = crate::config::load_local(project_root)?;
+    let local_before = local.clone();
+    if let Some(m) = &request.mutation {
+        mutation::apply_local_mutation(&mut local, &config, &user, project_root, m)?;
+    }
+    let local_changed = local != local_before;
+
     let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
@@ -354,6 +358,7 @@ pub(crate) fn load_config(
     Ok(LoadedConfig {
         config,
         local,
+        local_changed,
         effective,
         old_lock,
         carried,
@@ -799,7 +804,7 @@ pub(crate) fn sync_targets(
             config_files_changed: Vec::new(),
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
-            removed_native_outputs: Vec::new(),
+            native_removals: Default::default(),
             provided_skills: Vec::new(),
         };
     }
@@ -815,7 +820,6 @@ pub(crate) fn sync_targets(
         &agent_surface_policy,
         &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.force,
-        crate::surface_ownership::CollisionAdoptHint::SyncForce,
         diag,
     );
 
@@ -828,7 +832,7 @@ pub(crate) fn sync_targets(
         config_files_changed: Vec::new(),
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
-        removed_native_outputs: Vec::new(),
+        native_removals: Default::default(),
         provided_skills,
     }
 }

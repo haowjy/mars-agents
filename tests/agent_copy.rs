@@ -236,7 +236,7 @@ path = "{}"
 }
 
 #[test]
-fn agent_copy_link_fails_on_handwritten_native_collision() {
+fn agent_copy_link_keeps_handwritten_native_collision() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "src", &[("coder", CLAUDE_HARNESS_AGENT)], &[]);
     let project = dir.child("project");
@@ -275,7 +275,7 @@ path = "{}"
         ])
         .env("MERIDIAN_MANAGED", "1")
         .assert()
-        .failure();
+        .success();
 
     assert_eq!(
         fs::read_to_string(project.path().join(".claude/agents/coder.md")).unwrap(),
@@ -360,7 +360,7 @@ model: gpt-5.3-codex
 "#;
 
 #[test]
-fn link_scopes_native_agent_materialization_to_requested_target() {
+fn link_installs_native_agents_into_the_requested_target() {
     let dir = TempDir::new().unwrap();
     let project = setup_dual_harness_project(
         &dir,
@@ -373,10 +373,6 @@ harnesses = ["claude", "codex"]
 "#,
         Some("1"),
     );
-    project
-        .child("mars.local.toml")
-        .write_str("[settings]\ntargets = [\".claude\"]\n")
-        .unwrap();
     write_claude_collision(&project);
 
     mars()

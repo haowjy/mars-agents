@@ -14,7 +14,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
-use crate::surface_ownership::{self, CollisionAdoptHint};
+use crate::surface_ownership;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 
@@ -39,7 +39,6 @@ pub struct TargetSyncOutcome {
 pub struct TargetSyncContext<'a> {
     pub old_lock: &'a LockFile,
     pub force: bool,
-    pub collision_hint: CollisionAdoptHint,
     /// Managed native agent paths to exempt from orphan cleanup (selective mode).
     pub orphan_preserve_paths: Option<&'a HashMap<String, HashSet<String>>>,
 }
@@ -207,13 +206,11 @@ fn sync_one_target(
 ) -> Result<TargetSyncOutcome, MarsError> {
     let old_lock = ctx.old_lock;
     let force = ctx.force;
-    let collision_hint = ctx.collision_hint;
     let mut items_synced = 0;
     let mut items_removed = 0;
     let mut errors = Vec::new();
     let mut synced_outputs = Vec::new();
     let mut removed_dest_paths = Vec::new();
-    let previous_managed_paths = old_lock.output_dest_paths_for_target(target_name);
 
     std::fs::create_dir_all(target_root)?;
 
@@ -241,35 +238,11 @@ fn sync_one_target(
         if outcome.item_id.kind == mars_schema::item::ItemKind::Agent
             && !target_accepts_canonical_agents
         {
-            if matches!(outcome.action, ActionTaken::Removed) {
-                let target_path = target_root.join(dest_rel);
-                if remove_target_path_if_managed(
-                    &target_path,
-                    target_name,
-                    dest_rel,
-                    old_lock,
-                    &mut errors,
-                ) {
-                    items_removed += 1;
-                    removed_dest_paths.push(dest_rel.to_string());
-                }
-            }
             continue;
         }
         match &outcome.action {
-            ActionTaken::Removed => {
-                let target_path = target_root.join(dest_rel);
-                if remove_target_path_if_managed(
-                    &target_path,
-                    target_name,
-                    dest_rel,
-                    old_lock,
-                    &mut errors,
-                ) {
-                    items_removed += 1;
-                    removed_dest_paths.push(dest_rel.to_string());
-                }
-            }
+            // The orphan pass below removes what a dropped item recorded.
+            ActionTaken::Removed => {}
             ActionTaken::Skipped => {
                 expected_paths.insert(dest_rel.to_string());
                 let source = mars_dir.join(canonical_dest_rel);
@@ -446,7 +419,6 @@ fn sync_one_target(
                             surface_ownership::warn_no_installed_claim_collision(
                                 target_name,
                                 dest_rel,
-                                collision_hint,
                                 diag,
                             );
                         } else if let Some(expected_checksum) = &outcome.installed_checksum {
@@ -522,10 +494,12 @@ fn sync_one_target(
 
     let orphan_removed = cleanup_orphans(
         target_root,
+        target_name,
         &expected_paths,
-        &previous_managed_paths,
+        old_lock,
         &mut removed_dest_paths,
         &mut errors,
+        diag,
     );
     items_removed += orphan_removed;
 
@@ -553,7 +527,6 @@ fn should_copy_to_target(
         dest_rel,
         surface_ownership::DestState::new(surface_ownership::target_dest_exists(dest), identical),
         ctx.force,
-        ctx.collision_hint,
         diag,
     )
 }
@@ -614,28 +587,6 @@ fn dest_matches_recorded_or_desired(
                 && recorded.installed_checksum() == Some(actual)
         })
     })
-}
-
-fn remove_target_path_if_managed(
-    target_path: &Path,
-    target_name: &str,
-    dest_rel: &str,
-    old_lock: &LockFile,
-    errors: &mut Vec<String>,
-) -> bool {
-    if !surface_ownership::target_dest_exists(target_path) {
-        return false;
-    }
-    if !surface_ownership::may_delete(old_lock, target_name, dest_rel) {
-        return false;
-    }
-    match fs_ops::safe_remove(target_path) {
-        Ok(()) => true,
-        Err(e) => {
-            errors.push(format!("failed to remove {dest_rel}: {e}"));
-            false
-        }
-    }
 }
 
 fn hash_target_dest(
@@ -703,47 +654,60 @@ fn copy_item_to_target(
     Ok(true)
 }
 
+/// Remove each output the old lock records for `target_name` that this sync no longer expects.
 fn cleanup_orphans(
     target_root: &Path,
+    target_name: &str,
     expected: &HashSet<String>,
-    previous_managed_paths: &HashSet<String>,
+    old_lock: &LockFile,
     removed_dest_paths: &mut Vec<String>,
     errors: &mut Vec<String>,
+    diag: &mut DiagnosticCollector,
 ) -> usize {
     let mut removed = 0;
-
-    for managed_path in previous_managed_paths {
-        if expected.contains(managed_path) {
-            continue;
-        }
-
-        let full_path = target_root.join(managed_path);
-
-        // An already-absent owned path confirms deletion just as surely as a
-        // successful remove. Publish that confirmation so the lock drops it.
-        if !full_path.exists() && full_path.symlink_metadata().is_err() {
-            removed_dest_paths.push(managed_path.clone());
-            continue;
-        }
-
-        // Skip symlinked paths (legacy link setup — don't touch).
-        if full_path
-            .symlink_metadata()
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
-        if let Err(e) = fs_ops::safe_remove(&full_path) {
-            errors.push(format!("failed to remove orphan {managed_path}: {e}"));
-        } else {
-            removed += 1;
-            removed_dest_paths.push(managed_path.clone());
+    for (kind, record) in old_lock.output_records_for_target(target_name) {
+        if !expected.contains(record.dest_path.as_str()) {
+            removed += remove_recorded_output(
+                target_root,
+                target_name,
+                kind,
+                record,
+                removed_dest_paths,
+                errors,
+                diag,
+            );
         }
     }
-
     removed
+}
+
+/// Remove one output Mars recorded (see `removal::remove_recorded`) and say what became of its
+/// record: an output that is gone or was kept loses it, a failed removal keeps it for the next
+/// sync. Returns how many outputs were removed.
+fn remove_recorded_output(
+    target_root: &Path,
+    target_name: &str,
+    kind: mars_schema::item::ItemKind,
+    record: &crate::lock::OutputRecord,
+    removed_dest_paths: &mut Vec<String>,
+    errors: &mut Vec<String>,
+    diag: &mut DiagnosticCollector,
+) -> usize {
+    use removal::Removal;
+    let dest_rel = record.dest_path.as_str();
+    match removal::remove_recorded(&target_root.join(dest_rel), kind, record) {
+        Removal::Absent => removed_dest_paths.push(dest_rel.to_string()),
+        Removal::Removed => {
+            removed_dest_paths.push(dest_rel.to_string());
+            return 1;
+        }
+        Removal::Kept => {
+            removal::report_kept(target_name, dest_rel, diag);
+            removed_dest_paths.push(dest_rel.to_string());
+        }
+        Removal::Failed(error) => errors.push(format!("failed to remove {dest_rel}: {error}")),
+    }
+    0
 }
 
 #[cfg(test)]
@@ -752,7 +716,6 @@ mod tests {
     use crate::diagnostic::DiagnosticCollector;
     use crate::hash;
     use crate::lock::{LockFile, LockedItemV2, OutputRecord};
-    use crate::surface_ownership::CollisionAdoptHint;
     use crate::sync::apply::{ActionOutcome, ActionTaken};
     use crate::types::DestPath;
     use mars_schema::names::ItemName;
@@ -799,7 +762,6 @@ mod tests {
         TargetSyncContext {
             old_lock,
             force,
-            collision_hint: CollisionAdoptHint::SyncForce,
             orphan_preserve_paths: None,
         }
     }
@@ -866,7 +828,6 @@ mod tests {
             &TargetSyncContext {
                 old_lock: &old_lock,
                 force: false,
-                collision_hint: CollisionAdoptHint::SyncForce,
                 orphan_preserve_paths: Some(&preserve),
             },
             &mut diag,
@@ -884,12 +845,13 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_orphans_uses_forward_slash_keys_for_expected_paths() {
+    fn cleanup_orphans_removes_what_mars_wrote_and_keeps_what_changed() {
         let dir = TempDir::new().unwrap();
         let target_root = dir.path().join(".agents");
         std::fs::create_dir_all(target_root.join("agents")).unwrap();
         std::fs::write(target_root.join("agents/coder.md"), "# Managed").unwrap();
         std::fs::write(target_root.join("agents/orphan.md"), "# Orphan").unwrap();
+        std::fs::write(target_root.join("agents/edited.md"), "# Edited by hand").unwrap();
 
         let mut expected = HashSet::new();
         expected.insert(
@@ -903,22 +865,32 @@ mod tests {
             ".agents",
             &[
                 ("agents/coder.md", "sha256:coder"),
-                ("agents/orphan.md", "sha256:orphan"),
+                ("agents/orphan.md", &hash::hash_bytes(b"# Orphan")),
+                ("agents/edited.md", &hash::hash_bytes(b"# As installed")),
             ],
         );
-        let previous_paths = previous.output_dest_paths_for_target(".agents");
         let mut removed_dest_paths = Vec::new();
+        let mut diag = DiagnosticCollector::new();
         let removed = cleanup_orphans(
             &target_root,
+            ".agents",
             &expected,
-            &previous_paths,
+            &previous,
             &mut removed_dest_paths,
             &mut Vec::new(),
+            &mut diag,
         );
 
         assert_eq!(removed, 1);
         assert!(target_root.join("agents/coder.md").exists());
         assert!(!target_root.join("agents/orphan.md").exists());
+        assert!(target_root.join("agents/edited.md").exists());
+        removed_dest_paths.sort();
+        assert_eq!(removed_dest_paths, ["agents/edited.md", "agents/orphan.md"]);
+        let diagnostics = diag.drain();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "output-kept");
+        assert!(diagnostics[0].message.contains("agents/edited.md"));
     }
 
     #[test]

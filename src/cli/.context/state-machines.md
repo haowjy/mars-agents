@@ -44,40 +44,34 @@ stateDiagram-v2
 ## Target claim
 
 One target directory going from "not managed" to "managed by Mars": a settings entry, files in the
-target and lock records. `mars link` (`link.rs`). The order of writes in `link_target` is files
-(`sync_managed_targets`), native agent materialization, the lock (`apply_target_sync_outputs`,
-`persist_lock_then_native_agent_manifest`), then `settings.targets`. The collision check runs
-twice, before and after native materialization. `--local` writes `mars.local.toml` where this says `settings.targets`, and the lock publish files the records in `.mars/machine.lock` for a target `mars.toml` does not name; plain `link` also removes the target from `mars.local.toml`.
+target and lock records. `mars link` (`link.rs`) is `ConfigMutation::LinkTarget { target, local }` plus the sync
+pipeline, as `mars add` is: the target joins `targets` under the sync lock (`mutation.rs`), and the one sync installs
+everything a sync installs there: files, native agents, hooks and MCP servers. `link` has no install code of its own.
+`--local` writes `mars.local.toml` where this says `targets`, and the lock publish files the records in `.mars/machine.lock` for a target `mars.toml` does not name; plain `link` also removes the target from `mars.local.toml`.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Unlinked: target absent from settings.targets
   Unlinked --> Refused: no mars.toml
-  Unlinked --> Colliding: matching destination files mars has no claim for
-  Colliding --> Linked: --force adopts them and records checksums
-  Colliding --> Refused: unmanaged collision, nothing to do by hand but --force
-  Unlinked --> Linked: copy all canonical items, record outputs, then add to settings
-  Linked --> Linked: plain sync again
+  Unlinked --> Linked: named in targets, then the sync installs and records each output
+  Linked --> Linked: a destination Mars has no claim for is kept and warned (--force adopts it)
 ```
 
 An instance of [an ownership record](../../../.context/state-machines/ownership-record.md).
 
-- **A kill after the copies and before the lock write** leaves files the lock does not claim. The
-  next `mars link` or `mars sync` adopts those whose content is what it would write, silently, and
-  warns `target-unmanaged-collision` on the rest, which the user has to `--force` to adopt.
-- **A kill after the lock write and before `config.save`** leaves the lock claiming outputs for a
-  target that settings do not list. `unlink` treats a target the lock claims as managed
-  (`target::lock_claims`) and cleans it up; `link` finds the claim installed and finishes it.
-  The kill after the copies is repaired by the next write: bytes equal to what Mars would write
-  are adopted, not treated as the user's.
-- `--force` also decides adoption diagnostics: `warn_no_installed_claim_adopted` fires only when a
-  claim is missing, so re-linking an already linked target is silent.
+- **A kill after the config save and before the lock write** leaves a target `targets` names with
+  no records: the next sync installs it. The files left by a kill after the copies are adopted
+  when their content is what Mars would write, silently; the rest warn
+  `target-unmanaged-collision`, which `--force` adopts.
+- `--force` is the sync's `--force`: it also overwrites a divergent installed file in every
+  managed target, not only the new one.
+- `warn_no_installed_claim_adopted` fires only when a claim is missing, so re-linking an already
+  linked target is silent.
 
 ## Target teardown
 
 One target directory going from managed to not managed, plus removal of every file Mars recorded
-there. `mars unlink` (`unlink.rs`) and a sync that finds a target no config file names (`finalize`) both call `target_sync::removal::remove_served`, which removes recorded paths
-deepest first, treats `NotFound` as success, removes empty ancestors, and reconciles hooks
+there. `mars unlink` (`unlink.rs`) and a sync that finds a target no config file names (`finalize`) both call `target_sync::removal::remove_served`, and `cleanup_orphans` and the removal of an item the source dropped use the same `remove_recorded`. It removes an output only while it is what Mars wrote: the hash of the whole output (a file, or a skill, hook or MCP tree) equals the record's `installed_checksum`. An output that differs (an edit, a file the user added inside a recorded directory, a tree that cannot be hashed) stays, loses its record and is reported once per target (`output-kept`). A failed delete keeps its record as a pending deletion, is reported with its path, and does not stop the rest; a pending deletion is removed without the comparison. Removal goes deepest first, treats an absent path as removed, removes empty ancestors, and reconciles hooks
 through the `RemovalPlan` and keyed entries through `reconcile_keyed` (one pass per keyed kind
 the target declares), the paths sync uses.
 

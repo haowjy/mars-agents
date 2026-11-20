@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-11-20
+
+### Fixed
+- `mars link` on a target that is already linked no longer deletes the hook file Mars generated for it (`.agy/hooks/mars-<name>.hooks.json`, `.pi/extensions/mars-<name>.hooks.ts`, `.opencode/plugins/mars-<name>.hooks.ts`). Before, the hook stayed broken until the next `mars sync`.
+
 ## [0.37.0] - 2026-11-20
 
 ### Upgrade notes

@@ -195,7 +195,8 @@
               "code": "import.commands-dropped",
               "severity": "warning",
               "path": [],
-              "message": "commands are not imported (convert one to a skill): cmds/x.md"
+              "message": "commands are not imported (convert one to a skill): cmds/x.md",
+              "lost": true
             }
           ]
         }

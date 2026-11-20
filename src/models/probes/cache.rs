@@ -152,11 +152,9 @@ fn read_default_cache<R: CachedProbe>() -> Option<CacheEntry<R>> {
 }
 
 fn write_cache<R: CachedProbe>(path: &Path, entry: &CacheEntry<R>) {
-    let written = serde_json::to_string_pretty(entry)
-        .map_err(|e| MarsError::Internal(format!("{} probe cache serialize: {e}", R::HARNESS)))
-        .and_then(|json| crate::fs::atomic_write(path, json.as_bytes()));
-    if let Err(e) = written {
-        eprintln!("debug: {} probe cache write failed: {e}", R::HARNESS);
+    // Best effort: a probe that cannot be cached is run again next time.
+    if let Ok(json) = serde_json::to_string_pretty(entry) {
+        let _ = crate::fs::atomic_write(path, json.as_bytes());
     }
 }
 
@@ -282,7 +280,7 @@ fn probe_cached_observed<R: CachedProbe>(
 }
 
 fn trigger_background_refresh<R: CachedProbe>() {
-    let Some(lock) = super::probe_lock(R::LOCK_FILE, R::HARNESS) else {
+    let Some(lock) = super::probe_lock(R::LOCK_FILE) else {
         return;
     };
     if !read_default_cache::<R>().is_some_and(|entry| is_fresh_and_usable(&entry)) {

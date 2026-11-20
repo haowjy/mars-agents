@@ -244,10 +244,11 @@ fn assert_config_entry_consistency_with_diagnostics(
             let path = project
                 .child(&output.target_root)
                 .child(output.dest_path.as_str());
-            let output_divergence_was_reported = diagnostics.contains(&format!(
-                "target `{}` item `{}` was edited after Mars installed it",
-                output.target_root, output.dest_path
-            ));
+            let output_divergence_was_reported = diagnostics.lines().any(|line| {
+                line.contains("edited after Mars installed")
+                    && line.contains(&format!("target `{}`", output.target_root))
+                    && line.contains(&format!("`{}`", output.dest_path))
+            });
             let mars_agents::lock::OutputState::Installed { installed_checksum } = &output.state
             else {
                 continue;

@@ -404,7 +404,7 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
 }
 
 #[test]
-fn link_agents_prints_single_deprecation_warning() {
+fn link_agents_notes_the_deprecation_once_when_asked() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -422,7 +422,14 @@ fn link_agents_prints_single_deprecation_warning() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("deprecated link target").count(1));
+        .stdout(predicate::str::contains("deprecated link target").not())
+        .stderr(predicate::str::contains("deprecated link target").not());
+
+    // Nothing is lost by it, so only a command asked for detail says so.
+    mars()
+        .args(["validate", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .stderr(predicate::str::contains("deprecated link target").count(1));
 }
 
 #[test]

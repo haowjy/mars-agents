@@ -42,8 +42,11 @@ covered under [Remote servers](#remote-servers).
 
 **Codex** forwards an environment variable to the server by name, so
 `env_vars = ["VAR"]` covers an `env` entry whose key equals its variable. A
-renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync warns
-(`mcp-lossy`) and leaves that variable out.
+renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync leaves that
+variable out, so the server does not get it, and warns (`mcp-lossy`) whoever wrote the
+server. The text names the reader's own step: the author names the key as the variable, and the
+installer sets `KEY` in the environment Codex runs in. It prints on the sync that writes the
+entry, not on a sync that leaves it as it was; `--verbose` prints it every time.
 
 **Approval and trust are the user's.** Mars writes the entry but does not
 grant trust: Claude lists project `.mcp.json` servers as pending until you
@@ -176,9 +179,10 @@ API_KEY   = { from = "env", var = "MY_API_KEY" }
 API_TOKEN = { from = "env", var = "MY_API_TOKEN" }
 ```
 
-The `from = "env"` field is the only supported kind (V0). Mars warns at sync
-time when the named variable isn't present in the environment, but sync still
-proceeds.
+The `from = "env"` field is the only supported kind (V0). When the named variable
+isn't set in the shell that ran Mars, sync notes it as `mcp-env-missing`, an `info`
+(printed with `--verbose`, `mars validate` and `mars check`), and goes on: the shell
+that starts the harness may be another one, and a secret is often set only there.
 
 **Name override** — by default the server name matches the directory name. To
 use a different name:
@@ -967,8 +971,8 @@ reorder its file-mode artifact.
 
 | Code | Level | When |
 |---|---|---|
-| `hook-event-skipped` | warning for your own hooks and in `mars check`; info (one summary per sync) for dependencies' hooks | an event, handler type or matcher field has no counterpart on a managed target, whether or not the hook was selected there |
-| `hook-answer-unsupported` | info | the event renders, but some portable answers do not carry over to that target |
+| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook that no managed target takes (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
+| `hook-answer-unsupported` | warning; reported like `hook-event-skipped` | the event renders, but some portable answers do not carry over to that target |
 | `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
 | `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
@@ -978,7 +982,7 @@ reorder its file-mode artifact.
 | `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
 | `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
-| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
+| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists. The line names `mars upgrade <source>` as the installer's way out |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-native-hook-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 
@@ -1028,7 +1032,9 @@ usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` c
 `version` because `agy plugin validate --strict` warns on a plugin without one.
 
 **Skills.** Linking `.agents` too puts the neutral copy and the `agy` copy of each skill in front
-of `agy` under one name; sync warns (`target-skills-duplicated`).
+of `agy` under one name; Mars warns (`deprecated-agents-target`) and says to run
+`mars unlink .agents`. With no harness that reads `.agents/skills` linked, the same code is
+an `info` that only notes `.agents` is deprecated.
 
 **MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
 own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to do so
@@ -1038,8 +1044,8 @@ installed project path in `command`, as for every harness. Every other harness r
 (`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
 name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
-off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's
-`url` and literal headers are written as Claude's are; env headers are left out the same way.
+off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are
+written as Claude's are; env headers are left out the same way.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
 A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,

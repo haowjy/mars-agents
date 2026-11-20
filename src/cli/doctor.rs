@@ -1,5 +1,6 @@
 //! `mars doctor` — validate state consistency.
 
+use crate::diagnostic::{DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::hash;
 use crate::types::managed_cmd;
@@ -11,13 +12,12 @@ use super::output;
 pub struct DoctorArgs {}
 
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let mut errors = Vec::new();
-    let mut warnings = Vec::new();
+    let mut diag = DiagnosticCollector::new();
 
     let project_config = match crate::config::load_project_config_layers(&ctx.project_root) {
         Ok(loaded) => Some(loaded),
         Err(e) => {
-            errors.push(format!("config error: {e}"));
+            diag.error("config-error", format!("config error: {e}"));
             None
         }
     };
@@ -25,8 +25,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let lock = match crate::lock::load(&ctx.project_root) {
         Ok(l) => l,
         Err(e) => {
-            errors.push(format!("lock file error: {e}"));
-            output::print_doctor(&errors, &warnings, json);
+            diag.error("lock-error", format!("lock file error: {e}"));
+            output::print_doctor(&diag.drain(), json);
             return Ok(2);
         }
     };
@@ -36,21 +36,30 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let disk_path = dest_path_str.resolve(&mars_dir);
 
         if !disk_path.exists() {
-            errors.push(format!(
-                "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
-            ));
+            diag.error(
+                "item-missing",
+                format!(
+                    "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
+                ),
+            );
             continue;
         }
 
         if item.kind == mars_schema::item::ItemKind::Agent
             && super::conflict_markers::file_has_conflict_markers(&disk_path)
         {
-            errors.push(format!("{dest_path_str} has unresolved conflict markers"));
+            diag.error(
+                "conflict-markers",
+                format!("{dest_path_str} has unresolved conflict markers"),
+            );
         }
 
         // A differing checksum is a local modification, not a fault; only an unreadable item is.
         if let Err(e) = hash::compute_hash(&disk_path, item.kind) {
-            errors.push(format!("can't hash {dest_path_str}: {e}"));
+            diag.error(
+                "item-unreadable",
+                format!("can't hash {dest_path_str}: {e}"),
+            );
         }
     }
 
@@ -64,14 +73,17 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             Ok((effective, _diagnostics)) => {
                 for source_name in effective.dependencies.keys() {
                     if !lock.dependencies.contains_key(source_name) {
-                        errors.push(format!(
-                            "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
-                            cmd = managed_cmd("mars sync"),
-                        ));
+                        diag.error(
+                            "dependency-not-locked",
+                            format!(
+                                "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
+                                cmd = managed_cmd("mars sync"),
+                            ),
+                        );
                     }
                 }
             }
-            Err(err) => errors.push(format!("config error: {err}")),
+            Err(err) => diag.error("config-error", format!("config error: {err}")),
         }
     }
 
@@ -81,7 +93,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         let installed = match installed_items(&mars_dir) {
             Ok(installed) => installed,
             Err(e) => {
-                errors.push(e.to_string());
+                diag.error("installed-items", e.to_string());
                 break 'installed;
             }
         };
@@ -98,11 +110,14 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 } else {
                     "skill"
                 };
-                warnings.push(format!(
-                    "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
-                    item.name,
-                    cmd = managed_cmd("mars sync"),
-                ));
+                diag.warn(
+                    "legacy-symlink",
+                    format!(
+                        "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
+                        item.name,
+                        cmd = managed_cmd("mars sync"),
+                    ),
+                );
             }
         }
 
@@ -121,55 +136,38 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .map(|package| package.uses_providers.as_slice());
         for agent in &installed.agents {
             let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
-            for skill_name in skills {
-                let provided_here = provided.provides(&skill_name);
-                let Some(warning) = crate::validate::classify_skill_ref(
-                    crate::lock::ItemId {
-                        kind: mars_schema::item::ItemKind::Agent,
-                        name: agent.name.as_str().into(),
-                    },
-                    skill_name.clone(),
-                    &available_skills,
+            let owner = lock
+                .items
+                .get(&format!("agent/{}", agent.name))
+                .map(|locked| locked.source.as_str())
+                .filter(|source| *source != crate::types::SourceOrigin::LocalPackage.to_string());
+            for skill_name in &skills {
+                let reference = crate::validate::SkillRef {
+                    agent: &agent.name,
+                    skill_name,
+                    owner: owner.map_or(
+                        crate::diagnostic::Owner::Own,
+                        crate::diagnostic::Owner::Dependency,
+                    ),
                     declared,
-                    provided_here,
-                ) else {
-                    continue;
+                    provided_here: provided.provides(skill_name),
                 };
-                let mut msg = warning.message();
-                // A plain missing name is an error; a provider-shaped one could be a typo
-                // (`nope__meridain`) or a host's skill that is not installed, so it warns.
-                let is_error = matches!(
-                    warning,
-                    crate::validate::ValidationWarning::MissingSkill { .. }
-                ) && mars_schema::provider::provider_of(&skill_name).is_none();
-                let no_suggestion = matches!(
-                    warning,
-                    crate::validate::ValidationWarning::MissingSkill {
-                        suggestion: None,
-                        ..
-                    }
-                );
-                if is_error {
-                    if no_suggestion {
-                        msg.push_str(&format!(
-                        " — add a source that provides it, or create it locally in skills/{skill_name}/"
-                        ));
-                    }
-                    errors.push(msg);
-                } else {
-                    warnings.push(msg);
+                if let Some(found) =
+                    crate::validate::classify_skill_ref(&reference, &available_skills)
+                {
+                    diag.push(found);
                 }
             }
         }
     }
 
-    check_mars_gitignore(&ctx.project_root, &mut warnings);
+    check_mars_gitignore(&ctx.project_root, &mut diag);
     check_legacy_agents_directory(
         &ctx.project_root,
         project_config
             .as_ref()
             .map(|loaded| &loaded.effective.settings),
-        &mut warnings,
+        &mut diag,
     );
 
     if let Some(project_config) = &project_config {
@@ -177,22 +175,30 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.project_root,
             &lock,
             &crate::config::targets::managed_targets(&project_config.effective.settings),
-            &mut warnings,
+            &mut diag,
         );
         if let Some(summary) = divergence.summary() {
-            warnings.push(summary);
+            diag.warn("target-divergence", summary);
         }
     }
 
-    output::print_doctor(&errors, &warnings, json);
+    let diagnostics = diag.drain();
+    output::print_doctor(&diagnostics, json);
 
-    if errors.is_empty() { Ok(0) } else { Ok(2) }
+    if diagnostics
+        .iter()
+        .any(|d| d.level == DiagnosticLevel::Error)
+    {
+        Ok(2)
+    } else {
+        Ok(0)
+    }
 }
 
 fn check_legacy_agents_directory(
     project_root: &std::path::Path,
     settings: Option<&crate::config::Settings>,
-    warnings: &mut Vec<String>,
+    diag: &mut DiagnosticCollector,
 ) {
     let agents_dir = project_root.join(".agents");
     if agents_dir.symlink_metadata().is_err() {
@@ -212,14 +218,14 @@ fn check_legacy_agents_directory(
         .unwrap_or_else(|err| err.kind() == std::io::ErrorKind::PermissionDenied);
 
     if !is_explicit_target && has_content {
-        warnings.push(
-            "`.agents/` has content, but Mars no longer reads it (`.mars/` is the canonical store) and will not touch it. Before removing it, check that nothing in it is yours or tracked by git"
-                .to_string(),
+        diag.warn(
+            "agents-directory-unread",
+            "`.agents/` has content, but Mars no longer reads it (`.mars/` is the canonical store) and will not touch it. Before removing it, check that nothing in it is yours or tracked by git",
         );
     }
 }
 
-fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<String>) {
+fn check_mars_gitignore(project_root: &std::path::Path, diag: &mut DiagnosticCollector) {
     let mars_dir = project_root.join(".mars");
     if mars_dir.symlink_metadata().is_err() {
         return;
@@ -235,9 +241,9 @@ fn check_mars_gitignore(project_root: &std::path::Path, warnings: &mut Vec<Strin
     };
 
     if !is_ignored {
-        warnings.push(
-            ".mars/ is not in .gitignore — add `.mars/` to your .gitignore to avoid committing cached data"
-                .to_string(),
+        diag.warn(
+            "mars-not-gitignored",
+            ".mars/ is not in .gitignore — add `.mars/` to your .gitignore to avoid committing cached data",
         );
     }
 }
@@ -305,7 +311,7 @@ fn check_target_divergence(
     project_root: &std::path::Path,
     lock: &crate::lock::LockFile,
     targets: &[String],
-    warnings: &mut Vec<String>,
+    diag: &mut DiagnosticCollector,
 ) -> TargetDivergence {
     let mut divergence = TargetDivergence::default();
 
@@ -329,14 +335,20 @@ fn check_target_divergence(
                         item.kind,
                         mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
                     ) {
-                        warnings.push(format!(
-                            "divergent in target: {shown} (local modifications; the next sync overwrites them)"
-                        ));
+                        diag.warn(
+                            "target-divergent",
+                            format!(
+                                "divergent in target: {shown} (local modifications; the next sync overwrites them)"
+                            ),
+                        );
                         divergence.overwritten += 1;
                     } else {
-                        warnings.push(format!(
-                            "divergent in target: {shown} (local modifications; sync keeps them)"
-                        ));
+                        diag.warn(
+                            "target-divergent",
+                            format!(
+                                "divergent in target: {shown} (local modifications; sync keeps them)"
+                            ),
+                        );
                         divergence.kept += 1;
                     }
                 }
@@ -344,13 +356,14 @@ fn check_target_divergence(
                 // fail on something inside it), so look at the item itself.
                 Err(error) => match target_path.symlink_metadata() {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        warnings.push(format!("missing in target: {shown}"));
+                        diag.warn("target-missing", format!("missing in target: {shown}"));
                         divergence.missing += 1;
                     }
                     Ok(_) if !target_path.exists() => {
-                        warnings.push(format!(
-                            "wrong kind of file in target: {shown} (a symlink to nothing)"
-                        ));
+                        diag.warn(
+                            "target-wrong-kind",
+                            format!("wrong kind of file in target: {shown} (a symlink to nothing)"),
+                        );
                         divergence.wrong_kind += 1;
                     }
                     _ if matches!(
@@ -358,11 +371,17 @@ fn check_target_divergence(
                         Some(std::io::ErrorKind::NotADirectory | std::io::ErrorKind::IsADirectory)
                     ) =>
                     {
-                        warnings.push(format!("wrong kind of file in target: {shown} ({error})"));
+                        diag.warn(
+                            "target-wrong-kind",
+                            format!("wrong kind of file in target: {shown} ({error})"),
+                        );
                         divergence.wrong_kind += 1;
                     }
                     _ => {
-                        warnings.push(format!("could not check target item: {shown} ({error})"));
+                        diag.warn(
+                            "target-unchecked",
+                            format!("could not check target item: {shown} ({error})"),
+                        );
                         divergence.unchecked += 1;
                     }
                 },
@@ -442,6 +461,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{check_legacy_agents_directory, check_target_divergence};
+    use crate::diagnostic::DiagnosticCollector;
+
+    fn messages(diag: &mut DiagnosticCollector) -> Vec<String> {
+        diag.drain().into_iter().map(|d| d.message).collect()
+    }
 
     fn make_locked_agent(
         name: &str,
@@ -499,10 +523,10 @@ mod tests {
         fs::write(root.join(".agents/agents/modified.md"), "local edits")
             .expect("write modified file");
 
-        let mut warnings = Vec::new();
-        let divergence =
-            check_target_divergence(root, &lock, &[".agents".to_string()], &mut warnings);
+        let mut diag = DiagnosticCollector::new();
+        let divergence = check_target_divergence(root, &lock, &[".agents".to_string()], &mut diag);
 
+        let warnings = messages(&mut diag);
         assert_eq!((divergence.overwritten, divergence.missing), (1, 1));
         assert!(
             warnings
@@ -535,14 +559,15 @@ mod tests {
         fs::write(root.join(".agents/agents/test.md"), "expected content")
             .expect("write matching file");
 
-        let mut warnings = Vec::new();
+        let mut diag = DiagnosticCollector::new();
         let divergence = check_target_divergence(
             root,
             &lock,
             &[".agents".to_string(), ".claude".to_string()],
-            &mut warnings,
+            &mut diag,
         );
 
+        let warnings = messages(&mut diag);
         assert_eq!((divergence.overwritten, divergence.missing), (0, 1));
         assert!(
             warnings
@@ -556,14 +581,14 @@ mod tests {
         let temp = TempDir::new().expect("create temp dir");
         fs::create_dir_all(temp.path().join(".agents")).expect("create legacy dir");
 
-        let mut warnings = Vec::new();
+        let mut diag = DiagnosticCollector::new();
         check_legacy_agents_directory(
             temp.path(),
             Some(&crate::config::Settings::default()),
-            &mut warnings,
+            &mut diag,
         );
         assert!(
-            warnings.is_empty(),
+            messages(&mut diag).is_empty(),
             "an empty `.agents/` is not worth a warning"
         );
 
@@ -571,11 +596,11 @@ mod tests {
         check_legacy_agents_directory(
             temp.path(),
             Some(&crate::config::Settings::default()),
-            &mut warnings,
+            &mut diag,
         );
 
         assert!(
-            warnings
+            messages(&mut diag)
                 .iter()
                 .any(|w| w.contains("`.agents/` has content"))
         );
@@ -590,9 +615,10 @@ mod tests {
             targets: Some(vec![".agents".to_string()]),
             ..crate::config::Settings::default()
         };
-        let mut warnings = Vec::new();
-        check_legacy_agents_directory(temp.path(), Some(&settings), &mut warnings);
+        let mut diag = DiagnosticCollector::new();
+        check_legacy_agents_directory(temp.path(), Some(&settings), &mut diag);
 
+        let warnings = messages(&mut diag);
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 }

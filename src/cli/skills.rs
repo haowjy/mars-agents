@@ -84,7 +84,7 @@ fn visible_skills(
     source: Option<&str>,
 ) -> Result<Vec<VisibleSkill>, MarsError> {
     let visible = roots.visible_locked_items(ItemKind::Skill)?;
-    output::print_warnings(&visible.warnings);
+    output::print_diagnostics(&visible.warnings, false);
 
     let mut skills = Vec::new();
     for (scope, item, disk_path) in visible.items {
@@ -95,14 +95,20 @@ fn visible_skills(
         let content = match std::fs::read_to_string(&skill_md) {
             Ok(c) => c,
             Err(err) => {
-                eprintln!("warning: skipping {}: {err}", skill_md.display());
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {err}", skill_md.display()),
+                );
                 continue;
             }
         };
         let profile = match mars_schema::skill::read(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
-                eprintln!("warning: skipping {}: {why}", skill_md.display());
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {why}", skill_md.display()),
+                );
                 continue;
             }
         };

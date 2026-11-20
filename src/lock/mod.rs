@@ -1294,6 +1294,11 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedDependency {
     )
 }
 
+/// The lock key of a hook no managed target takes, which has no per-target item.
+pub fn unplaced_hook_key(name: &str) -> String {
+    format!("{}/{name}", ItemKind::Hook)
+}
+
 pub fn item_key(id: &ItemId) -> String {
     format!("{}/{}", id.kind, id.name)
 }

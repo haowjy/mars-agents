@@ -267,8 +267,9 @@ fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
         ]);
     let output = cmd.assert().success().get_output().clone();
     let bundle: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // A refresh on its way loses nothing, so a launch bundle does not carry it.
     assert!(
-        bundle["warnings"]
+        !bundle["warnings"]
             .to_string()
             .contains("background refresh started")
     );

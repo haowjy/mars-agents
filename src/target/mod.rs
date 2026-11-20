@@ -52,6 +52,14 @@ impl McpDirs {
 pub struct McpServerEntry {
     pub name: String,
     pub transport: mars_schema::mcp_server::McpTransport,
+    /// The source the server came from; `_self` for the project's own.
+    pub source: String,
+}
+
+impl McpServerEntry {
+    pub(crate) fn is_own(&self) -> bool {
+        self.source == crate::types::SourceOrigin::LocalPackage.to_string()
+    }
 }
 
 #[derive(Debug, Clone)]

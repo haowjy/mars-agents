@@ -21,15 +21,23 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// A `Warning` with no category: the form of a problem found by code that reports strings.
-    pub(crate) fn warning(code: &'static str, message: impl Into<String>) -> Self {
+    /// A problem at the level its finder gives it, with no category or context.
+    pub(crate) fn new(
+        level: DiagnosticLevel,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
-            level: DiagnosticLevel::Warning,
+            level,
             code: code.into(),
             message: message.into(),
             context: None,
             category: None,
         }
+    }
+
+    pub(crate) fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(DiagnosticLevel::Warning, code, message)
     }
 
     /// A schema diagnostic at the level its reader gave it, under the caller's message.
@@ -70,6 +78,38 @@ impl Diagnostic {
     }
 }
 
+/// Who wrote what a problem is about, and so who can fix it: the project's own file is the
+/// user's to change; a dependency's is its author's. When nothing the package declares is lost,
+/// a finding in a dependency's file is `Info` to the installer and a `Warning` to its author.
+/// A loss is a `Warning` to both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Owner<'a> {
+    Own,
+    /// Installed from this source.
+    Dependency(&'a str),
+}
+
+impl<'a> Owner<'a> {
+    /// The owner of an item that came from `source`.
+    pub(crate) fn of(source: &'a str) -> Self {
+        if source == crate::types::SourceOrigin::LocalPackage.to_string() {
+            Self::Own
+        } else {
+            Self::Dependency(source)
+        }
+    }
+
+    /// What `DiagnosticCollector::hold_until_written` keeps a loss under, and a sync's write of
+    /// this owner's files releases.
+    fn written_key(self) -> String {
+        let source = match self {
+            Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
+            Self::Dependency(source) => source.to_owned(),
+        };
+        format!("source {source}")
+    }
+}
+
 /// What the user loses if they ignore a diagnostic. The code that finds a problem states it;
 /// nothing downstream decides again whether the problem is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -94,10 +134,14 @@ pub enum LossinessMode {
     /// Suppress lossiness warnings (validate, export, repair, …).
     #[default]
     Hidden,
-    /// Default for sync, check, init and plugin builds: one line for the project covering the
-    /// restrictions an agent loses (`Lossiness::Dropped`).
+    /// A sync's default: one line for the project covering the restrictions lost by the items
+    /// whose native file this run wrote or changed (`Lossiness::Dropped`). A loss repeated on
+    /// every no-change sync is not news.
+    Written,
+    /// Check, init and plugin builds: the same line, covering every item.
     Surface,
-    /// Every lossy field per item and target: quiet, approximate and launch-time ones too.
+    /// Every lossy field per item and target, written this run or not: quiet, approximate and
+    /// launch-time ones too.
     Verbose,
 }
 
@@ -127,9 +171,37 @@ pub enum DiagnosticCategory {
     Advisory,
 }
 
+/// One finding that arises once per item but has one cause and one piece of advice, such as the
+/// files of a source that collide with unmanaged ones. [`DiagnosticCollector::warn_each`] gathers
+/// the items of a group and `drain` prints one line for it.
+#[derive(Clone, Copy)]
+pub(crate) struct ItemGroup<'a> {
+    pub code: &'static str,
+    /// What the items share: a source or a target.
+    pub subject: &'a str,
+    /// The line for `count` items, named by `names`.
+    pub describe: fn(subject: &str, count: usize, names: &str) -> String,
+}
+
+struct GroupedItems {
+    code: &'static str,
+    subject: String,
+    describe: fn(&str, usize, &str) -> String,
+    items: Vec<String>,
+}
+
+/// How many item names a grouped line lists before it counts the rest; `--verbose` lists all.
+const GROUP_NAME_CAP: usize = 3;
+
 /// Collects diagnostics during pipeline execution.
 pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
+    grouped: Vec<GroupedItems>,
+    /// What a native file lacks, by the entry that lacks it, until a write of that entry
+    /// releases it (`hold`).
+    held: Vec<(String, Diagnostic)>,
+    /// The `Owner::written_key`s whose files this run wrote, for a loss found after the write.
+    written: std::collections::HashSet<String>,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
     /// The command that re-runs this one with `--verbose`, named in the default lossiness line.
@@ -157,6 +229,9 @@ impl DiagnosticCollector {
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
+            grouped: Vec::new(),
+            held: Vec::new(),
+            written: std::collections::HashSet::new(),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             rerun_verbose: "mars sync --verbose",
@@ -170,7 +245,7 @@ impl DiagnosticCollector {
         &mut self,
         diagnostic: &mars_schema::diagnostic::SchemaDiagnostic,
         context: &str,
-        errors_as_warnings: bool,
+        owner: Owner<'_>,
     ) {
         use mars_schema::diagnostic::Severity;
 
@@ -185,9 +260,17 @@ impl DiagnosticCollector {
         }
         if diagnostic.code == "field.unknown" {
             self.note_unknown_field(code, &diagnostic.message, context);
-        } else if diagnostic.severity == Severity::Error && !errors_as_warnings {
+        } else if diagnostic.severity == Severity::Error {
             self.error_with_category(code, message, DiagnosticCategory::Validation);
-        } else if diagnostic.severity == Severity::Info {
+        } else if diagnostic.lost {
+            self.hold_until_written(
+                owner,
+                Diagnostic {
+                    category: Some(DiagnosticCategory::Advisory),
+                    ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
+                },
+            );
+        } else if diagnostic.severity == Severity::Info || owner != Owner::Own {
             self.info(code, message);
         } else {
             self.warn_advisory(code, message);
@@ -224,12 +307,15 @@ impl DiagnosticCollector {
         std::mem::take(&mut self.engine_fallbacks)
     }
 
-    /// Buffer one lowered item's lossy fields; `drain` renders them by mode.
+    /// Buffer one lowered item's lossy fields; `drain` renders them by mode. `written` is
+    /// whether this run wrote or changed the item's native file; a caller that previews
+    /// passes `true`.
     pub fn record_lossy_fields(
         &mut self,
         item_kind: &'static str,
         item_name: &str,
         fields: &[LossyField],
+        written: bool,
     ) {
         if !self.lossiness_mode.surfaces_lossiness() {
             return;
@@ -239,6 +325,7 @@ impl DiagnosticCollector {
                 item_kind,
                 item_name: item_name.to_string(),
                 field: field.clone(),
+                written,
             }));
     }
 
@@ -248,6 +335,7 @@ impl DiagnosticCollector {
         agent: &str,
         harness: &str,
         warning: &crate::models::reasoning::EffortWarning,
+        written: bool,
     ) {
         if !self.lossiness_mode.surfaces_lossiness() {
             return;
@@ -258,6 +346,7 @@ impl DiagnosticCollector {
                 harness: harness.to_string(),
                 message: warning.message.clone(),
                 not_sent: warning.not_sent,
+                written,
             });
     }
 
@@ -307,6 +396,87 @@ impl DiagnosticCollector {
         self.warn_with_category(code, message, DiagnosticCategory::Advisory);
     }
 
+    /// A warning for `item`, joined with the others of its `group` into one line at `drain`.
+    pub(crate) fn warn_each(&mut self, group: ItemGroup<'_>, item: impl Into<String>) {
+        let item = item.into();
+        let existing = self
+            .grouped
+            .iter_mut()
+            .find(|found| found.code == group.code && found.subject == group.subject);
+        match existing {
+            Some(found) if found.items.contains(&item) => {}
+            Some(found) => found.items.push(item),
+            None => self.grouped.push(GroupedItems {
+                code: group.code,
+                subject: group.subject.to_owned(),
+                describe: group.describe,
+                items: vec![item],
+            }),
+        }
+    }
+
+    pub(crate) fn has_item(&self, code: &str, subject: &str, item: &str) -> bool {
+        self.grouped.iter().any(|group| {
+            group.code == code && group.subject == subject && group.items.iter().any(|i| i == item)
+        })
+    }
+
+    /// Keep a loss found while rendering the native entry `entry` until the entry is written:
+    /// a loss on an entry that stays as it was is not news. See [`Self::release`]. A command
+    /// that lists every loss (`--verbose`, `mars check`) shows it at once; one that hides them
+    /// drops it.
+    pub(crate) fn hold(&mut self, entry: String, diagnostic: Diagnostic) {
+        match self.lossiness_mode {
+            LossinessMode::Written | LossinessMode::Hidden => self.held.push((entry, diagnostic)),
+            LossinessMode::Surface | LossinessMode::Verbose => self.diagnostics.push(diagnostic),
+        }
+    }
+
+    /// [`Self::hold`] for a loss as a warning: the user gets less than the item declares.
+    pub(crate) fn hold_warning(
+        &mut self,
+        entry: String,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        self.hold(
+            entry,
+            Diagnostic {
+                category: Some(DiagnosticCategory::Advisory),
+                ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
+            },
+        );
+    }
+
+    /// Report what `hold` kept for `entry`: this run wrote it.
+    pub(crate) fn release(&mut self, entry: &str) {
+        let (released, held): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held)
+            .into_iter()
+            .partition(|(held_entry, _)| held_entry == entry);
+        self.held = held;
+        self.diagnostics
+            .extend(released.into_iter().map(|(_, diagnostic)| diagnostic));
+    }
+
+    /// A loss in what `owner` installed, reported by the sync that writes its files (`release_written`; a loss found
+    /// after the write is reported at once),
+    /// not by every sync after it. A command that does not write shows it at once.
+    pub(crate) fn hold_until_written(&mut self, owner: Owner<'_>, diagnostic: Diagnostic) {
+        let key = owner.written_key();
+        if self.lossiness_mode == LossinessMode::Written && !self.written.contains(&key) {
+            self.hold(key, diagnostic);
+        } else {
+            self.diagnostics.push(diagnostic);
+        }
+    }
+
+    /// This sync installed or changed `source`'s files: report what `hold_until_written` kept.
+    pub(crate) fn release_written(&mut self, owner: Owner<'_>) {
+        let key = owner.written_key();
+        self.release(&key);
+        self.written.insert(key);
+    }
+
     pub(crate) fn warn_once(
         &mut self,
         code: impl Into<Cow<'static, str>>,
@@ -317,6 +487,12 @@ impl DiagnosticCollector {
         if !self.has(&code, &message) {
             self.warn(code, message);
         }
+    }
+
+    pub(crate) fn has_code(&self, code: &str) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code)
     }
 
     fn has(&self, code: &str, message: &str) -> bool {
@@ -378,6 +554,10 @@ impl DiagnosticCollector {
         });
     }
 
+    pub(crate) fn push(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(diagnostic);
+    }
+
     pub fn extend(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics.extend(diagnostics);
     }
@@ -406,6 +586,28 @@ impl DiagnosticCollector {
             self.lossiness_mode,
             self.rerun_verbose,
         ));
+        self.held.clear();
+        for group in std::mem::take(&mut self.grouped) {
+            let shown = if self.lossiness_mode.verbose() {
+                group.items.len()
+            } else {
+                GROUP_NAME_CAP
+            };
+            let mut names = group
+                .items
+                .iter()
+                .take(shown)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if group.items.len() > shown {
+                names.push_str(&format!(" and {} more", group.items.len() - shown));
+            }
+            self.diagnostics.push(Diagnostic::warning(
+                group.code,
+                (group.describe)(&group.subject, group.items.len(), &names),
+            ));
+        }
         let moves = std::mem::take(&mut self.effort_moves);
         crate::compiler::lossiness::render_effort_moves(
             &moves,
@@ -490,7 +692,7 @@ mod tests {
     #[test]
     fn collector_verbose_surfaces_meridian_only_detail() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Verbose);
-        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")], true);
         let diags = coll.drain();
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, "agent-field-meridian-only");
@@ -499,7 +701,7 @@ mod tests {
     #[test]
     fn collector_surface_is_silent_about_meridian_only_fields() {
         let mut coll = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
-        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")]);
+        coll.record_lossy_fields("agent", "coder", &[meridian_only("approval")], true);
         let diags = coll.drain();
         assert!(diags.is_empty());
     }

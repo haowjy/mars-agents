@@ -68,7 +68,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if target_was_managed
         && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
     {
-        output::print_warn(&warning);
+        output::warn("recovery-publish", warning);
     }
 
     if json {

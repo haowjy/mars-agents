@@ -152,8 +152,9 @@ fn unmanaged_target_hook_directory_warns_and_withholds_entry() {
     sync(&project)
         .success()
         .stderr(predicate::str::contains("no installed-content claim"))
-        .stderr(contains_path(".claude/hooks/audit"))
-        .stderr(predicate::str::contains("not emitting hook `audit`"));
+        .stderr(predicate::str::contains("`hooks/audit`"))
+        // The collision above is the one cause; the entry it withholds is not reported again.
+        .stderr(predicate::str::contains("not emitting hook").not());
     project
         .child(".claude/settings.local.json")
         .assert(r#"{"sentinel":true}"#);
@@ -230,8 +231,9 @@ fn identical_unmanaged_hook_is_preserved_through_sync_and_removal() {
     sync(&project)
         .success()
         .stderr(predicate::str::contains("no installed-content claim"))
-        .stderr(contains_path(".claude/hooks/audit"))
-        .stderr(predicate::str::contains("not emitting hook `audit`"));
+        .stderr(predicate::str::contains("`hooks/audit`"))
+        // The collision above is the one cause; the entry it withholds is not reported again.
+        .stderr(predicate::str::contains("not emitting hook").not());
     installed.child("run.sh").assert("#!/bin/sh\n");
     project
         .child(".claude/settings.local.json")

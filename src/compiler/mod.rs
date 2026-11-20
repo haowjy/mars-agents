@@ -180,12 +180,16 @@ fn compile_inner(
             .with_settings(effective_settings.clone())
         });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
-    if mars_agent_scan.has_agents() && models_cache.reasoning_data_missing() {
-        diag.warn_advisory(
+    // Nothing is lost: the stale-cache line already says the catalog is refreshing, so this
+    // is not repeated beside it.
+    if mars_agent_scan.has_agents()
+        && models_cache.reasoning_data_missing()
+        && !diag.has_code("models-cache-refresh")
+    {
+        diag.info(
             "models-reasoning-missing",
             "the models catalog has no reasoning data yet, so Agent efforts are written as given, \
-             without checking the model; it fills in at the next successful refresh"
-                .to_string(),
+             without checking the model; it fills in at the next successful refresh",
         );
     }
 
@@ -333,16 +337,18 @@ fn refreshed_models_cache(
 ) -> crate::models::ModelsCache {
     match crate::models::ensure_fresh_with_catalog_providers(mars_dir, ttl_hours, mode, providers) {
         Ok((cache, outcome)) => {
-            if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                diag.warn_advisory("models-cache-refresh", warning);
-            }
+            diag.extend(
+                crate::models::refresh_diagnostic(&outcome)
+                    .into_iter()
+                    .collect(),
+            );
             cache
         }
         Err(err) => {
             diag.warn_advisory(
                 "models-cache-refresh",
                 format!(
-                    "failed to refresh models cache: {err} Efforts are written as given, without checking the model."
+                    "failed to refresh models cache: {err}; Efforts are written as given, without checking the model."
                 ),
             );
             crate::models::ModelsCache::default()

@@ -4,7 +4,7 @@
 //! content from `.mars/` into that target.
 //! Use `mars unlink <target>` to remove a target.
 
-use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::lock::{ItemId, LockFile};
 use crate::surface_ownership::CollisionAdoptHint;
@@ -51,9 +51,10 @@ fn link_target(
     }
 
     if !json && !super::is_recognized_target(target_name) {
-        output::print_warn(&format!(
-            "`{target_name}` is not a recognized tool directory — managing anyway"
-        ));
+        output::warn(
+            "target-unrecognized",
+            format!("`{target_name}` is not a recognized tool directory — managing anyway"),
+        );
     }
 
     let mars_dir = ctx.project_root.join(".mars");
@@ -128,9 +129,9 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    if let Some(diagnostic) = deprecated_agents_target_diagnostic(target_name) {
-        diagnostics.push(diagnostic);
-    }
+    diagnostics.extend(crate::config::targets::agents_target_diagnostic(
+        &runtime_targets,
+    ));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
@@ -194,9 +195,7 @@ fn link_target(
             "managed target `{target_name}` (synced {}, removed {})",
             outcome.items_synced, outcome.items_removed
         ));
-        for diagnostic in diagnostics {
-            output::print_warn(&diagnostic.to_string());
-        }
+        output::print_diagnostics(&diagnostics, false);
     }
 
     Ok(0)
@@ -230,19 +229,6 @@ fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {
     if !targets.iter().any(|target| target == target_name) {
         targets.push(target_name.to_string());
     }
-}
-
-fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> {
-    (target_name == ".agents").then(|| Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target".into(),
-        message: format!(
-            "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
-            managed_cmd("mars unlink .agents"),
-        ),
-        context: Some("link target".to_string()),
-        category: Some(DiagnosticCategory::Compatibility),
-    })
 }
 
 fn lock_items_as_sync_outcomes(lock: &LockFile) -> Vec<ActionOutcome> {

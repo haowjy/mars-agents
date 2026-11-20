@@ -430,7 +430,7 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
         Ok(report) if report.errors().is_empty() => Ok(()),
         Ok(report) if force => {
             for error in report.errors() {
-                eprintln!("warning (--force): {error}");
+                output::warn("version-forced", format!("--force: {error}"));
             }
             Ok(())
         }
@@ -442,7 +442,7 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
             Err(ConfigError::Invalid { message }.into())
         }
         Err(e) if force => {
-            eprintln!("warning (--force): check failed: {e}");
+            output::warn("version-forced", format!("--force: check failed: {e}"));
             Ok(())
         }
         Err(e) => Err(e),
@@ -480,7 +480,10 @@ fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsErr
         Ok(report) if force => {
             for d in &report.diagnostics {
                 if d.level == DiagnosticLevel::Error {
-                    eprintln!("warning (--force): [{}] {}", d.code, d.message);
+                    output::warn(
+                        "version-forced",
+                        format!("--force: [{}] {}", d.code, d.message),
+                    );
                 }
             }
             Ok(())
@@ -495,7 +498,7 @@ fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsErr
             Err(ConfigError::Invalid { message }.into())
         }
         Err(e) if force => {
-            eprintln!("warning (--force): validate failed: {e}");
+            output::warn("version-forced", format!("--force: validate failed: {e}"));
             Ok(())
         }
         Err(e) => Err(e),
@@ -817,7 +820,10 @@ fn update_changelog_if_present(
         match changelog_commit_bullets(project_root) {
             Ok(bullets) => bullets,
             Err(error) => {
-                eprintln!("warning: could not collect commits for CHANGELOG.md: {error}");
+                output::warn(
+                    "changelog-commits",
+                    format!("could not collect commits for CHANGELOG.md: {error}"),
+                );
                 Vec::new()
             }
         }
@@ -838,7 +844,10 @@ fn update_changelog_if_present(
             );
         }
     } else if changelog.is_empty() {
-        eprintln!("warning: CHANGELOG.md has no entries under [Unreleased]");
+        output::warn(
+            "changelog-empty",
+            "CHANGELOG.md has no entries under [Unreleased]",
+        );
     }
 
     let updated = changelog.promote(next_version, &today_iso_date(), &commit_bullets);

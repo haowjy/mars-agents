@@ -45,26 +45,6 @@ pub(crate) fn preflight_config_entries(
     // Targets whose keyed files and hook files this sync reads: those the old lock has records
     // on, those with something selected, and a managed target's fixed entries.
     let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
-    if managed
-        .iter()
-        .any(|target| target == crate::target::AGENTS_TARGET)
-    {
-        for target in &managed {
-            if registry
-                .get(target)
-                .is_some_and(|adapter| adapter.reads_agents_skills())
-            {
-                diag.warn(
-                    "target-skills-duplicated",
-                    format!(
-                        "`{}` and `{target}` are both linked, and the harness for `{target}` also reads skills from `{}/skills`, so it sees each skill twice under the same name; unlink one",
-                        crate::target::AGENTS_TARGET,
-                        crate::target::AGENTS_TARGET,
-                    ),
-                );
-            }
-        }
-    }
     let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for target in &managed {
@@ -200,7 +180,8 @@ pub(crate) fn preflight_config_entries(
                     }
                 }
                 for limit in &merged.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -215,7 +196,7 @@ pub(crate) fn preflight_config_entries(
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.warn_advisory("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(hook_entry_key(target_name, &item.def.name), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -249,7 +230,8 @@ pub(crate) fn preflight_config_entries(
                     );
                 }
                 for limit in &files.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -294,9 +276,16 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took. The project's own hooks warn, each skip once. A dependency's
-/// hooks are the consumer's to accept, not fix: one summary line per sync.
+/// What names a hook's entry on a target for `DiagnosticCollector::hold`: a loss concerning
+/// the hook's output there is news when the sync writes or changes that output, whoever owns
+/// the hook. `compile_config_entries` releases it.
+pub(super) fn hook_entry_key(target: &str, hook: &str) -> String {
+    format!("{target} hook {hook}")
+}
+
+/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target.
+/// A pair no target took has no entry to write, so nothing releases its line: only a command
+/// that lists every loss shows it.
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -304,7 +293,6 @@ fn report_skips(
     diag: &mut DiagnosticCollector,
 ) {
     let mut seen = BTreeSet::new();
-    let mut from_dependencies = Vec::new();
     for item in targeted.target.accepted_hooks() {
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
@@ -317,32 +305,20 @@ fn report_skips(
                 continue;
             }
             let lines: Vec<String> = skips.iter().map(skip_text).collect();
-            match item.origin {
-                Origin::Local => {
-                    for line in lines {
-                        diag.warn_advisory(
-                            "hook-event-skipped",
-                            format!("hook `{}`: `{target}` {line}", item.def.name),
-                        );
-                    }
-                }
-                Origin::Dependency => from_dependencies.push(format!(
-                    "{}/{} on `{target}` ({} left out)",
-                    item.source_name,
+            let from = match item.origin {
+                Origin::Local => String::new(),
+                Origin::Dependency => format!(" from `{}`", item.source_name),
+            };
+            diag.hold_warning(
+                hook_entry_key(target, &item.def.name),
+                "hook-event-skipped",
+                format!(
+                    "hook `{}`{from}: `{target}` {}",
                     item.def.name,
-                    lines.len()
-                )),
-            }
+                    lines.join("; ")
+                ),
+            );
         }
-    }
-    if !from_dependencies.is_empty() {
-        diag.info(
-            "hook-event-skipped",
-            format!(
-                "some events or handlers of dependency hooks have no counterpart on a managed target: {}",
-                from_dependencies.join(", ")
-            ),
-        );
     }
 }
 

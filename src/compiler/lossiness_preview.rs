@@ -119,7 +119,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
 
     // As in sync: the project's network settings reach no native Codex file.
     if codex_emitted {
-        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", &mut diag);
+        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", true, &mut diag);
     }
     Ok(diag.drain())
 }
@@ -164,9 +164,9 @@ fn collect_agent_content_lossiness(
     ) {
         codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
-        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields);
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields, true);
         if let Some(moved) = effort_moved {
-            diag.record_effort_move(agent_name, harness.as_str(), &moved);
+            diag.record_effort_move(agent_name, harness.as_str(), &moved, true);
         }
     }
     codex_emitted

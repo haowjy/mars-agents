@@ -140,7 +140,11 @@ pub(super) fn losses(
                 .map(|(_, rule)| rule.as_str())
                 .collect();
             (!rules.is_empty()).then(|| {
-                let noun = if kind == Lost::Mcp { "mcp" } else { "tools" };
+                let noun = match kind {
+                    Lost::Shell => "shell",
+                    Lost::Mcp => "mcp",
+                    _ => "tools",
+                };
                 LossyField {
                     field: format!("{noun} ({})", rules.join(", ")),
                     target: target.into(),

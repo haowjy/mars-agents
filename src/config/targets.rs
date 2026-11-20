@@ -183,6 +183,46 @@ pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
 }
 
+/// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
+/// `.agents` is deprecated, which loses nothing; but a harness that also reads `.agents/skills`
+/// (`agy`) then sees every skill twice under one name, and only unlinking `.agents` fixes that.
+/// Neither says the sync fell short of what it wanted.
+pub(crate) fn agents_target_diagnostic(
+    managed: &[String],
+) -> Option<crate::diagnostic::Diagnostic> {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+    use crate::target::{AGENTS_TARGET, TargetRegistry};
+
+    if !managed.iter().any(|target| target == AGENTS_TARGET) {
+        return None;
+    }
+    let unlink = crate::types::managed_cmd("mars unlink .agents");
+    let registry = TargetRegistry::new();
+    let reader = managed.iter().find(|target| {
+        registry
+            .get(target)
+            .is_some_and(|adapter| adapter.reads_agents_skills())
+    });
+    let (level, message) = match reader {
+        Some(reader) => (
+            DiagnosticLevel::Warning,
+            format!(
+                "`{AGENTS_TARGET}` and `{reader}` are both linked, and the harness for `{reader}` also reads skills from `{AGENTS_TARGET}/skills`, so it sees each skill twice under the same name. Run `{unlink}` to remove it."
+            ),
+        ),
+        None => (
+            DiagnosticLevel::Info,
+            format!(
+                "`{AGENTS_TARGET}` is a deprecated link target. Run `{unlink}` to remove it. Skills are now emitted to native harness dirs automatically."
+            ),
+        ),
+    };
+    Some(Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(level, "deprecated-agents-target", message)
+    })
+}
+
 /// Harnesses that would receive native agent artifacts during sync for these settings.
 pub(crate) fn configured_emit_harnesses(settings: &Settings) -> Vec<HarnessId> {
     managed_targets(settings)

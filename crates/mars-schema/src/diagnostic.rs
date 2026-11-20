@@ -36,6 +36,11 @@ pub struct SchemaDiagnostic {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub range: Option<ByteRange>,
+    /// What the package declares does not reach the installed files (a dropped restriction, a
+    /// hook Mars cannot convert). Whoever owns the item, the installer's agents behave
+    /// differently from what the package says.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lost: bool,
 }
 
 impl SchemaDiagnostic {
@@ -51,7 +56,14 @@ impl SchemaDiagnostic {
             path,
             message: message.into(),
             range: None,
+            lost: false,
         }
+    }
+
+    /// Mark this as a loss of declared behaviour: see [`Self::lost`].
+    pub fn losing(mut self) -> Self {
+        self.lost = true;
+        self
     }
 
     pub fn is_error(&self) -> bool {

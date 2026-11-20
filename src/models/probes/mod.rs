@@ -82,17 +82,12 @@ pub(super) fn cache_dir() -> Result<PathBuf, MarsError> {
 }
 
 /// A probe cache's lock, best effort: `None` when another process holds it or the path cannot be
-/// opened, so the caller skips the refresh instead of failing. An open error is logged — it is not
-/// contention, and a silent skip would hide a broken cache directory.
-pub(super) fn probe_lock(file: &str, label: &str) -> Option<crate::fs::FileLock> {
+/// opened, so the caller skips the refresh instead of failing.
+pub(super) fn probe_lock(file: &str) -> Option<crate::fs::FileLock> {
     let dir = cache_dir().ok()?;
-    match crate::fs::FileLock::try_acquire(&dir.join(file)) {
-        Ok(lock) => lock,
-        Err(error) => {
-            eprintln!("debug: {label} probe cache lock failed: {error}");
-            None
-        }
-    }
+    crate::fs::FileLock::try_acquire(&dir.join(file))
+        .ok()
+        .flatten()
 }
 
 /// Wait for a probe cache's lock. `None` when the path cannot be opened: the cache is best effort.

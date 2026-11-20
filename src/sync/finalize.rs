@@ -9,7 +9,7 @@ use crate::error::MarsError;
 use crate::lock::LockFile;
 use crate::sync::kept_hooks;
 use crate::sync::{SyncReport, SyncRequest, SyncedState, recovery};
-use crate::types::MarsContext;
+use crate::types::{MarsContext, SourceName};
 
 pub(crate) fn finalize(
     ctx: &MarsContext,
@@ -47,6 +47,21 @@ pub(crate) fn finalize(
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
+        record_unplaced_hooks(
+            &mut new_lock,
+            &state.applied.planned.targeted.target,
+            &crate::config::targets::managed_targets(
+                &state
+                    .applied
+                    .planned
+                    .targeted
+                    .resolved
+                    .loaded
+                    .effective
+                    .settings,
+            ),
+            graph,
+        )?;
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
             .iter()
@@ -83,9 +98,6 @@ pub(crate) fn finalize(
         }
     }
 
-    for warning in &state.applied.planned.targeted.warnings {
-        diag.warn(warning.code(), warning.message());
-    }
     let dependency_changes = state
         .applied
         .planned
@@ -152,6 +164,32 @@ fn record_hook_source_paths(
             locked.source_path = source_path;
         }
     }
+}
+
+/// A hook no target takes has no output to hang a lock item on; it gets one with none, so the
+/// next sync can tell a new or changed hook from one it has already reported.
+fn record_unplaced_hooks(
+    lock: &mut LockFile,
+    target: &crate::sync::target::TargetState,
+    managed_targets: &[String],
+    graph: &crate::resolve::ResolvedGraph,
+) -> Result<(), MarsError> {
+    for hook in target.unplaced_hooks(managed_targets) {
+        let source = SourceName::from(hook.source_name.as_str());
+        lock.items
+            .entry(crate::lock::unplaced_hook_key(&hook.def.name))
+            .or_insert(crate::lock::LockedItemV2 {
+                source_path: graph.nodes.get(&source).and_then(|node| {
+                    kept_hooks::lock_source_path(&node.rooted_ref.package_root, &hook.hook_dir)
+                }),
+                source,
+                kind: ItemKind::Hook,
+                version: None,
+                source_checksum: crate::sync::target::hook_checksum(hook)?,
+                outputs: Vec::new(),
+            });
+    }
+    Ok(())
 }
 
 fn retry_tombstone_removals(

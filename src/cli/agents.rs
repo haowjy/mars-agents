@@ -119,7 +119,7 @@ fn visible_agents(
     source: Option<&str>,
 ) -> Result<Vec<VisibleAgent>, MarsError> {
     let visible = roots.visible_locked_items(ItemKind::Agent)?;
-    output::print_warnings(&visible.warnings);
+    output::print_diagnostics(&visible.warnings, false);
     let config = crate::build::load_effective_project_config_or_default(&ctx.project_root)?;
     let fanout = config.settings.meridian_fanout_agents();
     let native = read_native_agent_manifest(&roots.primary_mars_dir());
@@ -132,14 +132,20 @@ fn visible_agents(
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(c) => c,
             Err(err) => {
-                eprintln!("warning: skipping {}: {err}", disk_path.display());
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {err}", disk_path.display()),
+                );
                 continue;
             }
         };
         let profile = match mars_schema::agent::read(&content).into_fields() {
             Ok(profile) => profile,
             Err(why) => {
-                eprintln!("warning: skipping {}: {why}", disk_path.display());
+                output::warn(
+                    "content-skipped",
+                    format!("skipping {}: {why}", disk_path.display()),
+                );
                 continue;
             }
         };

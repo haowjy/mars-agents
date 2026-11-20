@@ -14,12 +14,6 @@ use crate::sync::SyncReport;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::managed_cmd;
 
-pub fn print_warnings(warnings: &[String]) {
-    for warning in warnings {
-        eprintln!("warning: {warning}");
-    }
-}
-
 /// One row of the `mars agents` / `mars skills` list table.
 pub struct CatalogRow<'a> {
     pub name: &'a str,
@@ -547,47 +541,63 @@ fn print_list_human(entries: &[ListEntry]) {
     }
 }
 
-pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
+pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
+    use crate::diagnostic::DiagnosticLevel;
+    let of = |level: DiagnosticLevel| {
+        diagnostics
+            .iter()
+            .filter(move |diagnostic| diagnostic.level == level)
+    };
+    let errors = of(DiagnosticLevel::Error).count();
+    let warnings = of(DiagnosticLevel::Warning).count();
     if json {
+        // `errors` and `warnings` keep the shape older builds printed; `diagnostics` adds the code.
         #[derive(Serialize)]
-        struct DoctorReport {
+        struct DoctorReport<'a> {
             ok: bool,
-            errors: Vec<String>,
-            warnings: Vec<String>,
+            errors: Vec<&'a str>,
+            warnings: Vec<&'a str>,
+            diagnostics: &'a [Diagnostic],
         }
+        let messages = |level| of(level).map(|d| d.message.as_str()).collect();
         let report = DoctorReport {
-            ok: errors.is_empty(),
-            errors: errors.to_vec(),
-            warnings: warnings.to_vec(),
+            ok: errors == 0,
+            errors: messages(DiagnosticLevel::Error),
+            warnings: messages(DiagnosticLevel::Warning),
+            diagnostics,
         };
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
+    } else if diagnostics.is_empty() {
+        let mut stdout = stdout_stream();
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+        let _ = writeln!(stdout, "  all checks passed");
+        let _ = stdout.reset();
     } else {
         let mut stdout = stdout_stream();
-        if errors.is_empty() && warnings.is_empty() {
-            let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-            let _ = writeln!(stdout, "  all checks passed");
-            let _ = stdout.reset();
-        } else {
-            for warning in warnings {
-                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
-                let _ = write!(stdout, "  ⚠ ");
+        // Warnings first, then errors, as before; notes last.
+        for level in [
+            DiagnosticLevel::Warning,
+            DiagnosticLevel::Error,
+            DiagnosticLevel::Info,
+        ] {
+            let (color, mark) = match level {
+                DiagnosticLevel::Warning => (Color::Yellow, "⚠"),
+                DiagnosticLevel::Error => (Color::Red, "✗"),
+                DiagnosticLevel::Info => (Color::Cyan, "ℹ"),
+            };
+            for diagnostic in of(level) {
+                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(color)));
+                let _ = write!(stdout, "  {mark} ");
                 let _ = stdout.reset();
-                let _ = writeln!(stdout, "{warning}");
+                let _ = writeln!(stdout, "{}", diagnostic.message);
             }
-
-            for error in errors {
-                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
-                let _ = write!(stdout, "  ✗ ");
-                let _ = stdout.reset();
-                let _ = writeln!(stdout, "{error}");
-            }
-            let _ = writeln!(stdout);
-            if !warnings.is_empty() {
-                let _ = writeln!(stdout, "  {} warning(s)", warnings.len());
-            }
-            if !errors.is_empty() {
-                let _ = writeln!(stdout, "  {} error(s)", errors.len());
-            }
+        }
+        let _ = writeln!(stdout);
+        if warnings > 0 {
+            let _ = writeln!(stdout, "  {warnings} warning(s)");
+        }
+        if errors > 0 {
+            let _ = writeln!(stdout, "  {errors} error(s)");
         }
     }
 }
@@ -626,6 +636,13 @@ fn write_diagnostics(diagnostics: &[Diagnostic], detail: bool, tagged: bool) {
     }
 }
 
+/// A warning from a command that has no collector of its own: built here, shown by
+/// [`print_diagnostics`] like any other.
+pub fn warn(code: &'static str, message: impl Into<String>) {
+    print_diagnostics(&[Diagnostic::warning(code, message)], false);
+}
+
+/// The closing line of `validate`, which counts warnings it has already listed.
 pub fn print_warn(msg: &str) {
     narrate(Some((Color::Yellow, "⚠")), msg);
 }

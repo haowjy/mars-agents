@@ -40,7 +40,7 @@ pub(crate) mod retention;
 
 use std::path::Path;
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, ItemGroup};
 use crate::lock::LockFile;
 use crate::types::managed_cmd;
 
@@ -92,20 +92,69 @@ pub fn warn_no_installed_claim_collision(
     hint: CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) {
-    let adopt_cmd: String = match hint {
-        CollisionAdoptHint::SyncForce => managed_cmd("mars sync --force").into_owned(),
-        CollisionAdoptHint::LinkForce => {
-            let inner = format!("mars link {target_name} --force");
-            managed_cmd(&inner).into_owned()
-        }
-    };
-    diag.warn(
-        "target-unmanaged-collision",
-        format!(
-            "target `{target_name}` item `{dest_rel}` exists locally but has no installed-content claim \
-             (preserved local content; run `{adopt_cmd}` to adopt)"
-        ),
+    diag.warn_each(
+        ItemGroup {
+            code: "target-unmanaged-collision",
+            subject: target_name,
+            describe: match hint {
+                CollisionAdoptHint::SyncForce => describe_unclaimed_by_sync,
+                CollisionAdoptHint::LinkForce => describe_unclaimed_by_link,
+            },
+        },
+        format!("`{dest_rel}`"),
     );
+}
+
+fn describe_unclaimed(target: &str, count: usize, names: &str, adopt_cmd: &str) -> String {
+    let plural = if count == 1 { "item" } else { "items" };
+    format!(
+        "target `{target}` has {count} {plural} that exist locally with no installed-content \
+         claim: {names}. They are preserved; if they are files Mars wrote and lost track of, or \
+         ones you want replaced, run `{adopt_cmd}` to adopt them"
+    )
+}
+
+fn describe_unclaimed_by_sync(target: &str, count: usize, names: &str) -> String {
+    describe_unclaimed(target, count, names, &managed_cmd("mars sync --force"))
+}
+
+fn describe_unclaimed_by_link(target: &str, count: usize, names: &str) -> String {
+    let adopt = format!("mars link {target} --force");
+    describe_unclaimed(target, count, names, &managed_cmd(&adopt))
+}
+
+/// Whether `warn_no_installed_claim_collision` or `warn_diverged` already told the user that
+/// `dest_rel` of `target_name` was left alone, so what follows from that (a config entry that
+/// cannot name the missing copy) need not say it again.
+pub fn already_left_alone(target_name: &str, dest_rel: &str, diag: &DiagnosticCollector) -> bool {
+    let item = format!("`{dest_rel}`");
+    ["target-unmanaged-collision", "target-divergent"]
+        .iter()
+        .any(|code| diag.has_item(code, target_name, &item))
+}
+
+/// An item of `target` whose installed content was edited after Mars wrote it: it is
+/// preserved, and `--force` or `repair` resets it. One line per target.
+pub fn warn_diverged(target_name: &str, dest_rel: &str, diag: &mut DiagnosticCollector) {
+    diag.warn_each(
+        ItemGroup {
+            code: "target-divergent",
+            subject: target_name,
+            describe: describe_diverged,
+        },
+        format!("`{dest_rel}`"),
+    );
+}
+
+fn describe_diverged(target: &str, count: usize, names: &str) -> String {
+    let plural = if count == 1 { "item" } else { "items" };
+    format!(
+        "target `{target}` has {count} {plural} edited after Mars installed {them}: {names}. \
+         Local content is preserved; run `{}` or `{}` to reset",
+        managed_cmd("mars sync --force"),
+        managed_cmd("mars repair"),
+        them = if count == 1 { "it" } else { "them" },
+    )
 }
 
 pub fn warn_no_installed_claim_adopted(

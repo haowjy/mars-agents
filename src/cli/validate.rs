@@ -169,17 +169,6 @@ fn category_str(cat: DiagnosticCategory) -> &'static str {
 }
 
 #[cfg(test)]
-fn validation_warning_to_diagnostic(vw: &crate::validate::ValidationWarning) -> Diagnostic {
-    Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: vw.code().into(),
-        message: vw.message(),
-        context: None,
-        category: Some(DiagnosticCategory::Validation),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticLevel;
@@ -246,42 +235,5 @@ mod tests {
             vd.level, "error",
             "warning should be escalated in strict mode"
         );
-    }
-
-    #[test]
-    fn validation_warning_missing_skill_no_suggestion() {
-        use crate::lock::ItemId;
-        use mars_schema::item::ItemKind;
-        use mars_schema::names::ItemName;
-        let vw = crate::validate::ValidationWarning::MissingSkill {
-            agent: ItemId {
-                kind: ItemKind::Agent,
-                name: ItemName::from("coder".to_string()),
-            },
-            skill_name: "planning".to_string(),
-            suggestion: None,
-        };
-        let diag = validation_warning_to_diagnostic(&vw);
-        assert_eq!(diag.level, DiagnosticLevel::Warning);
-        assert!(diag.message.contains("coder"));
-        assert!(diag.message.contains("planning"));
-        assert_eq!(diag.category, Some(DiagnosticCategory::Validation));
-    }
-
-    #[test]
-    fn validation_warning_missing_skill_with_suggestion() {
-        use crate::lock::ItemId;
-        use mars_schema::item::ItemKind;
-        use mars_schema::names::ItemName;
-        let vw = crate::validate::ValidationWarning::MissingSkill {
-            agent: ItemId {
-                kind: ItemKind::Agent,
-                name: ItemName::from("coder".to_string()),
-            },
-            skill_name: "plan".to_string(),
-            suggestion: Some("planning".to_string()),
-        };
-        let diag = validation_warning_to_diagnostic(&vw);
-        assert!(diag.message.contains("did you mean `planning`"));
     }
 }

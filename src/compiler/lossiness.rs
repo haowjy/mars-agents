@@ -6,7 +6,9 @@
 //!
 //! **A lost restriction that changes what an agent can do is shown by default. Every other lost
 //! field is available under `--verbose`. Nothing is dropped without a record.** `Dropped` is the
-//! one class that prints by default, as one line for the project ([`Lost`] names the kind). A site
+//! one class that prints by default, as one line for the project ([`Lost`] names the kind), and
+//! only for items whose native file the run wrote or changed: a sync that leaves the file as it
+//! was has no news (`LossinessMode::Written`; `--verbose` and `mars check` cover every item). A site
 //! goes quiet only as `Quiet { why }` (a lost field that restricts nothing, or something else
 //! already covers it), `Approximate`, or `MeridianOnly` (a launch-time field); those print per
 //! item under `--verbose`. Quiet needs a reason, so an unclassified site is loud.
@@ -102,14 +104,14 @@ pub struct LoweredOutput {
     pub siblings: Vec<LoweredSibling>,
 }
 
-/// The target directory of the harness named `harness`.
-pub(crate) fn target_label(harness: &str) -> String {
-    match mars_schema::harness::parse(harness) {
-        Some(id) => crate::harness::registry::descriptor(id)
-            .default_target
-            .to_string(),
-        None => format!(".{}", harness.to_lowercase()),
-    }
+/// The target directory of the harness a lossy field names by its display name (`Claude`,
+/// `Antigravity`): lowering labels its target the way a person reads it.
+pub(crate) fn target_label(harness: &str) -> &'static str {
+    crate::harness::registry::descriptors()
+        .iter()
+        .find(|descriptor| descriptor.display_name.eq_ignore_ascii_case(harness))
+        .map(|descriptor| descriptor.default_target)
+        .expect("a lossy field's target is a harness display name")
 }
 
 /// Record that project `[settings]` network keys reach no native file of `target`: the settings
@@ -118,6 +120,7 @@ pub(crate) fn target_label(harness: &str) -> String {
 pub fn record_project_network_loss(
     keys: &[(&'static str, bool)],
     target: &str,
+    written: bool,
     diag: &mut DiagnosticCollector,
 ) {
     for &(key, restricts) in keys {
@@ -137,6 +140,7 @@ pub fn record_project_network_loss(
                     }
                 },
             }],
+            written,
         );
     }
 }
@@ -148,6 +152,8 @@ pub(crate) struct LossRecord {
     pub item_kind: &'static str,
     pub item_name: String,
     pub field: LossyField,
+    /// This run wrote or changed the item's native file, so the loss is news.
+    pub written: bool,
 }
 
 /// An Agent whose effort moved to a level the model and harness take, found at sync.
@@ -159,6 +165,8 @@ pub(crate) struct EffortMoveRecord {
     pub message: String,
     /// No effort was sent, as against moving to another level.
     pub not_sent: bool,
+    /// This run wrote or changed the Agent's native file.
+    pub written: bool,
 }
 
 /// `Surface` prints one line for all Agents; `Verbose` one line per Agent and harness.
@@ -168,6 +176,10 @@ pub(crate) fn render_effort_moves(
     rerun: &str,
     out: &mut Vec<Diagnostic>,
 ) {
+    let moves: Vec<&EffortMoveRecord> = moves
+        .iter()
+        .filter(|moved| moved.written || mode != LossinessMode::Written)
+        .collect();
     if moves.is_empty() {
         return;
     }
@@ -247,7 +259,13 @@ pub(crate) fn render(records: &[LossRecord], mode: LossinessMode, rerun: &str) -
         render_per_item(records, &mut out);
         render_meridian_only(records, &mut out);
     } else {
-        render_dropped_rollup(records, rerun, &mut out);
+        // A lost restriction is a warning whoever wrote the item: the installed file does less
+        // than the package says.
+        let news: Vec<&LossRecord> = records
+            .iter()
+            .filter(|record| record.written || mode != LossinessMode::Written)
+            .collect();
+        render_dropped_rollup(&news, rerun, &mut out);
     }
     out
 }
@@ -330,9 +348,10 @@ fn counted(count: usize) -> (usize, &'static str) {
 /// separate sets and claims nothing about which combination applies: each listed item loses at
 /// least one of the listed kinds on at least one of the listed targets. The per-item, per-target,
 /// per-field detail is `--verbose`.
-fn render_dropped_rollup(records: &[LossRecord], rerun: &str, out: &mut Vec<Diagnostic>) {
+fn render_dropped_rollup(records: &[&LossRecord], rerun: &str, out: &mut Vec<Diagnostic>) {
     let dropped: Vec<(&LossRecord, Lost)> = records
         .iter()
+        .copied()
         .filter_map(|r| match r.field.classification {
             Lossiness::Dropped(kind) => Some((r, kind)),
             _ => None,
@@ -349,6 +368,7 @@ fn render_dropped_rollup(records: &[LossRecord], rerun: &str, out: &mut Vec<Diag
             .collect()
     };
     let agents = names("agent");
+    let skills = names("skill");
     let settings = names("project");
     let kinds: BTreeSet<Lost> = dropped.iter().map(|(_, kind)| *kind).collect();
     let targets: BTreeSet<&str> = dropped
@@ -357,25 +377,30 @@ fn render_dropped_rollup(records: &[LossRecord], rerun: &str, out: &mut Vec<Diag
         .collect();
 
     let mut subjects = Vec::new();
-    if !agents.is_empty() {
-        let plural = if agents.len() == 1 { "" } else { "s" };
-        subjects.push(format!(
-            "{} agent{plural} ({})",
-            agents.len(),
-            name_list(&agents)
-        ));
+    for (noun, names) in [("agent", &agents), ("skill", &skills)] {
+        if !names.is_empty() {
+            let plural = if names.len() == 1 { "" } else { "s" };
+            subjects.push(format!(
+                "{} {noun}{plural} ({})",
+                names.len(),
+                name_list(names)
+            ));
+        }
     }
     if !settings.is_empty() {
         let plural = if settings.len() == 1 { "" } else { "s" };
         subjects.push(format!("project setting{plural} {}", name_list(&settings)));
     }
-    let verb = if subjects.len() == 1 && agents.len() + settings.len() == 1 {
+    let verb = if agents.len() + skills.len() + settings.len() == 1 {
         "loses"
     } else {
         "lose"
     };
     let kinds: Vec<String> = kinds.iter().map(|k| k.name().to_string()).collect();
-    let targets: Vec<String> = targets.iter().map(|t| target_label(t)).collect();
+    let targets: Vec<String> = targets
+        .iter()
+        .map(|t| target_label(t).to_string())
+        .collect();
     out.push(diagnostic(
         DiagnosticLevel::Warning,
         "agent-restriction-dropped",
@@ -474,7 +499,7 @@ mod tests {
                     field("approval", target, Lossiness::MeridianOnly),
                 ];
                 for name in ["a", "b", "c", "d", "e"] {
-                    d.record_lossy_fields("agent", name, &lossy);
+                    d.record_lossy_fields("agent", name, &lossy, true);
                 }
             }
         };
@@ -510,11 +535,13 @@ mod tests {
                     ),
                     field("network", "Codex", Lossiness::Dropped(Lost::Network)),
                 ],
+                true,
             );
             d.record_lossy_fields(
                 "agent",
                 "b",
                 &[field("x", "Pi", Lossiness::Dropped(Lost::Policy))],
+                true,
             );
         });
         assert_eq!(out.len(), 1);
@@ -533,6 +560,7 @@ mod tests {
                     field("tools (deny edit)", "Codex", Lossiness::Quiet { why: "w" }),
                     field("approval", "Codex", Lossiness::MeridianOnly),
                 ],
+                true,
             )
         });
         assert!(out.is_empty());

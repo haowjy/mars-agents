@@ -38,8 +38,21 @@ pub(crate) fn render_all(
         .iter()
         .map(|server| {
             let rendered = (file.render)(server);
+            // The native entry does less than the server declares, whoever wrote it; the text names
+            // the step that is the reader's own.
+            let own = server.is_own();
             for lost in rendered.lossy {
-                diag.warn_advisory("mcp-lossy", format!("MCP server `{}`: {lost}", server.name));
+                let message = if own {
+                    format!("MCP server `{}`: {}", server.name, lost.text(true))
+                } else {
+                    format!(
+                        "MCP server `{}` (from `{}`): {}",
+                        server.name,
+                        server.source,
+                        lost.text(false)
+                    )
+                };
+                diag.hold_warning(file.at.entry_key(&server.name), "mcp-lossy", message);
             }
             Rendered {
                 name: server.name.clone(),
@@ -78,6 +91,7 @@ mod tests {
                     })
                     .collect(),
             },
+            source: "_self".to_owned(),
         }
     }
 
@@ -149,11 +163,10 @@ mod tests {
         let registry = TargetRegistry::new();
         let adapter = registry.get(".codex").unwrap();
         let mut diag = DiagnosticCollector::new();
-        render_all(
-            &adapter.mcp_file().unwrap(),
-            &[server("r", &[("A", "B")])],
-            &mut diag,
-        );
+        let file = adapter.mcp_file().unwrap();
+        render_all(&file, &[server("r", &[("A", "B")])], &mut diag);
+        // The loss is held until the entry is written.
+        diag.release(&file.at.entry_key("r"));
         assert_eq!(diag.drain().len(), 1);
 
         write(".codex", tmp.path(), std::slice::from_ref(&entry));

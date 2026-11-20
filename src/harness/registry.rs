@@ -66,7 +66,6 @@ pub enum ListingAuth {
 /// `id.as_str()`, the target directory `.{id}`, and the skill variant key `id.as_str()`.
 /// Lowering policy is a table in the compiler, so `src/harness` never depends on it.
 pub struct HarnessDescriptor {
-    pub id: HarnessId,
     pub class: HarnessClass,
 }
 
@@ -88,74 +87,71 @@ pub fn default_harness_order_names() -> Vec<String> {
         .collect()
 }
 
-const DESCRIPTORS: &[HarnessDescriptor] = &[
-    HarnessDescriptor {
-        id: HarnessId::Claude,
-        class: HarnessClass::Native {
-            provider: "anthropic",
-            auth_status: &["auth", "status"],
-        },
+const CLAUDE: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::Native {
+        provider: "anthropic",
+        auth_status: &["auth", "status"],
     },
-    HarnessDescriptor {
-        id: HarnessId::Codex,
-        class: HarnessClass::Native {
-            provider: "openai",
-            auth_status: &["login", "status"],
-        },
-    },
-    HarnessDescriptor {
-        id: HarnessId::Pi,
-        class: HarnessClass::ProbeBacked(ProbeSpec {
-            probe: ProbeDriver::of::<PiProbeResult>(),
-            listing: ListingAuth::Gated,
-            slugs: SlugShape::Qualified,
-            tiers: None,
-        }),
-    },
-    HarnessDescriptor {
-        id: HarnessId::OpenCode,
-        class: HarnessClass::ProbeBacked(ProbeSpec {
-            probe: ProbeDriver::of::<OpenCodeProbeResult>(),
-            listing: ListingAuth::Ungated,
-            slugs: SlugShape::Qualified,
-            tiers: None,
-        }),
-    },
-    HarnessDescriptor {
-        id: HarnessId::Cursor,
-        class: HarnessClass::ProbeBacked(ProbeSpec {
-            probe: ProbeDriver::of::<CursorProbeResult>(),
-            listing: ListingAuth::Gated,
-            slugs: SlugShape::Bare,
-            tiers: Some(SlugTiers {
-                bare_level: Some(EffortLevel::Medium),
-                respell: cursor::model_id_shim,
-            }),
-        }),
-    },
-    HarnessDescriptor {
-        id: HarnessId::Agy,
-        class: HarnessClass::ProbeBacked(ProbeSpec {
-            probe: ProbeDriver::of::<AgyProbeResult>(),
-            listing: ListingAuth::Gated,
-            slugs: SlugShape::Bare,
-            tiers: Some(SlugTiers {
-                bare_level: None,
-                respell: |_| None,
-            }),
-        }),
-    },
-];
+};
 
-pub fn descriptors() -> &'static [HarnessDescriptor] {
-    DESCRIPTORS
-}
+const CODEX: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::Native {
+        provider: "openai",
+        auth_status: &["login", "status"],
+    },
+};
+
+const PI: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::ProbeBacked(ProbeSpec {
+        probe: ProbeDriver::of::<PiProbeResult>(),
+        listing: ListingAuth::Gated,
+        slugs: SlugShape::Qualified,
+        tiers: None,
+    }),
+};
+
+const OPENCODE: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::ProbeBacked(ProbeSpec {
+        probe: ProbeDriver::of::<OpenCodeProbeResult>(),
+        listing: ListingAuth::Ungated,
+        slugs: SlugShape::Qualified,
+        tiers: None,
+    }),
+};
+
+const CURSOR: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::ProbeBacked(ProbeSpec {
+        probe: ProbeDriver::of::<CursorProbeResult>(),
+        listing: ListingAuth::Gated,
+        slugs: SlugShape::Bare,
+        tiers: Some(SlugTiers {
+            bare_level: Some(EffortLevel::Medium),
+            respell: cursor::model_id_shim,
+        }),
+    }),
+};
+
+const AGY: HarnessDescriptor = HarnessDescriptor {
+    class: HarnessClass::ProbeBacked(ProbeSpec {
+        probe: ProbeDriver::of::<AgyProbeResult>(),
+        listing: ListingAuth::Gated,
+        slugs: SlugShape::Bare,
+        tiers: Some(SlugTiers {
+            bare_level: None,
+            respell: |_| None,
+        }),
+    }),
+};
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
-    DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.id == id)
-        .expect("harness descriptor exists")
+    match id {
+        HarnessId::Claude => &CLAUDE,
+        HarnessId::Codex => &CODEX,
+        HarnessId::Pi => &PI,
+        HarnessId::OpenCode => &OPENCODE,
+        HarnessId::Cursor => &CURSOR,
+        HarnessId::Agy => &AGY,
+    }
 }
 
 /// The probe-backed harness's spec, or `None` for a native harness.
@@ -196,13 +192,9 @@ pub fn harness_for_target(target: &str) -> Option<HarnessId> {
 
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
     let normalized = provider.trim().to_ascii_lowercase();
-    DESCRIPTORS
-        .iter()
-        .find(|descriptor| match descriptor.class {
-            HarnessClass::Native { provider, .. } => provider == normalized,
-            HarnessClass::ProbeBacked(_) => false,
-        })
-        .map(|descriptor| descriptor.id)
+    mars_schema::harness::ALL.iter().copied().find(|id| {
+        matches!(descriptor(*id).class, HarnessClass::Native { provider, .. } if provider == normalized)
+    })
 }
 
 pub fn provider_candidate_order(provider: &str) -> Vec<HarnessId> {

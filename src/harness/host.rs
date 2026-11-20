@@ -137,16 +137,14 @@ impl CapabilitySession {
             return None;
         }
         let mut probes = Vec::new();
-        for descriptor in registry::descriptors() {
-            let Some(spec) = registry::probe_spec(descriptor.id) else {
+        for &id in mars_schema::harness::ALL {
+            let Some(spec) = registry::probe_spec(id) else {
                 continue;
             };
-            if spec.slugs != SlugShape::Qualified
-                || !self.installed.contains(descriptor.id.as_str())
-            {
+            if spec.slugs != SlugShape::Qualified || !self.installed.contains(id.as_str()) {
                 continue;
             }
-            probes.push(match self.loaded_outcome(descriptor.id) {
+            probes.push(match self.loaded_outcome(id) {
                 None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
                 Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
                 Some(outcome) => ProbeListing::Listed(outcome.result()?.slugs.clone()),

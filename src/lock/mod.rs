@@ -1,5 +1,5 @@
 use mars_schema::item::ItemKind;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -10,6 +10,8 @@ use crate::diagnostic::Diagnostic;
 use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
+
+mod targets;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {
@@ -23,29 +25,6 @@ pub struct LockFile {
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
-}
-
-/// What a lock recorded for targets the configuration does not name: each item's outputs there,
-/// and their config entries.
-#[derive(Debug, Clone, Default)]
-pub struct UnmanagedRecords {
-    items: Vec<(String, LockedItemV2)>,
-    config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
-}
-
-impl UnmanagedRecords {
-    /// The targets these records are on, each once.
-    pub fn targets(&self) -> BTreeSet<&str> {
-        self.items
-            .iter()
-            .flat_map(|(_, item)| {
-                item.outputs
-                    .iter()
-                    .map(|output| output.target_root.as_str())
-            })
-            .chain(self.config_entries.keys().map(String::as_str))
-            .collect()
-    }
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
@@ -69,55 +48,6 @@ impl LockFile {
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
-    }
-
-    /// Take out what the lock records for targets outside `managed`, so nothing in a sync plans,
-    /// deletes or rewrites it; [`LockFile::restore_unmanaged`] puts it back into the lock the sync
-    /// writes. `mars unlink` is what removes it.
-    pub fn set_aside_unmanaged(&mut self, managed: &[String]) -> UnmanagedRecords {
-        let is_unmanaged = |target_root: &str| {
-            target_root != CANONICAL_TARGET_ROOT && !managed.iter().any(|name| name == target_root)
-        };
-        let mut set_aside = UnmanagedRecords::default();
-        let mut emptied = Vec::new();
-        for (key, item) in &mut self.items {
-            let (unmanaged, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut item.outputs)
-                .into_iter()
-                .partition(|output| is_unmanaged(&output.target_root));
-            item.outputs = kept;
-            if !unmanaged.is_empty() {
-                if item.outputs.is_empty() {
-                    emptied.push(key.clone());
-                }
-                set_aside.items.push((
-                    key.clone(),
-                    LockedItemV2 {
-                        outputs: unmanaged,
-                        ..item.clone()
-                    },
-                ));
-            }
-        }
-        self.items.retain(|key, _| !emptied.contains(key));
-        let (unmanaged, kept): (BTreeMap<_, _>, BTreeMap<_, _>) =
-            std::mem::take(&mut self.config_entries)
-                .into_iter()
-                .partition(|(target_root, _)| is_unmanaged(target_root));
-        self.config_entries = kept;
-        set_aside.config_entries = unmanaged;
-        set_aside
-    }
-
-    pub fn restore_unmanaged(&mut self, set_aside: &UnmanagedRecords) {
-        for (key, stub) in &set_aside.items {
-            match self.items.get_mut(key) {
-                Some(item) => item.outputs.extend(stub.outputs.iter().cloned()),
-                None => {
-                    self.items.insert(key.clone(), stub.clone());
-                }
-            }
-        }
-        self.config_entries.extend(set_aside.config_entries.clone());
     }
 
     pub fn empty() -> Self {

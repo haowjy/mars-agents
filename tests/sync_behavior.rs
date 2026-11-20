@@ -1912,12 +1912,18 @@ fn sync_leaves_a_target_the_config_no_longer_names_until_unlink() {
         .child("mars.toml")
         .write_str("[settings]\ntargets = ['.opencode']\n")
         .unwrap();
+    let mut lock_after_each = Vec::new();
     for _ in 0..2 {
         sync_project(&dir, &project).stderr(
             predicate::str::contains("`.claude` is not in `targets`")
                 .and(predicate::str::contains("mars unlink .claude")),
         );
+        lock_after_each.push(fs::read(project.child("mars.lock").path()).unwrap());
     }
+    assert_eq!(
+        lock_after_each[0], lock_after_each[1],
+        "a sync rewrites no record of an unnamed target"
+    );
     assert_eq!(fs::read(project.child(".mcp.json").path()).unwrap(), mcp);
     assert_eq!(
         fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
@@ -1941,6 +1947,33 @@ fn sync_leaves_a_target_the_config_no_longer_names_until_unlink() {
     sync_project(&dir, &project).stderr(predicate::str::contains("mars unlink").not());
     let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
     assert!(!lock.contains("target_root = \".claude\""), "{lock}");
+}
+
+#[test]
+fn link_after_a_hand_removal_finds_the_hook_in_place() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    sync_project(&dir, &project);
+
+    offline_mars(dir.path())
+        .args([
+            "link",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    let settings = fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(settings.contains("SessionStart"), "{settings}");
+    sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
 }
 
 #[test]
@@ -1979,5 +2012,9 @@ fn unlink_keeps_the_records_of_hooks_other_targets_cannot_run() {
         .assert()
         .success();
     let after = records(&fs::read_to_string(project.child("mars.lock").path()).unwrap());
-    assert_eq!(after, before, "unlink drops no other target's record");
+    assert_eq!(
+        after,
+        before - 1,
+        "unlink drops only the unlinked target's record"
+    );
 }

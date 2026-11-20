@@ -79,15 +79,6 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
-        new_lock.restore_unmanaged(
-            &state
-                .applied
-                .planned
-                .targeted
-                .resolved
-                .loaded
-                .unmanaged_records,
-        );
         new_lock.finish(unplaced_hook_records(
             &state.applied.planned.targeted,
             &crate::config::targets::managed_targets(
@@ -102,6 +93,16 @@ pub(crate) fn finalize(
             ),
         )?);
         diag.settle(old_lock, &new_lock);
+        new_lock.merge_targets(
+            state
+                .applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .unscoped
+                .clone(),
+        );
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }

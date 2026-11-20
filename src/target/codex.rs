@@ -31,7 +31,6 @@ impl TargetAdapter for CodexAdapter {
                 format: SectionFormat::TomlTable("mcp_servers"),
             },
             render,
-            unreached: None,
         })
     }
 }

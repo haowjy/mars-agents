@@ -174,6 +174,17 @@ pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
     McpRender { value, lossy }
 }
 
+/// `agy` starts a server with `.agy/` as its working directory, but every other harness resolves
+/// a command that names a path (`./server.sh`) from the project root, so the path is written
+/// one directory up. A bare name (`node`) is looked up on `PATH` and stays.
+fn agy_command(command: &str) -> String {
+    if command.contains('/') && !command.starts_with('/') {
+        format!("../{}", command.strip_prefix("./").unwrap_or(command))
+    } else {
+        command.to_owned()
+    }
+}
+
 fn render_agy(transport: &McpTransport) -> McpRender {
     let mut lossy = Vec::new();
     let value = match transport {
@@ -184,7 +195,7 @@ fn render_agy(transport: &McpTransport) -> McpRender {
                     "agy sets a server's env only from a plugin variable, which turns the whole plugin off until the user fills it in; `{key}` is not set from `{variable}`. Name the key `{variable}` to pass it through."
                 )
             }));
-            serde_json::json!({ "command": command, "args": args })
+            serde_json::json!({ "command": agy_command(command), "args": args })
         }
         McpTransport::Http { url, headers } => {
             let mut literals = Map::new();

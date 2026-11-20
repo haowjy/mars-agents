@@ -299,12 +299,9 @@ const ANTIGRAVITY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     description: DescriptionPolicy::Preserve,
     mode_note: None,
     skills: AgentSkillsPolicy::BodyGuidance,
-    fields: &[
-        LoweredField::Identity,
-        LoweredField::AllowlistOrAll,
-        LoweredField::Roles,
-    ],
+    fields: &[LoweredField::Identity, LoweredField::AllowlistOrAll],
     lossiness: &[
+        AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
             deny: DenyCarry::Nothing,
             ask: false,
@@ -424,7 +421,6 @@ impl<'a> AgentLoweringCtx<'a> {
             LoweredField::Tools => self.insert_tools(),
             LoweredField::Effort => self.insert_claude_effort(),
             LoweredField::Mode => self.insert_mode(),
-            LoweredField::Roles => self.insert_roles(),
             LoweredField::AllowlistOrAll => self.insert_allowlist_or_all(),
         }
     }
@@ -499,10 +495,9 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
-    /// `agy` loads an agent with no `tools` key without write or shell, and it has no deny list:
-    /// the key is the allowlist, `*` when the policy does not restrict. An empty allowlist
-    /// writes no key. The probes saw an agent with no `tools` run no write or shell in most
-    /// trials, but sometimes run a shell command, and why is unknown, so it may not be "no tools".
+    /// `agy` gives an agent with no `tools` key no write or shell, has no deny list and no
+    /// wildcard: the key is the allowlist, or every tool name Mars knows when the policy does
+    /// not restrict. An empty allowlist writes no key.
     fn insert_allowlist_or_all(&mut self) {
         let projection = project(self.eff.tools, self.harness);
         for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
@@ -515,7 +510,10 @@ impl<'a> AgentLoweringCtx<'a> {
         let tools = if self.eff.tools.is_allowlist() {
             projection.available()
         } else {
-            vec!["*".to_owned()]
+            mars_schema::tool_natives::agy_every_tool()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
         };
         if !tools.is_empty() {
             self.yaml.insert(
@@ -523,20 +521,6 @@ impl<'a> AgentLoweringCtx<'a> {
                 serde_yaml::Value::Sequence(tools.iter().map(|tool| yv(tool)).collect()),
             );
         }
-    }
-
-    /// An agent with no `mode` runs as both a main agent and a subagent.
-    fn insert_roles(&mut self) {
-        use mars_schema::agent::AgentMode;
-        let (main, sub) = match self.profile.mode {
-            Some(AgentMode::Primary) => (true, false),
-            Some(AgentMode::Subagent) => (false, true),
-            None => (true, true),
-        };
-        self.yaml
-            .insert(yk("mainAgent"), serde_yaml::Value::Bool(main));
-        self.yaml
-            .insert(yk("subagent"), serde_yaml::Value::Bool(sub));
     }
 
     fn insert_claude_effort(&mut self) {

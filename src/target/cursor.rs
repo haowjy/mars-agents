@@ -27,7 +27,6 @@ impl TargetAdapter for CursorAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render,
-            unreached: None,
         })
     }
 }

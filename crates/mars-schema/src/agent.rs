@@ -24,21 +24,19 @@ pub enum LoweredField {
     Tools,
     Effort,
     Mode,
-    /// `agy`'s `mainAgent` and `subagent` flags, which it reads where other harnesses read `mode`.
-    Roles,
-    /// `agy`'s `tools`: an allowlist, `*` when the policy does not restrict, and no deny list.
+    /// `agy`'s `tools`: an allowlist, every known tool when the policy does not restrict, and no
+    /// deny list.
     AllowlistOrAll,
 }
 
 impl LoweredField {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Identity,
         Self::Model,
         Self::Skills,
         Self::Tools,
         Self::Effort,
         Self::Mode,
-        Self::Roles,
         Self::AllowlistOrAll,
     ];
 
@@ -51,7 +49,6 @@ impl LoweredField {
             Self::Tools => &["tools", "disallowed-tools"],
             Self::Effort => &["effort"],
             Self::Mode => &["mode"],
-            Self::Roles => &["mainAgent", "subagent"],
             Self::AllowlistOrAll => &["tools"],
         }
     }

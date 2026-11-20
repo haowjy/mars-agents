@@ -506,6 +506,20 @@ const AGY: Table = &[
 /// The one tool `agy` reaches every MCP server through (`server` and `tool` are arguments).
 pub const AGY_MCP_GATEWAY: &[&str] = &["call_mcp_tool"];
 
+/// Every tool name Mars writes into an `agy` agent file, sorted. `agy` 1.5.13 has no wildcard
+/// (`*` and `all` fail the agent at its first prompt) and gives an agent with no `tools` key no
+/// write or shell, so an agent that restricts nothing lists all of them.
+pub fn agy_every_tool() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = AGY
+        .iter()
+        .flat_map(|(_, native)| native.native_tools().iter().copied())
+        .chain(AGY_MCP_GATEWAY.iter().copied())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
 /// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
 /// adds joins by being listed here.

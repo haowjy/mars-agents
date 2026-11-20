@@ -1,4 +1,8 @@
-//! Discovery and validation of the skills a provider ships.
+//! Discovery and validation of what a provider ships: skills, hooks and MCP servers.
+//!
+//! Hooks and MCP servers are validated by the readers sync uses, on a copy of only the entries
+//! that qualify (`_x` and `.x` never reach sync), and that copy is what `provide` stages under
+//! `.mars/provided/<provider>/`.
 //!
 //! `<dir>/skills/` is read one level deep. Entries are copied as authored — never normalized —
 //! so the digest describes exactly what lands in `.mars/skills/` (each file's bytes and
@@ -27,33 +31,31 @@ pub(crate) struct ProvidedSkill {
 
 pub(crate) struct ProvidedEntries {
     pub skills: Vec<ProvidedSkill>,
-    /// SHA-256 over `(name, skill digest)` pairs: it moves when any skill's bytes, executable
-    /// bits or the entry list do, and leaves the per-skill digests as the one description of a
-    /// tree.
+    /// The validated hooks and MCP servers as `hooks/<name>/` and `mcp/<name>/` under one root,
+    /// `None` when the bundle has none. Installing this tree is staging.
+    pub staged: Option<tempfile::TempDir>,
+    /// [`tree_digest`] of `staged`.
+    pub staged_digest: Option<String>,
+    /// SHA-256 over `(name, skill digest)` pairs and the staged tree's digest: it moves when any
+    /// skill's bytes, executable bits or the entry list do, and leaves the per-skill digests as
+    /// the one description of a tree.
     pub digest: String,
 }
 
-/// Fails before the caller writes anything when the source could not be installed as named:
-/// a name that is not `<skill>__<provider>`, or a `SKILL.md` the schema reader rejects.
-pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<String>), MarsError> {
-    let skills_dir = spec.package_dir.join("skills");
-    if !skills_dir.is_dir() {
-        return Err(invalid_skill(format!(
-            "{} has no `skills/` directory",
-            spec.package_dir.display()
-        )));
-    }
-
+/// The subdirectories of `<dir>/<kind>/` that are entries: not `_`/`.` plumbing (`__pycache__/`,
+/// `AGENTS.md` beside Meridian's bundle), and a real directory, so a file or a symlink is left
+/// out rather than copied through from outside the bundle. Sorted.
+fn entry_names(kind_dir: &Path) -> Result<BTreeSet<String>, MarsError> {
     let mut names = BTreeSet::new();
-    for entry in fs::read_dir(&skills_dir)? {
+    if !kind_dir.is_dir() {
+        return Ok(names);
+    }
+    for entry in fs::read_dir(kind_dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
         };
-        // `_`/`.` entries are package plumbing, not skills: `__init__.py`, `__pycache__/`,
-        // `AGENTS.md` beside Meridian's bundle. Only a real subdirectory is a skill entry: a
-        // file or a symlink is left out rather than copied through from outside the bundle.
         if name.starts_with('_') || name.starts_with('.') {
             continue;
         }
@@ -61,28 +63,123 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
             names.insert(name.to_string());
         }
     }
+    Ok(names)
+}
+
+/// Fails before the caller writes anything when the source could not be installed as named:
+/// a name that is not `<skill>__<provider>`, a `SKILL.md` the schema reader rejects, or a hook
+/// or MCP server the readers sync uses reject. `skills/`, `hooks/` and `mcp/` are each optional.
+pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<String>), MarsError> {
+    if !spec.package_dir.is_dir() {
+        return Err(invalid_skill(format!(
+            "{} is not a directory",
+            spec.package_dir.display()
+        )));
+    }
+    let skills_dir = spec.package_dir.join("skills");
 
     let mut warnings = Vec::new();
     let mut skills = Vec::new();
-    for name in names {
+    for name in entry_names(&skills_dir)? {
         let dir = skills_dir.join(&name);
         let profile = read_skill(&name, &dir, &mut warnings)?;
         check_name(spec, &name, &profile)?;
         let digest = tree_digest(&dir)?;
         skills.push(ProvidedSkill { name, dir, digest });
     }
+    let (staged, staged_digest) = stage_hooks_and_mcp(spec, &mut warnings)?;
 
-    let entries = skills
+    let mut entries: Vec<(String, String)> = skills
         .iter()
         .map(|skill| (skill.name.clone(), skill.digest.clone()))
         .collect();
+    if let Some(digest) = &staged_digest {
+        // `/` cannot appear in a skill's directory name, so this key cannot collide with one.
+        entries.push(("staged/".to_string(), digest.clone()));
+    }
     Ok((
         ProvidedEntries {
             digest: crate::hash::hash_file_manifest(entries),
             skills,
+            staged,
+            staged_digest,
         },
         warnings,
     ))
+}
+
+/// Copies each qualifying hook and MCP server into a scratch tree and reads it as sync will.
+fn stage_hooks_and_mcp(
+    spec: &ProvideSpec,
+    warnings: &mut Vec<String>,
+) -> Result<(Option<tempfile::TempDir>, Option<String>), MarsError> {
+    let mut copied = 0;
+    let scratch = tempfile::tempdir()?;
+    for (kind, manifest) in [("hooks", "hook.toml"), ("mcp", "mcp.toml")] {
+        let kind_dir = spec.package_dir.join(kind);
+        for name in entry_names(&kind_dir)? {
+            let source = kind_dir.join(&name);
+            if source.join(manifest).is_file() {
+                crate::fs::copy_dir_filtered(&source, &scratch.path().join(kind).join(&name), &[])?;
+                copied += 1;
+            }
+        }
+    }
+    if copied == 0 {
+        return Ok((None, None));
+    }
+
+    let source_name = super::source::source_name(&spec.provider);
+    let mut diag = crate::diagnostic::DiagnosticCollector::new();
+    let hooks = crate::compiler::hooks::discover_hook_items(
+        scratch.path(),
+        &source_name,
+        crate::compiler::hooks::HookSource::Dependency {
+            version: &spec.version,
+        },
+        1,
+        0,
+        &mut diag,
+    )
+    .map_err(|error| {
+        invalid(
+            "provided-hook-invalid",
+            in_bundle(
+                &crate::compiler::hooks::error_message(error),
+                scratch.path(),
+                spec,
+            ),
+        )
+    })?;
+    // The dependency reader skips a hook that is not exported, so one that lacks it would install
+    // nowhere.
+    if let Some(hook) = hooks
+        .iter()
+        .find(|hook| hook.def.visibility != mars_schema::visibility::Visibility::Exported)
+    {
+        return Err(invalid(
+            "provided-hook-invalid",
+            format!(
+                "hook `{}` must set `visibility = \"exported\"` in its hook.toml",
+                hook.def.name
+            ),
+        ));
+    }
+    crate::compiler::mcp::discover_mcp_items(scratch.path(), &source_name, 1, 0, &mut diag)
+        .map_err(|error| {
+            invalid(
+                "provided-mcp-invalid",
+                in_bundle(&error.to_string(), scratch.path(), spec),
+            )
+        })?;
+    warnings.extend(
+        diag.drain()
+            .into_iter()
+            .map(|diagnostic| diagnostic.message),
+    );
+
+    let digest = tree_digest(scratch.path())?;
+    Ok((Some(scratch), Some(digest)))
 }
 
 /// An install is bytes plus the mode the copy path gives them (`0o644` and the source's execute
@@ -172,8 +269,20 @@ fn check_name(spec: &ProvideSpec, name: &str, profile: &SkillProfile) -> Result<
     Ok(())
 }
 
+/// The readers name files in the scratch copy; the host knows the bundle.
+fn in_bundle(message: &str, scratch: &Path, spec: &ProvideSpec) -> String {
+    message.replace(
+        &scratch.display().to_string(),
+        &spec.package_dir.display().to_string(),
+    )
+}
+
 fn invalid_skill(message: String) -> MarsError {
+    invalid("provided-skill-invalid", message)
+}
+
+fn invalid(code: &str, message: String) -> MarsError {
     MarsError::InvalidRequest {
-        message: format!("provided-skill-invalid: {message}"),
+        message: format!("{code}: {message}"),
     }
 }

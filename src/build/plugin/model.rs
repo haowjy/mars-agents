@@ -57,7 +57,6 @@ fn resolve_token(
     native_aliases: &[&str],
     aliases: &IndexMap<String, ModelAlias>,
 ) -> ResolvedModel {
-    let descriptor = crate::compiler::harness_descriptor::descriptor(harness);
     let Some(token) = token else {
         return ResolvedModel {
             native: NativeModel::Clear,
@@ -77,7 +76,7 @@ fn resolve_token(
 
     let target = alias_target(alias);
     if let Some(model) = alias.pinned_model_id()
-        && target == Some(descriptor.id)
+        && target == Some(harness)
         // A file-less OpenCode agent names its model as provider and id, so a bare id cannot be set.
         && (harness != HarnessId::OpenCode || model.contains('/'))
     {
@@ -88,7 +87,7 @@ fn resolve_token(
             from_policy: false,
         };
     }
-    if native_aliases.contains(&token) && target == Some(descriptor.id) {
+    if native_aliases.contains(&token) && target == Some(harness) {
         return ResolvedModel {
             native: NativeModel::Set(token.to_string()),
             fallback: None,

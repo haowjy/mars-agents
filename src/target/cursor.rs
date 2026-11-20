@@ -1,4 +1,5 @@
 use crate::types::DestPath;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_servers::{self, Flavor, McpRender};
 
@@ -8,12 +9,8 @@ use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter}
 pub struct CursorAdapter;
 
 impl TargetAdapter for CursorAdapter {
-    fn name(&self) -> &str {
-        ".cursor"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
-        Some("cursor")
+    fn harness(&self) -> Option<HarnessId> {
+        Some(HarnessId::Cursor)
     }
 
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {

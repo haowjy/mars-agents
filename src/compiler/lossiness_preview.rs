@@ -14,7 +14,6 @@ use std::path::Path;
 use crate::compiler::agent_copy;
 use crate::compiler::agent_surface_policy;
 use crate::compiler::agents::lower::lower_for_harness_with_model;
-use crate::compiler::harness_descriptor::configured_emit_harnesses;
 use crate::compiler::lossiness;
 use crate::compiler::native_agents::{
     AgentRef, NativeEmission, NativeModelRoutingRuntime, qualifying_agent_emissions,
@@ -22,6 +21,7 @@ use crate::compiler::native_agents::{
 use crate::compiler::variants;
 use crate::config::Settings;
 use crate::config::routing_settings::ResolvedRoutingSettings;
+use crate::config::targets::configured_emit_harnesses;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
 use crate::error::MarsError;
 use crate::models::ModelsCache;

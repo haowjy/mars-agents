@@ -1,5 +1,6 @@
 use crate::types::DestPath;
 use indexmap::IndexMap;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
 use mars_schema::mcp_servers::{McpRender, partition_env};
@@ -10,12 +11,8 @@ use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter}
 pub struct CodexAdapter;
 
 impl TargetAdapter for CodexAdapter {
-    fn name(&self) -> &str {
-        ".codex"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
-        Some("codex")
+    fn harness(&self) -> Option<HarnessId> {
+        Some(HarnessId::Codex)
     }
 
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {

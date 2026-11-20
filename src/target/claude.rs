@@ -1,4 +1,5 @@
 use crate::types::DestPath;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
 use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
@@ -7,12 +8,8 @@ use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
 pub struct ClaudeAdapter;
 
 impl TargetAdapter for ClaudeAdapter {
-    fn name(&self) -> &str {
-        ".claude"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
-        Some("claude")
+    fn harness(&self) -> Option<HarnessId> {
+        Some(HarnessId::Claude)
     }
 
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {

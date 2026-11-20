@@ -1,7 +1,6 @@
 //! Declarative per-harness agent lowering policies and shared pipeline.
 use crate::compiler::agents::opencode_permission;
 use crate::compiler::agents::tool_loss::{self, Allowlist, Carries, DenyCarry};
-use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// Per-target agent lowering — translates a parsed [`AgentProfile`] into
 ///
 /// # Lossiness classification (per agent-compilation-mapping.md §6)
@@ -24,6 +23,7 @@ use crate::compiler::harness_descriptor::{self, AgentLoweringPolicyKind};
 /// unclassified site is loud. Codex lowers `network` as dropped, because its native artifact
 /// carries `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, ProjectLoss};
+use crate::harness::registry;
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
@@ -401,7 +401,7 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn target_name(&self) -> &'static str {
-        harness_descriptor::descriptor(self.harness).display_name
+        registry::descriptor(self.harness).display_name
     }
 
     fn insert_identity(&mut self) {
@@ -990,16 +990,11 @@ pub fn lower_for_harness_with_model(
     body: &str,
     model_field: &NativeModel,
 ) -> LoweredOutput {
-    match harness_descriptor::descriptor(*harness).agent_policy {
-        AgentLoweringPolicyKind::Claude => lower_to_claude(profile, body, model_field),
-        AgentLoweringPolicyKind::Codex => lower_to_codex(profile, body, model_field),
-        AgentLoweringPolicyKind::Markdown => match harness {
-            HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
-            HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
-            HarnessId::Pi => lower_to_pi(profile, body, model_field),
-            HarnessId::Claude | HarnessId::Codex => {
-                unreachable!("native policies handled above")
-            }
-        },
+    match harness {
+        HarnessId::Claude => lower_to_claude(profile, body, model_field),
+        HarnessId::Codex => lower_to_codex(profile, body, model_field),
+        HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
+        HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
+        HarnessId::Pi => lower_to_pi(profile, body, model_field),
     }
 }

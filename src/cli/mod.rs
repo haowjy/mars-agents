@@ -50,7 +50,10 @@ use crate::types::managed_cmd;
 
 pub const WELL_KNOWN: &[&str] = &[".agents"];
 
-pub const TOOL_DIRS: &[&str] = &[".claude", ".codex", ".opencode", ".cursor", ".pi"];
+/// `.agents` or a harness's target directory.
+pub fn is_recognized_target(name: &str) -> bool {
+    WELL_KNOWN.contains(&name) || crate::harness::registry::harness_for_target(name).is_some()
+}
 
 impl MarsContext {
     pub fn new(project_root: PathBuf) -> Result<Self, MarsError> {
@@ -397,7 +400,7 @@ fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     let start = if let Some(root) = explicit {
         if let Some(basename) = root.file_name().and_then(|f| f.to_str())
-            && (WELL_KNOWN.contains(&basename) || TOOL_DIRS.contains(&basename))
+            && is_recognized_target(basename)
         {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(

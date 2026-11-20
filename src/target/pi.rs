@@ -1,4 +1,5 @@
 use crate::types::DestPath;
+use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
 use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
@@ -7,12 +8,8 @@ use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
 pub struct PiAdapter;
 
 impl TargetAdapter for PiAdapter {
-    fn name(&self) -> &str {
-        ".pi"
-    }
-
-    fn skill_variant_key(&self) -> Option<&str> {
-        Some("pi")
+    fn harness(&self) -> Option<HarnessId> {
+        Some(HarnessId::Pi)
     }
 
     fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {

@@ -47,7 +47,6 @@ impl TargetAdapter for OpencodeAdapter {
                 format: SectionFormat::JsonSection(MCP_SECTION),
             },
             render,
-            unreached: None,
         })
     }
 

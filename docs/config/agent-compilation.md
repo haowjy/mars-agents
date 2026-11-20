@@ -470,14 +470,14 @@ frontmatter keys it does not know.
 | Source field | Antigravity native | Classification |
 |---|---|---|
 | `name`, `description` | `name:`, `description:` | exact |
-| `mode` | `mainAgent:` and `subagent:` (`primary`: true and false; `subagent`: false and true; no `mode`: both true) | exact |
+| `mode` | not written: `agy` takes `mainAgent: false` to mean "not selectable by `--agent`" and runs the default agent instead, so Mars writes neither role key | meridian-only |
 | `tools` | `tools:` (see below) | exact for an allowlist and for no rules; denies and `ask` are dropped |
 | `model`, `effort` | not written: Meridian sets them for each session | meridian-only |
 | `skills` | a body line that names them (`agy` loads a skill by reading it) | approximate |
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 
 `tools` is always written, because an `agy` agent with no `tools` key has no write and no shell.
-With no rules, or rules that only allow, it is `["*"]`. With an allowlist (`"*": deny` plus allows)
+`agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::agy_every_tool`). With an allowlist (`"*": deny` plus allows)
 it is the native names of the allowed tools, plus `call_mcp_tool` when any MCP tool is allowed:
 `agy` reaches every MCP server through that one tool, so an MCP grant opens every server
 (reported as approximate). `agy`'s agent file has no deny list and `*` minus a name cannot be
@@ -695,7 +695,7 @@ Compact per-field, per-target classification:
 | `description` | preserved | exact | exact | exact | exact (one-line normalized) | exact | exact |
 | `model` | preserved | exact | exact | exact | exact (internal deterministic adaptation when available) | exact | meridian-only (not written) |
 | `harness` | preserved | dropped | dropped | dropped | dropped | dropped | dropped |
-| `mode` | preserved | dropped | dropped | approximate | approximate | approximate | exact (`mainAgent`, `subagent`) |
+| `mode` | preserved | dropped | dropped | approximate | approximate | approximate | meridian-only |
 | `approval` | preserved | dropped | exact | dropped | approximate | dropped | meridian-only |
 | `sandbox` | preserved | dropped | exact | dropped | approximate | dropped | meridian-only |
 | `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only | meridian-only |

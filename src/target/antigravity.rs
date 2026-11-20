@@ -30,18 +30,14 @@ impl TargetAdapter for AntigravityAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render,
-            unreached: Some(
-                "sessions started over `agy acp`, which Meridian spawns use, did not reach plugin MCP servers in the one probe that ran them; plain `agy` did",
-            ),
         })
     }
 
-    /// A server starts with the plugin directory as its working directory. `agy` substitutes
-    /// `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to in `command`, so the command
-    /// is relative to the working directory.
-    fn mcp_dirs(&self, native: &str, _installed: &str) -> McpDirs {
+    /// `agy` substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to in `command`,
+    /// which gets the installed path as every harness does.
+    fn mcp_dirs(&self, native: &str, installed: &str) -> McpDirs {
         McpDirs {
-            command: native.to_owned(),
+            command: installed.to_owned(),
             args: format!("${{PLUGIN_ROOT}}/{native}"),
         }
     }

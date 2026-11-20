@@ -320,11 +320,17 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_agent_without_rules_gets_every_tool_and_both_roles() {
+    fn antigravity_agent_without_rules_gets_every_tool_and_no_role_keys() {
         let (text, lossy) =
             antigravity("---\nname: r\ndescription: d\nmodel: opus\neffort: high\n---\n# body");
-        assert!(text.contains("tools:\n- '*'\n"), "{text}");
-        assert!(text.contains("mainAgent: true\nsubagent: true\n"), "{text}");
+        assert!(
+            !text.contains("'*'") && !text.contains("mainAgent"),
+            "{text}"
+        );
+        assert!(
+            text.contains("- run_command\n") && text.contains("- call_mcp_tool\n"),
+            "{text}"
+        );
         assert!(
             !text.contains("model:") && !text.contains("effort:"),
             "{text}"
@@ -346,8 +352,13 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("mainAgent: false\nsubagent: true\n"),
+            !text.contains("mainAgent") && !text.contains("subagent:"),
             "{text}"
+        );
+        assert!(
+            lossy
+                .iter()
+                .any(|f| f.field == "mode" && f.classification == Lossiness::MeridianOnly)
         );
         assert!(
             !lossy
@@ -358,15 +369,11 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_keeps_the_wildcard_and_reports_a_deny_it_cannot_write() {
+    fn antigravity_lists_every_tool_and_reports_a_deny_it_cannot_write() {
         let (text, lossy) =
             antigravity("---\nname: r\nmode: primary\ntools:\n  bash: deny\n---\n# body");
         assert!(
-            text.contains("tools:\n- '*'\n") && !text.contains("run_command"),
-            "{text}"
-        );
-        assert!(
-            text.contains("mainAgent: true\nsubagent: false\n"),
+            text.contains("- run_command\n") && !text.contains("'*'"),
             "{text}"
         );
         assert!(

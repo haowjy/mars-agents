@@ -1030,16 +1030,15 @@ usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` c
 of `agy` under one name; sync warns (`target-skills-duplicated`).
 
 **MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
-own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`. So `${MARS_MCP_DIR}` becomes
-`${PLUGIN_ROOT}/mcp/<name>` in `args` and the relative `mcp/<name>` in `command`, and the file
-stays valid wherever `.agy/` lives. An `env` entry that passes a variable through under its own
+own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to do so
+in `command`. So `${MARS_MCP_DIR}` becomes `${PLUGIN_ROOT}/mcp/<name>` in `args` and the
+installed project path in `command`, as for every harness. Every other harness resolves a
+`command` that names a path (`./server.sh`) from the project root, so Mars writes it one level up
+(`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
 name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
 off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's
 `url` and literal headers are written as Claude's are; env headers are left out the same way.
-Sessions started over `agy acp` did not call a plugin's MCP servers in the one probe that ran
-them (a server passed in ACP `session/new` was called); plain `agy` did. Sync warns once
-(`mcp-unreached`) whenever a server lands in `.agy`, since Meridian spawns run over ACP.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
 A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,

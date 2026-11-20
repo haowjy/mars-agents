@@ -8,6 +8,8 @@ Dry runs must not create project state: they use scratch staging and acquire an 
 
 A package may replace a provided canonical item: provider ownership is recognized alongside lock ownership, so host-specific provided items don't change the package lock. See [ownership.rs](ownership.rs) and [validate.rs](validate.rs).
 
+Sync plans, writes and removes only the records of the targets the config names. Loading the lock sets every other target's records aside (`LockFile::set_aside_unmanaged`), finalization puts them back, and each such target is one `unmanaged-target` warning; only `mars unlink` removes them. Don't add a second path for a target Mars stopped writing: it is this one.
+
 Sync and plugin builds share target selection and renaming. Sync removes unmanaged collisions before rewriting references. Hook and MCP entries are lowered from the selected target state, never rediscovered, and their config must not reference a directory target sync failed to install. Invalid dependency hooks can retain the directories and outputs recorded in the lock rather than being pruned as removed.
 
 See [target sync ownership](../target_sync/.context/CONTEXT.md) and [resolution](../resolve/AGENTS.md).

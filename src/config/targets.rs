@@ -217,6 +217,25 @@ fn cursor_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Dia
     })
 }
 
+/// What sync does about a target it holds records for but the configuration does not name:
+/// nothing, so what it installed there stays until `mars unlink` removes it or `targets` names the
+/// target again.
+pub(crate) fn unmanaged_target_diagnostic(target: &str) -> crate::diagnostic::Diagnostic {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+
+    let unlink = crate::types::managed_cmd(&format!("mars unlink {target}")).into_owned();
+    Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(
+            DiagnosticLevel::Warning,
+            "unmanaged-target",
+            format!(
+                "`{target}` is not in `targets`, so sync no longer updates what it installed there. Run `{unlink}` to remove it, or add `{target}` to `targets`."
+            ),
+        )
+    }
+}
+
 /// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
 /// `.agents` is deprecated, which loses nothing; but a harness that also reads `.agents/skills`
 /// (`agy`) then sees every skill twice under one name, and only unlinking `.agents` fixes that.

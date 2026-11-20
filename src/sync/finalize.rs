@@ -79,6 +79,15 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
+        new_lock.restore_unmanaged(
+            &state
+                .applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .unmanaged_records,
+        );
         new_lock.finish(unplaced_hook_records(
             &state.applied.planned.targeted,
             &crate::config::targets::managed_targets(

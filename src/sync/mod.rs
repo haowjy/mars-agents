@@ -117,6 +117,9 @@ pub(crate) struct LoadedConfig {
     pub local: LocalConfig,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
+    /// What `old_lock` recorded for targets the configuration does not name, kept out of it and
+    /// put back into the lock the sync writes.
+    pub unmanaged_records: crate::lock::UnmanagedRecords,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
     pub dependency_changes: Vec<DependencyUpsertChange>,
@@ -321,6 +324,16 @@ pub(crate) fn load_config(
         );
     }
 
+    let unmanaged_records = old_lock.set_aside_unmanaged(&crate::config::targets::managed_targets(
+        &effective.settings,
+    ));
+    diag.extend(
+        unmanaged_records
+            .targets()
+            .into_iter()
+            .map(crate::config::targets::unmanaged_target_diagnostic)
+            .collect(),
+    );
     let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
 
     Ok(LoadedConfig {
@@ -328,6 +341,7 @@ pub(crate) fn load_config(
         local,
         effective,
         old_lock,
+        unmanaged_records,
         provided,
         dependency_changes,
         sync_lock,

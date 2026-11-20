@@ -227,7 +227,7 @@ The diff matrix:
 | No | Yes | **LocalModified** (keep local) |
 | Yes | Yes | **Conflict** → source wins overwrite + warning |
 | — | — | **Add** (new item) |
-| — | — | **Orphan** (in lock but not in target → remove) |
+| — | — | **Orphan** (in lock but not in target → remove). Records on a target `targets` does not name are not in the lock the diff sees: they stay until `mars unlink` |
 
 With `--force`, the baseline for "local changed" shifts to `source_checksum`, so conflicted files are treated as local modifications and get overwritten.
 

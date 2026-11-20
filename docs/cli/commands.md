@@ -371,6 +371,7 @@ mars unlink <target>
 
 **Behavior:**
 - Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
+- Is how Mars content leaves a target the config no longer names: a sync leaves what it installed in such a target (files, MCP servers, hook entries) as it is, and warns (`unmanaged-target`) on every sync until you run this or add the target back to `targets`
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
 - Removes only outputs and config entries owned by the target's lock records. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays

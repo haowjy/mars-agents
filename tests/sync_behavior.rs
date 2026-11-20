@@ -2043,3 +2043,119 @@ fn sync_installs_only_the_token_servers_directory_and_keeps_its_entry() {
     user_copy.assert("user content");
     assert!(!project.child(".claude/mcp/plain/mcp.toml").exists());
 }
+
+/// A project with a local MCP server and hook, synced to `targets`.
+fn project_with_config_entries(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!("[settings]\ntargets = {targets}\n"))
+        .unwrap();
+    project
+        .child("mcp/srv/mcp.toml")
+        .write_str("command = \"node\"\n")
+        .unwrap();
+    project
+        .child("hooks/audit/hook.toml")
+        .write_str("[targets.\".claude\"]\n")
+        .unwrap();
+    project
+        .child("hooks/audit/claude.json")
+        .write_str(r#"{"SessionStart":[{"hooks":[{"type":"command","command":"true"}]}]}"#)
+        .unwrap();
+    project
+}
+
+fn sync_project(
+    dir: &TempDir,
+    project: &assert_fs::fixture::ChildPath,
+) -> assert_cmd::assert::Assert {
+    offline_mars(dir.path())
+        .args(["sync", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+}
+
+#[test]
+fn sync_leaves_a_target_the_config_no_longer_names_until_unlink() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
+    sync_project(&dir, &project);
+    let mcp = fs::read(project.child(".mcp.json").path()).unwrap();
+    let settings = fs::read(project.child(".claude/settings.local.json").path()).unwrap();
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.opencode']\n")
+        .unwrap();
+    for _ in 0..2 {
+        sync_project(&dir, &project).stderr(
+            predicate::str::contains("`.claude` is not in `targets`")
+                .and(predicate::str::contains("mars unlink .claude")),
+        );
+    }
+    assert_eq!(fs::read(project.child(".mcp.json").path()).unwrap(), mcp);
+    assert_eq!(
+        fs::read(project.child(".claude/settings.local.json").path()).unwrap(),
+        settings
+    );
+    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("target_root = \".claude\""), "{lock}");
+
+    offline_mars(dir.path())
+        .args([
+            "unlink",
+            ".claude",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(!project.child(".claude/hooks/audit").exists());
+    assert!(!project.child(".mcp.json").exists());
+    sync_project(&dir, &project).stderr(predicate::str::contains("mars unlink").not());
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(!lock.contains("target_root = \".claude\""), "{lock}");
+}
+
+#[test]
+fn unlink_keeps_the_records_of_hooks_other_targets_cannot_run() {
+    let dir = TempDir::new().unwrap();
+    let project = dir.child("project");
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.claude', '.codex', '.pi', '.opencode']\n")
+        .unwrap();
+    project
+        .child("hooks/audit/run.sh")
+        .write_str("#!/bin/sh\n")
+        .unwrap();
+    project
+        .child("hooks/audit/hook.toml")
+        .write_str(
+            "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
+        )
+        .unwrap();
+    sync_project(&dir, &project);
+    let records = |lock: &str| lock.matches("outputs = []").count();
+    let before = records(&fs::read_to_string(project.child("mars.lock").path()).unwrap());
+    assert!(
+        before >= 2,
+        "the hook only `.claude` can run leaves records"
+    );
+
+    offline_mars(dir.path())
+        .args([
+            "unlink",
+            ".opencode",
+            "--root",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let after = records(&fs::read_to_string(project.child("mars.lock").path()).unwrap());
+    assert_eq!(after, before, "unlink drops no other target's record");
+}

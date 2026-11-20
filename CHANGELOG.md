@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-11-20
+
+### Fixed
+- `mars sync --frozen` no longer fails on a fresh clone. A checkout with `mars.toml` and `mars.lock` but no `.mars/` or target directories now installs what the lock records and exits 0; `--frozen` refuses only a sync that would change `mars.lock`.
+
 ## [0.38.0] - 2026-11-20
 
 ### Upgrade notes

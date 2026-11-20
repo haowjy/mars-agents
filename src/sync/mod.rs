@@ -62,8 +62,8 @@ pub struct SyncReport {
     pub hook_files_rewritten: Vec<(String, String)>,
     /// Config files of keyed entries (`.mcp.json`, `.codex/config.toml`,
     /// `.agents/plugins.json`, ...) this run wrote or deleted, as `(target_root, file path,
-    /// what the file holds)`. Surfaced for the same reason as `hook_files_rewritten`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    /// the kind of entry it holds)`. Surfaced for the same reason as `hook_files_rewritten`.
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
@@ -162,7 +162,7 @@ pub(crate) struct SyncedState {
     pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub rewritten_hook_files: Vec<(String, String)>,
     /// Keyed config files written or deleted this run, as `(target_root, file path, what it holds)`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,

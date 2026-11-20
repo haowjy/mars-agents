@@ -12,6 +12,7 @@ pub use table::{TargetSpec, for_harness, spec};
 pub use config_doc::SectionFormat;
 pub use keyed_entries::{KeyedKind, KeyedSection};
 pub use mcp_file::McpFile;
+pub(crate) use plugin::HOOK_ENTRY_KIND;
 
 pub(crate) const AGENTS_TARGET: &str = ".agents";
 

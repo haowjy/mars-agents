@@ -41,17 +41,11 @@ pub struct PluginTarget {
     /// The project's plugin list: an array whose elements name a plugin directory by `path`.
     pub pointer: KeyedSection,
     pub manifest: KeyedSection,
-    /// Where `hooks::targets` places this target's keyed hooks.
-    pub hooks: KeyedSection,
 }
 
 impl PluginTarget {
-    pub fn sections(&self) -> [(KeyedKind, KeyedSection); 3] {
-        [
-            (POINTER_KIND, self.pointer),
-            (MANIFEST_KIND, self.manifest),
-            (HOOK_ENTRY_KIND, self.hooks),
-        ]
+    pub fn sections(&self) -> [(KeyedKind, KeyedSection); 2] {
+        [(POINTER_KIND, self.pointer), (MANIFEST_KIND, self.manifest)]
     }
 
     /// What a managed plugin target always has: its pointer and the manifest keys Mars owns.

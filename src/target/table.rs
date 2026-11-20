@@ -8,8 +8,8 @@ use super::keyed_entries::Rendered;
 use super::mcp_file::{agy_render, claude_render, cursor_render};
 use super::plugin::PluginTarget;
 use super::{
-    AGENTS_TARGET, KeyedKind, KeyedSection, McpDirs, McpFile, SectionFormat, codex, mcp_file,
-    opencode,
+    AGENTS_TARGET, HOOK_ENTRY_KIND, KeyedKind, KeyedSection, McpDirs, McpFile, SectionFormat,
+    codex, mcp_file, opencode,
 };
 use crate::types::DestPath;
 use std::path::Path;
@@ -106,7 +106,20 @@ impl TargetSpec {
             .map(|file| (mcp_file::MCP_KIND, file.at))
             .into_iter()
             .chain(self.plugin.into_iter().flat_map(|plugin| plugin.sections()))
+            .chain(self.keyed_hooks())
             .collect()
+    }
+
+    /// Where the hook table places this target's keyed hooks, when it does.
+    fn keyed_hooks(&self) -> Option<(KeyedKind, KeyedSection)> {
+        let path = mars_schema::hooks::targets::target(&self.name())?.keyed_path()?;
+        Some((
+            HOOK_ENTRY_KIND,
+            KeyedSection {
+                path,
+                format: SectionFormat::JsonTopLevel,
+            },
+        ))
     }
 
     /// Entries the target has whenever it is managed, whatever packages install.
@@ -212,10 +225,6 @@ const AGY: TargetSpec = TargetSpec {
         },
         manifest: KeyedSection {
             path: ".agy/plugin.json",
-            format: SectionFormat::JsonTopLevel,
-        },
-        hooks: KeyedSection {
-            path: ".agy/hooks.json",
             format: SectionFormat::JsonTopLevel,
         },
     }),

@@ -30,7 +30,7 @@ pub(crate) struct ConfigEntryCompilation {
     pub rewritten_outputs: Vec<(String, String)>,
     /// Keyed-entry config files this run wrote or deleted, as `(target_root, file path, what
     /// it holds)`.
-    pub config_files_changed: Vec<(String, String, &'static str)>,
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -568,7 +568,7 @@ pub(crate) struct KeyedReconciliation {
     pub removed: BTreeMap<String, Vec<String>>,
     /// `(target_root, file path, what the file holds)` of each file written or deleted (or, in
     /// a dry run, to be).
-    pub files_changed: Vec<(String, String, &'static str)>,
+    pub files_changed: Vec<(String, String, crate::target::KeyedKind)>,
 }
 
 /// Reconcile every keyed section each target's adapter declares: a target no longer managed
@@ -626,11 +626,8 @@ pub(crate) fn reconcile_all_keyed(
                 .or_default()
                 .extend(reconciled.removed);
             if reconciled.changed {
-                out.files_changed.push((
-                    target_root.clone(),
-                    section.path.to_string(),
-                    kind.plural,
-                ));
+                out.files_changed
+                    .push((target_root.clone(), section.path.to_string(), kind));
             }
         }
     }

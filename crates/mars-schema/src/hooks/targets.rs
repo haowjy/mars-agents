@@ -77,12 +77,12 @@ pub enum Placement {
     Merge(MergeFile),
     /// The hook is installed as whole files in `dir`, under the target root.
     File { dir: &'static str },
-    /// Each hook is one entry of the JSON object in `file`, under the target root, keyed by
-    /// the hook's name: the hook's own events, as the harness reads them, are the value.
-    /// A hook that translates `[hooks]` keeps its runner data in `dir`, beside its own
-    /// directory copy, and never inside it: target sync owns that copy as a whole.
+    /// Each hook is one entry of the JSON object in the file at `path`, relative to the
+    /// project, keyed by the hook's name: the hook's own events, as the harness reads them, are
+    /// the value. A hook that translates `[hooks]` keeps its runner data in `dir`, beside its
+    /// own directory copy, and never inside it: target sync owns that copy as a whole.
     Keyed {
-        file: &'static str,
+        path: &'static str,
         dir: &'static str,
     },
 }
@@ -166,10 +166,11 @@ impl Target {
         }
     }
 
-    /// The file whose entries are keyed by hook name; `None` for any other placement.
-    pub fn keyed_file(&self) -> Option<&'static str> {
+    /// The project-relative file whose entries are keyed by hook name; `None` for any other
+    /// placement.
+    pub fn keyed_path(&self) -> Option<&'static str> {
         match self.placement {
-            Placement::Keyed { file, .. } => Some(file),
+            Placement::Keyed { path, .. } => Some(path),
             Placement::Merge(_) | Placement::File { .. } => None,
         }
     }
@@ -191,7 +192,7 @@ impl Target {
     /// Whether a hook can own files on the target besides its directory copy: the files of
     /// a file target, or a keyed target's runner data.
     pub fn installs_files(&self) -> bool {
-        self.is_file() || self.keyed_file().is_some()
+        self.is_file() || self.keyed_path().is_some()
     }
 
     /// The path, relative to the target root, of the hook's own native hook file; `None` for a
@@ -403,7 +404,7 @@ const TARGETS: &[Target] = &[
         root: ".agy",
         // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
         placement: Placement::Keyed {
-            file: "hooks.json",
+            path: ".agy/hooks.json",
             dir: "hooks",
         },
         profile: Profile {

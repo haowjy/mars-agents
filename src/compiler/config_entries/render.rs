@@ -80,7 +80,7 @@ pub(crate) fn preflight_config_entries(
     }
     for (dir, _) in targeted.target.selected_hooks() {
         let target = dir.target().to_string();
-        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_file().is_some()) {
+        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_path().is_some()) {
             keyed_touched
                 .entry(target.clone())
                 .or_default()
@@ -147,7 +147,7 @@ pub(crate) fn preflight_config_entries(
         };
         // A keyed hook's commands run from the plugin directory, so its directory is the
         // relative path there and the file stays valid wherever the target is.
-        let installed = if target.keyed_file().is_some() {
+        let installed = if target.keyed_path().is_some() {
             dir.native()
         } else {
             installed_token(ctx, dir)

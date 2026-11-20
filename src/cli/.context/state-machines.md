@@ -76,8 +76,9 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 
 One target directory going from managed to not managed, plus removal of every file Mars recorded
 there. `mars unlink` (`unlink.rs`). `remove_owned_target_content` removes recorded paths
-deepest first, treats `NotFound` as success, removes empty ancestors, and reconciles hooks and
-MCP through the same `reconcile_mcp` and `RemovalPlan` path sync uses.
+deepest first, treats `NotFound` as success, removes empty ancestors, and reconciles hooks
+through the `RemovalPlan` and keyed entries through `reconcile_keyed` (one pass per keyed kind
+the target declares), the paths sync uses.
 
 ```mermaid
 stateDiagram-v2

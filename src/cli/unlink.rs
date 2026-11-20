@@ -166,29 +166,36 @@ fn remove_owned_target_content(
         },
         &mut diagnostics,
     );
-    let reconciled = crate::compiler::config_entries::reconcile_mcp(
-        &registry,
-        &ctx.project_root,
-        target_name,
-        Some(&previous),
-        &[],
-        false,
-        false,
-        &mut diagnostics,
-    );
+    let mut keyed_records = std::collections::BTreeMap::new();
+    let mut keyed_removed = Vec::new();
+    for kind in &crate::target::KEYED_KINDS {
+        let reconciled = crate::compiler::config_entries::reconcile_keyed(
+            &registry,
+            &ctx.project_root,
+            target_name,
+            kind,
+            Some(&previous),
+            &[],
+            false,
+            false,
+            &mut diagnostics,
+        );
+        keyed_records.extend(reconciled.records);
+        keyed_removed.extend(reconciled.removed);
+    }
     crate::compiler::config_entries::report_removed(
         retention.removed_keys(),
-        &std::collections::BTreeMap::from([(target_name.to_string(), reconciled.removed)]),
+        &std::collections::BTreeMap::from([(target_name.to_string(), keyed_removed)]),
         &mut diagnostics,
     );
     lock.config_entries.remove(target_name);
     lock.config_entries
         .extend(retention.into_retained_records());
-    if !reconciled.records.is_empty() {
+    if !keyed_records.is_empty() {
         lock.config_entries
             .entry(target_name.to_string())
             .or_default()
-            .extend(reconciled.records);
+            .extend(keyed_records);
     }
 
     Ok((removed.len(), diagnostics.drain()))

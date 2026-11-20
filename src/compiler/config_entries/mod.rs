@@ -15,9 +15,9 @@ use crate::lock::ConfigEntryRecord;
 use crate::surface_ownership::retention::{RemovalOperation, RemovalReport};
 use crate::sync::AppliedState;
 use crate::sync::package_dir::PackageDir;
-use crate::target::{
-    HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, McpServerEntry, TargetRegistry, mcp_file,
-};
+use crate::target::keyed_entries::{self, KeyedKind};
+use crate::target::mcp_file::{self, MCP_KIND};
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, McpServerEntry, TargetRegistry};
 use crate::types::MarsContext;
 use file_hooks::{file_hook_output_preserve_paths, kept_file_outputs, write_file_hook_outputs};
 use mars_schema::hooks::HookOutput;
@@ -82,7 +82,7 @@ pub(crate) fn compile_config_entries(
     let registry = TargetRegistry::new();
     let mut desired_records: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>> =
         BTreeMap::new();
-    let mut desired_mcp: BTreeMap<String, Vec<mcp_file::Rendered>> = BTreeMap::new();
+    let mut desired_mcp: BTreeMap<String, Vec<keyed_entries::Rendered>> = BTreeMap::new();
     let mut pending_hooks: BTreeMap<String, Vec<HookEntry>> = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     let mut desired_file_outputs = std::collections::BTreeSet::new();
@@ -201,13 +201,13 @@ pub(crate) fn compile_config_entries(
                 .into_iter()
                 .flatten()
             {
-                let Some(name) = key.strip_prefix(MCP_KEY_PREFIX) else {
+                let Some(name) = key.strip_prefix(MCP_KIND.key_prefix) else {
                     continue;
                 };
-                if rendered.iter().all(|server| server.key() != *key)
+                if rendered.iter().all(|server| server.key(&MCP_KIND) != *key)
                     && let Ok(value) = serde_json::from_str(&record.emitted_json)
                 {
-                    rendered.push(mcp_file::Rendered {
+                    rendered.push(keyed_entries::Rendered {
                         name: name.to_string(),
                         value,
                     });
@@ -216,7 +216,7 @@ pub(crate) fn compile_config_entries(
         }
         let target_records: BTreeMap<_, _> = rendered
             .iter()
-            .map(|server| (server.key(), server.record()))
+            .map(|server| (server.key(&MCP_KIND), server.record()))
             .chain(hooks.iter().map(|hook| {
                 let key = hook.key();
                 let record = kept_records
@@ -531,7 +531,7 @@ fn reconcile_all_mcp(
     registry: &TargetRegistry,
     project_root: &Path,
     previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
-    desired_mcp: &BTreeMap<String, Vec<mcp_file::Rendered>>,
+    desired_mcp: &BTreeMap<String, Vec<keyed_entries::Rendered>>,
     force: bool,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
@@ -546,10 +546,11 @@ fn reconcile_all_mcp(
         .chain(desired_mcp.keys())
         .collect::<BTreeSet<_>>()
     {
-        let reconciled = reconcile_mcp(
+        let reconciled = reconcile_keyed(
             registry,
             project_root,
             target_root,
+            &MCP_KIND,
             previous_records.get(target_root),
             desired_mcp.get(target_root).map_or(&[], Vec::as_slice),
             force,
@@ -570,23 +571,25 @@ fn reconcile_all_mcp(
     out
 }
 
+/// Reconcile `kind`'s entries in `target_root`'s section for that kind.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn reconcile_mcp(
+pub(crate) fn reconcile_keyed(
     registry: &TargetRegistry,
     project_root: &Path,
     target_root: &str,
+    kind: &KeyedKind,
     previous: Option<&BTreeMap<String, ConfigEntryRecord>>,
-    desired: &[mcp_file::Rendered],
+    desired: &[keyed_entries::Rendered],
     force: bool,
     dry_run: bool,
     diag: &mut DiagnosticCollector,
-) -> mcp_file::Reconciled {
+) -> keyed_entries::Reconciled {
     let no_records = BTreeMap::new();
     let previous = previous.unwrap_or(&no_records);
     let Some(adapter) = registry.get(target_root) else {
         let retained: BTreeMap<_, _> = previous
             .iter()
-            .filter(|(key, _)| key.starts_with(MCP_KEY_PREFIX))
+            .filter(|(key, _)| key.starts_with(kind.key_prefix))
             .map(|(key, record)| (key.clone(), record.clone()))
             .collect();
         if !retained.is_empty() {
@@ -597,21 +600,26 @@ pub(crate) fn reconcile_mcp(
                 ),
             );
         }
-        return mcp_file::Reconciled {
+        return keyed_entries::Reconciled {
             records: retained,
             removed: Vec::new(),
             changed: false,
         };
     };
-    let Some(file) = adapter.mcp_file() else {
-        return mcp_file::Reconciled {
+    let Some((_, section)) = adapter
+        .keyed_sections()
+        .into_iter()
+        .find(|(declared, _)| declared == kind)
+    else {
+        return keyed_entries::Reconciled {
             records: BTreeMap::new(),
             removed: Vec::new(),
             changed: false,
         };
     };
-    mcp_file::reconcile(
-        &file,
+    keyed_entries::reconcile(
+        kind,
+        &section,
         project_root,
         target_root,
         previous,

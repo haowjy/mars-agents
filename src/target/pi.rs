@@ -2,7 +2,7 @@ use crate::types::DestPath;
 use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
-use super::{McpFile, McpLocation, SectionFormat, TargetAdapter};
+use super::{KeyedSection, McpFile, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct PiAdapter;
@@ -22,7 +22,7 @@ impl TargetAdapter for PiAdapter {
     // Pi reads project MCP servers only from trusted projects.
     fn mcp_file(&self) -> Option<McpFile> {
         Some(McpFile {
-            at: McpLocation {
+            at: KeyedSection {
                 path: ".pi/mcp.json",
                 format: SectionFormat::JsonSection("mcpServers"),
             },

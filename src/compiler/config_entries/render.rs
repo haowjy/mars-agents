@@ -7,7 +7,8 @@ use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
 use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
-use crate::target::{HOOK_KEY_PREFIX, HookEntry, MCP_KEY_PREFIX, TargetAdapter};
+use crate::target::mcp_file::MCP_KIND;
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetAdapter};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
 use mars_schema::hooks::targets::Profile;
@@ -45,7 +46,10 @@ pub(crate) fn preflight_config_entries(
     let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for (target, records) in &resolved.loaded.old_lock.config_entries {
-        if records.keys().any(|key| key.starts_with(MCP_KEY_PREFIX)) {
+        if records
+            .keys()
+            .any(|key| key.starts_with(MCP_KIND.key_prefix))
+        {
             mcp_targets.insert(target.clone());
         }
         if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
@@ -73,7 +77,7 @@ pub(crate) fn preflight_config_entries(
                 let path = ctx.project_root.join(location.path);
                 if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
                     errors.push(error);
-                } else if let Err(error) = crate::target::mcp_file::validate(location, &path) {
+                } else if let Err(error) = crate::target::keyed_entries::validate(location, &path) {
                     errors.push(format!(
                         "target `{target_name}` reads MCP servers from `{}`: {}",
                         location.path,

@@ -6,7 +6,7 @@
 //! authorized target and payload together; mutation boundaries derive paths and
 //! records from those operations, so callers cannot provide an independent
 //! target. MCP servers are keyed and replaced in place, and never come through
-//! here (`target::mcp_file::reconcile`).
+//! here (`target::keyed_entries::reconcile`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

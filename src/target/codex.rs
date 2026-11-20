@@ -5,7 +5,7 @@ use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
 use mars_schema::mcp_servers::{McpRender, partition_env};
 
-use super::{McpFile, McpLocation, McpServerEntry, SectionFormat, TargetAdapter};
+use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
 
 #[derive(Debug)]
 pub struct CodexAdapter;
@@ -26,7 +26,7 @@ impl TargetAdapter for CodexAdapter {
         Some(McpFile {
             // Codex reads `[mcp_servers.<name>]` from the project's
             // `.codex/config.toml`, for trusted projects only.
-            at: McpLocation {
+            at: KeyedSection {
                 path: ".codex/config.toml",
                 format: SectionFormat::TomlTable("mcp_servers"),
             },

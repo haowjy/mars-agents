@@ -287,7 +287,10 @@ fn report_skips(
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
         }
-        for target in managed {
+        for target in managed
+            .iter()
+            .filter(|target| crate::provided::offered_to(&item.source_name, target))
+        {
             let skips = reported
                 .remove(&(hook_key(item), target.clone()))
                 .unwrap_or_else(|| item.def.skips_for(target));

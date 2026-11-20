@@ -99,7 +99,8 @@ impl TargetState {
                     .iter()
                     .map(String::as_str)
                     .filter(move |target| {
-                        self.placed_hook(hook, target).is_none()
+                        crate::provided::offered_to(&hook.source_name, target)
+                            && self.placed_hook(hook, target).is_none()
                             && !hook.def.skips_for(target).is_empty()
                     })
                     .map(move |target| (hook, target))
@@ -117,6 +118,108 @@ impl TargetState {
                 placed.source_name == hook.source_name && placed.def.name == hook.def.name
             })
             .map(|(dir, _)| dir)
+    }
+
+    /// Selects `parsed` for `target_name` unless it is a host's hook and a package's of the same
+    /// name already holds the target, or is a package's and displaces a host's. The host's yields:
+    /// the user's sync never fails over a host's content, and the package's is installed and
+    /// recorded as if the host had provided none. One warning, which the lock settles by the
+    /// record the package's item makes.
+    fn place_hook(
+        &mut self,
+        collected: &mut Vec<TargetItem>,
+        target_name: &str,
+        target_item: TargetItem,
+        parsed: &crate::compiler::hooks::ParsedHookItem,
+        diag: &mut DiagnosticCollector,
+    ) {
+        use crate::provided::is_provided_source;
+
+        let key = format!(
+            "hook/{}@{}",
+            parsed.def.name,
+            target_name.trim_start_matches('.')
+        );
+        let existing = self
+            .selected_hooks
+            .get(&target_item.dest_path)
+            .map(|held| held.item.source_name.clone());
+        let yielded = match existing {
+            Some(held) if is_provided_source(&held) != is_provided_source(&parsed.source_name) => {
+                let provided = if is_provided_source(&held) {
+                    held
+                } else {
+                    parsed.source_name.clone()
+                };
+                Some(provided)
+            }
+            _ => None,
+        };
+        if let Some(provided) = &yielded {
+            // No loss is recorded for a hook nothing of which is installed.
+            self.accepted_hooks
+                .retain(|hook| hook.source_name != *provided || hook.def.name != parsed.def.name);
+            diag.hold_warning(
+                crate::lock::RecordRef::Item(key.clone()),
+                "provided-shadowed",
+                format!(
+                    "hook {}@{} from {} is not installed: a package also provides it",
+                    parsed.def.name,
+                    target_name.trim_start_matches('.'),
+                    crate::provided::provider_label(provided)
+                ),
+            );
+            if is_provided_source(&parsed.source_name) {
+                return;
+            }
+            collected.retain(|item| item.dest_path != target_item.dest_path);
+        }
+        self.select_hook(target_name, &target_item, parsed.clone());
+        collected.push(target_item);
+    }
+
+    /// A provided MCP server yields to a package's of the same name on the same target, as a
+    /// hook does ([`Self::place_hook`]).
+    fn yield_provided_mcp(&mut self, diag: &mut DiagnosticCollector) {
+        use crate::lock::RecordRef;
+        use crate::provided::is_provided_source;
+
+        let held: HashSet<(String, String)> = self
+            .selected_mcp
+            .iter()
+            .filter(|selected| !is_provided_source(&selected.item.source_name))
+            .map(|selected| {
+                (
+                    selected.dir.target().to_string(),
+                    selected.item.name.clone(),
+                )
+            })
+            .collect();
+        let (yielded, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.selected_mcp)
+            .into_iter()
+            .partition(|selected| {
+                is_provided_source(&selected.item.source_name)
+                    && held.contains(&(
+                        selected.dir.target().to_string(),
+                        selected.item.name.clone(),
+                    ))
+            });
+        self.selected_mcp = kept;
+        for selected in yielded {
+            diag.hold_warning(
+                RecordRef::Entry {
+                    target_root: selected.dir.target().to_string(),
+                    key: crate::target::mcp_file::MCP_KIND.key(&selected.item.name),
+                },
+                "provided-shadowed",
+                format!(
+                    "MCP server {}@{} from {} is not installed: a package also provides it",
+                    selected.item.name,
+                    selected.dir.target().trim_start_matches('.'),
+                    crate::provided::provider_label(&selected.item.source_name)
+                ),
+            );
+        }
     }
 
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
@@ -346,7 +449,6 @@ pub(crate) fn build_with_collisions_and_diag(
     };
     let mut explicit_renames = Vec::new();
     let managed_target_roots = crate::config::targets::managed_targets(&config.settings);
-    let mcp_target_roots = mcp_config_targets(&managed_target_roots);
     let dependency_depths = graph.dependency_depths(&config.dependencies);
     let decl_orders = graph.dependency_decl_orders(&config.dependencies);
 
@@ -360,6 +462,12 @@ pub(crate) fn build_with_collisions_and_diag(
     for source_name in &graph.order {
         let node = &graph.nodes[source_name];
         let source_config = config.dependencies.get(source_name);
+        let offered_targets: Vec<String> = managed_target_roots
+            .iter()
+            .filter(|target| crate::provided::offered_to(source_name.as_str(), target))
+            .cloned()
+            .collect();
+        let offered_mcp_targets = mcp_config_targets(&offered_targets);
 
         // Removed hook schemas are a compatibility error even when dependency
         // filters select no hook. Discovery also supplies the hooks for filters,
@@ -375,7 +483,7 @@ pub(crate) fn build_with_collisions_and_diag(
             source_name,
             package_depth,
             decl_order,
-            &managed_target_roots,
+            &offered_targets,
             diag,
         )?;
         let mut parsed_hooks = Vec::new();
@@ -440,7 +548,7 @@ pub(crate) fn build_with_collisions_and_diag(
                 for item in items {
                     if is_direct || item.visibility == mars_schema::visibility::Visibility::Exported
                     {
-                        target.select_mcp(item, &mcp_target_roots);
+                        target.select_mcp(item, &offered_mcp_targets);
                     }
                 }
             }
@@ -477,10 +585,15 @@ pub(crate) fn build_with_collisions_and_diag(
                 }
                 target.accepted_hooks.push(parsed.clone());
                 for (target_name, _dest_path, target_item) in
-                    hook_target_items(parsed, source_name, &managed_target_roots)?
+                    hook_target_items(parsed, source_name, &offered_targets)?
                 {
-                    target.select_hook(&target_name, &target_item, parsed.clone());
-                    collected_items.push(target_item);
+                    target.place_hook(
+                        &mut collected_items,
+                        &target_name,
+                        target_item,
+                        parsed,
+                        diag,
+                    );
                 }
                 continue;
             }
@@ -537,6 +650,8 @@ pub(crate) fn build_with_collisions_and_diag(
             collected_items.push(target_item);
         }
     }
+
+    target.yield_provided_mcp(diag);
 
     let collision_renames =
         rename_destination_collisions(&mut collected_items, local_source, diag)?;

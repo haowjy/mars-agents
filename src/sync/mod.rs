@@ -269,9 +269,19 @@ pub(crate) fn load_config(
     }
 
     let user = crate::config::load_user_config()?;
-    let (effective, config_diagnostics) =
+    let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
+    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: a
+    // host's content belongs to this machine's sync and to nothing it builds or publishes.
+    if crate::config::targets::managed_targets(&effective.settings)
+        .iter()
+        .any(|target| crate::harness::registry::takes_provided(target))
+    {
+        effective
+            .dependencies
+            .extend(crate::provided::staged_dependencies(project_root)?);
+    }
     diag.extend(
         crate::diagnostic::compatibility_preflight(effective.settings.min_mars_version.as_deref())
             .map_err(|message| crate::error::ConfigError::Invalid { message })?
@@ -700,12 +710,16 @@ pub(crate) fn create_plan(
     })
 }
 
+/// A host's hooks and MCP servers change with the host, not with the lock a team commits, so
+/// they never trip the gate: a CI machine without the host has none, and one with it is not
+/// asking for a lock change.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
     let has_changes = planned.plan.actions.iter().any(|a| {
-        !matches!(
-            a,
-            plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
-        )
+        !crate::provided::is_provided_source(a.source_name().as_ref())
+            && !matches!(
+                a,
+                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
+            )
     });
     if has_changes {
         return Err(MarsError::FrozenViolation {

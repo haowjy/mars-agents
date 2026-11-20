@@ -26,6 +26,22 @@ pub(super) fn split(lock: &LockFile) -> (LockFile, LockFile) {
         }
         !provided
     });
+    for (target, key) in &lock.provided_entries {
+        if let Some(record) = committed
+            .config_entries
+            .get_mut(target)
+            .and_then(|records| records.remove(key))
+        {
+            local
+                .config_entries
+                .entry(target.clone())
+                .or_default()
+                .insert(key.clone(), record);
+        }
+    }
+    committed
+        .config_entries
+        .retain(|_, records| !records.is_empty());
     (committed, local)
 }
 
@@ -34,6 +50,9 @@ pub(super) fn merge(mut committed: LockFile, local: LockFile) -> LockFile {
     committed.items.extend(local.items);
     committed.dependencies.extend(local.dependencies);
     for (target, records) in local.config_entries {
+        committed
+            .provided_entries
+            .extend(records.keys().map(|key| (target.clone(), key.clone())));
         committed
             .config_entries
             .entry(target)

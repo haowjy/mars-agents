@@ -48,6 +48,8 @@ pub(crate) fn finalize(
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
+        new_lock.provided_entries =
+            provided_entries(&state.applied.planned.targeted.target, old_lock, &new_lock);
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
             .iter()
@@ -180,6 +182,70 @@ fn record_hook_source_paths(
             locked.source_path = source_path;
         }
     }
+}
+
+/// The config entries of `new_lock` that a host's provided content wrote, which the lock saves in
+/// `provided-outputs.lock`. A record carries no source, so this reads the selection: an entry is
+/// the host's when a selected hook or MCP server of a provided source has its key. One no
+/// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
+fn provided_entries(
+    target: &crate::sync::target::TargetState,
+    old_lock: &LockFile,
+    new_lock: &LockFile,
+) -> std::collections::BTreeSet<(String, String)> {
+    use crate::target::mcp_file::MCP_KIND;
+    use crate::target::plugin::HOOK_ENTRY_KIND;
+
+    let hooks = target.selected_hooks().map(|(dir, hook)| {
+        let keys: Vec<String> = new_lock
+            .config_entries
+            .get(dir.target())
+            .into_iter()
+            .flat_map(|records| records.keys())
+            .filter(|key| {
+                **key == HOOK_ENTRY_KIND.key(&hook.def.name)
+                    || key
+                        .strip_prefix(crate::target::HOOK_KEY_PREFIX)
+                        .and_then(|rest| rest.split_once(':'))
+                        .is_some_and(|(_, name)| name == hook.def.name)
+            })
+            .cloned()
+            .collect();
+        (dir.target(), hook.source_name.as_str(), keys)
+    });
+    let servers = target.selected_mcp().map(|(dir, server)| {
+        (
+            dir.target(),
+            server.source_name.as_str(),
+            vec![MCP_KIND.key(&server.name)],
+        )
+    });
+    let mut provided = std::collections::BTreeSet::new();
+    let mut claimed = std::collections::BTreeSet::new();
+    for (target_root, source, keys) in hooks.chain(servers) {
+        for key in keys {
+            let owner = (target_root.to_string(), key);
+            if crate::provided::is_provided_source(source) {
+                provided.insert(owner);
+            } else {
+                claimed.insert(owner);
+            }
+        }
+    }
+    provided.extend(
+        old_lock
+            .provided_entries
+            .iter()
+            .filter(|entry| !claimed.contains(*entry))
+            .cloned(),
+    );
+    provided.retain(|(target_root, key)| {
+        new_lock
+            .config_entries
+            .get(target_root)
+            .is_some_and(|records| records.contains_key(key))
+    });
+    provided
 }
 
 /// A hook on a target that takes none of it has no output to hang an item on. Its record has

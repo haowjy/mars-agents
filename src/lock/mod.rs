@@ -26,6 +26,11 @@ pub struct LockFile {
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
+    /// `(target, record key)` of the config entries a host's provided content wrote. They are not
+    /// a field of the file: [`write`] saves exactly these records in `provided-outputs.lock`, and
+    /// [`load_with_diagnostics`] rebuilds the set from the keys it finds there.
+    #[serde(skip)]
+    pub provided_entries: std::collections::BTreeSet<(String, String)>,
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
@@ -46,6 +51,7 @@ impl LockFile {
             dependencies: wire.dependencies,
             items: wire.items,
             config_entries,
+            provided_entries: Default::default(),
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
@@ -57,6 +63,7 @@ impl LockFile {
             dependencies: IndexMap::new(),
             items: IndexMap::new(),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -874,6 +881,7 @@ pub fn build(
         dependencies,
         items,
         config_entries,
+        provided_entries: Default::default(),
         dependency_model_aliases: IndexMap::new(),
     })
 }
@@ -1556,6 +1564,7 @@ mod tests {
             dependencies,
             items,
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -1886,6 +1895,7 @@ installed_checksum = "sha256:bbb"
                 ),
             ]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -1967,6 +1977,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -2042,6 +2053,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let mut lock = old_lock.clone();
@@ -2333,6 +2345,7 @@ installed_checksum = "sha256:bbb"
             dependencies: old_sources,
             items: IndexMap::new(),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
 
@@ -2459,6 +2472,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
@@ -2564,6 +2578,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {

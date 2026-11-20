@@ -189,7 +189,7 @@ pub(crate) fn discover_resolved_hook_items(
                 error,
                 removed_schema: true,
                 ..
-            }) => return Err(error),
+            }) if !crate::provided::is_provided_source(source_name.as_str()) => return Err(error),
             // The one place a dependency's hook is judged invalid: it must also render on
             // every managed target it is installed for.
             Ok(item) => match render_check(&item, managed_targets) {
@@ -326,6 +326,15 @@ fn invalid_manifest(
 ) -> MarsError {
     let message = match source {
         HookSource::Project => format!("{}: {message}", toml_path.display()),
+        HookSource::Dependency { .. }
+            if code == hooks::REMOVED_SCHEMA_CODE
+                && crate::provided::is_provided_source(source_name) =>
+        {
+            format!(
+                "hook `{hook_name}` from {} uses a retired hook schema",
+                crate::provided::provider_label(source_name)
+            )
+        }
         HookSource::Dependency { version } if code == hooks::REMOVED_SCHEMA_CODE => format!(
             "source package `{source_name}` version `{version}` {message}; \
              suggested: `{cmd_upgrade}` or `{cmd_remove}`",

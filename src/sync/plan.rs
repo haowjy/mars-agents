@@ -37,6 +37,16 @@ pub enum PlannedAction {
     },
 }
 
+impl PlannedAction {
+    pub fn source_name(&self) -> &SourceName {
+        match self {
+            Self::Install { target } | Self::Overwrite { target } => &target.source_name,
+            Self::Skip { source_name, .. } | Self::KeepLocal { source_name, .. } => source_name,
+            Self::Remove { locked } => &locked.source,
+        }
+    }
+}
+
 pub fn create(diff: &SyncDiff, options: &SyncOptions, diag: &mut DiagnosticCollector) -> SyncPlan {
     let mut actions = Vec::new();
 

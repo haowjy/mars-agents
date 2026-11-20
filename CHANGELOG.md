@@ -7,6 +7,47 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-20
+
+### Upgrade notes
+- `[settings] managed_root`, which `mars init <dir>` wrote before this release, still works for one more minor, read as `targets` when no `mars.toml` or `mars.local.toml` sets `targets`. A sync warns (`field.deprecated`) until you replace it with `targets = [".claude"]`. When another file's `targets` overrides it, the warning says it has no effect and to delete it. `mars init`, `mars link` and `mars unlink` drop the key from the file they write. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#managed_root).
+- Cursor support is deprecated and goes away in the next minor. A sync warns while `.cursor` is a target; run `mars unlink .cursor`. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-link).
+- The first `mars sync` after upgrading rewrites a Claude or Pi skill that sets `model-invocable: false` or `user-invocable: false`. Its frontmatter keys come in a new order: same keys, same values, one rewrite. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/skill-compilation.md#model-invocable).
+
+### Added
+- **The `agy` target.** `mars link agy` writes Antigravity (`agy`) its skills, agents, hooks and MCP servers as a plugin in `.agy/`, and adds one entry to the project's `.agents/plugins.json` so `agy` loads it. Your own entries there are left alone. See [Antigravity](https://github.com/haowjy/mars-agents/blob/main/docs/config/mcp-and-hooks.md#antigravity-agy).
+  - **Agents.** An `agy` agent gets an explicit tool list. A `deny` or `ask` rule, which `agy`'s agent file cannot express, is reported as a lost restriction.
+  - **Hooks.** A native `[targets.".agy"]` hook installs as written (default file `agy.json`). A portable `[hooks]` table is translated for `agy`'s events and replies by a hidden `mars hook run` command, and sync reports each event or answer that does not carry over.
+  - **Reading.** `.agy/hooks.json` names the `mars` binary by absolute path, so `.agy/` is machine-local, like `settings.local.json`.
+- `mars models list` includes `agy`'s models.
+
+### Changed
+- **Fewer warnings, each worth reading.** `mars sync` warns only when you can act on it, or when the installed files do less than the package declares. Examples:
+  - a lost restriction, including `model-invocable: false` a target cannot carry;
+  - a package's hooks Mars does not convert;
+  - an MCP env key a target cannot set;
+  - a hook event or answer a target has no counterpart for;
+  - an agent's missing skill.
+
+  Each prints once: on the sync that installs or changes the affected files, or when you link a target it applies to. An unchanged sync is quiet. Whoever wrote the item decides the level only when nothing is lost; schema advice about a dependency is an `info`. `--verbose`, `mars check` and `mars validate` still show every item.
+- **Downgraded or removed.**
+  - Now `info`: `mcp-env-missing`, a stale models cache with a refresh already running, `models-reasoning-missing` and the plain `.agents` deprecation.
+  - `deprecated-agents-target` and `target-skills-duplicated` are one diagnostic. It is a warning only when a harness that also reads `.agents/skills` (`agy`) is linked, with the advice `mars unlink .agents`.
+- **Collisions.** Collisions and edited installs are one line per source or target. The advice covers files Mars wrote and lost track of (`mars sync --force` adopts them).
+- **The "lose restrictions" line.** It names skills as well as agents, and `--verbose` labels each restriction kind (`shell`, `tools`, `mcp`).
+- **`mars doctor`.** It reports a missing skill as a warning and exits 2 only for an error. `mars doctor --json` adds `diagnostics` (`level`, `code`, `message`); `errors` and `warnings` stay for one minor release.
+- **`mars validate` and `mars check`.** They print every warning through one printer, so hook and plugin warnings in `mars check` go to stderr.
+- **Agent files under Meridian.** Under `MERIDIAN_MANAGED=1`, `agent_emission = auto` writes native agents for `agy`, which Meridian does not launch. Other harnesses keep today's behaviour.
+- **Routing never selects `agy`.** Meridian does not launch it, whatever named it: the fallback list, `harness_order`, `default_harness`, an alias or `--harness`. `mars models resolve` and `mars build launch-bundle` fall through to a harness that can run the model, such as OpenCode. The trace says `Meridian does not launch agy`, and `--harness agy` fails with `explicit_harness_excluded`. Settings that name `agy` still load.
+- **`mars init`.** `mars init <target>` records the target in `targets`. `mars init --json` no longer has `managed_root`, and the routing report's `target_source.field` is `targets` or `none`.
+- **Routing trace.** `skip_reason` for a Pi that cannot be driven is `incompatible_harness`, not `pi_incompatible`, as `mars models list` already showed.
+
+### Fixed
+- Warnings in `mars.toml` itself, such as a deprecated key, show on a plain sync instead of only under `--verbose`.
+- `mars sync` no longer says `already up to date` when it wrote or removed files in a target directory, such as a target added by editing the config. It prints `wrote N target file(s)`.
+- A "warning: warning:" doubling in rename and `[package.tools]` messages.
+- A transitive dependency's missing `[package] schema` was worded for its author instead of for you.
+
 ## [0.36.2] - 2026-11-20
 
 ### Fixed

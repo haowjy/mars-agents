@@ -32,8 +32,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     };
 
     // Judge the half of the lock that sync maintains. A target a config file names but the sync
-    // does not manage (retired `.cursor`, or left out by `mars.local.toml`) keeps its records and
-    // its `.mars/<surface>/<target>/` copies, which nothing reinstalls; one no config file names
+    // does not manage (retired `.cursor`) keeps its records and its
+    // `.mars/<surface>/<target>/` copies, which nothing reinstalls; one no config file names
     // is removed by the next sync.
     let lock = match &project_config {
         Some(loaded) => {

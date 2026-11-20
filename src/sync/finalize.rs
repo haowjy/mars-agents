@@ -33,7 +33,8 @@ pub(crate) fn finalize(
         .collect();
 
     let dropped = &state.applied.planned.targeted.resolved.loaded.dropped;
-    let dropped_targets: Vec<String> = dropped.recorded_targets().into_iter().collect();
+    let mut dropped_targets: Vec<String> = dropped.recorded_targets().into_iter().collect();
+    let mut pending_targets = Vec::new();
     // A dry run names what a real run would delete; a real run, what it did.
     let mut dropped_outputs = Vec::new();
     if request.options.dry_run {
@@ -133,6 +134,11 @@ pub(crate) fn finalize(
         )?;
         diag.extend(removed.diagnostics);
         dropped_outputs = removed.outputs;
+        // A target whose removal failed keeps its records, and the next sync retries it.
+        let remaining = new_lock.recorded_targets();
+        (pending_targets, dropped_targets) = dropped_targets
+            .into_iter()
+            .partition(|target| remaining.contains(target));
         let project_targets = crate::config::targets::project_targets(&loaded.config);
         if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
             diag.warn("native-agent-manifest-write", warning);
@@ -175,6 +181,7 @@ pub(crate) fn finalize(
         target_outcomes: state.target_outcomes,
         dry_run: request.options.dry_run,
         dropped_targets,
+        pending_targets,
         dropped_outputs,
         native_emitted,
         native_removed,

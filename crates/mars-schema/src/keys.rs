@@ -18,6 +18,8 @@ pub enum Surface {
     HookToml,
     /// `[settings]` in `mars.toml`, `mars.local.toml` and the user config.
     Settings,
+    /// `[settings]` in `mars.local.toml` alone, where a key can mean more than in `mars.toml`.
+    LocalSettings,
     /// `[agents.<name>]` in the consumer config files.
     AgentOverlay,
     /// `[models.<alias>]` in `mars.toml`.
@@ -130,6 +132,14 @@ pub static GATED: &[Gated] = &[
         since: Release(0, 30, 0),
         gate: Gate::Rules(denies_or_asks),
     },
+    // Mars before 0.39.0 reads a local `targets` as the whole list, not an addition to the
+    // project's, and under its advised `--force` rewrites the shared lock to match.
+    Gated {
+        key: "targets",
+        surfaces: &[LocalSettings],
+        since: Release(0, 39, 0),
+        gate: Gate::Present,
+    },
     // An Agent's `effort`, an overlay's `effort` and a model policy's `override.effort`. Mars
     // before 0.35.0 refuses `minimal`, `auto` and `null` and fails the whole sync.
     Gated {
@@ -199,8 +209,10 @@ impl Used {
 pub enum Document {
     /// A package's `mars.toml`.
     Package,
-    /// `mars.toml`, `mars.local.toml` or the user `config.toml` as a project's configuration.
+    /// `mars.toml` or the user `config.toml` as a project's configuration.
     Consumer,
+    /// `mars.local.toml`: a consumer file with the keys only it gates.
+    Local,
 }
 
 /// The gated keys `document` uses: every key of a table that has a gated row on that table's
@@ -266,9 +278,12 @@ pub fn used(document: &toml::Table, kind: Document) -> Vec<Used> {
             }
             scan_aliases(document, &mut scan);
         }
-        Document::Consumer => {
+        Document::Consumer | Document::Local => {
             if let Some(settings) = document.get("settings").and_then(toml::Value::as_table) {
                 scan(Settings, "settings".into(), settings);
+                if kind == Document::Local {
+                    scan(LocalSettings, "settings".into(), settings);
+                }
             }
             let agents = document.get("agents").and_then(toml::Value::as_table);
             for (name, agent) in agents.into_iter().flatten() {

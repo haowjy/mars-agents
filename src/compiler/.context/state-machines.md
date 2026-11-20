@@ -120,7 +120,7 @@ root: desired records are planned in memory (from `lower_merge_outputs` and
 `mcp_file::render_all`), `unchanged_records` decides what to leave alone, `RemovalPlan` removes,
 and the lock's `config_entries` hold what was recorded. Dry runs stop after planning with
 previews. File-placement hooks (OpenCode, Pi) are a second branch: files recorded in the lock and
-deleted when no longer desired, if `may_delete` says Mars wrote them.
+removed when no longer desired through `remove_recorded`, which keeps a file whose hash is no longer the record's.
 
 ```mermaid
 stateDiagram-v2

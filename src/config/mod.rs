@@ -317,8 +317,9 @@ fn parse_failed(path: &Path, error: &toml::de::Error) -> MarsError {
 fn read_file<T: DeserializeOwned>(
     content: &str,
     path: &Path,
+    document: keys::Document,
 ) -> Result<mars_schema::config::Read<T>, MarsError> {
-    mars_schema::config::read(content).map_err(|error| parse_failed(path, &error))
+    mars_schema::config::read(content, document).map_err(|error| parse_failed(path, &error))
 }
 
 /// Interpret consumer-owned manifest sections from bytes already normalized by
@@ -346,12 +347,16 @@ pub(crate) fn parse_prepared_manifest(
 
 /// Read a `mars.local.toml`-shaped file: the project's local file and the user `config.toml`.
 /// `file` names it in what the reader reports.
-fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
+fn parse_local(
+    content: &str,
+    path: &Path,
+    document: keys::Document,
+) -> Result<LocalConfig, MarsError> {
     let mars_schema::config::Read {
         mut value,
         unknown_keys,
         floor,
-    } = read_file::<LocalConfig>(content, path)?;
+    } = read_file::<LocalConfig>(content, path, document)?;
     refuse(
         path,
         &mars_schema::config::settings_refusals(
@@ -368,7 +373,7 @@ fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
 pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     match std::fs::read_to_string(&path) {
-        Ok(content) => parse_local(&content, &path),
+        Ok(content) => parse_local(&content, &path, keys::Document::Local),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(read_error(&path, e)),
     }
@@ -755,7 +760,9 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
 /// Write mars.local.toml, changing only what differs from the file as it stands.
 pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
-    save::save_document(&path, local, |text| parse_local(text, &path))
+    save::save_document(&path, local, |text| {
+        parse_local(text, &path, keys::Document::Local)
+    })
 }
 
 #[cfg(test)]
@@ -1451,6 +1458,7 @@ override = { effort = "high" }
         let local = parse_local(
             "[settings]\nnetwork_deny = ['x.test']\n",
             Path::new("mars.local.toml"),
+            keys::Document::Local,
         )
         .unwrap();
         assert!(local.unknown_keys.is_empty());

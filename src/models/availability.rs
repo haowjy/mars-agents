@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::harness::registry;
 use crate::models::harness_model::resolve_harness_model;
 use crate::routing::{Eligibility, RoutingTrace};
 use mars_schema::HarnessId;
@@ -12,18 +13,24 @@ pub enum AvailabilityStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AvailabilitySource {
     RouteRejected,
     RouteUnverified,
     HarnessInstalled,
-    #[serde(rename = "pi_probe")]
-    PiProbe,
-    #[serde(rename = "opencode_probe")]
-    OpenCodeProbe,
-    #[serde(rename = "cursor_probe")]
-    CursorProbe,
+    /// The harness's own model listing, serialized as `<harness>_probe`.
+    Probe(HarnessId),
+}
+
+impl Serialize for AvailabilitySource {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::RouteRejected => serializer.serialize_str("route_rejected"),
+            Self::RouteUnverified => serializer.serialize_str("route_unverified"),
+            Self::HarnessInstalled => serializer.serialize_str("harness_installed"),
+            Self::Probe(harness) => serializer.collect_str(&format_args!("{harness}_probe")),
+        }
+    }
 }
 
 /// One selected, executable model path. Never reconstructed from a second support check.
@@ -131,11 +138,10 @@ pub fn from_routing_trace(
             let mars_provider = runnable
                 .mars_provider
                 .unwrap_or_else(|| provider.to_string());
-            let source = match harness {
-                HarnessId::Pi => AvailabilitySource::PiProbe,
-                HarnessId::OpenCode => AvailabilitySource::OpenCodeProbe,
-                HarnessId::Cursor => AvailabilitySource::CursorProbe,
-                _ => AvailabilitySource::HarnessInstalled,
+            let source = if registry::probe_spec(harness).is_some() {
+                AvailabilitySource::Probe(harness)
+            } else {
+                AvailabilitySource::HarnessInstalled
             };
             ModelAvailability {
                 status: AvailabilityStatus::Runnable,

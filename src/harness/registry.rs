@@ -1,13 +1,32 @@
+use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver};
 use mars_schema::HarnessId;
 
 /// How a harness proves runtime support and authentication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum HarnessClass {
     /// Serves one provider directly; support comes from the catalog and auth from a
     /// native status command.
     Native { provider: &'static str },
     /// Support comes from the harness's own model listing.
-    ProbeBacked { listing: ListingAuth },
+    ProbeBacked(ProbeSpec),
+}
+
+/// What a probe-backed harness is: how its listing is fetched and cached, what a good listing
+/// proves about credentials, and how it spells models.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeSpec {
+    pub probe: ProbeDriver,
+    pub listing: ListingAuth,
+    pub slugs: SlugShape,
+}
+
+/// How a probe-backed harness spells the models it lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlugShape {
+    /// `provider/model`: the listing names the providers it serves.
+    Qualified,
+    /// The harness's own flat names (Cursor's `gpt-5.5-high`), with no provider.
+    Bare,
 }
 
 /// Whether a probe-backed harness lists models only when credentials are configured.
@@ -22,7 +41,7 @@ pub enum ListingAuth {
     Ungated,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 /// The one row per harness: identity-derived facts (`as_str`, the `.claude`-style variant key)
 /// are not stored. Lowering policy is a match on `HarnessId` in the compiler.
 pub struct HarnessDescriptor {
@@ -71,27 +90,33 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
         display_name: "Pi",
         binary: "pi",
         default_target: ".pi",
-        class: HarnessClass::ProbeBacked {
+        class: HarnessClass::ProbeBacked(ProbeSpec {
+            probe: ProbeDriver::of::<PiProbeResult>(),
             listing: ListingAuth::Gated,
-        },
+            slugs: SlugShape::Qualified,
+        }),
     },
     HarnessDescriptor {
         id: HarnessId::OpenCode,
         display_name: "OpenCode",
         binary: "opencode",
         default_target: ".opencode",
-        class: HarnessClass::ProbeBacked {
+        class: HarnessClass::ProbeBacked(ProbeSpec {
+            probe: ProbeDriver::of::<OpenCodeProbeResult>(),
             listing: ListingAuth::Ungated,
-        },
+            slugs: SlugShape::Qualified,
+        }),
     },
     HarnessDescriptor {
         id: HarnessId::Cursor,
         display_name: "Cursor",
         binary: "cursor",
         default_target: ".cursor",
-        class: HarnessClass::ProbeBacked {
+        class: HarnessClass::ProbeBacked(ProbeSpec {
+            probe: ProbeDriver::of::<CursorProbeResult>(),
             listing: ListingAuth::Gated,
-        },
+            slugs: SlugShape::Bare,
+        }),
     },
 ];
 
@@ -106,10 +131,18 @@ pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
         .expect("harness descriptor exists")
 }
 
+/// The probe-backed harness's spec, or `None` for a native harness.
+pub fn probe_spec(id: HarnessId) -> Option<ProbeSpec> {
+    match descriptor(id).class {
+        HarnessClass::ProbeBacked(spec) => Some(spec),
+        HarnessClass::Native { .. } => None,
+    }
+}
+
 pub fn native_provider(id: HarnessId) -> Option<&'static str> {
     match descriptor(id).class {
         HarnessClass::Native { provider } => Some(provider),
-        HarnessClass::ProbeBacked { .. } => None,
+        HarnessClass::ProbeBacked(_) => None,
     }
 }
 
@@ -126,7 +159,7 @@ pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
         .iter()
         .find(|descriptor| match descriptor.class {
             HarnessClass::Native { provider } => provider == normalized,
-            HarnessClass::ProbeBacked { .. } => false,
+            HarnessClass::ProbeBacked(_) => false,
         })
         .map(|descriptor| descriptor.id)
 }
@@ -167,7 +200,7 @@ mod tests {
         ] {
             let listing = match descriptor(harness).class {
                 HarnessClass::Native { .. } => None,
-                HarnessClass::ProbeBacked { listing } => Some(listing),
+                HarnessClass::ProbeBacked(spec) => Some(spec.listing),
             };
             assert_eq!(listing, expected, "{harness}");
         }

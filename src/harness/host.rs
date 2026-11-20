@@ -1,4 +1,3 @@
-use crate::config::targets::HarnessScope;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -7,11 +6,10 @@ use std::time::Duration;
 use wait_timeout::ChildExt;
 
 use crate::harness::registry;
+use crate::harness::registry::SlugShape;
 use crate::models::probes::ProbeRefreshMode;
-use crate::models::probes::cache::{self, CachedProbeOutcome};
-use crate::models::probes::{
-    CursorProbeResult, ObservedOutcome, OpenCodeProbeResult, PiProbeResult, ProbeObservation,
-};
+use crate::models::probes::cache::CachedProbeOutcome;
+use crate::models::probes::{Listing, ObservedOutcome, ProbeObservation};
 use mars_schema::HarnessId;
 
 #[derive(Debug, Clone)]
@@ -30,15 +28,6 @@ impl Default for CapabilityCollectionOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CapabilitySnapshot {
-    pub executable: BTreeMap<HarnessId, ExecutableState>,
-    pub opencode: CachedProbeOutcome<OpenCodeProbeResult>,
-    pub pi: CachedProbeOutcome<PiProbeResult>,
-    pub cursor: CachedProbeOutcome<CursorProbeResult>,
-    pub offline: bool,
-}
-
 /// Listing success and refresh freshness are independent: a failed latest
 /// attempt may retain last-good support without implying current auth.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -47,127 +36,19 @@ pub struct ListingEvidence {
     pub latest_attempt_ok: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ListingEvidenceSet {
-    opencode: ListingEvidence,
-    pi: ListingEvidence,
-    cursor: ListingEvidence,
-}
-
-impl ListingEvidenceSet {
-    /// For static input and fixtures only. A real cache outcome must use
-    /// `from_outcomes` so failed refreshes are not treated as latest success.
-    pub fn from_results_assuming_latest_ok(
-        opencode: Option<&OpenCodeProbeResult>,
-        pi: Option<&PiProbeResult>,
-        cursor: Option<&CursorProbeResult>,
-    ) -> Self {
-        Self {
-            opencode: ListingEvidence {
-                succeeded: opencode.is_some_and(|result| result.model_probe_success),
-                latest_attempt_ok: true,
-            },
-            pi: ListingEvidence {
-                succeeded: pi.is_some_and(|result| result.model_probe_success),
-                latest_attempt_ok: true,
-            },
-            cursor: ListingEvidence {
-                succeeded: cursor
-                    .is_some_and(|result| result.model_probe_success && !result.slugs.is_empty()),
-                latest_attempt_ok: true,
-            },
-        }
-    }
-
-    pub fn from_outcomes(
-        opencode: Option<&CachedProbeOutcome<OpenCodeProbeResult>>,
-        pi: Option<&CachedProbeOutcome<PiProbeResult>>,
-        cursor: Option<&CachedProbeOutcome<CursorProbeResult>>,
-    ) -> Self {
-        let mut evidence = Self::from_results_assuming_latest_ok(
-            opencode.and_then(CachedProbeOutcome::result),
-            pi.and_then(CachedProbeOutcome::result),
-            cursor.and_then(CachedProbeOutcome::result),
-        );
-        evidence.opencode.latest_attempt_ok =
-            opencode.is_none_or(CachedProbeOutcome::latest_attempt_ok);
-        evidence.pi.latest_attempt_ok = pi.is_none_or(CachedProbeOutcome::latest_attempt_ok);
-        evidence.cursor.latest_attempt_ok =
-            cursor.is_none_or(CachedProbeOutcome::latest_attempt_ok);
-        evidence
-    }
-
-    pub fn get(self, harness: HarnessId) -> ListingEvidence {
-        match harness {
-            HarnessId::OpenCode => self.opencode,
-            HarnessId::Pi => self.pi,
-            HarnessId::Cursor => self.cursor,
-            _ => ListingEvidence::default(),
-        }
-    }
-}
-
-impl CapabilitySnapshot {
-    pub fn listing_evidence_set(&self) -> ListingEvidenceSet {
-        ListingEvidenceSet::from_outcomes(Some(&self.opencode), Some(&self.pi), Some(&self.cursor))
-    }
-
-    pub fn installed_harnesses(&self) -> HashSet<String> {
-        self.executable
-            .iter()
-            .filter(|(_, state)| matches!(state, ExecutableState::Found { .. }))
-            .map(|(id, _)| id)
-            .map(|id| id.as_str().to_string())
-            .collect()
-    }
-}
-
 /// Command-scoped lazy capability session.
 ///
-/// Executable checks are collected immediately. Harness probe checks are
-/// loaded lazily on first use per harness and memoized for the command.
+/// Executable checks are collected immediately. Each probe-backed harness's listing is
+/// loaded lazily on first use and memoized for the command.
 #[derive(Debug, Clone)]
 pub struct CapabilitySession {
-    executable: BTreeMap<HarnessId, ExecutableState>,
     installed: HashSet<String>,
     offline: bool,
     probe_refresh: ProbeRefreshMode,
-    opencode: Option<ObservedOutcome<CachedProbeOutcome<OpenCodeProbeResult>>>,
-    pi: Option<ObservedOutcome<CachedProbeOutcome<PiProbeResult>>>,
-    cursor: Option<ObservedOutcome<CachedProbeOutcome<CursorProbeResult>>>,
+    outcomes: BTreeMap<HarnessId, ObservedOutcome<CachedProbeOutcome<Listing>>>,
 }
 
 impl CapabilitySession {
-    #[cfg(test)]
-    pub(crate) fn set_opencode_outcome_for_test(
-        &mut self,
-        outcome: CachedProbeOutcome<OpenCodeProbeResult>,
-    ) {
-        self.opencode = Some(ObservedOutcome {
-            outcome,
-            observation: None,
-        });
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_pi_outcome_for_test(&mut self, outcome: CachedProbeOutcome<PiProbeResult>) {
-        self.pi = Some(ObservedOutcome {
-            outcome,
-            observation: None,
-        });
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_cursor_outcome_for_test(
-        &mut self,
-        outcome: CachedProbeOutcome<CursorProbeResult>,
-    ) {
-        self.cursor = Some(ObservedOutcome {
-            outcome,
-            observation: None,
-        });
-    }
-
     pub fn collect(options: &CapabilityCollectionOptions) -> Self {
         Self::collect_with_resolver(options, &PathExecutableResolver)
     }
@@ -176,27 +57,22 @@ impl CapabilitySession {
         options: &CapabilityCollectionOptions,
         resolver: &dyn ExecutableResolver,
     ) -> Self {
-        let mut executable = BTreeMap::new();
-
-        for descriptor in registry::descriptors() {
-            let state = resolver.resolve(descriptor.binary);
-            executable.insert(descriptor.id, state);
-        }
-
-        let installed = executable
+        let installed = registry::descriptors()
             .iter()
-            .filter(|(_, state)| matches!(state, ExecutableState::Found { .. }))
-            .map(|(id, _)| id.as_str().to_string())
-            .collect::<HashSet<_>>();
+            .filter(|descriptor| {
+                matches!(
+                    resolver.resolve(descriptor.binary),
+                    ExecutableState::Found { .. }
+                )
+            })
+            .map(|descriptor| descriptor.id.as_str().to_string())
+            .collect();
 
         Self {
-            executable,
             installed,
             offline: options.offline,
             probe_refresh: options.probe_refresh,
-            opencode: None,
-            pi: None,
-            cursor: None,
+            outcomes: BTreeMap::new(),
         }
     }
 
@@ -211,85 +87,45 @@ impl CapabilitySession {
         self.installed.extend(harnesses);
     }
 
-    pub fn opencode_outcome(&mut self) -> &CachedProbeOutcome<OpenCodeProbeResult> {
-        if self.opencode.is_none() {
-            let observed =
-                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
-            self.opencode = Some(observed);
-        }
-        &self
-            .opencode
-            .as_ref()
-            .expect("loaded OpenCode outcome")
-            .outcome
+    fn observed(&mut self, harness: HarnessId) -> &ObservedOutcome<CachedProbeOutcome<Listing>> {
+        self.outcomes
+            .entry(harness)
+            .or_insert_with(|| match registry::probe_spec(harness) {
+                Some(spec) => spec
+                    .probe
+                    .load(&self.installed, self.offline, self.probe_refresh),
+                None => ObservedOutcome {
+                    outcome: CachedProbeOutcome::Unavailable,
+                    observation: None,
+                },
+            })
     }
 
-    pub fn loaded_opencode_outcome(&self) -> Option<&CachedProbeOutcome<OpenCodeProbeResult>> {
-        self.opencode.as_ref().map(|observed| &observed.outcome)
+    /// The harness's listing outcome, probing on first use. A native harness has none.
+    pub fn outcome(&mut self, harness: HarnessId) -> &CachedProbeOutcome<Listing> {
+        &self.observed(harness).outcome
     }
 
-    pub fn loaded_pi_outcome(&self) -> Option<&CachedProbeOutcome<PiProbeResult>> {
-        self.pi.as_ref().map(|observed| &observed.outcome)
+    /// The outcome already loaded for routing or listing; never probes.
+    pub fn loaded_outcome(&self, harness: HarnessId) -> Option<&CachedProbeOutcome<Listing>> {
+        self.outcomes
+            .get(&harness)
+            .map(|observed| &observed.outcome)
     }
 
-    pub fn loaded_cursor_outcome(&self) -> Option<&CachedProbeOutcome<CursorProbeResult>> {
-        self.cursor.as_ref().map(|observed| &observed.outcome)
-    }
-
-    pub fn loaded_opencode_probe_result(&self) -> Option<&OpenCodeProbeResult> {
-        self.loaded_opencode_outcome()
-            .and_then(CachedProbeOutcome::result)
-    }
-
-    pub fn loaded_pi_probe_result(&self) -> Option<&PiProbeResult> {
-        self.loaded_pi_outcome()
-            .and_then(CachedProbeOutcome::result)
-    }
-
-    pub fn loaded_cursor_probe_result(&self) -> Option<&CursorProbeResult> {
-        self.loaded_cursor_outcome()
-            .and_then(CachedProbeOutcome::result)
-    }
-
-    pub fn pi_outcome(&mut self) -> &CachedProbeOutcome<PiProbeResult> {
-        if self.pi.is_none() {
-            let observed =
-                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
-            self.pi = Some(observed);
-        }
-        &self.pi.as_ref().expect("loaded Pi outcome").outcome
-    }
-
-    pub fn cursor_outcome(&mut self) -> &CachedProbeOutcome<CursorProbeResult> {
-        if self.cursor.is_none() {
-            let observed =
-                cache::probe_cached_observed(&self.installed, self.offline, self.probe_refresh);
-            self.cursor = Some(observed);
-        }
-        &self.cursor.as_ref().expect("loaded Cursor outcome").outcome
+    pub fn listing(&mut self, harness: HarnessId) -> Option<Listing> {
+        self.outcome(harness).result().cloned()
     }
 
     pub fn probe_observation(&mut self, harness: HarnessId) -> Option<ProbeObservation> {
-        match harness {
-            HarnessId::Pi => {
-                self.pi_outcome();
-                self.pi
-                    .as_ref()
-                    .and_then(|observed| observed.observation.clone())
-            }
-            HarnessId::OpenCode => {
-                self.opencode_outcome();
-                self.opencode
-                    .as_ref()
-                    .and_then(|observed| observed.observation.clone())
-            }
-            HarnessId::Cursor => {
-                self.cursor_outcome();
-                self.cursor
-                    .as_ref()
-                    .and_then(|observed| observed.observation.clone())
-            }
-            _ => None,
+        self.observed(harness).observation.clone()
+    }
+
+    pub fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
+        let outcome = self.outcome(harness);
+        ListingEvidence {
+            succeeded: outcome.result().is_some_and(Listing::is_evidence),
+            latest_attempt_ok: outcome.latest_attempt_ok(),
         }
     }
 
@@ -306,105 +142,22 @@ impl CapabilitySession {
             return None;
         }
         let mut probes = Vec::new();
-        if self.installed.contains(HarnessId::OpenCode.as_str()) {
-            probes.push(match self.loaded_opencode_outcome() {
+        for descriptor in registry::descriptors() {
+            let Some(spec) = registry::probe_spec(descriptor.id) else {
+                continue;
+            };
+            if spec.slugs != SlugShape::Qualified
+                || !self.installed.contains(descriptor.id.as_str())
+            {
+                continue;
+            }
+            probes.push(match self.loaded_outcome(descriptor.id) {
                 None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
                 Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
-                Some(outcome) => ProbeListing::Listed(outcome.result()?.model_slugs.clone()),
-            });
-        }
-        if self.installed.contains(HarnessId::Pi.as_str()) {
-            probes.push(match self.loaded_pi_outcome() {
-                None | Some(CachedProbeOutcome::Unavailable) => ProbeListing::NeverProbed,
-                Some(CachedProbeOutcome::Failed(_)) => ProbeListing::Failed,
-                Some(outcome) => {
-                    ProbeListing::Listed(outcome.result()?.model_slugs.iter().cloned().collect())
-                }
+                Some(outcome) => ProbeListing::Listed(outcome.result()?.slugs.clone()),
             });
         }
         known_providers(catalog_slugs, &probes)
-    }
-
-    pub fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
-        self.opencode_outcome().result().cloned()
-    }
-
-    pub fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
-        self.pi_outcome().result().cloned()
-    }
-
-    pub fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
-        self.cursor_outcome().result().cloned()
-    }
-
-    pub fn listing_evidence(&mut self, harness: HarnessId) -> ListingEvidence {
-        match harness {
-            HarnessId::Pi => {
-                ListingEvidenceSet::from_outcomes(None, Some(self.pi_outcome()), None).get(harness)
-            }
-            HarnessId::Cursor => {
-                ListingEvidenceSet::from_outcomes(None, None, Some(self.cursor_outcome()))
-                    .get(harness)
-            }
-            HarnessId::OpenCode => {
-                ListingEvidenceSet::from_outcomes(Some(self.opencode_outcome()), None, None)
-                    .get(harness)
-            }
-            _ => ListingEvidence::default(),
-        }
-    }
-
-    pub fn loaded_listing_evidence_set(&self) -> ListingEvidenceSet {
-        ListingEvidenceSet::from_outcomes(
-            self.loaded_opencode_outcome(),
-            self.loaded_pi_outcome(),
-            self.loaded_cursor_outcome(),
-        )
-    }
-
-    pub fn into_snapshot(self) -> CapabilitySnapshot {
-        self.into_scoped_snapshot(&HarnessScope::Unrestricted)
-    }
-
-    pub fn into_scoped_snapshot(mut self, scope: &HarnessScope) -> CapabilitySnapshot {
-        let opencode = if scope.permits("opencode") {
-            self.opencode
-                .take()
-                .map(|observed| observed.outcome)
-                .unwrap_or_else(|| {
-                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
-                })
-        } else {
-            CachedProbeOutcome::Unavailable
-        };
-        let pi = if scope.permits("pi") {
-            self.pi
-                .take()
-                .map(|observed| observed.outcome)
-                .unwrap_or_else(|| {
-                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
-                })
-        } else {
-            CachedProbeOutcome::Unavailable
-        };
-        let cursor = if scope.permits("cursor") {
-            self.cursor
-                .take()
-                .map(|observed| observed.outcome)
-                .unwrap_or_else(|| {
-                    cache::probe_cached(&self.installed, self.offline, self.probe_refresh)
-                })
-        } else {
-            CachedProbeOutcome::Unavailable
-        };
-
-        CapabilitySnapshot {
-            executable: self.executable,
-            opencode,
-            pi,
-            cursor,
-            offline: self.offline,
-        }
     }
 }
 
@@ -468,17 +221,6 @@ impl ExecutableResolver for PathExecutableResolver {
 
         ExecutableState::Missing
     }
-}
-
-pub fn collect_capability_snapshot(options: &CapabilityCollectionOptions) -> CapabilitySnapshot {
-    collect_capability_snapshot_with_resolver(options, &PathExecutableResolver)
-}
-
-pub fn collect_capability_snapshot_with_resolver(
-    options: &CapabilityCollectionOptions,
-    resolver: &dyn ExecutableResolver,
-) -> CapabilitySnapshot {
-    CapabilitySession::collect_with_resolver(options, resolver).into_snapshot()
 }
 
 /// Native auth is observed lazily once per command, independently of model candidates.
@@ -608,52 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn listing_evidence_is_identical_for_session_and_snapshot() {
-        let mut session = CapabilitySession::collect_with_resolver(
-            &CapabilityCollectionOptions {
-                offline: true,
-                probe_refresh: ProbeRefreshMode::Skip,
-            },
-            &FakeResolver::default(),
-        );
-        session.set_opencode_outcome_for_test(CachedProbeOutcome::StaleFailed(
-            OpenCodeProbeResult {
-                model_probe_success: true,
-                model_slugs: vec!["openai/gpt-5".into()],
-                error: None,
-            },
-        ));
-        session.set_pi_outcome_for_test(CachedProbeOutcome::Failed(PiProbeResult {
-            compatible: true,
-            model_probe_success: false,
-            error: Some("listing failed".into()),
-            ..PiProbeResult::default()
-        }));
-        session.set_cursor_outcome_for_test(CachedProbeOutcome::StaleFailed(CursorProbeResult {
-            model_probe_success: true,
-            slugs: vec!["gpt-5".into()],
-            error: None,
-        }));
-        let expected = [
-            (HarnessId::OpenCode, true, false),
-            (HarnessId::Pi, false, false),
-            (HarnessId::Cursor, true, false),
-        ];
-        let snapshot_set = session.clone().into_snapshot().listing_evidence_set();
-        let loaded_set = session.loaded_listing_evidence_set();
-        for (harness, succeeded, latest_attempt_ok) in expected {
-            let evidence = ListingEvidence {
-                succeeded,
-                latest_attempt_ok,
-            };
-            assert_eq!(session.listing_evidence(harness), evidence);
-            assert_eq!(snapshot_set.get(harness), evidence);
-            assert_eq!(loaded_set.get(harness), evidence);
-        }
-    }
-
-    #[test]
-    fn snapshot_marks_installed_harnesses_from_resolver() {
+    fn session_marks_installed_harnesses_from_resolver() {
         let mut resolver = FakeResolver::default();
         resolver.map.insert(
             "pi".to_string(),
@@ -662,13 +359,15 @@ mod tests {
             },
         );
 
-        let options = CapabilityCollectionOptions {
-            offline: true,
-            probe_refresh: ProbeRefreshMode::Skip,
-        };
-        let snapshot = collect_capability_snapshot_with_resolver(&options, &resolver);
+        let session = CapabilitySession::collect_with_resolver(
+            &CapabilityCollectionOptions {
+                offline: true,
+                probe_refresh: ProbeRefreshMode::Skip,
+            },
+            &resolver,
+        );
 
-        let installed = snapshot.installed_harnesses();
+        let installed = session.installed_harnesses();
         assert!(installed.contains("pi"));
         assert!(!installed.contains("codex"));
     }

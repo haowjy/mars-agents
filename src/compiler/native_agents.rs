@@ -125,31 +125,6 @@ struct NativeModelCandidate {
     harness_constraint: Option<mars_schema::HarnessId>,
 }
 
-struct NativeSessionProbeResolver<'a> {
-    session: &'a mut CapabilitySession,
-}
-
-impl crate::routing::ProbeResolver for NativeSessionProbeResolver<'_> {
-    fn opencode_probe_result(&mut self) -> Option<crate::models::probes::OpenCodeProbeResult> {
-        self.session.opencode_probe_result()
-    }
-
-    fn pi_probe_result(&mut self) -> Option<crate::models::probes::PiProbeResult> {
-        self.session.pi_probe_result()
-    }
-
-    fn cursor_probe_result(&mut self) -> Option<crate::models::probes::CursorProbeResult> {
-        self.session.cursor_probe_result()
-    }
-
-    fn listing_evidence(
-        &mut self,
-        harness: mars_schema::HarnessId,
-    ) -> crate::harness::host::ListingEvidence {
-        self.session.listing_evidence(harness)
-    }
-}
-
 /// Command-scoped native model router. Native surfaces must emit one concrete
 /// harness model per file, but the accept/reject decision is delegated to the
 /// same routing evaluator used by `mars models resolve`.
@@ -305,7 +280,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
     ) -> crate::build::policy::ModelProfile {
         let resolved = token.and_then(|token| Some((token, self.resolve_candidate(token)?)));
         let cursor_probe = (harness == mars_schema::HarnessId::Cursor)
-            .then(|| self.session.cursor_probe_result())
+            .then(|| self.session.listing(mars_schema::HarnessId::Cursor))
             .flatten();
         crate::build::policy::profile_for_model(
             profile,
@@ -387,15 +362,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 harness_scope: crate::config::targets::HarnessScope::Only(
                     [*target_harness].into_iter().collect(),
                 ),
-                opencode_probe_result: None,
-                pi_probe_result: None,
-                cursor_probe_result: None,
                 catalog_model_slugs: Some(self.catalog_model_slugs.as_slice()),
             };
-            let mut probe_resolver = NativeSessionProbeResolver {
-                session: &mut self.session,
-            };
-            let trace = crate::routing::evaluate_candidates(&input, &mut probe_resolver, |_| {
+            let trace = crate::routing::evaluate_candidates(&input, &mut self.session, |_| {
                 crate::harness::host::AuthState::Unchecked
             });
             if trace.selected_harness() != target_name {

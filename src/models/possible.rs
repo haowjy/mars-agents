@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::config::targets::HarnessScope;
 use crate::harness::host::{CapabilitySession, ListingEvidence};
-use crate::harness::registry::{self, ListingAuth};
+use crate::harness::registry::{self, ListingAuth, ProbeSpec, SlugShape};
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::probes::ProbeObservation;
 use crate::routing::slug;
@@ -23,20 +23,11 @@ pub struct PossibleRow {
     pub provenance: Provenance,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProbeKind {
-    Pi,
-    Cursor,
-    #[serde(rename = "opencode")]
-    OpenCode,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Provenance {
     Enumerated {
-        probe: ProbeKind,
+        probe: HarnessId,
         observed_at: u64,
         auth_gated: bool,
         latest_attempt_ok: bool,
@@ -199,44 +190,22 @@ impl<'a> SessionPossibleSource<'a> {
             };
         }
 
-        // Each outcome is memoized by CapabilitySession. The typed seam owns the
-        // listing-success and latest-attempt policy for every probe-backed harness.
-        let (slugs, compatible, enumeration_succeeded) = match harness {
-            HarnessId::Pi => {
-                let result = self.session.pi_outcome().result();
-                (
-                    result.map(|probe| probe.model_slugs.iter().cloned().collect::<Vec<_>>()),
-                    result.map(|probe| probe.compatible),
-                    result.is_some_and(|probe| probe.model_probe_success),
-                )
-            }
-            HarnessId::OpenCode => {
-                let result = self.session.opencode_outcome().result();
-                (
-                    result.map(|probe| probe.model_slugs.clone()),
-                    Some(true),
-                    result.is_some_and(|probe| probe.model_probe_success),
-                )
-            }
-            HarnessId::Cursor => {
-                let result = self.session.cursor_outcome().result();
-                (
-                    result.map(|probe| probe.slugs.clone()),
-                    Some(true),
-                    result.is_some_and(|probe| probe.model_probe_success),
-                )
-            }
-            _ => unreachable!("native harness handled above"),
-        };
-        if compatible == Some(false) {
+        // The session memoizes each outcome and owns the listing-success and latest-attempt
+        // policy for every probe-backed harness.
+        let spec = registry::probe_spec(harness).expect("native harness handled above");
+        let result = self.session.outcome(harness).result();
+        if result.is_some_and(|listing| listing.incompatible.is_some()) {
             return HarnessPossible::Unlisted(UnlistedReason::Incompatible);
         }
-        let listing = self.session.listing_evidence(harness);
-        if !enumeration_succeeded {
+        if !result.is_some_and(|listing| listing.succeeded) {
             return HarnessPossible::Unlisted(UnlistedReason::ListingUnavailable);
         }
+        let slugs = result
+            .map(|listing| listing.slugs.clone())
+            .unwrap_or_default();
+        let listing = self.session.listing_evidence(harness);
         let observation = self.session.probe_observation(harness).unwrap_or_default();
-        project_enumerated(harness, slugs.unwrap_or_default(), listing, observation)
+        project_enumerated(harness, spec, slugs, listing, observation)
     }
 }
 
@@ -252,33 +221,24 @@ impl PossibleSource for SessionPossibleSource<'_> {
 
 fn project_enumerated(
     harness: HarnessId,
+    spec: ProbeSpec,
     slugs: Vec<String>,
     listing: ListingEvidence,
     observation: ProbeObservation,
 ) -> HarnessPossible {
-    let (probe, auth_gated) = match registry::descriptor(harness).class {
-        crate::harness::registry::HarnessClass::ProbeBacked { listing } => {
-            let probe = match harness {
-                HarnessId::Pi => ProbeKind::Pi,
-                HarnessId::OpenCode => ProbeKind::OpenCode,
-                HarnessId::Cursor => ProbeKind::Cursor,
-                _ => unreachable!("native harness has no listing"),
-            };
-            (probe, listing == ListingAuth::Gated)
-        }
-        _ => unreachable!("native harness handled above"),
-    };
+    let auth_gated = spec.listing == ListingAuth::Gated;
     // A lock-less, command-local probe may succeed without a cache write. In
     // that case there is no retained timestamp; it was observed in this call.
     let observed_at = observation.observed_at.unwrap_or_else(now_unix_secs);
     let mut rows = slugs
         .into_iter()
         .filter_map(|raw| {
-            let (provider, model_id) = if harness == HarnessId::Cursor {
-                (None, raw.clone())
-            } else {
-                let parts = slug::parse(&raw)?;
-                (Some(parts.provider.to_string()), parts.model_id.to_string())
+            let (provider, model_id) = match spec.slugs {
+                SlugShape::Bare => (None, raw.clone()),
+                SlugShape::Qualified => {
+                    let parts = slug::parse(&raw)?;
+                    (Some(parts.provider.to_string()), parts.model_id.to_string())
+                }
             };
             let launch = resolve_harness_model(
                 harness,
@@ -294,7 +254,7 @@ fn project_enumerated(
                 provider,
                 model_id,
                 provenance: Provenance::Enumerated {
-                    probe,
+                    probe: harness,
                     observed_at,
                     auth_gated,
                     latest_attempt_ok: listing.latest_attempt_ok,

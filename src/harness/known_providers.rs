@@ -1,13 +1,13 @@
 //! Which providers Mars has observed, for judging `settings.provider_order` entries.
 //!
 //! A provider is known when it appears in the model catalog (the default catalog providers and
-//! the providers of cached entries), in an OpenCode or Pi probe listing (`opencode-go` from
+//! the providers of cached entries), in a probe listing of `provider/model` slugs (`opencode-go` from
 //! `opencode-go/deepseek-v4.1-flash`), or as a harness's native provider. There is no list to
 //! maintain. Variants such as `openai-codex` are known through `slug::normalize_provider`.
 //!
 //! Pure: the caller (the capability session) supplies the catalog slugs and probe outcomes and
-//! passes the result in as `RoutingInput::known_providers`. Cursor is not a source: its slugs
-//! carry no provider prefix.
+//! passes the result in as `RoutingInput::known_providers`. A harness whose slugs are `SlugShape::Bare`
+//! (Cursor) is not a source: they carry no provider prefix.
 
 use std::collections::HashSet;
 

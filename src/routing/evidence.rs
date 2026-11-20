@@ -3,7 +3,6 @@ use mars_schema::HarnessId;
 use std::collections::HashSet;
 
 use crate::config::routing_settings::ResolvedRoutingSettings;
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult};
 
 use super::RoutingInput;
 
@@ -17,9 +16,6 @@ pub struct RoutingEvidence<'a> {
     pub installed_harnesses: &'a HashSet<String>,
     pub harness_scope: HarnessScope,
     pub excluded_harnesses: &'a [HarnessId],
-    pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pub pi_probe_result: Option<&'a PiProbeResult>,
-    pub cursor_probe_result: Option<&'a CursorProbeResult>,
     pub catalog_model_slugs: Option<&'a [String]>,
 }
 
@@ -39,9 +35,6 @@ impl<'a> RoutingEvidence<'a> {
             installed_harnesses: self.installed_harnesses,
             harness_scope: self.harness_scope.clone(),
             excluded_harnesses: self.excluded_harnesses,
-            opencode_probe_result: self.opencode_probe_result,
-            pi_probe_result: self.pi_probe_result,
-            cursor_probe_result: self.cursor_probe_result,
             catalog_model_slugs: self.catalog_model_slugs,
         }
     }
@@ -52,9 +45,6 @@ pub struct RoutingSettingsEvidence<'a> {
     pub provider_for_order: Option<&'a str>,
     pub provider_constraint: Option<&'a str>,
     pub installed_harnesses: &'a HashSet<String>,
-    pub opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pub pi_probe_result: Option<&'a PiProbeResult>,
-    pub cursor_probe_result: Option<&'a CursorProbeResult>,
     pub catalog_model_slugs: Option<&'a [String]>,
     provider_order: Option<Vec<String>>,
     harness_order: Option<Vec<String>>,
@@ -69,9 +59,6 @@ impl<'a> RoutingSettingsEvidence<'a> {
         provider_for_order: Option<&'a str>,
         provider_constraint: Option<&'a str>,
         installed_harnesses: &'a HashSet<String>,
-        opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-        pi_probe_result: Option<&'a PiProbeResult>,
-        cursor_probe_result: Option<&'a CursorProbeResult>,
         catalog_model_slugs: Option<&'a [String]>,
         routing_settings: &ResolvedRoutingSettings,
     ) -> Self {
@@ -80,9 +67,6 @@ impl<'a> RoutingSettingsEvidence<'a> {
             provider_for_order,
             provider_constraint,
             installed_harnesses,
-            opencode_probe_result,
-            pi_probe_result,
-            cursor_probe_result,
             catalog_model_slugs,
             provider_order: routing_settings.provider_order_names(),
             harness_order: routing_settings.harness_order_names(),
@@ -103,9 +87,6 @@ impl<'a> RoutingSettingsEvidence<'a> {
             installed_harnesses: self.installed_harnesses,
             harness_scope: self.harness_scope.clone(),
             excluded_harnesses: &[],
-            opencode_probe_result: self.opencode_probe_result,
-            pi_probe_result: self.pi_probe_result,
-            cursor_probe_result: self.cursor_probe_result,
             catalog_model_slugs: self.catalog_model_slugs,
         }
     }

@@ -45,6 +45,16 @@ impl super::cache::CachedProbe for CursorProbeResult {
     fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
+    fn listing(&self) -> super::Listing {
+        super::Listing {
+            slugs: self.slugs.clone(),
+            succeeded: self.model_probe_success,
+            error: self.error.clone(),
+            empty_is_failure: true,
+            ..super::Listing::default()
+        }
+    }
 }
 
 /// Probe cursor with a specific timeout.
@@ -220,13 +230,13 @@ pub enum CursorEffortFailure {
 /// already carries a tier.
 pub fn cursor_tiers_from_probe(
     model_id: &str,
-    probe: Option<&CursorProbeResult>,
+    probe: Option<&super::Listing>,
 ) -> Result<CursorTiers, CursorEffortFailure> {
     if model_id.trim().is_empty() {
         return Err(CursorEffortFailure::NoModelPrefixMatch);
     }
     let probe = probe.ok_or(CursorEffortFailure::ProbeUnavailable)?;
-    if !probe.model_probe_success {
+    if !probe.succeeded {
         return Err(CursorEffortFailure::ProbeFailed {
             error: probe.error.clone(),
         });

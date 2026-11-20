@@ -9,15 +9,11 @@ use std::collections::HashSet;
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel};
 use crate::error::{ConfigError, MarsError};
-use crate::harness::host::{
-    CapabilityCollectionOptions, CapabilitySession, ListingEvidence, NativeAuthCache,
-};
+use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, NativeAuthCache};
 use crate::models::availability::{AvailabilityStatus, ModelAvailability};
-use crate::models::probes::CursorProbeResult;
-use crate::models::probes::OpenCodeProbeResult;
-use crate::models::probes::PiProbeResult;
+use crate::models::probes::Listing;
 use crate::models::probes::ProbeRefreshMode;
-use crate::models::probes::cache::{self, CachedProbeOutcome};
+use crate::models::probes::cache::CachedProbeOutcome;
 use crate::models::{self, HarnessSource, ModelAlias, ModelSpec};
 use crate::types::MarsContext;
 
@@ -243,33 +239,8 @@ struct RouteTraceInput<'a> {
     provider_for_order: &'a str,
     provider_constraint: Option<&'a str>,
     installed: &'a HashSet<String>,
-    opencode_probe_result: Option<&'a OpenCodeProbeResult>,
-    pi_probe_result: Option<&'a PiProbeResult>,
-    cursor_probe_result: Option<&'a CursorProbeResult>,
     catalog_model_slugs: Option<&'a [String]>,
     routing_settings: &'a ResolvedRoutingSettings,
-}
-
-pub(super) struct SessionProbeResolver<'a> {
-    pub(super) session: &'a mut CapabilitySession,
-}
-
-impl crate::routing::ProbeResolver for SessionProbeResolver<'_> {
-    fn opencode_probe_result(&mut self) -> Option<OpenCodeProbeResult> {
-        self.session.opencode_probe_result()
-    }
-
-    fn pi_probe_result(&mut self) -> Option<PiProbeResult> {
-        self.session.pi_probe_result()
-    }
-
-    fn cursor_probe_result(&mut self) -> Option<CursorProbeResult> {
-        self.session.cursor_probe_result()
-    }
-
-    fn listing_evidence(&mut self, harness: mars_schema::HarnessId) -> ListingEvidence {
-        self.session.listing_evidence(harness)
-    }
 }
 
 struct OutputResolvedInput<'a> {
@@ -279,7 +250,7 @@ struct OutputResolvedInput<'a> {
     route_trace: &'a crate::routing::RoutingTrace,
     routing_settings: &'a ResolvedRoutingSettings,
     outcome: &'a models::RefreshOutcome,
-    cache_outcome: &'a CachedProbeOutcome<OpenCodeProbeResult>,
+    cache_outcome: &'a CachedProbeOutcome<Listing>,
     probe_refresh: ProbeRefreshMode,
     routing_diagnostics: &'a [String],
     json: bool,
@@ -306,9 +277,6 @@ fn routing_settings_evidence<'a>(
         Some(input.provider_for_order),
         input.provider_constraint,
         input.installed,
-        input.opencode_probe_result,
-        input.pi_probe_result,
-        input.cursor_probe_result,
         input.catalog_model_slugs,
         input.routing_settings,
     )
@@ -541,18 +509,11 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
                 .unwrap_or(resolved.provider.as_str()),
             provider_constraint: provider_constraint.as_deref(),
             installed: &installed,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
             catalog_model_slugs: Some(catalog_slugs.as_slice()),
             routing_settings: &routing_settings,
         };
-        let route_trace = {
-            let mut probe_resolver = SessionProbeResolver {
-                session: &mut capability_session,
-            };
-            route_trace_for_resolved_model_with_probes(&route_input, &mut probe_resolver)
-        };
+        let route_trace =
+            { route_trace_for_resolved_model_with_probes(&route_input, &mut capability_session) };
         apply_route_to_resolved_alias(
             &mut resolved,
             &route_trace,
@@ -562,7 +523,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
             },
         );
         let cache_outcome = capability_session
-            .loaded_opencode_outcome()
+            .loaded_outcome(mars_schema::HarnessId::OpenCode)
             .cloned()
             .unwrap_or(CachedProbeOutcome::Unavailable);
         return run_output_resolved(OutputResolvedInput {
@@ -601,11 +562,9 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
 }
 
 fn run_refresh_probe(args: &RefreshProbeArgs) -> Result<i32, MarsError> {
-    match args.target.as_str() {
-        "opencode" => cache::run_refresh_probe_command::<OpenCodeProbeResult>(),
-        "pi" => cache::run_refresh_probe_command::<PiProbeResult>(),
-        "cursor" => cache::run_refresh_probe_command::<CursorProbeResult>(),
-        _ => Ok(1),
+    match mars_schema::harness::parse(&args.target).and_then(crate::harness::registry::probe_spec) {
+        Some(spec) => spec.probe.refresh(),
+        None => Ok(1),
     }
 }
 
@@ -724,18 +683,12 @@ fn run_resolve_exact_alias(
             provider_for_order: &r.provider,
             provider_constraint: provider_constraint.as_deref(),
             installed: runtime.installed,
-            opencode_probe_result: None,
-            pi_probe_result: None,
-            cursor_probe_result: None,
             catalog_model_slugs: Some(runtime.catalog_model_slugs),
             routing_settings: runtime.routing_settings,
         };
-        let mut probe_resolver = SessionProbeResolver {
-            session: capability_session,
-        };
         route_trace = Some(route_trace_for_resolved_model_with_probes(
             &route_input,
-            &mut probe_resolver,
+            capability_session,
         ));
         if let Some(trace) = route_trace.as_ref() {
             apply_route_to_resolved_alias(
@@ -762,7 +715,7 @@ fn run_resolve_exact_alias(
         });
     let diagnostics = diag.drain();
     let probe_outcome = capability_session
-        .loaded_opencode_outcome()
+        .loaded_outcome(mars_schema::HarnessId::OpenCode)
         .cloned()
         .unwrap_or(CachedProbeOutcome::Unavailable);
 
@@ -1079,22 +1032,14 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
         Some(provider_for_order),
         provider_constraint.as_deref(),
         installed,
-        None,
-        None,
-        None,
         catalog_model_slugs,
         routing_settings,
     );
-    let trace = {
-        let mut probe_resolver = SessionProbeResolver {
-            session: capability_session,
-        };
-        crate::routing::evaluate_candidates(
-            &routing_evidence.routing_input(),
-            &mut probe_resolver,
-            |harness| auth.state(harness),
-        )
-    };
+    let trace = crate::routing::evaluate_candidates(
+        &routing_evidence.routing_input(),
+        capability_session,
+        |harness| auth.state(harness),
+    );
     let mut report = model_report(
         name,
         &passthrough_model_id,

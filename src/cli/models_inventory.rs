@@ -16,7 +16,7 @@ use crate::types::MarsContext;
 use mars_schema::HarnessId;
 use mars_schema::effort::Levels;
 
-use super::models::{CatalogViewArgs, ListArgs, SessionProbeResolver};
+use super::models::{CatalogViewArgs, ListArgs};
 use super::models_common::{
     catalog_providers, load_merged_aliases, load_project_config_layers_optional,
     models_cache_ttl_hours,
@@ -456,18 +456,14 @@ fn assess(
         row.key.provider.as_deref(),
         row.key.provider.as_deref(),
         installed,
-        None,
-        None,
-        None,
         Some(catalog_slugs),
         settings,
     );
     let input: RoutingInput<'_> = evidence.routing_input();
-    let mut probes = SessionProbeResolver { session };
     let result = routing::evaluate_fixed_harness_with_auth_and_probes(
         &input,
         row.key.harness.as_str(),
-        &mut probes,
+        session,
         |harness| auth.state(harness),
     );
     associated_verdict(row, &result)

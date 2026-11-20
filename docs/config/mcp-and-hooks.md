@@ -1039,9 +1039,11 @@ an `info` that only notes `.agents` is deprecated.
 **MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
 own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to do so
 in `command`. So `${MARS_MCP_DIR}` becomes `${PLUGIN_ROOT}/mcp/<name>` in `args` and the
-installed project path in `command`, as for every harness. Every other harness resolves a
-`command` that names a path (`./server.sh`) from the project root, so Mars writes it one level up
-(`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
+installed project path in `command`, as for every harness: an absolute path such as
+`/home/me/proj/.agy/mcp/<name>/server.sh`, which `.agy/` (ignored, like `hooks.json`) can hold
+because it is machine-local. A `command` the author wrote as a path of their own (`./server.sh`)
+is relative to the project root for every other harness, but `agy` runs it from `.agy/`, so Mars
+writes it one level up (`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
 name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
 off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.4] - 2026-11-20
+
+### Fixed
+- `mars unlink .claude` (or a sync that removes your last hook) left `.claude/settings.local.json` holding `{}`, and `.codex/hooks.json` holding `{}`. Mars now deletes a hook file when removing its hooks leaves nothing in it. A file with any key of yours stays.
+
 ## [0.37.3] - 2026-11-20
 
 ### Fixed

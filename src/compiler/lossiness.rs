@@ -120,7 +120,7 @@ pub(crate) fn target_label(harness: &str) -> String {
 pub fn record_project_network_loss(
     keys: &[(&'static str, bool)],
     target: &str,
-    written: bool,
+    concerns: &[crate::lock::RecordRef],
     diag: &mut DiagnosticCollector,
 ) {
     for &(key, restricts) in keys {
@@ -140,7 +140,7 @@ pub fn record_project_network_loss(
                     }
                 },
             }],
-            written,
+            concerns,
         );
     }
 }
@@ -152,7 +152,9 @@ pub(crate) struct LossRecord {
     pub item_kind: &'static str,
     pub item_name: String,
     pub field: LossyField,
-    /// This run wrote or changed the item's native file, so the loss is news.
+    /// The lock records of the files the item was lowered into.
+    pub concerns: Vec<crate::lock::RecordRef>,
+    /// The sync changed one of `concerns`, so the loss is news.
     pub written: bool,
 }
 
@@ -165,7 +167,9 @@ pub(crate) struct EffortMoveRecord {
     pub message: String,
     /// No effort was sent, as against moving to another level.
     pub not_sent: bool,
-    /// This run wrote or changed the Agent's native file.
+    /// The lock records of the Agent's native files.
+    pub concerns: Vec<crate::lock::RecordRef>,
+    /// The sync changed one of `concerns`, so the move is news.
     pub written: bool,
 }
 
@@ -499,7 +503,7 @@ mod tests {
                     field("approval", target, Lossiness::MeridianOnly),
                 ];
                 for name in ["a", "b", "c", "d", "e"] {
-                    d.record_lossy_fields("agent", name, &lossy, true);
+                    d.record_lossy_fields("agent", name, &lossy, &[]);
                 }
             }
         };
@@ -535,13 +539,13 @@ mod tests {
                     ),
                     field("network", "Codex", Lossiness::Dropped(Lost::Network)),
                 ],
-                true,
+                &[],
             );
             d.record_lossy_fields(
                 "agent",
                 "b",
                 &[field("x", "Pi", Lossiness::Dropped(Lost::Policy))],
-                true,
+                &[],
             );
         });
         assert_eq!(out.len(), 1);
@@ -560,7 +564,7 @@ mod tests {
                     field("tools (deny edit)", "Codex", Lossiness::Quiet { why: "w" }),
                     field("approval", "Codex", Lossiness::MeridianOnly),
                 ],
-                true,
+                &[],
             )
         });
         assert!(out.is_empty());

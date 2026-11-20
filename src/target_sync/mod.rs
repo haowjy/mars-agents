@@ -12,7 +12,7 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::lock::LockFile;
+use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
@@ -302,7 +302,7 @@ fn sync_one_target(
                                 if target_projection_matches {
                                     projection.record_lossiness(
                                         outcome.item_id.name.as_str(),
-                                        false,
+                                        &[RecordRef::output(target_name, dest_rel)],
                                         diag,
                                     );
                                     synced_outputs.push(TargetSyncedOutput {
@@ -322,7 +322,7 @@ fn sync_one_target(
                                         }
                                         projection.record_lossiness(
                                             outcome.item_id.name.as_str(),
-                                            wrote,
+                                            &[RecordRef::output(target_name, dest_rel)],
                                             diag,
                                         );
                                         synced_outputs.push(TargetSyncedOutput {
@@ -351,6 +351,7 @@ fn sync_one_target(
                                 &dest,
                                 outcome,
                                 native_skill_variant_key.as_deref(),
+                                &[RecordRef::output(target_name, dest_rel)],
                                 diag,
                             ) {
                                 Ok(true) => {
@@ -419,6 +420,7 @@ fn sync_one_target(
                         &dest,
                         outcome,
                         native_skill_variant_key.as_deref(),
+                        &[RecordRef::output(target_name, dest_rel)],
                         diag,
                     ) {
                         Ok(true) => {
@@ -580,6 +582,7 @@ fn copy_item_to_target(
     dest: &Path,
     outcome: &ActionOutcome,
     native_skill_variant_key: Option<&str>,
+    concerns: &[RecordRef],
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
     let kind = outcome.item_id.kind;
@@ -592,6 +595,7 @@ fn copy_item_to_target(
             native_skill_variant_key,
             diag,
             item_name,
+            concerns,
         );
     }
 

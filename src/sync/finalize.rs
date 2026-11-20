@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 
 use crate::diagnostic::DiagnosticCollector;
@@ -47,21 +48,6 @@ pub(crate) fn finalize(
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
-        record_unplaced_hooks(
-            &mut new_lock,
-            &state.applied.planned.targeted.target,
-            &crate::config::targets::managed_targets(
-                &state
-                    .applied
-                    .planned
-                    .targeted
-                    .resolved
-                    .loaded
-                    .effective
-                    .settings,
-            ),
-            graph,
-        )?;
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
             .iter()
@@ -93,6 +79,20 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
+        new_lock.finish(unplaced_hook_items(
+            &state.applied.planned.targeted,
+            &crate::config::targets::managed_targets(
+                &state
+                    .applied
+                    .planned
+                    .targeted
+                    .resolved
+                    .loaded
+                    .effective
+                    .settings,
+            ),
+        )?);
+        diag.settle(old_lock, &new_lock);
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
@@ -166,19 +166,20 @@ fn record_hook_source_paths(
     }
 }
 
-/// A hook no target takes has no output to hang a lock item on; it gets one with none, so the
-/// next sync can tell a new or changed hook from one it has already reported.
-fn record_unplaced_hooks(
-    lock: &mut LockFile,
-    target: &crate::sync::target::TargetState,
+/// A hook no managed target takes has no output to hang an item on. Its record has none
+/// either, and `LockFile::finish` keeps it: the next sync tells a new or changed hook from one
+/// it has already reported by this record.
+fn unplaced_hook_items(
+    targeted: &crate::sync::TargetedState,
     managed_targets: &[String],
-    graph: &crate::resolve::ResolvedGraph,
-) -> Result<(), MarsError> {
-    for hook in target.unplaced_hooks(managed_targets) {
-        let source = SourceName::from(hook.source_name.as_str());
-        lock.items
-            .entry(crate::lock::unplaced_hook_key(&hook.def.name))
-            .or_insert(crate::lock::LockedItemV2 {
+) -> Result<IndexMap<String, crate::lock::LockedItemV2>, MarsError> {
+    let graph = &targeted.resolved.graph;
+    targeted
+        .target
+        .unplaced_hooks(managed_targets)
+        .map(|hook| {
+            let source = SourceName::from(hook.source_name.as_str());
+            let item = crate::lock::LockedItemV2 {
                 source_path: graph.nodes.get(&source).and_then(|node| {
                     kept_hooks::lock_source_path(&node.rooted_ref.package_root, &hook.hook_dir)
                 }),
@@ -187,9 +188,10 @@ fn record_unplaced_hooks(
                 version: None,
                 source_checksum: crate::sync::target::hook_checksum(hook)?,
                 outputs: Vec::new(),
-            });
-    }
-    Ok(())
+            };
+            Ok((crate::lock::unplaced_hook_key(&hook.def.name), item))
+        })
+        .collect()
 }
 
 fn retry_tombstone_removals(

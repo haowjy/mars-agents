@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
 use crate::diagnostic::DiagnosticCollector;
+use crate::lock::RecordRef;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
 use crate::target::plugin::HOOK_ENTRY_KIND;
@@ -177,7 +178,7 @@ pub(crate) fn preflight_config_entries(
                 }
                 for limit in &merged.answer_limits {
                     diag.hold_warning(
-                        hook_entry_key(target_name, &item.def.name),
+                        RecordRef::Item(dir.lock_key()),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -192,7 +193,7 @@ pub(crate) fn preflight_config_entries(
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.hold_warning(hook_entry_key(target_name, &item.def.name), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(RecordRef::Item(dir.lock_key()), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -227,7 +228,7 @@ pub(crate) fn preflight_config_entries(
                 }
                 for limit in &files.answer_limits {
                     diag.hold_warning(
-                        hook_entry_key(target_name, &item.def.name),
+                        RecordRef::Item(dir.lock_key()),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -272,16 +273,10 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// What names a hook's entry on a target for `DiagnosticCollector::hold`: a loss concerning
-/// the hook's output there is news when the sync writes or changes that output, whoever owns
-/// the hook. `compile_config_entries` releases it.
-pub(super) fn hook_entry_key(target: &str, hook: &str) -> String {
-    format!("{target} hook {hook}")
-}
-
-/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target.
-/// A pair no target took has no entry to write, so nothing releases its line: only a command
-/// that lists every loss shows it.
+/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target. A
+/// line concerns the hook's item on that target, or the hook's own record when no managed target
+/// took it. A hook that some targets take and others do not has no record for the pair that
+/// was not taken, so only a command that lists every loss shows that line.
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -305,8 +300,16 @@ fn report_skips(
                 Origin::Local => String::new(),
                 Origin::Dependency => format!(" from `{}`", item.source_name),
             };
+            let record = targeted
+                .target
+                .selected_hooks_for_target(target)
+                .find(|(_, placed)| hook_key(placed) == hook_key(item))
+                .map_or_else(
+                    || RecordRef::Item(crate::lock::unplaced_hook_key(&item.def.name)),
+                    |(dir, _)| RecordRef::Item(dir.lock_key()),
+                );
             diag.hold_warning(
-                hook_entry_key(target, &item.def.name),
+                record,
                 "hook-event-skipped",
                 format!(
                     "hook `{}`{from}: `{target}` {}",

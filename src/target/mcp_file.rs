@@ -10,6 +10,7 @@ use mars_schema::mcp_servers::{Flavor, McpRender, render};
 use super::McpServerEntry;
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
 use crate::diagnostic::DiagnosticCollector;
+use crate::lock::RecordRef;
 
 pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
     key_prefix: "mcp:",
@@ -39,6 +40,7 @@ pub(super) fn agy_render(server: &McpServerEntry) -> McpRender {
 
 pub(crate) fn render_all(
     file: &McpFile,
+    target: &str,
     servers: &[McpServerEntry],
     diag: &mut DiagnosticCollector,
 ) -> Vec<Rendered> {
@@ -60,7 +62,14 @@ pub(crate) fn render_all(
                         lost.text(false)
                     )
                 };
-                diag.hold_warning(file.at.entry_key(&server.name), "mcp-lossy", message);
+                diag.hold_warning(
+                    RecordRef::Entry {
+                        target_root: target.to_owned(),
+                        key: MCP_KIND.key(&server.name),
+                    },
+                    "mcp-lossy",
+                    message,
+                );
             }
             Rendered {
                 name: server.name.clone(),
@@ -111,7 +120,7 @@ mod tests {
     ) -> (BTreeMap<String, ConfigEntryRecord>, Vec<String>) {
         let file = crate::target::spec(target).unwrap().mcp.unwrap();
         let mut diag = DiagnosticCollector::new();
-        let rendered = render_all(&file, desired, &mut diag);
+        let rendered = render_all(&file, target, desired, &mut diag);
         let records = reconcile(
             &MCP_KIND, &file.at, root, target, previous, &rendered, force, false, &mut diag,
         )
@@ -141,6 +150,7 @@ mod tests {
         let file = crate::target::spec(target).unwrap().mcp.unwrap();
         render_all(
             &file,
+            target,
             std::slice::from_ref(server),
             &mut DiagnosticCollector::new(),
         )[0]
@@ -164,9 +174,19 @@ mod tests {
         let entry = server("srv", &[("TOKEN", "TOKEN")]);
         let mut diag = DiagnosticCollector::new();
         let file = crate::target::spec(".codex").unwrap().mcp.unwrap();
-        render_all(&file, &[server("r", &[("A", "B")])], &mut diag);
-        // The loss is held until the entry is written.
-        diag.release(&file.at.entry_key("r"));
+        render_all(&file, ".codex", &[server("r", &[("A", "B")])], &mut diag);
+        // The loss is held until the sync writes the entry's record.
+        let mut written = crate::lock::LockFile::empty();
+        written.config_entries.insert(
+            ".codex".to_owned(),
+            BTreeMap::from([(
+                "mcp:r".to_owned(),
+                ConfigEntryRecord {
+                    emitted_json: "{}".to_owned(),
+                },
+            )]),
+        );
+        diag.settle(&crate::lock::LockFile::empty(), &written);
         assert_eq!(diag.drain().len(), 1);
 
         write(".codex", tmp.path(), std::slice::from_ref(&entry));

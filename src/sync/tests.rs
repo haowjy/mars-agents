@@ -17,17 +17,17 @@ fn test_local_source() -> crate::types::SourceName {
 
 struct TestFixture {
     project_root: TempDir,
-    managed_root: PathBuf,
+    mars_dir: PathBuf,
     source_trees: Vec<TempDir>,
 }
 
 impl TestFixture {
     fn new() -> Self {
         let project_root = TempDir::new().unwrap();
-        let managed_root = project_root.path().join(".agents");
+        let mars_dir = project_root.path().join(".agents");
         TestFixture {
             project_root,
-            managed_root,
+            mars_dir,
             source_trees: Vec::new(),
         }
     }
@@ -58,8 +58,8 @@ impl TestFixture {
         self.project_root.path()
     }
 
-    fn managed_root(&self) -> &std::path::Path {
-        &self.managed_root
+    fn mars_dir(&self) -> &std::path::Path {
+        &self.mars_dir
     }
 
     fn tree_path(&self, idx: usize) -> PathBuf {
@@ -428,7 +428,7 @@ fn planned_bump_entries_preserve_filters_and_renames() {
 #[test]
 fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
-    let managed_root = project_root.path().join(".agents");
+    let mars_dir = project_root.path().join(".agents");
     crate::config::save(
         project_root.path(),
         &Config {
@@ -465,7 +465,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
 
     let saved = crate::config::load(project_root.path()).unwrap();
     assert!(!saved.dependencies.contains_key("base"));
-    assert!(!managed_root.join("agents/coder.md").exists());
+    assert!(!mars_dir.join("agents/coder.md").exists());
     assert!(!project_root.path().join("mars.lock").exists());
 }
 
@@ -484,15 +484,15 @@ fn local_modification_preserved() {
     )
     .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(fixture.mars_dir(), &lock, &target, false).unwrap();
     let options = SyncOptions::default();
     let sync_plan = create_sync_plan(&sync_diff, &options);
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &options).unwrap();
+    let result = apply::execute(fixture.mars_dir(), &sync_plan, &options).unwrap();
     let first_lock =
         crate::lock::build(&graph, &result, &lock, std::collections::BTreeMap::new()).unwrap();
 
     fs::write(
-        fixture.managed_root().join("agents/coder.md"),
+        fixture.mars_dir().join("agents/coder.md"),
         "# Locally modified",
     )
     .unwrap();
@@ -504,7 +504,7 @@ fn local_modification_preserved() {
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
-    let sync_diff2 = diff::compute(fixture.managed_root(), &first_lock, &target2, false).unwrap();
+    let sync_diff2 = diff::compute(fixture.mars_dir(), &first_lock, &target2, false).unwrap();
 
     assert_eq!(sync_diff2.items.len(), 1);
     assert!(matches!(
@@ -534,7 +534,7 @@ fn dry_run_produces_plan_without_changes() {
     )
     .unwrap();
     let lock = LockFile::empty();
-    let sync_diff = diff::compute(fixture.managed_root(), &lock, &target, false).unwrap();
+    let sync_diff = diff::compute(fixture.mars_dir(), &lock, &target, false).unwrap();
 
     let dry_options = SyncOptions {
         dry_run: true,
@@ -544,10 +544,10 @@ fn dry_run_produces_plan_without_changes() {
     let sync_plan = create_sync_plan(&sync_diff, &dry_options);
     assert!(!sync_plan.actions.is_empty());
 
-    let result = apply::execute(fixture.managed_root(), &sync_plan, &dry_options).unwrap();
+    let result = apply::execute(fixture.mars_dir(), &sync_plan, &dry_options).unwrap();
     assert!(!result.outcomes.is_empty());
 
-    assert!(!fixture.managed_root().join("agents/coder.md").exists());
+    assert!(!fixture.mars_dir().join("agents/coder.md").exists());
 }
 
 #[test]

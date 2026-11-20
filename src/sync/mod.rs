@@ -507,7 +507,6 @@ pub(crate) fn build_target(
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
 
     let mut built = build_target_state(
@@ -535,7 +534,7 @@ pub(crate) fn build_target(
     // not also reported as missing it.
     let mut held_back_skills = std::collections::HashSet::new();
     for collision in target::check_unmanaged_collisions(
-        managed_root,
+        &mars_dir,
         &resolved.loaded.ownership(),
         &built.target,
         request.options.force,
@@ -547,8 +546,8 @@ pub(crate) fn build_target(
                 item.id.kind,
                 mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
             ) || local_items::force_adoptable_self_destination(
-                &collision.path.resolve(managed_root),
-                managed_root,
+                &collision.path.resolve(&mars_dir),
+                &mars_dir,
                 item.id.kind,
             )
         });
@@ -660,10 +659,9 @@ pub(crate) fn create_plan(
     diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
 
     let sync_diff = diff::compute(
-        managed_root,
+        &mars_dir,
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,

@@ -30,9 +30,9 @@ stateDiagram-v2
 ```
 
 - **A wrong edit changes where files are written**, which is the one thing the CLI can get
-  catastrophically wrong. `MarsContext::from_roots` rejects a `.agents` target that resolves
-  outside the project root. No other target is checked there; `managed_root`, which was, no longer
-  exists.
+  catastrophically wrong. `MarsContext::new` rejects a `.mars/` that resolves
+  outside the project root, because Mars deletes and rewrites inside it. Targets are not checked:
+  one may be a symlink out of the project, and Mars writes there only what it recorded.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
   also refuses a `--root` that is not itself a project root.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;

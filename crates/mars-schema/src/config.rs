@@ -12,7 +12,7 @@ use serde_ignored::Path as IgnoredPath;
 
 use crate::alias::ModelAlias;
 use crate::dependency::RawEntry;
-use crate::diagnostic::{PathSegment, SchemaDiagnostic, unknown_field};
+use crate::diagnostic::{DOCS, PathSegment, SchemaDiagnostic, Severity, unknown_field};
 use crate::keys;
 use crate::model_policy::ModelPolicyRule;
 use crate::names::SourceName;
@@ -213,6 +213,10 @@ impl SkillOverlay {
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
+    /// The v0.36 spelling of one target. Read for one more minor release: [`fold_managed_root`]
+    /// copies it into `targets` when the file is read; a save leaves the file's key as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_root: Option<String>,
     /// Managed target directories materialized from .mars/ canonical store.
     /// When set, only listed targets are populated. When unset, no target-sync
     /// targets are enabled by default.
@@ -336,6 +340,10 @@ pub enum AgentEmission {
 const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 
 impl Settings {
+    fn fold_managed_root(&mut self) -> Option<SchemaDiagnostic> {
+        fold_managed_root(self.managed_root.as_deref(), &mut self.targets)
+    }
+
     pub fn models_cache_ttl_hours(&self) -> u32 {
         self.models_cache_ttl_hours
             .unwrap_or(DEFAULT_MODELS_CACHE_TTL_HOURS)
@@ -434,6 +442,28 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     })
 }
 
+/// Read `managed_root` as `targets` when the file sets no `targets`, and say how to fix the
+/// file. Both `[settings]` readers, `mars.toml` and `mars.local.toml`, call this once, so the
+/// key has no other reader. It goes in the minor after 0.37.0, with `targets` alone left.
+pub fn fold_managed_root(
+    managed_root: Option<&str>,
+    targets: &mut Option<Vec<String>>,
+) -> Option<SchemaDiagnostic> {
+    let managed_root = managed_root?;
+    let as_target = format!("[\"{managed_root}\"]");
+    if targets.is_none() {
+        *targets = Some(vec![managed_root.to_owned()]);
+    }
+    Some(SchemaDiagnostic::new(
+        "field.deprecated",
+        Severity::Warning,
+        key_path(&["settings", "managed_root"]),
+        format!(
+            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}` for now. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
+        ),
+    ))
+}
+
 /// One `field.unknown` note for each key a serde pass left unread, `prefix` being where the
 /// pass started.
 fn unknown_notes(ignored: Vec<Vec<PathSegment>>, prefix: &[PathSegment]) -> Vec<SchemaDiagnostic> {
@@ -451,12 +481,7 @@ fn unknown_notes(ignored: Vec<Vec<PathSegment>>, prefix: &[PathSegment]) -> Vec<
         let table = table_name(&at);
         let mut path = at;
         path.push(PathSegment::Key(key.clone()));
-        let retired = (table == "settings")
-            .then(|| {
-                crate::retired::diagnostic(crate::retired::Scope::Settings, &key, path.clone())
-            })
-            .flatten();
-        notes.push(retired.unwrap_or_else(|| unknown_field(path, &table, &key)));
+        notes.push(unknown_field(path, &table, &key));
     }
     notes
 }
@@ -490,6 +515,9 @@ pub fn read_consumer(content: &str) -> ConsumerRead {
         Ok(read) => {
             let mut config = read.value;
             config.unknown_keys = read.unknown_keys;
+            config
+                .unknown_keys
+                .extend(config.settings.fold_managed_root());
             config.unknown_keys.extend(config.dependency_unknown_keys());
             config.floor = read.floor;
             let issues = settings_refusals(
@@ -538,7 +566,8 @@ fn read_tables(content: &str, whole: &toml::de::Error) -> (Config, Vec<ConfigIss
     config.plugin = table.get("plugin").cloned();
     if let Some(value) = table.get("settings") {
         match read_value::<Settings>(value, key_path(&["settings"]), &mut unknown) {
-            Ok(settings) => {
+            Ok(mut settings) => {
+                unknown.extend(settings.fold_managed_root());
                 issues.extend(settings_refusals(
                     Some(&settings.tools),
                     settings.min_mars_version.as_deref(),

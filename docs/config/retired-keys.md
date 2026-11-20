@@ -99,18 +99,3 @@ A value of a key Mars reads is checked against the keys it allows, so these are 
 ## An Agent with no frontmatter
 
 An Agent whose first line is not exactly `---` has no frontmatter, so every field takes its default and it reads as the widest Agent. Schema 1 refuses it (`frontmatter.missing`), in a package and in a project's own `.mars-src/agents`. Put two `---` lines above a body-only Agent's text, or delete the stray line above the fence.
-
-## Settings managed_root
-
-`[settings] managed_root` was removed. It named one target directory and `mars init .claude` used to write it. Replace it with the same directory in `targets`:
-
-```toml
-# before
-[settings]
-managed_root = ".claude"
-# after
-[settings]
-targets = [".claude"]
-```
-
-`managed_root` is not read, so until you do, a project that set only it has no targets and a sync writes nothing outside `.mars/`.

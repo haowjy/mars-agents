@@ -136,6 +136,9 @@ pub struct LocalConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalSettings {
+    /// As in `Settings`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -356,6 +359,12 @@ fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
         ),
     )?;
     value.unknown_keys = unknown_keys;
+    value
+        .unknown_keys
+        .extend(mars_schema::config::fold_managed_root(
+            value.settings.managed_root.as_deref(),
+            &mut value.settings.targets,
+        ));
     value.floor = floor;
     Ok(value)
 }

@@ -114,6 +114,8 @@ impl From<&Settings> for LocalSettings {
     /// A project's `[settings]` as a layer: every field it sets, no more.
     fn from(project: &Settings) -> Self {
         let Settings {
+            // Already folded into `targets` when the file was read.
+            managed_root: _,
             targets,
             models_cache_ttl_hours,
             min_mars_version,
@@ -131,6 +133,7 @@ impl From<&Settings> for LocalSettings {
             model_policies,
         } = project.clone();
         LocalSettings {
+            managed_root: None,
             targets,
             models_cache_ttl_hours,
             min_mars_version,

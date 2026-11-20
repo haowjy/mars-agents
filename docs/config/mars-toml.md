@@ -385,7 +385,20 @@ include_fanout = false
 | `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching. Entries are kept as written. `mars models list` warns once for an entry Mars has not seen in its model catalog, a harness probe listing, or a harness's native provider; it only reads probes the listing already loaded. `models resolve`, sync and launch bundles do not check |
 | `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
 
-`.mars/` is always the canonical compiled store. Target sync is opt-in: if `targets` is not set, Mars creates no target-sync targets by default. `managed_root`, the older spelling of a single target, is no longer read ([retired keys](retired-keys.md#settings-managed_root)).
+`.mars/` is always the canonical compiled store. Target sync is opt-in: if `targets` is not set, Mars creates no target-sync targets by default. `managed_root`, the older spelling of a single target, is [deprecated](#managed_root).
+
+#### `managed_root`
+
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0. It is deprecated: Mars reads it as `targets = [".claude"]` when the file sets no `targets`, warns (`field.deprecated`) on every sync, and stops reading it in the minor after 0.37.0. Replace it with the same directory in `targets`:
+
+```toml
+# before
+[settings]
+managed_root = ".claude"
+# after
+[settings]
+targets = [".claude"]
+```
 
 Targets also govern launch permission. `targets = [".codex", ".opencode"]` permits
 only those harnesses, regardless of what is installed or logged in. Explicit empty

@@ -102,4 +102,4 @@ it:
 | Probe loading and known providers | Which probes one command has loaded | [harness](../../src/harness/.context/state-machines.md) |
 | Harness routing scan | Which harness candidate the evaluator accepted | [routing](../../src/routing/.context/state-machines.md) |
 | Curation fold | Whether one possible model row is shown | [curation](../../src/curation/.context/state-machines.md) |
-| Target provenance | Which config file set `targets` and `managed_root` | [config](../../src/config/.context/state-machines.md) |
+| Target provenance | Which config file set `targets` | [config](../../src/config/.context/state-machines.md) |

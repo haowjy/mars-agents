@@ -44,12 +44,10 @@ pub(crate) fn warn_unknown_visibility(
 }
 
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
+pub use native_agents::native_agent_orphan_preserve_paths;
 pub(crate) use native_agents::{
     NativeAgentLinkMaterializeCtx, RemovedNativeOutput, ToolConfig, effective_native_profile,
     installed_agent_tools, materialize_native_agents_after_link,
-};
-pub use native_agents::{
-    native_agent_orphan_preserve_paths, selective_native_orphan_preserve_paths,
 };
 
 use crate::config::AgentEmission;
@@ -347,6 +345,52 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
         .filter(|outcome| outcome.item_id.kind != mars_schema::item::ItemKind::Agent)
         .cloned()
         .collect()
+}
+
+/// Target-sync `targets` from `outcomes` under `policy`: the one place that decides which
+/// outcomes target sync sees and which lock-recorded files its orphan pass must leave alone
+/// (hook-generated files, native agents that reconcile owns). Sync and `link` both call it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sync_targets_under_policy(
+    project_root: &std::path::Path,
+    targets: &[String],
+    outcomes: &[ActionOutcome],
+    policy: &AgentSurfacePolicy,
+    old_lock: &crate::lock::LockFile,
+    force: bool,
+    collision_hint: crate::surface_ownership::CollisionAdoptHint,
+    diag: &mut DiagnosticCollector,
+) -> Vec<crate::target_sync::TargetSyncOutcome> {
+    let filtered;
+    let outcomes = match &policy.launched {
+        AgentSurfaceMode::SuppressAll => {
+            filtered = suppress_agent_outcomes(outcomes);
+            &filtered
+        }
+        AgentSurfaceMode::EmitSelective(_) => {
+            filtered = omit_agent_outcomes(outcomes);
+            &filtered
+        }
+        AgentSurfaceMode::EmitAll => outcomes,
+    };
+    let mut preserve = config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
+    for (target, paths) in native_agent_orphan_preserve_paths(old_lock, targets) {
+        preserve.entry(target).or_default().extend(paths);
+    }
+    let ctx = crate::target_sync::TargetSyncContext {
+        old_lock,
+        force,
+        collision_hint,
+        orphan_preserve_paths: (!preserve.is_empty()).then_some(&preserve),
+    };
+    crate::target_sync::sync_managed_targets(
+        project_root,
+        &project_root.join(".mars"),
+        targets,
+        outcomes,
+        &ctx,
+        diag,
+    )
 }
 
 /// The models catalog, refreshed per `mode`, with the refresh's warning on `diag`.

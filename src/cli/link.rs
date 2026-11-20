@@ -99,33 +99,14 @@ fn link_target(
         &mut diag,
     )?;
 
-    let filtered_outcomes;
-    let orphan_preserve_paths;
-    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy.launched {
-        crate::compiler::AgentSurfaceMode::SuppressAll => {
-            filtered_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
-            (&filtered_outcomes, None)
-        }
-        crate::compiler::AgentSurfaceMode::EmitSelective(spec) => {
-            orphan_preserve_paths =
-                crate::compiler::selective_native_orphan_preserve_paths(&lock, spec);
-            filtered_outcomes = crate::compiler::omit_agent_outcomes(&outcomes);
-            (&filtered_outcomes, Some(&orphan_preserve_paths))
-        }
-        crate::compiler::AgentSurfaceMode::EmitAll => (&outcomes, None),
-    };
-    let target_sync_ctx = crate::target_sync::TargetSyncContext {
-        old_lock: &lock,
-        force,
-        collision_hint: CollisionAdoptHint::LinkForce,
-        orphan_preserve_paths: orphan_preserve,
-    };
-    let target_outcomes = crate::target_sync::sync_managed_targets(
+    let target_outcomes = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
-        &mars_dir,
         &[target_name.to_string()],
-        sync_outcomes,
-        &target_sync_ctx,
+        &outcomes,
+        &agent_surface_policy,
+        &lock,
+        force,
+        CollisionAdoptHint::LinkForce,
         &mut diag,
     );
     let mut diagnostics = diag.drain();

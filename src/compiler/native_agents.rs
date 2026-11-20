@@ -507,19 +507,6 @@ pub fn native_agent_orphan_preserve_paths(
     preserved
 }
 
-/// Lock-recorded native paths retained by `mars link` for its selected harnesses.
-pub fn selective_native_orphan_preserve_paths(
-    old_lock: &crate::lock::LockFile,
-    spec: &agent_copy::AgentCopySpec,
-) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
-    let targets: Vec<_> = spec
-        .harnesses
-        .iter()
-        .map(|harness| harness.target_dir())
-        .collect();
-    native_agent_orphan_preserve_paths(old_lock, &targets)
-}
-
 fn is_native_agent_dest_path(dest_rel: &str) -> bool {
     let Some(name) = dest_rel.strip_prefix("agents/") else {
         return false;

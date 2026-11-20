@@ -137,6 +137,7 @@ fn table(host: Host) -> Table {
         Host::Harness(HarnessId::OpenCode) => OPENCODE,
         Host::Harness(HarnessId::Pi) => PI,
         Host::Harness(HarnessId::Cursor) => CURSOR,
+        Host::Harness(HarnessId::Antigravity) => AGY,
         Host::MeridianFlow => FLOW,
     }
 }
@@ -444,6 +445,78 @@ const CURSOR: Table = &[
     ("plan_mode", Tools(&["SwitchMode"])),
 ];
 
+/// Antigravity CLI (`agy`) 1.5.12.
+///
+/// Source: live probes of plugin agents (`antigravity-mars/evidence/probe-agent-frontmatter.md`
+/// §1, §2, §10). An agent's `tools` list loaded with `find_by_name`, `grep_search`,
+/// `list_dir`, `multi_replace_file_content`, `read_file`, `replace_file_content`,
+/// `run_command`, `search_web` and `write_to_file` together, and a shell call ran;
+/// `view_file` is the same tool as `read_file`: listing both
+/// fails. `browser_subagent`, `codebase_search`, `view_code_item` and `view_file_outline` did
+/// not resolve. One unknown name makes the agent fail at its first prompt, so a row holds only
+/// a name a probe loaded, and a tool nobody loaded is `Absent` here, which means "Mars knows
+/// no name to write", not "agy has no such tool". `agy` gives every agent every MCP server whatever
+/// `tools` says, and `call_mcp_tool` in `tools` fails the agent at its first prompt, so no name
+/// is written for MCP (`tool_project`). The subagent tool is
+/// `invoke_subagent` in permission requests, but no probe listed it in `tools`, so `agent` is
+/// `NoSwitch` until one does. `agy` loads a skill by reading its `SKILL.md` with `read_file`.
+const AGY: Table = &[
+    ("bash", Tools(&["run_command"])),
+    ("ls", Tools(&["list_dir"])),
+    ("work", Absent),
+    ("read", Tools(&["read_file"])),
+    ("write", Tools(&["write_to_file"])),
+    (
+        "edit",
+        Tools(&[
+            "replace_file_content",
+            "multi_replace_file_content",
+            "write_to_file",
+        ]),
+    ),
+    ("notebook", Absent),
+    (
+        "agent",
+        NoSwitch("agy's subagent tool (`invoke_subagent`) is not a verified `tools` name"),
+    ),
+    (
+        "skill",
+        NoSwitch("agy loads skills by reading files; no switch"),
+    ),
+    ("workflow", Absent),
+    ("glob", Tools(&["find_by_name"])),
+    ("grep", Tools(&["grep_search"])),
+    ("web", Tools(&["search_web"])),
+    ("web_search", Tools(&["search_web"])),
+    ("web_fetch", Absent),
+    ("ask_user", Absent),
+    ("task", Absent),
+    ("plan_mode", Absent),
+    ("cron", Absent),
+    ("notifications", Absent),
+    ("worktree", Absent),
+    ("lsp", Absent),
+    ("monitor", Absent),
+    ("send_user_file", Absent),
+    ("schedule_wakeup", Absent),
+    ("remote_trigger", Absent),
+    ("tool_search", Absent),
+    ("image", Absent),
+];
+
+/// Every tool name Mars writes into an `agy` agent file, sorted. `agy` 1.5.13 has no wildcard
+/// (`*` and `all` fail the agent at its first prompt) and gives an agent with no `tools` key no
+/// write or shell, so an agent that restricts nothing lists all of them.
+pub fn agy_every_tool() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = AGY
+        .iter()
+        .flat_map(|(_, native)| native.native_tools().iter().copied())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
 /// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
 /// adds joins by being listed here.
@@ -612,6 +685,18 @@ mod tests {
                 "read",
                 "write",
             ],
+            // `agy` 1.5.12: the names the probes in the `AGY` doc comment loaded as agent tools.
+            HarnessId::Antigravity => &[
+                "find_by_name",
+                "grep_search",
+                "list_dir",
+                "multi_replace_file_content",
+                "read_file",
+                "replace_file_content",
+                "run_command",
+                "search_web",
+                "write_to_file",
+            ],
             // Mars 0.16 table; not re-verified (target unmaintained).
             HarnessId::Cursor => &[
                 "AskQuestion",
@@ -742,6 +827,7 @@ mod tests {
             HarnessId::Codex,
             HarnessId::OpenCode,
             HarnessId::Pi,
+            HarnessId::Antigravity,
         ] {
             for capability in crate::tool_names::canonical_capabilities() {
                 assert!(

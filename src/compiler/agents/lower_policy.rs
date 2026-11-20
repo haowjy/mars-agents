@@ -154,6 +154,8 @@ enum AgentLossinessStep {
     /// file has (`tools` booleans are deprecated).
     PermissionMap,
     EffortApproximate(&'static str),
+    /// Meridian sets the effort for each session; the native file has no effort.
+    EffortMeridianOnly,
     MeridianOnlyFields,
     InvocationAxes,
 }
@@ -293,6 +295,28 @@ const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     ],
 };
 
+const ANTIGRAVITY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
+    description: DescriptionPolicy::Preserve,
+    mode_note: None,
+    skills: AgentSkillsPolicy::BodyGuidance,
+    fields: &[LoweredField::Identity, LoweredField::AllowlistOrAll],
+    lossiness: &[
+        AgentLossinessStep::ModeDropped,
+        AgentLossinessStep::ToolRules(Carries {
+            deny: DenyCarry::Nothing,
+            ask: false,
+            allowlist: Allowlist::NonEmpty,
+            writes_covered: false,
+            mcp_remainder: Some(Lossiness::Quiet {
+                why: "agy gives every agent every MCP server, so an MCP grant restricts nothing",
+            }),
+        }),
+        AgentLossinessStep::EffortMeridianOnly,
+        AgentLossinessStep::MeridianOnlyFields,
+        AgentLossinessStep::InvocationAxes,
+    ],
+};
+
 /// Override keys that carry policy: dropping one leaves the target running the agent with
 /// permissions the author's override would have limited. Any other key is not known to restrict.
 const POLICY_OVERRIDE_KEYS: &[&str] = &[
@@ -394,9 +418,10 @@ impl<'a> AgentLoweringCtx<'a> {
             LoweredField::Identity => self.insert_identity(),
             LoweredField::Model => self.insert_model(),
             LoweredField::Skills => self.insert_skills(),
-            LoweredField::Tools => self.insert_claude_tools(),
+            LoweredField::Tools => self.insert_tools(),
             LoweredField::Effort => self.insert_claude_effort(),
             LoweredField::Mode => self.insert_mode(),
+            LoweredField::AllowlistOrAll => self.insert_allowlist_or_all(),
         }
     }
 
@@ -432,7 +457,7 @@ impl<'a> AgentLoweringCtx<'a> {
         }
     }
 
-    fn insert_claude_tools(&mut self) {
+    fn insert_tools(&mut self) {
         let target = self.target_name();
         let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
@@ -466,6 +491,34 @@ impl<'a> AgentLoweringCtx<'a> {
             self.yaml.insert(
                 yk("disallowedTools"),
                 serde_yaml::Value::Sequence(disallowed.iter().map(|tool| yv(tool)).collect()),
+            );
+        }
+    }
+
+    /// `agy` gives an agent with no `tools` key no write or shell, has no deny list and no
+    /// wildcard: the key is the allowlist, or every tool name Mars knows when the policy does
+    /// not restrict. An empty allowlist writes no key.
+    fn insert_allowlist_or_all(&mut self) {
+        let projection = project(self.eff.tools, self.harness);
+        for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
+            self.lossy.push(LossyField {
+                field: format!("tools (allow {rule})"),
+                target: self.target_name().into(),
+                classification: Lossiness::Approximate { note },
+            });
+        }
+        let tools = if self.eff.tools.is_allowlist() {
+            projection.available()
+        } else {
+            mars_schema::tool_natives::agy_every_tool()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        if !tools.is_empty() {
+            self.yaml.insert(
+                yk("tools"),
+                serde_yaml::Value::Sequence(tools.iter().map(|tool| yv(tool)).collect()),
             );
         }
     }
@@ -510,6 +563,11 @@ impl<'a> AgentLoweringCtx<'a> {
                     });
                 }
             }
+            AgentLossinessStep::EffortMeridianOnly => self.record_if_present(
+                "effort",
+                self.eff.effort().is_some(),
+                Lossiness::MeridianOnly,
+            ),
             AgentLossinessStep::MeridianOnlyFields => self.record_meridian_only_fields(),
             AgentLossinessStep::InvocationAxes => {
                 record_agent_invocation_lossiness(self.profile, self.target_name(), &mut self.lossy)
@@ -980,6 +1038,21 @@ pub fn lower_to_pi(profile: &AgentProfile, body: &str, model_field: &NativeModel
     lower_markdown_agent(HarnessId::Pi, &PI_AGENT_POLICY, profile, body, model_field)
 }
 
+/// Lower an agent profile to an `agy` plugin agent (markdown, `tools` always written).
+pub fn lower_to_antigravity(
+    profile: &AgentProfile,
+    body: &str,
+    model_field: &NativeModel,
+) -> LoweredOutput {
+    lower_markdown_agent(
+        HarnessId::Antigravity,
+        &ANTIGRAVITY_AGENT_POLICY,
+        profile,
+        body,
+        model_field,
+    )
+}
+
 /// Lower an agent to the native format for the given harness.
 ///
 /// Returns `None` for unknown harnesses (should not happen if the profile was
@@ -996,5 +1069,6 @@ pub fn lower_for_harness_with_model(
         HarnessId::OpenCode => lower_to_opencode(profile, body, model_field),
         HarnessId::Cursor => lower_to_cursor_with_model(profile, body, model_field),
         HarnessId::Pi => lower_to_pi(profile, body, model_field),
+        HarnessId::Antigravity => lower_to_antigravity(profile, body, model_field),
     }
 }

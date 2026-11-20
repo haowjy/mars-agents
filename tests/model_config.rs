@@ -354,7 +354,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert!(stdout["route_rejection"]["reason"].is_string());
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "cursor", "opencode", "antigravity"])
     );
     assert!(stdout["route_trace"].is_object());
     assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(3));
@@ -416,7 +416,7 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "cursor", "opencode", "antigravity"])
     );
 }
 
@@ -441,7 +441,7 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "cursor", "opencode", "antigravity"])
     );
 }
 
@@ -775,7 +775,7 @@ provider = "anthropic"
     assert_eq!(stdout["route_trace"]["outcome"], "exhausted");
     assert_eq!(
         stdout["route_trace"]["model_attempts"][0]["candidates_tried"],
-        json!(["codex", "claude", "pi", "cursor", "opencode"])
+        json!(["codex", "claude", "pi", "cursor", "opencode", "antigravity"])
     );
     assert_eq!(stdout["route_trace"]["version"], 3);
     let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]

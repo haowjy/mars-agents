@@ -98,7 +98,7 @@ fn output(
         &tokens(),
     )? {
         HookOutput::Merge(output) => Ok(output),
-        HookOutput::File(_) => panic!("{root} is a file target"),
+        HookOutput::File(_) | HookOutput::Keyed(_) => panic!("{root} is not a merge target"),
     }
 }
 
@@ -177,7 +177,7 @@ fn hook_dir_token_is_replaced_in_text_and_in_every_json_string() {
         .unwrap()
     {
         HookOutput::Merge(merged) => merged,
-        HookOutput::File(_) => unreachable!(),
+        HookOutput::File(_) | HookOutput::Keyed(_) => unreachable!(),
     };
     assert_eq!(
         serde_json::to_string(&merged.events["Stop"]).unwrap(),

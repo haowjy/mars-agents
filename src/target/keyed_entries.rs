@@ -49,7 +49,7 @@ impl KeyedKind {
 
 /// An entry Mars wants in the section.
 #[derive(Debug, Clone)]
-pub(crate) struct Rendered {
+pub struct Rendered {
     pub name: String,
     pub value: Value,
 }

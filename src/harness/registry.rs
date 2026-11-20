@@ -1,5 +1,6 @@
 use crate::models::probes::{
-    CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver, cursor,
+    AntigravityProbeResult, CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver,
+    cursor,
 };
 use mars_schema::HarnessId;
 use mars_schema::agent::EffortLevel;
@@ -68,7 +69,9 @@ pub struct HarnessDescriptor {
     pub class: HarnessClass,
 }
 
-/// Default launch-bundle harness try order when `settings.harness_order` is unset.
+/// Default launch-bundle harness try order when `settings.harness_order` is unset. A harness
+/// joins it only when Meridian can launch it; Antigravity is reached through `harness_order` or
+/// an alias that names it.
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,
@@ -137,6 +140,21 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
             tiers: Some(SlugTiers {
                 bare_level: Some(EffortLevel::Medium),
                 respell: cursor::model_id_shim,
+            }),
+        }),
+    },
+    HarnessDescriptor {
+        id: HarnessId::Antigravity,
+        display_name: "Antigravity",
+        binary: "agy",
+        default_target: ".agy",
+        class: HarnessClass::ProbeBacked(ProbeSpec {
+            probe: ProbeDriver::of::<AntigravityProbeResult>(),
+            listing: ListingAuth::Gated,
+            slugs: SlugShape::Bare,
+            tiers: Some(SlugTiers {
+                bare_level: None,
+                respell: |_| None,
             }),
         }),
     },
@@ -224,6 +242,7 @@ mod tests {
             (Pi, Some(ListingAuth::Gated)),
             (Cursor, Some(ListingAuth::Gated)),
             (OpenCode, Some(ListingAuth::Ungated)),
+            (Antigravity, Some(ListingAuth::Gated)),
         ] {
             let listing = match descriptor(harness).class {
                 HarnessClass::Native { .. } => None,

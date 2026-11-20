@@ -54,6 +54,7 @@ pub const LOWERED_KEYS: &[&str] = &[
     "metadata",
     "disable-model-invocation",
     "user-invocable",
+    "disable-slash-command",
     "alwaysApply",
 ];
 

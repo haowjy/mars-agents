@@ -20,9 +20,19 @@ use serde::ser::{SerializeStruct, Serializer};
 /// What a host does with a tool name, which only this module's lowering needs.
 impl Host {
     /// Whether a tool name can be narrowed to a pattern. A harness spells the scope in the
-    /// permission name (`Bash(git push *)`); Flow's tools take no scope.
+    /// permission name (`Bash(git push *)`); Flow's tools and `agy`'s `tools` names take no
+    /// scope. Every host states it, so a new host cannot inherit a default.
     fn scopes_patterns(self) -> bool {
-        !matches!(self, Self::MeridianFlow)
+        match self {
+            Self::Harness(
+                HarnessId::Claude
+                | HarnessId::Codex
+                | HarnessId::OpenCode
+                | HarnessId::Pi
+                | HarnessId::Cursor,
+            ) => true,
+            Self::Harness(HarnessId::Antigravity) | Self::MeridianFlow => false,
+        }
     }
 
     /// An MCP ref as this host names it. Server and tool segments are kept verbatim, never
@@ -47,6 +57,9 @@ impl Host {
                 Err("Codex per-tool MCP gating lives in server config, not the tool list")
             }
             Self::Harness(HarnessId::Pi) => Err("Harness has no MCP tool surface"),
+            Self::Harness(HarnessId::Antigravity) => {
+                unreachable!("agy's MCP refs lower in `project_agy_mcp`")
+            }
             Self::MeridianFlow => {
                 unreachable!("Flow's MCP refs lower in `project_flow_connection_tools`")
             }
@@ -96,6 +109,7 @@ const UNSCOPABLE_NOTE: &str = "this host's tool takes no pattern, so the rule ca
 const FLOW_MCP_DENY_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule disallows all of them, for every server";
 const FLOW_MCP_ASK_NOTE: &str = "Flow's connection tools are not scoped to one server or tool, so this rule asks before every connection tool, for every server";
 const FLOW_MCP_GRANT_NOTE: &str = "Flow cannot scope a connection tool to one server or tool, so granting them would give every connection; none is given";
+const AGY_MCP_RESTRICTION: &str = "agy gives every agent every MCP server, so this rule cannot restrict them; the restriction is lost";
 const NO_NATIVE_NAME: &str = "no native name known for this tool on this harness; left out";
 
 /// The stricter rule that wins a covered rule's calls, as its author wrote it.
@@ -260,6 +274,9 @@ fn project_rule(rule: &ToolRule, host: Host, restricted: bool) -> ProjectedRule 
         capability if host == Host::MeridianFlow && capability.names_mcp() => {
             project_flow_connection_tools(rule.action, restricted)
         }
+        capability if host == Host::Harness(HarnessId::Antigravity) && capability.names_mcp() => {
+            project_agy_mcp(rule.action)
+        }
         Capability::Mcp(mcp_ref) => match host.mcp_token(mcp_ref) {
             Ok(token) => ProjectedRule::known(vec![NativeBinding::direct(&token, None)], None),
             Err(reason) => ProjectedRule::with_status(NativeStatus::Unknown(reason)),
@@ -295,6 +312,17 @@ fn project_flow_connection_tools(action: ToolAction, restricted: bool) -> Projec
         .map(|name| NativeBinding::direct(name, None))
         .collect();
     ProjectedRule::known(bindings, note)
+}
+
+/// `agy` gives every agent every MCP server and no `tools` entry names them, so an allow loses
+/// nothing and a deny or an ask cannot be applied.
+fn project_agy_mcp(action: ToolAction) -> ProjectedRule {
+    match action {
+        ToolAction::Allow => ProjectedRule::known(Vec::new(), None),
+        ToolAction::Deny | ToolAction::Ask => {
+            ProjectedRule::with_status(NativeStatus::Unknown(AGY_MCP_RESTRICTION))
+        }
+    }
 }
 
 /// Project one canonical builtin capability through the same table and status semantics as a

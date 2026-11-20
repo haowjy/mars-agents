@@ -23,6 +23,7 @@ pub fn lower_skill_for_harness(
         HarnessId::OpenCode => lower_skill_to_opencode(profile, body),
         HarnessId::Pi => lower_skill_to_pi(profile, body),
         HarnessId::Cursor => lower_skill_to_cursor(profile, body),
+        HarnessId::Antigravity => lower_skill_to_antigravity(profile, body),
     }
 }
 
@@ -44,6 +45,10 @@ pub fn lower_skill_to_pi(profile: &SkillProfile, body: &str) -> LoweredOutput {
 
 pub fn lower_skill_to_cursor(profile: &SkillProfile, body: &str) -> LoweredOutput {
     lower_policy::lower_skill_with_policy(HarnessId::Cursor, profile, body)
+}
+
+pub fn lower_skill_to_antigravity(profile: &SkillProfile, body: &str) -> LoweredOutput {
+    lower_policy::lower_skill_with_policy(HarnessId::Antigravity, profile, body)
 }
 
 #[cfg(test)]
@@ -146,5 +151,40 @@ mod tests {
         let out = String::from_utf8(lowered.bytes).unwrap();
         assert!(!out.contains("user-invocable"));
         assert!(is_quiet(&lowered.lossy_fields, "user-invocable", "Cursor"));
+    }
+
+    #[test]
+    fn antigravity_hides_the_slash_command_for_user_invocable_false() {
+        let lowered = lower_skill_to_antigravity(&user_invocable_false_profile(), "Body\n");
+        let out = String::from_utf8(lowered.bytes).unwrap();
+        assert!(out.contains("disable-slash-command: true"), "{out}");
+        assert!(!out.contains("user-invocable"), "{out}");
+        assert!(lowered.lossy_fields.is_empty());
+    }
+
+    #[test]
+    fn model_invocable_false_is_a_lost_restriction_where_no_switch_exists() {
+        for (lower, target) in [
+            (
+                lower_skill_to_antigravity as fn(&SkillProfile, &str) -> LoweredOutput,
+                "Antigravity",
+            ),
+            (lower_skill_to_opencode, "OpenCode"),
+        ] {
+            let lowered = lower(&profile(), "Body\n");
+            let out = String::from_utf8(lowered.bytes).unwrap();
+            assert!(
+                out.contains("description: desc"),
+                "description stays: {out}"
+            );
+            assert!(
+                lowered
+                    .lossy_fields
+                    .iter()
+                    .any(|f| f.field == "model-invocable"
+                        && f.target == target
+                        && matches!(f.classification, Lossiness::Dropped(_)))
+            );
+        }
     }
 }

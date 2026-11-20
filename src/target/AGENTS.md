@@ -2,7 +2,9 @@
 
 Hook placement and rendering belong to `mars-schema::hooks`, not the adapter's MCP specification. Hook entries are unkeyed array elements, so their removal and rewrite use the shared retention plan, not MCP's keyed reconciliation.
 
-Keyed entries (MCP servers today) share one engine, `keyed_entries.rs`. A user of it declares a `KeyedSection` (file and section shape) and a `KeyedKind` (lock key prefix, message nouns, diagnostic code prefix) and lists them from `TargetAdapter::keyed_sections`; sync and unlink both reconcile through it, so a new kind is a declaration, not a second engine. Its MCP diagnostic codes and texts are user-visible.
+Keyed entries share one engine, `keyed_entries.rs`: MCP servers, and for a plugin target (`.agy`) its pointer in `.agents/plugins.json`, its `plugin.json` keys and its hooks. A user of it declares a `KeyedSection` (file and section shape) and a `KeyedKind` (lock key prefix, message nouns, diagnostic code prefix) and lists them from `TargetAdapter::keyed_sections`; sync and unlink both reconcile through it, so a new kind is a declaration, not a second engine. Its diagnostic codes and texts are user-visible. A section shape (`SectionFormat`) is a `Doc` accessor set in `config_doc.rs`: `JsonSection`, `TomlTable`, `JsonTopLevel` and `JsonArrayByField`.
+
+A plugin target is a `TargetAdapter::plugin()`: it declares where its pointer, manifest and hook file are, and `keyed_sections` and `fixed_entries` (what the target has whenever it is managed) follow from it. The hook file's path is declared here and again, as a file under the target root, in `mars-schema::hooks::targets` (`Placement::Keyed`); a test pins that they agree. A new keyed kind never needs a branch in `compiler/config_entries`: it needs a declaration and, if packages feed it, an entry in the compile loop.
 
 Ownership applies to entries, not the containing file. Reconcile removes or replaces only recorded, unchanged entries; edited entries are kept unless forced, and failed writes retain previous records for retry. An empty config file is removed only when reconciliation changed it and left it empty: an untouched empty file may be the user's.
 

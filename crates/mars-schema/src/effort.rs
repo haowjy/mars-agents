@@ -187,13 +187,16 @@ pub struct EffortResolution {
 /// | Pi | every level (`none` as `off`) | Pi 1.5.0 `--thinking` help: off, minimal, low, medium, high, xhigh, max |
 /// | OpenCode | `Any` | OpenCode 2.3.0 decodes models.dev `reasoning_options` itself (the string is in its binary) |
 /// | Cursor | `Any` here; the caller passes the levels its probe slugs list | Cursor probe listing |
+/// | Antigravity | `Any` here; the caller passes the levels its probe slugs list (`gemini-3.8-flash-low`) | `agy models` 1.5.12 |
 /// | Meridian Flow | `none` (as `off`), `low`, `medium`, `high`, `max` | meridian-runtime `src/gateway/domain/types.ts:63` (`REASONING_EFFORTS`), per Flow's gateway lead |
 pub fn harness_levels(host: Host) -> Levels {
     use EffortLevel::*;
     match host {
         Host::Harness(HarnessId::Claude) => Levels::only([Low, Medium, High, XHigh, Max]),
         Host::Harness(HarnessId::Codex | HarnessId::Pi) => Levels::only(EffortLevel::LADDER),
-        Host::Harness(HarnessId::OpenCode | HarnessId::Cursor) => Levels::Any,
+        Host::Harness(HarnessId::OpenCode | HarnessId::Cursor | HarnessId::Antigravity) => {
+            Levels::Any
+        }
         Host::MeridianFlow => Levels::only([None, Low, Medium, High, Max]),
     }
 }

@@ -76,6 +76,9 @@ pub enum Placement {
     Merge(MergeFile),
     /// The hook is installed as whole files in `dir`, under the target root.
     File { dir: &'static str },
+    /// Each hook is one entry of the JSON object in `file`, under the target root, keyed by
+    /// the hook's name: the hook's own events, as the harness reads them, are the value.
+    Keyed { file: &'static str },
 }
 
 /// How `[hooks]` becomes a target's entries.
@@ -137,11 +140,19 @@ impl Target {
         self.profile.event(event).is_some() || self.other_events.contains(&event)
     }
 
-    /// The file a merge target appends entries to; `None` for a file target.
+    /// The file a merge target appends entries to; `None` for any other placement.
     pub fn merge_file(&self) -> Option<&MergeFile> {
         match &self.placement {
             Placement::Merge(merge) => Some(merge),
-            Placement::File { .. } => None,
+            Placement::File { .. } | Placement::Keyed { .. } => None,
+        }
+    }
+
+    /// The file whose entries are keyed by hook name; `None` for any other placement.
+    pub fn keyed_file(&self) -> Option<&'static str> {
+        match self.placement {
+            Placement::Keyed { file } => Some(file),
+            Placement::Merge(_) | Placement::File { .. } => None,
         }
     }
 
@@ -271,6 +282,17 @@ const PI_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason"),
 ];
 
+// `agy` reads these six from a plugin's `hooks.json`; the first four take handler objects,
+// the last two `{matcher, hooks}` groups (`probe-agent-frontmatter.md` §9).
+const ANTIGRAVITY_EVENTS: &[Event] = &[
+    event("SessionStart"),
+    event("PreInvocation"),
+    event("PostInvocation"),
+    event("Stop"),
+    matched("PreToolUse", "tool_name"),
+    matched("PostToolUse", "tool_name"),
+];
+
 const CLAUDE_VERSION: &str = "Claude Code 2.1.312";
 
 /// What the Claude plugin tree's `hooks/hooks.json` must satisfy: Claude's events under
@@ -346,6 +368,19 @@ const TARGETS: &[Target] = &[
             events: PI_EVENTS,
             verified_against: Some("Pi 1.4.0"),
             rules: Rules::TypeScript(&typescript::PI),
+        },
+        other_events: &[],
+    },
+    Target {
+        root: ".agy",
+        // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
+        placement: Placement::Keyed { file: "hooks.json" },
+        profile: Profile {
+            events: ANTIGRAVITY_EVENTS,
+            verified_against: Some("agy 1.5.12"),
+            rules: Rules::Withheld {
+                reason: "translating `[hooks]` for `agy` is not yet implemented; only a native `[targets.\".agy\"]` hook installs",
+            },
         },
         other_events: &[],
     },

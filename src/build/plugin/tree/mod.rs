@@ -332,9 +332,11 @@ pub(super) fn write_tree(
                 crate::fs::copy_dir_filtered(item.server_dir(), &root.join(dir.native()), &[])?;
             }
             Ok((
-                profile
-                    .plugin_root
-                    .resolve(mars_schema::mcp_server::MCP_DIR_TOKEN, &dir.native()),
+                crate::target::McpDirs::same(
+                    profile
+                        .plugin_root
+                        .resolve(mars_schema::mcp_server::MCP_DIR_TOKEN, &dir.native()),
+                ),
                 item,
             ))
         })

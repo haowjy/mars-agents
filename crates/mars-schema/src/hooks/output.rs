@@ -16,6 +16,8 @@ use crate::ordered::OrderedValue;
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum HookOutput {
     Merge(MergeOutput),
+    /// One entry of a keyed hook file: the hook's events, and `enabled` where it is set.
+    Keyed(MergeOutput),
     File(FileOutput),
 }
 
@@ -23,7 +25,7 @@ impl HookOutput {
     /// What `[hooks]` leaves out on the target, minus what a native hook replaces.
     pub fn skips(&self) -> &[Skip] {
         match self {
-            Self::Merge(output) => &output.skips,
+            Self::Merge(output) | Self::Keyed(output) => &output.skips,
             Self::File(output) => &output.skips,
         }
     }
@@ -73,9 +75,28 @@ pub struct MergeOutput {
     pub overrides: Vec<String>,
     /// What `[hooks]` leaves out here, minus the events a native hook replaces.
     pub skips: Vec<Skip>,
+    /// A keyed target's `enabled` switch, as the native hook sets it.
+    pub enabled: Option<bool>,
 }
 
 impl MergeOutput {
+    /// The hook as a keyed target's file holds it: `enabled`, then each event with entries.
+    pub fn keyed_value(&self) -> serde_json::Value {
+        let mut value = serde_json::Map::new();
+        if let Some(enabled) = self.enabled {
+            value.insert("enabled".to_owned(), enabled.into());
+        }
+        for (event, entries) in &self.events {
+            if !entries.is_empty() {
+                value.insert(
+                    event.clone(),
+                    OrderedValue::Array(entries.clone()).to_json(),
+                );
+            }
+        }
+        value.into()
+    }
+
     /// Hold every event Claude lists to Codex's handler rules, reporting what that leaves
     /// out. Events outside Claude's table (`unchecked`) and events turned off stay as they
     /// are. Idempotent, so entries `[hooks]` already rendered pass unchanged.
@@ -145,8 +166,13 @@ impl HookDef {
                 tokens,
             )))
         } else {
-            self.merge_output(target, &target.profile, native_hook_text, origin, tokens)
-                .map(HookOutput::Merge)
+            let output =
+                self.merge_output(target, &target.profile, native_hook_text, origin, tokens)?;
+            Ok(if target.keyed_file().is_some() {
+                HookOutput::Keyed(output)
+            } else {
+                HookOutput::Merge(output)
+            })
         }
     }
 
@@ -278,6 +304,13 @@ impl HookDef {
         // Sorted, so the first fault reported does not depend on authored order.
         let sorted: BTreeMap<_, _> = object.into_iter().collect();
         for (event, entries) in sorted {
+            if event == "enabled" && target.keyed_file().is_some() {
+                let OrderedValue::Bool(enabled) = entries else {
+                    return Err(err("`enabled` must be true or false".into()));
+                };
+                output.enabled = Some(enabled);
+                continue;
+            }
             if profile.event(&event).is_none() {
                 if !native_hook.is_unchecked() && origin == Origin::Dependency {
                     output.skipped_events.push(event);

@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 mod config_doc;
@@ -8,23 +9,42 @@ pub(crate) mod keyed_entries;
 pub mod mcp_file;
 pub mod opencode;
 pub mod pi;
+pub(crate) mod plugin;
 
 use crate::harness::registry;
 use crate::types::DestPath;
 pub use config_doc::SectionFormat;
+use keyed_entries::Rendered;
 pub use keyed_entries::{KeyedKind, KeyedSection};
 use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 pub use mcp_file::McpFile;
+use plugin::PluginTarget;
+use std::path::Path;
 
-const AGENTS_TARGET: &str = ".agents";
+pub(crate) const AGENTS_TARGET: &str = ".agents";
 
 const WINDOWS_INVALID_CHARS: &[char] = &[':', '*', '?', '<', '>', '|', '"', '/', '\\'];
 
-/// Every kind of keyed entry Mars owns; an adapter declares which it takes.
-pub(crate) const KEYED_KINDS: [KeyedKind; 1] = [mcp_file::MCP_KIND];
-
 pub(crate) const HOOK_KEY_PREFIX: &str = "hook:";
+
+/// What `${MARS_MCP_DIR}` becomes in a server's `command` and in its `args`, which a harness may
+/// resolve differently.
+#[derive(Debug, Clone)]
+pub struct McpDirs {
+    pub command: String,
+    pub args: String,
+}
+
+impl McpDirs {
+    pub fn same(dir: impl Into<String>) -> Self {
+        let dir = dir.into();
+        Self {
+            command: dir.clone(),
+            args: dir,
+        }
+    }
+}
 
 /// Env values are variable names (symbolic). Adapters translate them to the
 /// target's interpolation syntax (e.g. `${VAR}` for Claude, plain name for Codex).
@@ -74,13 +94,42 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// What `${MARS_MCP_DIR}` becomes for a server installed at `native` (relative to the
+    /// target root) or `installed` (the project path of that copy).
+    fn mcp_dirs(&self, _native: &str, installed: &str) -> McpDirs {
+        McpDirs::same(installed)
+    }
+
+    /// The files of a target that is a plugin directory the harness loads through a pointer.
+    fn plugin(&self) -> Option<PluginTarget> {
+        None
+    }
+
+    /// Whether the harness also reads `.agents/skills/`, so linking `.agents` beside this
+    /// target puts every skill in front of it twice.
+    fn reads_agents_skills(&self) -> bool {
+        false
+    }
+
     /// The keyed-entry sections Mars owns entries in for this target: one per
     /// [`KeyedKind`] the target declares. Reconcile and unlink drive from this.
     fn keyed_sections(&self) -> Vec<(KeyedKind, KeyedSection)> {
         self.mcp_file()
             .map(|file| (mcp_file::MCP_KIND, file.at))
             .into_iter()
+            .chain(
+                self.plugin()
+                    .into_iter()
+                    .flat_map(|plugin| plugin.sections()),
+            )
             .collect()
+    }
+
+    /// Entries the target has whenever it is managed, whatever packages install.
+    fn fixed_entries(&self, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
+        self.plugin()
+            .map(|plugin| plugin.fixed_entries(self.name(), project_root))
+            .unwrap_or_default()
     }
 }
 
@@ -98,6 +147,7 @@ impl TargetRegistry {
                 Box::new(opencode::OpencodeAdapter),
                 Box::new(pi::PiAdapter),
                 Box::new(cursor::CursorAdapter),
+                Box::new(antigravity::AntigravityAdapter),
             ],
         }
     }

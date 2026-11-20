@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use crate::error::MarsError;
 use cache::{CachedProbe, CachedProbeOutcome};
 
+pub mod agy;
 pub mod cache;
+mod command;
 pub mod cursor;
 pub mod opencode;
 pub mod pi;
@@ -12,6 +14,7 @@ pub mod probe_refresh;
 
 pub use probe_refresh::ProbeRefreshMode;
 
+pub use agy::AntigravityProbeResult;
 pub use cursor::CursorProbeResult;
 pub use opencode::OpenCodeProbeResult;
 pub use pi::PiProbeResult;

@@ -361,9 +361,9 @@ fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
     value.unknown_keys = unknown_keys;
     value
         .unknown_keys
-        .extend(mars_schema::config::fold_managed_root(
+        .extend(mars_schema::config::managed_root_note(
             value.settings.managed_root.as_deref(),
-            &mut value.settings.targets,
+            value.settings.targets.is_some(),
         ));
     value.floor = floor;
     Ok(value)

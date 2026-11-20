@@ -389,7 +389,7 @@ include_fanout = false
 
 #### `managed_root`
 
-`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0. It is deprecated: Mars reads it as `targets = [".claude"]` when the file sets no `targets`, warns (`field.deprecated`) on every sync, and stops reading it in the minor after 0.37.0. Replace it with the same directory in `targets`:
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0. It is deprecated: Mars reads it as `targets = [".claude"]` only when no file (`mars.toml`, `mars.local.toml`) sets `targets`, ignores it otherwise, warns (`field.deprecated`) on every sync, and stops reading it in the minor after 0.37.0. `mars link` and `mars unlink` remove it from the file they edit. Replace it with the same directory in `targets`:
 
 ```toml
 # before

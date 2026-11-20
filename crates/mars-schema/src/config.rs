@@ -213,8 +213,8 @@ impl SkillOverlay {
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
-    /// The v0.36 spelling of one target. Read for one more minor release: [`fold_managed_root`]
-    /// copies it into `targets` when the file is read; a save leaves the file's key as it is.
+    /// The v0.36 spelling of one target. Read for one more minor release, and only when no layer
+    /// sets `targets` (`effective_links`); every writer of `targets` removes it first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
     /// Managed target directories materialized from .mars/ canonical store.
@@ -340,8 +340,8 @@ pub enum AgentEmission {
 const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 
 impl Settings {
-    fn fold_managed_root(&mut self) -> Option<SchemaDiagnostic> {
-        fold_managed_root(self.managed_root.as_deref(), &mut self.targets)
+    fn managed_root_note(&self) -> Option<SchemaDiagnostic> {
+        managed_root_note(self.managed_root.as_deref(), self.targets.is_some())
     }
 
     pub fn models_cache_ttl_hours(&self) -> u32 {
@@ -442,25 +442,30 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     })
 }
 
-/// Read `managed_root` as `targets` when the file sets no `targets`, and say how to fix the
-/// file. Both `[settings]` readers, `mars.toml` and `mars.local.toml`, call this once, so the
+/// The `field.deprecated` note for a file's `managed_root`, worded for whether Mars reads it. A
+/// file that sets `targets` has it ignored; otherwise it counts when no other file sets
+/// `targets`. Both `[settings]` readers, `mars.toml` and `mars.local.toml`, call this once, so the
 /// key has no other reader. It goes in the minor after 0.37.0, with `targets` alone left.
-pub fn fold_managed_root(
+pub fn managed_root_note(
     managed_root: Option<&str>,
-    targets: &mut Option<Vec<String>>,
+    file_sets_targets: bool,
 ) -> Option<SchemaDiagnostic> {
     let managed_root = managed_root?;
     let as_target = format!("[\"{managed_root}\"]");
-    if targets.is_none() {
-        *targets = Some(vec![managed_root.to_owned()]);
-    }
+    let message = if file_sets_targets {
+        format!(
+            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars ignores it here because the file sets `targets`. Delete it: {DOCS}/mars-toml.md#managed_root"
+        )
+    } else {
+        format!(
+            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}` while no file sets `targets`. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
+        )
+    };
     Some(SchemaDiagnostic::new(
         "field.deprecated",
         Severity::Warning,
         key_path(&["settings", "managed_root"]),
-        format!(
-            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}` for now. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
-        ),
+        message,
     ))
 }
 
@@ -517,7 +522,7 @@ pub fn read_consumer(content: &str) -> ConsumerRead {
             config.unknown_keys = read.unknown_keys;
             config
                 .unknown_keys
-                .extend(config.settings.fold_managed_root());
+                .extend(config.settings.managed_root_note());
             config.unknown_keys.extend(config.dependency_unknown_keys());
             config.floor = read.floor;
             let issues = settings_refusals(
@@ -566,8 +571,8 @@ fn read_tables(content: &str, whole: &toml::de::Error) -> (Config, Vec<ConfigIss
     config.plugin = table.get("plugin").cloned();
     if let Some(value) = table.get("settings") {
         match read_value::<Settings>(value, key_path(&["settings"]), &mut unknown) {
-            Ok(mut settings) => {
-                unknown.extend(settings.fold_managed_root());
+            Ok(settings) => {
+                unknown.extend(settings.managed_root_note());
                 issues.extend(settings_refusals(
                     Some(&settings.tools),
                     settings.min_mars_version.as_deref(),

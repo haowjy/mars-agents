@@ -152,7 +152,9 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 fn persist_target(project_root: &Path, target: &str) -> Result<(), MarsError> {
     let target = crate::config::migrations::link::normalize_link(target).target;
     let mut config = crate::config::load(project_root)?;
-    let targets = config.settings.targets.get_or_insert_with(Vec::new);
+    let settings = &mut config.settings;
+    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
+    let targets = settings.targets.get_or_insert_with(Vec::new);
     if !targets.contains(&target) {
         targets.push(target);
         crate::config::save(project_root, &config)?;

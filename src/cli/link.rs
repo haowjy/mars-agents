@@ -175,6 +175,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
+        config.settings.managed_root = None;
         config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;
     }

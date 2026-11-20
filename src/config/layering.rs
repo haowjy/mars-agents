@@ -114,8 +114,7 @@ impl From<&Settings> for LocalSettings {
     /// A project's `[settings]` as a layer: every field it sets, no more.
     fn from(project: &Settings) -> Self {
         let Settings {
-            // Already folded into `targets` when the file was read.
-            managed_root: _,
+            managed_root,
             targets,
             models_cache_ttl_hours,
             min_mars_version,
@@ -133,7 +132,7 @@ impl From<&Settings> for LocalSettings {
             model_policies,
         } = project.clone();
         LocalSettings {
-            managed_root: None,
+            managed_root,
             targets,
             models_cache_ttl_hours,
             min_mars_version,
@@ -155,7 +154,8 @@ impl From<&Settings> for LocalSettings {
 
 impl LocalSettings {
     pub(crate) fn is_empty(&self) -> bool {
-        self.targets.is_none()
+        self.managed_root.is_none()
+            && self.targets.is_none()
             && self.models_cache_ttl_hours.is_none()
             && self.min_mars_version.is_none()
             && self.default_harness.is_none()
@@ -185,8 +185,14 @@ impl LocalSettings {
             path: None,
         };
 
+        if let Some(value) = &self.managed_root {
+            merged.managed_root = Some(value.clone());
+        }
         if let Some(value) = &self.targets {
             merged.targets = Some(value.clone());
+        }
+        // `managed_root` counts only while no layer sets `targets`.
+        if self.targets.is_some() || (self.managed_root.is_some() && merged.targets.is_none()) {
             target_source.field = LinkSource::Targets;
             target_source.origin = TargetOrigin::Local;
         }

@@ -36,6 +36,11 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
             local.settings.targets.take().is_some(),
         ),
         (
+            "settings",
+            "managed_root",
+            local.settings.managed_root.take().is_some(),
+        ),
+        (
             "",
             "overrides",
             !std::mem::take(&mut local.overrides).is_empty(),

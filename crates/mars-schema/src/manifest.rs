@@ -13,7 +13,7 @@ use serde::Serialize;
 /// The reading of a `mars.toml`: the `[package]` table as every definition reading has it, the
 /// dependency entries the package declares, and, from [`read_all`], the consumer tables. Table
 /// keys are the file's names and are left out when empty; the fields inside `settings`, `agents`
-/// and `models` are spelled as Mars writes them back (`managed_root`, `default_effort`). The
+/// and `models` are spelled as Mars writes them back (`default_effort`). The
 /// consumer tables are plain JSON values, the same as the `[package]` pairs: a key or value JSON
 /// cannot hold is left out with a `toml.non-json-value` diagnostic.
 #[derive(Debug, Clone, Serialize)]

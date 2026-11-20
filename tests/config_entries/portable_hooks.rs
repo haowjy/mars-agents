@@ -239,7 +239,7 @@ fn a_dependency_hook_with_an_unknown_event_installs_its_other_events() {
 }
 
 #[test]
-fn a_dependency_hook_left_out_of_a_target_is_reported_only_with_verbose() {
+fn a_dependency_hook_left_out_of_a_target_is_reported_by_the_sync_that_installs_it() {
     let dir = TempDir::new().unwrap();
     let source = dir.child("source");
     source.create_dir_all().unwrap();
@@ -256,13 +256,16 @@ fn a_dependency_hook_left_out_of_a_target_is_reported_only_with_verbose() {
         "guard",
         &format!("visibility = \"exported\"\n{GUARD}"),
     );
+    sync(&project).success().stderr(predicate::str::contains(
+        "hook `guard` from `tool`: `.opencode` does not run `Notification`",
+    ));
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("no counterpart on a managed target").not());
+        .stderr(predicate::str::contains("does not run").not());
     sync_verbose(&project)
         .success()
         .stderr(predicate::str::contains(
-            "tool/guard on `.opencode` (1 left out)",
+            "hook `guard` from `tool`: `.opencode` does not run `Notification`",
         ));
 }
 
@@ -334,8 +337,8 @@ fn check_warns_about_the_floor_and_a_condition_that_never_runs() {
         .stdout(predicate::str::contains(
             "write `requires-mars = \">=0.25.0\"`",
         ))
-        .stdout(predicate::str::contains("`if` on `Stop` never matches"))
-        .stdout(predicate::str::contains(
+        .stderr(predicate::str::contains("`if` on `Stop` never matches"))
+        .stderr(predicate::str::contains(
             "`.codex` does not run `Notification`",
         ));
 }
@@ -408,14 +411,19 @@ fn a_deleted_entry_shared_by_two_hooks_is_restored() {
 }
 
 #[test]
-fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
+fn a_portable_hook_that_renders_on_no_managed_target_is_reported_once() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".codex\", \".pi\"");
-    write_hook(
-        &project,
-        "notify",
-        "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
-    );
+    let notify = |command: &str| {
+        write_hook(
+            &project,
+            "notify",
+            &format!(
+                "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"{command}\"\n"
+            ),
+        );
+    };
+    notify("echo n");
     sync(&project)
         .success()
         .stderr(predicate::str::contains(
@@ -424,6 +432,13 @@ fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
         .stderr(predicate::str::contains(
             "hook `notify`: `.pi` does not run `Notification`: Pi has no such event",
         ));
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("does not run").not());
+    notify("echo changed");
+    sync(&project)
+        .success()
+        .stderr(predicate::str::contains("does not run"));
 }
 
 #[test]

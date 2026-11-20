@@ -187,13 +187,12 @@ impl LocalSettings {
 
         if let Some(value) = &self.managed_root {
             merged.managed_root = Some(value.clone());
-            if merged.targets.is_none() {
-                target_source.field = LinkSource::ManagedRoot;
-                target_source.origin = TargetOrigin::Local;
-            }
         }
         if let Some(value) = &self.targets {
             merged.targets = Some(value.clone());
+        }
+        // `managed_root` counts only while no layer sets `targets`.
+        if self.targets.is_some() || (self.managed_root.is_some() && merged.targets.is_none()) {
             target_source.field = LinkSource::Targets;
             target_source.origin = TargetOrigin::Local;
         }

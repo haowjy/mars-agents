@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use crate::config::{Config, EffectiveConfig, LocalConfig, Settings};
-use crate::diagnostic::{Diagnostic, DiagnosticCollector, LossinessMode};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, ItemGroup, LossinessMode};
 use crate::error::MarsError;
 use crate::fs::FileLock;
 use crate::lock::LockFile;
@@ -31,7 +31,6 @@ pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
-use crate::validate::ValidationWarning;
 
 pub(crate) use crate::sync::finalize::finalize;
 pub use crate::sync::halt::{RecoveryBlocker, RecoveryHalt};
@@ -61,9 +60,10 @@ pub struct SyncReport {
     /// (`.codex/hooks.json`), as `(target_root, dest_path)`. Surfaced because a sync
     /// that rewrites only these is not "already up to date".
     pub hook_files_rewritten: Vec<(String, String)>,
-    /// MCP config files (`.mcp.json`, `.codex/config.toml`, ...) this run wrote or deleted,
-    /// as `(target_root, file path)`. Surfaced for the same reason as `hook_files_rewritten`.
-    pub mcp_files_changed: Vec<(String, String)>,
+    /// Config files of keyed entries (`.mcp.json`, `.codex/config.toml`,
+    /// `.agents/plugins.json`, ...) this run wrote or deleted, as `(target_root, file path,
+    /// the kind of entry it holds)`. Surfaced for the same reason as `hook_files_rewritten`.
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     /// Present when a recovery command persisted intent but stopped before
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
@@ -143,7 +143,6 @@ pub(crate) struct ResolvedState {
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
-    pub warnings: Vec<ValidationWarning>,
 }
 
 pub(crate) struct PlannedState {
@@ -162,8 +161,8 @@ pub(crate) struct SyncedState {
     pub config_entries: BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
     pub config_entry_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub rewritten_hook_files: Vec<(String, String)>,
-    /// MCP config files written or deleted this run, as `(target_root, file path)`.
-    pub mcp_files_changed: Vec<(String, String)>,
+    /// Keyed config files written or deleted this run, as `(target_root, file path, what it holds)`.
+    pub config_files_changed: Vec<(String, String, crate::target::KeyedKind)>,
     pub removed_config_entry_outputs: Vec<(String, String)>,
     pub compiled_native_outputs: Vec<crate::lock::CompiledNativeOutput>,
     pub removed_native_outputs: Vec<crate::compiler::RemovedNativeOutput>,
@@ -190,7 +189,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
-            mcp_files_changed: Vec::new(),
+            config_files_changed: Vec::new(),
             recovery_halt: Some(recovery_halt),
             engine_fallbacks: diag.take_engine_fallbacks(),
         });
@@ -487,9 +486,7 @@ pub(crate) fn apply_target_renames(
     let rename_index = rewrite::RenameIndex::new(&explicit_renames, &collision_renames, &target);
     let dep_precedence: Vec<SourceName> = effective.dependencies.keys().cloned().collect();
     if !rename_index.is_empty() {
-        for warning in rewrite::apply_renames(&mut target, &rename_index, graph, &dep_precedence)? {
-            diag.warn_advisory("rewrite-warning", warning);
-        }
+        rewrite::apply_renames(&mut target, &rename_index, graph, &dep_precedence, diag)?;
     }
     package_tools::fold(&mut target, graph, local_tools, diag);
 
@@ -510,7 +507,6 @@ pub(crate) fn build_target(
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
 
     let mut built = build_target_state(
@@ -533,9 +529,12 @@ pub(crate) fn build_target(
 
     // Prevent managed installs from overwriting unmanaged files. This runs over
     // every item, hook and MCP directories included, and before renames rewrite
-    // references, so a pruned item is neither referenced nor installed.
+    // references, so a pruned item is neither referenced nor installed. A pruned skill still
+    // exists on disk, and the collision says why it is not Mars's: an agent that names it is
+    // not also reported as missing it.
+    let mut held_back_skills = std::collections::HashSet::new();
     for collision in target::check_unmanaged_collisions(
-        managed_root,
+        &mars_dir,
         &resolved.loaded.ownership(),
         &built.target,
         request.options.force,
@@ -547,31 +546,32 @@ pub(crate) fn build_target(
                 item.id.kind,
                 mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
             ) || local_items::force_adoptable_self_destination(
-                &collision.path.resolve(managed_root),
-                managed_root,
+                &collision.path.resolve(&mars_dir),
+                &mars_dir,
                 item.id.kind,
             )
         });
-        let force_hint = if force_works {
-            format!(
-                ". `{}` instead replaces every colliding path in the project and discards local \
-                 edits to managed items; preview it with `{}`",
-                crate::types::managed_cmd("mars sync --force"),
-                crate::types::managed_cmd("mars sync --force --diff"),
-            )
+        let item = if force_works {
+            format!("`{}`", collision.path)
         } else {
-            String::new()
-        };
-        diag.warn(
-            "unmanaged-collision",
             format!(
-                "source `{}` collides with unmanaged path `{}` — leaving existing content untouched. \
-                 Move your copy out of `.mars/` and sync again (an agent, skill or bootstrap doc you \
-                 want to keep belongs in `.mars-src/`){force_hint}",
-                collision.source_name, collision.path,
-            ),
+                "`{}` (`--force` cannot replace it; remove it by hand)",
+                collision.path
+            )
+        };
+        diag.warn_each(
+            ItemGroup {
+                code: "unmanaged-collision",
+                subject: collision.source_name.as_str(),
+                describe: describe_unmanaged_collisions,
+            },
+            item,
         );
-        built.target.items.shift_remove(&collision.path);
+        if let Some(pruned) = built.target.items.shift_remove(&collision.path)
+            && pruned.id.kind == mars_schema::item::ItemKind::Skill
+        {
+            held_back_skills.insert(pruned.id.name.to_string());
+        }
     }
 
     // The project's own package ships its `.mars-src/` agents; a project with no `[package]`
@@ -596,7 +596,7 @@ pub(crate) fn build_target(
         diag,
     )?;
 
-    let warnings = validate::validate_skill_refs(
+    validate::validate_skill_refs(
         &target_state,
         &resolved.graph,
         Some(&resolved.loaded.provided),
@@ -606,6 +606,8 @@ pub(crate) fn build_target(
             .package
             .as_ref()
             .map(|package| package.uses_providers.as_slice()),
+        &held_back_skills,
+        diag,
     );
 
     validate::report_skill_links(&target_state, &resolved.graph, &local_items, diag);
@@ -621,8 +623,33 @@ pub(crate) fn build_target(
     Ok(TargetedState {
         resolved,
         target: target_state,
-        warnings,
     })
+}
+
+fn describe_disk_divergence(_: &str, count: usize, names: &str) -> String {
+    let plural = if count == 1 { "item" } else { "items" };
+    format!(
+        "{count} installed {plural} in `.mars/` diverged from the mars.lock checksum: {names}. \
+         Local content is preserved; run `{}` or `{}` to reset",
+        managed_cmd("mars sync --force"),
+        managed_cmd("mars repair"),
+    )
+}
+
+/// One line per source: the paths of a source that Mars did not install but found in `.mars/`.
+/// They are the user's own copies, or files Mars wrote and lost track of (a lock that was
+/// reset), and `--force` adopts the second kind.
+fn describe_unmanaged_collisions(source: &str, count: usize, names: &str) -> String {
+    let plural = if count == 1 { "path" } else { "paths" };
+    format!(
+        "source `{source}` collides with {count} unmanaged {plural} in `.mars/`: {names}. Existing \
+         content is left untouched. If it is your own copy, move it out of `.mars/` (what you want \
+         to keep belongs in `.mars-src/`). If Mars wrote it and lost track of it, `{}` adopts it, \
+         replacing every colliding path in the project and discarding local edits to managed \
+         items; preview with `{}`",
+        managed_cmd("mars sync --force"),
+        managed_cmd("mars sync --force --diff"),
+    )
 }
 
 pub(crate) fn create_plan(
@@ -632,10 +659,9 @@ pub(crate) fn create_plan(
     diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
 
     let sync_diff = diff::compute(
-        managed_root,
+        &mars_dir,
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,
@@ -644,14 +670,13 @@ pub(crate) fn create_plan(
     if !request.options.force {
         for entry in &sync_diff.items {
             if let diff::DiffEntry::LocalModified { target, .. } = entry {
-                diag.warn(
-                    "disk-lock-divergent",
-                    format!(
-                        "{} diverged from mars.lock checksum; preserving local content (run `{cmd1}` or `{cmd2}` to reset)",
-                        target.dest_path,
-                        cmd1 = managed_cmd("mars sync --force"),
-                        cmd2 = managed_cmd("mars repair"),
-                    ),
+                diag.warn_each(
+                    ItemGroup {
+                        code: "disk-lock-divergent",
+                        subject: ".mars",
+                        describe: describe_disk_divergence,
+                    },
+                    format!("`{}`", target.dest_path),
                 );
             }
         }
@@ -718,6 +743,7 @@ pub(crate) fn sync_targets(
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,
             &ctx.project_root.join(".mars"),
+            &applied.planned.targeted.resolved.loaded.old_lock,
             &crate::config::targets::managed_targets(
                 &applied.planned.targeted.resolved.loaded.effective.settings,
             ),
@@ -730,7 +756,7 @@ pub(crate) fn sync_targets(
             config_entries: BTreeMap::new(),
             config_entry_outputs: Vec::new(),
             rewritten_hook_files: Vec::new(),
-            mcp_files_changed: Vec::new(),
+            config_files_changed: Vec::new(),
             removed_config_entry_outputs: Vec::new(),
             compiled_native_outputs: Vec::new(),
             removed_native_outputs: Vec::new(),
@@ -744,16 +770,16 @@ pub(crate) fn sync_targets(
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;
-    let target_outcomes_source = match &agent_surface_policy {
-        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+    let target_outcomes_source = match &agent_surface_policy.launched {
+        crate::compiler::AgentSurfaceMode::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(_) => {
+        crate::compiler::AgentSurfaceMode::EmitSelective(_) => {
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => &applied.applied.outcomes,
+        crate::compiler::AgentSurfaceMode::EmitAll => &applied.applied.outcomes,
     };
     let mut orphan_preserve_paths =
         crate::compiler::config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
@@ -786,7 +812,7 @@ pub(crate) fn sync_targets(
         config_entries: BTreeMap::new(),
         config_entry_outputs: Vec::new(),
         rewritten_hook_files: Vec::new(),
-        mcp_files_changed: Vec::new(),
+        config_files_changed: Vec::new(),
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),

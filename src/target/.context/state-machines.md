@@ -1,14 +1,17 @@
 # Target config-file state machines
 
-Mars shares MCP and hook config files with the user, so what Mars may change is decided entry by
+Mars shares MCP, plugin and hook config files with the user, so what Mars may change is decided entry by
 entry against what the lock recorded. These machines are those entries. The compiler's per-target
 pass that drives them is in [config entries](../../compiler/.context/state-machines.md). The
 index of all machines is [state-machines/index.md](../../../.context/state-machines/index.md).
 
-## MCP server entry
+## Keyed entry (MCP server, plugin entry, plugin manifest key, plugin hook)
 
-One entry in a target's MCP config file (`.mcp.json`, `.codex/config.toml`, `.cursor/mcp.json`
-and others), and whether Mars may overwrite or remove it. Ownership is the comparison of the entry
+One entry in a target's keyed config file (`.mcp.json`, `.codex/config.toml`, `.cursor/mcp.json`;
+an `agy` plugin's `.agents/plugins.json`, `.agy/plugin.json`, `.agy/hooks.json`
+and `.agy/mcp_config.json`), and whether Mars may overwrite or remove it. The diagrams spell the
+codes with `mcp`; each kind's own code replaces it (`plugin-pointer`, `plugin-manifest`,
+`hook-entry`). Ownership is the comparison of the entry
 on disk with the JSON Mars recorded when it wrote it (`ownership` in `keyed_entries.rs`).
 `try_reconcile` in the shared keyed-entries engine runs the whole section: the removal pass removes only `Ownership::Owned` entries,
 and the write pass has a four-way decision and keeps the previous record when it does not write,
@@ -39,7 +42,8 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
   sync retries instead of orphaning entries.
 - A file that will not parse keeps every prior record and reports one warning; the machine has
   no "unreadable" state of its own and borrows `kept`.
-- Persisted: `ConfigEntryRecord.emitted_json` per `mcp:<name>` key. In memory: `prior`, `kept`,
+- Persisted: `ConfigEntryRecord.emitted_json` per `<kind prefix><name>` key (`mcp:`, `pointer:`,
+  `manifest:`, `hook-entry:`). In memory: `prior`, `kept`,
   `changed`.
 
 ## Hook entry

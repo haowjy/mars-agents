@@ -1,21 +1,5 @@
-use crate::harness::host::{ExecutableResolver, ExecutableState, PathExecutableResolver};
 use crate::harness::registry;
-use std::collections::HashSet;
 
-pub fn detect_installed_harnesses() -> HashSet<String> {
-    let resolver = PathExecutableResolver;
-    mars_schema::harness::ALL
-        .iter()
-        .copied()
-        .filter(|id| {
-            matches!(
-                resolver.resolve(registry::descriptor(*id).binary),
-                ExecutableState::Found { .. }
-            )
-        })
-        .map(|id| id.as_str().to_string())
-        .collect()
-}
 pub fn normalize_harness_name(name: &str) -> Option<String> {
     mars_schema::harness::normalize_name(name)
 }

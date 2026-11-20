@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::{HarnessId, Host};
+use crate::Host;
 
 /// What a harness calls a capability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,11 +57,13 @@ impl Native {
 
 use Native::{Absent, NoSwitch, ScopedTools, Tools};
 
-type Table = &'static [(&'static str, Native)];
+pub(crate) type Table = &'static [(&'static str, Native)];
 
 /// The row for `capability` on `harness`, or `None` when Mars has no entry.
 pub fn lookup(capability: &str, host: impl Into<Host>) -> Option<Native> {
-    table(host.into())
+    host.into()
+        .spec()
+        .tools
         .iter()
         .find(|(name, _)| *name == capability)
         .map(|(_, native)| *native)
@@ -122,22 +124,11 @@ pub fn vocabulary() -> Vocabulary {
     };
     let natives = Host::ALL
         .iter()
-        .map(|host| (host.as_str(), rows(table(*host))))
+        .map(|host| (host.as_str(), rows(host.spec().tools)))
         .collect();
     Vocabulary {
         capabilities: crate::tool_names::capabilities(),
         natives,
-    }
-}
-
-fn table(host: Host) -> Table {
-    match host {
-        Host::Harness(HarnessId::Claude) => CLAUDE,
-        Host::Harness(HarnessId::Codex) => CODEX,
-        Host::Harness(HarnessId::OpenCode) => OPENCODE,
-        Host::Harness(HarnessId::Pi) => PI,
-        Host::Harness(HarnessId::Cursor) => CURSOR,
-        Host::MeridianFlow => FLOW,
     }
 }
 
@@ -154,7 +145,7 @@ fn table(host: Host) -> Table {
 /// `agent` is the sub-agent family, as it is on Codex: `Agent` spawns, `SendMessage` and
 /// `ListAgents` reach the agents it spawned, and an `agent: deny` that left them available would
 /// still let the agent steer sub-agents.
-const CLAUDE: Table = &[
+pub(crate) const CLAUDE: Table = &[
     ("bash", Tools(&["Bash"])),
     ("read", Tools(&["Read"])),
     // Claude lists through Bash; there is no listing tool.
@@ -262,7 +253,7 @@ const CLAUDE: Table = &[
 /// `skill` loads by reading `SKILL.md`; the `skills.list` / `skills.read` tools of the skills
 /// extension are not something Mars can name. `update_plan` is the task list ("Updates the task
 /// plan.").
-const CODEX: Table = &[
+pub(crate) const CODEX: Table = &[
     ("bash", Tools(&["exec_command"])),
     ("ls", Absent),
     ("work", Absent),
@@ -331,7 +322,7 @@ const CODEX: Table = &[
 /// is `todowrite` alone: `todoread` is in neither binary. `plan_enter` / `plan_exit` are v1.19.3
 /// permissions (its agent defaults deny them); v2.0.29 has no such names, where a rule for
 /// them is inert. OpenCode has no notebook, cron, monitor or tool-search tool.
-const OPENCODE: Table = &[
+pub(crate) const OPENCODE: Table = &[
     ("bash", Tools(&["bash"])),
     ("ls", Tools(&["list"])),
     ("work", Absent),
@@ -386,7 +377,7 @@ pub fn opencode_v2_action(v1: &str) -> &str {
 /// `edit` and `write` are separate tools, so the `edit` capability covers both. Pi has skills
 /// (`--skill`, `--no-skills`) but they load by reading `SKILL.md`, with no tool to switch
 /// (`NoSwitch`).
-const PI: Table = &[
+pub(crate) const PI: Table = &[
     ("bash", Tools(&["bash"])),
     ("ls", Tools(&["ls"])),
     ("work", Absent),
@@ -424,7 +415,7 @@ const PI: Table = &[
 /// overrides and PascalCase convention, not re-verified against a current Cursor. Cursor
 /// `edit` has always named only `StrReplace`, so it does not cover `Write`. Anything the old
 /// convention guessed beyond these rows is now `unknown`.
-const CURSOR: Table = &[
+pub(crate) const CURSOR: Table = &[
     ("bash", Tools(&["Shell"])),
     ("ls", Absent),
     ("work", Absent),
@@ -444,6 +435,78 @@ const CURSOR: Table = &[
     ("plan_mode", Tools(&["SwitchMode"])),
 ];
 
+/// Antigravity CLI (`agy`) 1.5.12.
+///
+/// Source: live probes of plugin agents. An agent's `tools` list loaded with `find_by_name`, `grep_search`,
+/// `list_dir`, `multi_replace_file_content`, `read_file`, `replace_file_content`,
+/// `run_command`, `search_web` and `write_to_file` together, and a shell call ran;
+/// `view_file` is the same tool as `read_file`: listing both
+/// fails. `browser_subagent`, `codebase_search`, `view_code_item` and `view_file_outline` did
+/// not resolve. One unknown name makes the agent fail at its first prompt, so a row holds only
+/// a name a probe loaded, and a tool nobody loaded is `Absent` here, which means "Mars knows
+/// no name to write", not "agy has no such tool". `agy` gives every agent every MCP server whatever
+/// `tools` says, and `call_mcp_tool` in `tools` fails the agent at its first prompt, so no name
+/// is written for MCP (`tool_project`). The subagent tool is
+/// `invoke_subagent` in permission requests, but no probe listed it in `tools`, so `agent` is
+/// `NoSwitch` until one does. `agy` loads a skill by reading its `SKILL.md` with `read_file`.
+pub(crate) const AGY: Table = &[
+    ("bash", Tools(&["run_command"])),
+    ("ls", Tools(&["list_dir"])),
+    ("work", Absent),
+    ("read", Tools(&["read_file"])),
+    ("write", Tools(&["write_to_file"])),
+    (
+        "edit",
+        Tools(&[
+            "replace_file_content",
+            "multi_replace_file_content",
+            "write_to_file",
+        ]),
+    ),
+    ("notebook", Absent),
+    (
+        "agent",
+        NoSwitch("agy's subagent tool (`invoke_subagent`) is not a verified `tools` name"),
+    ),
+    (
+        "skill",
+        NoSwitch("agy loads skills by reading files; no switch"),
+    ),
+    ("workflow", Absent),
+    ("glob", Tools(&["find_by_name"])),
+    ("grep", Tools(&["grep_search"])),
+    ("web", Tools(&["search_web"])),
+    ("web_search", Tools(&["search_web"])),
+    ("web_fetch", Absent),
+    ("ask_user", Absent),
+    ("task", Absent),
+    ("plan_mode", Absent),
+    ("cron", Absent),
+    ("notifications", Absent),
+    ("worktree", Absent),
+    ("lsp", Absent),
+    ("monitor", Absent),
+    ("send_user_file", Absent),
+    ("schedule_wakeup", Absent),
+    ("remote_trigger", Absent),
+    ("tool_search", Absent),
+    ("image", Absent),
+];
+
+/// Every native tool name Mars knows for `host`, sorted.
+pub fn every_tool(host: impl Into<Host>) -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = host
+        .into()
+        .spec()
+        .tools
+        .iter()
+        .flat_map(|(_, native)| native.native_tools().iter().copied())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// Flow's connection tools, which `mcp(...)` rules and MCP wire tokens lower onto. Flow has no
 /// per-server MCP tools: each of these takes the server as an argument. A connection tool Flow
 /// adds joins by being listed here.
@@ -455,7 +518,7 @@ pub const FLOW_CONNECTION_TOOLS: &[&str] = &["mcp_describe", "mcp_call", "mcp_ru
 /// ships no `glob` tool yet, so `glob` is absent. Flow's tool set is closed: every canonical
 /// capability has a row, `Absent` where Flow lacks the tool, so `unknown` on Flow only ever
 /// means a name Mars does not recognize.
-const FLOW: Table = &[
+pub(crate) const FLOW: Table = &[
     ("read", Tools(&["read"])),
     ("write", Tools(&["write"])),
     ("edit", Tools(&["write"])),
@@ -498,6 +561,7 @@ const FLOW: Table = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::HarnessId;
 
     /// Every tool each harness ships, with where the list came from. A name in a table above
     /// that is not here is a guess.
@@ -612,6 +676,18 @@ mod tests {
                 "read",
                 "write",
             ],
+            // `agy` 1.5.12: the names the probes in the `AGY` doc comment loaded as agent tools.
+            HarnessId::Agy => &[
+                "find_by_name",
+                "grep_search",
+                "list_dir",
+                "multi_replace_file_content",
+                "read_file",
+                "replace_file_content",
+                "run_command",
+                "search_web",
+                "write_to_file",
+            ],
             // Mars 0.16 table; not re-verified (target unmaintained).
             HarnessId::Cursor => &[
                 "AskQuestion",
@@ -636,7 +712,7 @@ mod tests {
     fn every_native_name_and_native_tool_is_a_real_tool_of_its_harness() {
         for &harness in crate::harness::ALL {
             let real = real_tools(harness);
-            for (capability, native) in table(Host::Harness(harness)) {
+            for (capability, native) in Host::Harness(harness).spec().tools {
                 let lists: &[&[&str]] = match native {
                     Tools(names) => &[names],
                     ScopedTools {
@@ -710,7 +786,7 @@ mod tests {
     fn every_row_is_a_canonical_capability_named_once() {
         for &harness in crate::harness::ALL {
             let mut seen = std::collections::HashSet::new();
-            for (capability, _) in table(Host::Harness(harness)) {
+            for (capability, _) in Host::Harness(harness).spec().tools {
                 assert!(
                     crate::tool_names::is_canonical_capability(capability),
                     "{harness:?} has a row for `{capability}`, which is not a canonical capability"
@@ -742,6 +818,7 @@ mod tests {
             HarnessId::Codex,
             HarnessId::OpenCode,
             HarnessId::Pi,
+            HarnessId::Agy,
         ] {
             for capability in crate::tool_names::canonical_capabilities() {
                 assert!(

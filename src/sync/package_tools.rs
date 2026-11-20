@@ -50,7 +50,7 @@ pub(crate) fn fold(
                     diag.warn_advisory(
                         "package-tools-skipped",
                         format!(
-                            "warning: could not add `[package.tools]` rules to agent `{}`: cannot read {}: {error}",
+                            "could not add `[package.tools]` rules to agent `{}`: cannot read {}: {error}",
                             item.id.name,
                             item.source_path.display()
                         ),

@@ -15,6 +15,7 @@ pub mod hooks;
 /// Hook compiler lane: native event discovery, validation, and ordering.
 pub(crate) mod lossiness;
 pub(crate) mod lossiness_preview;
+pub(crate) mod lowering;
 /// MCP server compiler lane: discovery, env-ref validation, collision detection.
 pub mod mcp;
 pub(crate) mod native_agent_manifest;
@@ -170,22 +171,25 @@ fn compile_inner(
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =
         crate::config::routing_settings::ResolvedRoutingSettings::from_settings(effective_settings);
-    let mut native_model_router =
-        (!matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll)).then(|| {
-            native_agents::NativeModelRoutingRuntime::collect(
-                &model_aliases,
-                &models_cache,
-                routing_settings,
-            )
-            .with_settings(effective_settings.clone())
-        });
+    let mut native_model_router = (!agent_surface_policy.emits_nothing()).then(|| {
+        native_agents::NativeModelRoutingRuntime::collect(
+            &model_aliases,
+            &models_cache,
+            routing_settings,
+        )
+        .with_settings(effective_settings.clone())
+    });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
-    if mars_agent_scan.has_agents() && models_cache.reasoning_data_missing() {
-        diag.warn_advisory(
+    // Nothing is lost: the stale-cache line already says the catalog is refreshing, so this
+    // is not repeated beside it.
+    if mars_agent_scan.has_agents()
+        && models_cache.reasoning_data_missing()
+        && !diag.has_code("models-cache-refresh")
+    {
+        diag.info(
             "models-reasoning-missing",
             "the models catalog has no reasoning data yet, so Agent efforts are written as given, \
-             without checking the model; it fills in at the next successful refresh"
-                .to_string(),
+             without checking the model; it fills in at the next successful refresh",
         );
     }
 
@@ -215,7 +219,7 @@ fn compile_inner(
     synced.config_entries = config_entry_compilation.records;
     synced.config_entry_outputs = config_entry_compilation.emitted_outputs;
     synced.rewritten_hook_files = config_entry_compilation.rewritten_outputs;
-    synced.mcp_files_changed = config_entry_compilation.mcp_files_changed;
+    synced.config_files_changed = config_entry_compilation.config_files_changed;
     synced.removed_config_entry_outputs = config_entry_compilation.removed_outputs;
 
     let loaded = &synced.applied.planned.targeted.resolved.loaded;
@@ -231,7 +235,7 @@ fn compile_inner(
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
     };
-    let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
+    let native_compile_ctx = if agent_surface_policy.emits_nothing() {
         None
     } else {
         Some(native_agents::NativeAgentCompileCtx {
@@ -267,9 +271,20 @@ fn compile_inner(
     finalize(ctx, synced, request, diag)
 }
 
-/// Describes what happens to agent artifacts on target surfaces.
+/// What happens to agent artifacts on target surfaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentSurfacePolicy {
+pub struct AgentSurfacePolicy {
+    /// What applies to canonical agent copies and to the native agents of harnesses Meridian
+    /// launches (`launched_by_meridian`).
+    pub launched: AgentSurfaceMode,
+    /// Whether the native agents of a harness Meridian does not launch are written: a harness
+    /// run by hand has no other source for its agents, so only `agent_emission = "never"`
+    /// withholds them.
+    pub emit_unlaunched: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSurfaceMode {
     /// Emit lowered native agents and copy canonical agents to managed targets.
     EmitAll,
     /// Emit only agents whose model resolves to configured harnesses.
@@ -278,20 +293,31 @@ pub enum AgentSurfacePolicy {
     SuppressAll,
 }
 
+impl AgentSurfacePolicy {
+    /// No harness gets a native agent.
+    pub fn emits_nothing(&self) -> bool {
+        self.launched == AgentSurfaceMode::SuppressAll && !self.emit_unlaunched
+    }
+}
+
 pub fn agent_surface_policy(
     agent_emission: Option<&AgentEmission>,
     agent_copy: Option<&agent_copy::AgentCopySpec>,
     meridian_managed: bool,
 ) -> AgentSurfacePolicy {
-    match agent_emission.unwrap_or(&AgentEmission::Auto) {
-        AgentEmission::Always => AgentSurfacePolicy::EmitAll,
-        AgentEmission::Auto if !meridian_managed => AgentSurfacePolicy::EmitAll,
-        AgentEmission::Auto | AgentEmission::Never => match agent_copy {
-            Some(spec) if !spec.harnesses.is_empty() => {
-                AgentSurfacePolicy::EmitSelective(spec.clone())
-            }
-            _ => AgentSurfacePolicy::SuppressAll,
-        },
+    let under_meridian = || match agent_copy {
+        Some(spec) if !spec.harnesses.is_empty() => AgentSurfaceMode::EmitSelective(spec.clone()),
+        _ => AgentSurfaceMode::SuppressAll,
+    };
+    let (launched, emit_unlaunched) = match agent_emission.unwrap_or(&AgentEmission::Auto) {
+        AgentEmission::Always => (AgentSurfaceMode::EmitAll, true),
+        AgentEmission::Auto if !meridian_managed => (AgentSurfaceMode::EmitAll, true),
+        AgentEmission::Auto => (under_meridian(), true),
+        AgentEmission::Never => (under_meridian(), false),
+    };
+    AgentSurfacePolicy {
+        launched,
+        emit_unlaunched,
     }
 }
 
@@ -333,16 +359,18 @@ fn refreshed_models_cache(
 ) -> crate::models::ModelsCache {
     match crate::models::ensure_fresh_with_catalog_providers(mars_dir, ttl_hours, mode, providers) {
         Ok((cache, outcome)) => {
-            if let Some(warning) = crate::models::refresh_warning(&outcome) {
-                diag.warn_advisory("models-cache-refresh", warning);
-            }
+            diag.extend(
+                crate::models::refresh_diagnostic(&outcome)
+                    .into_iter()
+                    .collect(),
+            );
             cache
         }
         Err(err) => {
             diag.warn_advisory(
                 "models-cache-refresh",
                 format!(
-                    "failed to refresh models cache: {err} Efforts are written as given, without checking the model."
+                    "failed to refresh models cache: {err}; Efforts are written as given, without checking the model."
                 ),
             );
             crate::models::ModelsCache::default()

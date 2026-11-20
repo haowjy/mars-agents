@@ -123,9 +123,16 @@ pub(super) fn settle(
         } else {
             "no installed copy of it was found, so nothing is installed"
         };
+        // Only the dependency's author can repair its hook; the installer can take a release
+        // that has.
         diag.warn(
             "hook-invalid-kept",
-            format!("{}; {outcome}", invalid.message),
+            format!(
+                "{}; {outcome}. `{}` takes a newer release of `{}` if it has fixed this",
+                invalid.message,
+                crate::types::managed_cmd(&format!("mars upgrade {}", invalid.source_name)),
+                invalid.source_name,
+            ),
         );
         kept_hooks.extend(kept);
     }

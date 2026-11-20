@@ -40,12 +40,46 @@ pub enum Flavor {
     Plugin,
 }
 
+/// Something a harness's native entry could not carry, with the step each reader can take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpLoss {
+    /// What is lost, as one sentence.
+    pub what: String,
+    /// What the server's author changes so nothing is lost.
+    pub author_fix: Option<String>,
+    /// What a user of the server does themselves, when there is a way.
+    pub installer_fix: Option<String>,
+}
+
+impl McpLoss {
+    pub fn new(what: String) -> Self {
+        Self {
+            what,
+            author_fix: None,
+            installer_fix: None,
+        }
+    }
+
+    /// The text for the server's author, or for whoever installed it from another package.
+    pub fn text(&self, author: bool) -> String {
+        let fix = if author {
+            &self.author_fix
+        } else {
+            &self.installer_fix
+        };
+        match fix {
+            Some(fix) => format!("{} {fix}", self.what),
+            None => self.what.clone(),
+        }
+    }
+}
+
 /// One server rendered into a harness's native shape.
 #[derive(Debug, Clone)]
 pub struct McpRender {
     pub value: Value,
-    /// What the native shape could not carry, one full sentence each; each becomes a warning.
-    pub lossy: Vec<String>,
+    /// What the native shape could not carry.
+    pub lossy: Vec<McpLoss>,
 }
 
 impl McpRender {
@@ -131,10 +165,11 @@ pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
                 if !forwarded.is_empty() {
                     entry["env_vars"] = serde_json::json!(forwarded);
                 }
-                lossy.extend(renamed.into_iter().map(|(key, variable)| {
-                    format!(
+                lossy.extend(renamed.into_iter().map(|(key, variable)| McpLoss {
+                    installer_fix: Some(format!("Set `{key}` in the environment Codex runs in.")),
+                    ..McpLoss::new(format!(
                         "Codex 0.164.0 passes `${{{variable}}}` literally instead of reading `{variable}`, so `{key}` is not set from it."
-                    )
+                    ))
                 }));
             } else if !env.is_empty() {
                 entry["env"] = env_map(env, interpolate);
@@ -151,12 +186,64 @@ pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
             }
             if flavor == Flavor::Plugin {
                 lossy.extend(headers.iter().filter_map(|(name, value)| match value {
-                    HeaderValue::Env { env, .. } => Some(format!(
+                    HeaderValue::Env { env, .. } => Some(McpLoss::new(format!(
                         "Codex 0.164.0 passes `${{{0}}}` literally instead of reading `{0}`, so header `{name}` is not set from it.",
                         env.var_name()
-                    )),
+                    ))),
                     HeaderValue::Literal(_) => None,
                 }));
+            }
+            entry
+        }
+    };
+    McpRender { value, lossy }
+}
+
+/// `agy` starts a server with `.agy/` as its working directory, but every other harness resolves
+/// a command that names a path (`./server.sh`) from the project root, so the path is written
+/// one directory up. A bare name (`node`) is looked up on `PATH` and stays.
+fn agy_command(command: &str) -> String {
+    if command.contains('/') && !command.starts_with('/') {
+        format!("../{}", command.strip_prefix("./").unwrap_or(command))
+    } else {
+        command.to_owned()
+    }
+}
+
+/// An `agy` plugin's `mcp_config.json` entry: the server inherits `agy`'s environment, so a
+/// variable passed through by name is left out and a renamed one cannot be written (a `${VAR}`
+/// that the plugin does not declare in `variables` is passed literally, and declaring one turns
+/// the whole plugin off until the user fills it in), and a remote entry has no `type`.
+pub fn render_agy(transport: &McpTransport) -> McpRender {
+    let mut lossy = Vec::new();
+    let value = match transport {
+        McpTransport::Stdio { command, args, env } => {
+            let (_, renamed) = partition_env(env);
+            lossy.extend(renamed.into_iter().map(|(key, variable)| McpLoss {
+                author_fix: Some(format!("Name the key `{variable}` to pass it through.")),
+                installer_fix: Some(format!("Set `{key}` in the environment agy starts from.")),
+                ..McpLoss::new(format!(
+                    "agy sets a server's env only from a plugin variable, which turns the whole plugin off until the user fills it in; `{key}` is not set from `{variable}`."
+                ))
+            }));
+            serde_json::json!({ "command": agy_command(command), "args": args })
+        }
+        McpTransport::Http { url, headers } => {
+            let mut literals = Map::new();
+            for (name, value) in headers {
+                match value {
+                    HeaderValue::Literal(text) => {
+                        literals.insert(name.clone(), Value::String(text.clone()));
+                    }
+                    HeaderValue::Env { env, .. } => lossy.push(McpLoss::new(format!(
+                        "agy sets a header only from a plugin variable, which turns the whole plugin off until the user fills it in; `{name}` is not set from `{}`.",
+                        env.var_name()
+                    ))),
+                }
+            }
+            let mut entry = serde_json::json!({ "url": url });
+            if !literals.is_empty() {
+                entry["headers"] = literals.into();
             }
             entry
         }

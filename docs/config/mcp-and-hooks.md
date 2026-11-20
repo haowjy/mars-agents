@@ -11,8 +11,8 @@ agents and skills. Mars compiles these into target-specific config files during
   gate which MCP tools an agent may use — separate from server registration.
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** are written once in Claude's hook format (`[hooks]` in `hook.toml`)
-  and installed natively in Claude, Codex, OpenCode and Pi, or contributed as
-  target-native hooks (JSON for Claude, Codex and Cursor; TypeScript for
+  and installed natively in Claude, Codex, OpenCode and Pi (translated for Antigravity), or contributed as
+  target-native hooks (JSON for Claude, Codex, Cursor and Antigravity; TypeScript for
   OpenCode and Pi). Their complete hook directories install beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
   directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
@@ -32,6 +32,7 @@ project root:
 | `.opencode` | `.opencode/opencode.json` | `mcp` | `{env:VAR}` |
 | `.pi` | `.pi/mcp.json` | `mcpServers` | `${VAR}` |
 | `.cursor` | `.cursor/mcp.json` | `mcpServers` | `${env:VAR}` |
+| `.agy` | `.agy/mcp_config.json` | `mcpServers` | inherited (see [Antigravity](#antigravity-agy)) |
 
 Mars edits these files in place. Other keys, other servers, and (in
 `.codex/config.toml`) comments and key order survive. Stdio servers are written as
@@ -41,8 +42,11 @@ covered under [Remote servers](#remote-servers).
 
 **Codex** forwards an environment variable to the server by name, so
 `env_vars = ["VAR"]` covers an `env` entry whose key equals its variable. A
-renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync warns
-(`mcp-lossy`) and leaves that variable out.
+renamed reference (`KEY = { var = "OTHER" }`) cannot be written; sync leaves that
+variable out, so the server does not get it, and warns (`mcp-lossy`) whoever wrote the
+server. The text names the reader's own step: the author names the key as the variable, and the
+installer sets `KEY` in the environment Codex runs in. It prints on the sync that writes the
+entry, not on a sync that leaves it as it was; `--verbose` prints it every time.
 
 **Approval and trust are the user's.** Mars writes the entry but does not
 grant trust: Claude lists project `.mcp.json` servers as pending until you
@@ -175,9 +179,10 @@ API_KEY   = { from = "env", var = "MY_API_KEY" }
 API_TOKEN = { from = "env", var = "MY_API_TOKEN" }
 ```
 
-The `from = "env"` field is the only supported kind (V0). Mars warns at sync
-time when the named variable isn't present in the environment, but sync still
-proceeds.
+The `from = "env"` field is the only supported kind (V0). When the named variable
+isn't set in the shell that ran Mars, sync notes it as `mcp-env-missing`, an `info`
+(printed with `--verbose`, `mars validate` and `mars check`), and goes on: the shell
+that starts the harness may be another one, and a secret is often set only there.
 
 **Name override** — by default the server name matches the directory name. To
 use a different name:
@@ -223,6 +228,7 @@ the same `mcp-env-missing` check as `env`.
 | `.cursor` | `{"url", "headers"}` | `prefix${env:VAR}` |
 | `.opencode` | `{"type": "remote", "url", "headers"}` | `prefix{env:VAR}` |
 | `.pi` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
+| `.agy` | `{"url", "headers"}`, literal headers only; not described by `agy`'s docs and not run | none |
 | `.codex` | `url`, `http_headers`, `env_http_headers`, `bearer_token_env_var` | see below |
 
 **Codex** reads a header from the environment whole (`env_http_headers`, no
@@ -335,7 +341,7 @@ The token applies to `command` and `args`. `env` values remain symbolic
 
 Write a hook once, in the shape Claude Code uses for `"hooks"` in
 `settings.json`, expressed as TOML. Mars installs it natively in Claude Code,
-Codex, OpenCode and Pi. A hook directory holds `hook.toml` and the script it
+Codex, OpenCode and Pi, and translated for Antigravity. A hook directory holds `hook.toml` and the script it
 runs:
 
 ```
@@ -965,8 +971,8 @@ reorder its file-mode artifact.
 
 | Code | Level | When |
 |---|---|---|
-| `hook-event-skipped` | warning for your own hooks and in `mars check`; info (one summary per sync) for dependencies' hooks | an event, handler type or matcher field has no counterpart on a managed target, whether or not the hook was selected there |
-| `hook-answer-unsupported` | info | the event renders, but some portable answers do not carry over to that target |
+| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook, or adds a target, that takes none of the hook (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
+| `hook-answer-unsupported` | warning; reported like `hook-event-skipped` | the event renders, but some portable answers do not carry over to that target |
 | `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
 | `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |
 | `hook-event-unchecked` | warning | `unchecked = true` passes an unknown event through to a target |
@@ -976,7 +982,7 @@ reorder its file-mode artifact.
 | `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
 | `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
-| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists |
+| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists. The line names `mars upgrade <source>` as the installer's way out |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-native-hook-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 
@@ -996,6 +1002,103 @@ OpenCode native hook; `${MARS_HOOK_TARGET}` is `.opencode` there. The Cursor tre
 `[hooks]`. For each hook that gets nothing in a tree (no native hook for it, and `[hooks]`
 render nothing there), sync reports `plugin-native-hook-dropped`, naming the harnesses that
 won't get it. A native hook for another target also reports it.
+
+### Antigravity (`agy`)
+
+`mars link agy` adds the target `.agy`. `agy` reads nothing from `.agy/` by itself, so
+Mars writes it as an `agy` **plugin** and adds one entry to the project's `.agents/plugins.json`:
+
+```
+.agents/plugins.json     {"entries": [..., {"path": ".agy"}]}   Mars's entry, after yours
+.agy/plugin.json         {"name": "mars-<project>", "version": "1.0.0"}   <project> is the directory name, as [a-z0-9-]
+.agy/skills/<name>/      as for every target
+.agy/agents/<name>.md    see agent-compilation.md
+.agy/hooks.json          one top-level key per hook
+.agy/hooks/<name>/       the hook's directory
+.agy/hooks/mars-<name>.hooks.json   a translated hook's data, beside the directory
+.agy/mcp_config.json     {"mcpServers": {...}}
+.agy/mcp/<name>/         a server's directory, when it uses `${MARS_MCP_DIR}`
+```
+
+Mars owns the pointer entry, the manifest keys, each hook and each MCP server **by key**, in
+files you may also edit, with the rules MCP servers have above: an entry equal to what Mars
+recorded is Mars's; one you edited is kept with a warning (`plugin-pointer-divergent`, ...) until
+`--force`; one Mars did not write collides unless identical, and an identical one, such as an
+existing `{"path": ".agy"}`, is adopted. Other entries of `plugins.json` and their order stay.
+A `plugins.json` that is not a JSON object with an `entries` array fails the sync before anything
+is written, as a bad `.mcp.json` does. A file Mars's change leaves empty is deleted; `.agents/`
+stays. Mars writes no `.gitignore`: ignoring `.agy/` and committing `.agents/plugins.json` is the
+usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` carries a
+`version` because `agy plugin validate --strict` warns on a plugin without one.
+
+**Skills.** Linking `.agents` too puts the neutral copy and the `agy` copy of each skill in front
+of `agy` under one name; Mars warns (`deprecated-agents-target`) and says to run
+`mars unlink .agents`. With no harness that reads `.agents/skills` linked, the same code is
+an `info` that only notes `.agents` is deprecated.
+
+**MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
+own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to do so
+in `command`. So `${MARS_MCP_DIR}` becomes `${PLUGIN_ROOT}/mcp/<name>` in `args` and the
+installed project path in `command`, as for every harness: an absolute path such as
+`/home/me/proj/.agy/mcp/<name>/server.sh`, which `.agy/` (ignored, like `hooks.json`) can hold
+because it is machine-local. A `command` the author wrote as a path of their own (`./server.sh`)
+is relative to the project root for every other harness, but `agy` runs it from `.agy/`, so Mars
+writes it one level up (`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
+name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
+spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
+off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are
+written as Claude's are; env headers are left out the same way.
+`agy` starts one server per process, during the first prompted turn. In two probes (TUI and
+ACP, `agy` 1.5.13) the model could not use a plugin server's tools on the first prompt and could
+from the second; whether that is timing or the prompts' wording is not yet known. Every `agy`
+agent reaches every server, whatever its `tools` list says.
+
+**Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
+A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,
+installed under the hook's name. `${MARS_HOOK_DIR}` becomes `hooks/<name>`, relative to the
+working directory `agy` gives a hook command (`.agy/`). The events are `SessionStart`,
+`PreInvocation`, `PostInvocation`, `Stop` (handler objects) and `PreToolUse`, `PostToolUse`
+(`{matcher, hooks}` groups).
+
+A portable `[hooks]` table is **translated**: `agy`'s events, payloads and replies are not
+Claude's, so each `hooks.json` handler runs `mars hook run` (hidden; `agy` calls it, you do not)
+on the hook's data file, `hooks/mars-<name>.hooks.json`. The runner reads `agy`'s payload,
+builds Claude's (`tool_name` and `tool_input` through the tool and argument tables in
+`mars_schema::hooks::agy`, `session_id`, `cwd`, `transcript_path`), runs the hook's
+commands with Claude's matcher, `if`, timeout and exit-code rules (the same as the generated
+TypeScript for OpenCode and Pi; `crates/mars-schema/fixtures/hook-vectors.json` pins the two),
+and answers in the form `agy` reads for that event. The hook's commands run with the `cwd` `agy`
+reports (the project), and `${MARS_HOOK_DIR}` is the hook's directory. A command runs as on the
+TypeScript targets: one deadline covers the shell's exit and its pipes closing, then the
+shell's process group is killed (so a background job cannot outlast the timeout); an `async`
+handler gets its whole stdin and no stdout or stderr, and is left running when the runner
+returns. On Windows the shell is Git's `bash` (found as `core.ts` finds it, never WSL's
+`System32\bash.exe`); that path is written but never run.
+
+The command names the `mars` that ran the sync by absolute path, as invoked when that is a
+link to the running binary (a Homebrew `bin/mars` rather than its versioned cellar, which an
+upgrade removes), so `hooks.json` is machine-local (the same reason Claude's hooks go to `settings.local.json`): moving the binary
+needs a `mars sync`. On Windows `agy` runs `cmd /c` and the command is a `cmd` form of the same
+guard, written but never run. A guard in front of `mars` settles a missing binary by the hook's
+failure rule: exit 0 with no output leaves the call alone, and exit 1 blocks it when a handler of
+a blocking event (`PreToolUse`, `UserPromptSubmit`, `Stop`) has `onFailure = "block"`. A data
+file of a version this `mars` does not read is settled the same way, with a message on stderr.
+
+| Claude event | `agy` event | What carries over |
+|---|---|---|
+| `PreToolUse` | `PreToolUse` | `deny`, `ask`, `allow` and `updatedInput` (as `overwrite`, top-level keys only) answers and exit 2; no opinion is empty output, which leaves the call to `agy`'s own permission flow. `additionalContext` is dropped |
+| `PostToolUse`, `PostToolUseFailure` | `PostToolUse` | `agy` passes no tool output and reads no answer: the hook runs, its answers are dropped; the failure event is the call's `error` being set |
+| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, on its first prompt rather than when the TUI opens, and not on resume, so `source` is always `startup` |
+| `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`), including a failing hook's `onFailure = "block"`; `stop_hook_active` is true from the turn's second Stop (`executionNum` above 0), because `agy`'s `continuationActive` is false on every Stop |
+| `UserPromptSubmit` | `PreInvocation` | runs on the first invocation of a prompt (`invocationNum` 0); a `block` answer ends the turn with the reason as an error message; context becomes a system message |
+
+Any other Claude event is skipped and reported. Sync reports (`hook-answer-unsupported`) each
+translated event whose answers or firing do not fully carry over, and a matcher the runner's
+regular-expression engine cannot compile (look-around and backreferences, which Claude's can).
+`agy` timeouts are the sum of the Claude timeouts of an event's handlers plus a second, since
+the runner runs them in turn and must outlive its last kill. A tool matcher that names plain
+Claude tools is narrowed to `agy`'s names for them; any other is `*`, and the runner applies
+Claude's matcher either way.
 
 ### Ownership and removal
 

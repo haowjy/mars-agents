@@ -430,7 +430,6 @@ fn native_hook_error(item: &ParsedHookItem, file: &str, message: &str) -> MarsEr
 /// What `mars check` finds in a package's hooks.
 pub(crate) struct HookCheck {
     pub(crate) errors: Vec<String>,
-    pub(crate) warnings: Vec<String>,
     /// The hooks written as `[hooks]`, which a Mars before the table's `since` rejects.
     pub(crate) portable: Vec<String>,
 }
@@ -451,12 +450,10 @@ pub(crate) fn check_hooks(
         Err(error) => {
             return Ok(HookCheck {
                 errors: vec![error_message(error)],
-                warnings: Vec::new(),
                 portable: Vec::new(),
             });
         }
     };
-    let mut warnings = Vec::new();
     let mut portable_names = Vec::new();
     for item in &items {
         let Some(portable) = item.def.portable() else {
@@ -465,28 +462,30 @@ pub(crate) fn check_hooks(
         let name = &item.def.name;
         portable_names.push(name.clone());
         for event in portable.conditions_on_non_tool_events() {
-            warnings.push(format!(
-                "hook `{name}`: `if` on `{event}` never matches: Claude does not run a handler with `if` on a non-tool event"
-            ));
+            diag.warn(
+                "hook-if-non-tool-event",
+                format!(
+                    "hook `{name}`: `if` on `{event}` never matches: Claude does not run a handler with `if` on a non-tool event"
+                ),
+            );
         }
         // Cursor renders nothing before 0.26, so its one blanket skip is no reason an author
         // can act on.
-        for target in mars_schema::hooks::targets::all()
-            .iter()
-            .filter(|target| target.profile.renders())
-        {
+        for target in mars_schema::hooks::targets::all().filter(|target| target.profile.renders()) {
             for skip in item.def.skips_for(target.root) {
-                warnings.push(format!(
-                    "hook `{name}`: `{}` {}",
-                    target.root,
-                    crate::compiler::config_entries::render::skip_text(&skip)
-                ));
+                diag.warn(
+                    "hook-skipped",
+                    format!(
+                        "hook `{name}`: `{}` {}",
+                        target.root,
+                        crate::compiler::config_entries::render::skip_text(&skip)
+                    ),
+                );
             }
         }
     }
     Ok(HookCheck {
         errors: Vec::new(),
-        warnings,
         portable: portable_names,
     })
 }

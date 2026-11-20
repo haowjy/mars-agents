@@ -49,7 +49,7 @@ impl KeyedKind {
 
 /// An entry Mars wants in the section.
 #[derive(Debug, Clone)]
-pub(crate) struct Rendered {
+pub struct Rendered {
     pub name: String,
     pub value: Value,
 }
@@ -85,6 +85,47 @@ pub(crate) fn ownership(record: Option<&ConfigEntryRecord>, current: &Value) -> 
 
 pub(crate) fn validate(section: &KeyedSection, path: &Path) -> Result<(), MarsError> {
     Doc::load(path, section.format).map(|_| ())
+}
+
+/// Whether the file at `rel_path` (project-relative) holds nothing but entries Mars recorded
+/// in `lock` and that still equal what it wrote. A user's entry, an edited one or an
+/// unreadable file make it the user's.
+pub(crate) fn holds_only_owned(
+    project_root: &Path,
+    rel_path: &str,
+    lock: &crate::lock::LockFile,
+) -> bool {
+    let mut sections = Vec::new();
+    for (target, records) in &lock.config_entries {
+        let Some(spec) = super::spec(target) else {
+            continue;
+        };
+        for (kind, section) in spec.keyed_sections() {
+            if section.path == rel_path {
+                sections.push((kind, section, records));
+            }
+        }
+    }
+    let Some((_, first, _)) = sections.first() else {
+        return false;
+    };
+    let Ok(Some(mut doc)) = Doc::load(&project_root.join(rel_path), first.format) else {
+        return false;
+    };
+    for (kind, _, records) in sections {
+        for (key, record) in records {
+            let Some(name) = key.strip_prefix(kind.key_prefix) else {
+                continue;
+            };
+            let owned = doc.get(name).is_some_and(|current| {
+                matches!(ownership(Some(record), &current), Ownership::Owned)
+            });
+            if owned {
+                doc.remove(name);
+            }
+        }
+    }
+    doc.is_empty()
 }
 
 struct Open {

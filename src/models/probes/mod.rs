@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use crate::error::MarsError;
 use cache::{CachedProbe, CachedProbeOutcome};
 
+pub mod agy;
 pub mod cache;
+mod command;
 pub mod cursor;
 pub mod opencode;
 pub mod pi;
@@ -12,6 +14,7 @@ pub mod probe_refresh;
 
 pub use probe_refresh::ProbeRefreshMode;
 
+pub use agy::AgyProbeResult;
 pub use cursor::CursorProbeResult;
 pub use opencode::OpenCodeProbeResult;
 pub use pi::PiProbeResult;
@@ -24,9 +27,9 @@ pub struct Listing {
     /// The harness's model listing command completed.
     pub succeeded: bool,
     pub error: Option<String>,
-    /// Why the harness cannot be driven at all (a skip reason code), even when its listing
-    /// completed. Pi sets this when its help surface lacks a flag Mars needs.
-    pub incompatible: Option<&'static str>,
+    /// The harness cannot be driven at all, even when its listing completed. Pi sets this when
+    /// its help surface lacks a flag Mars needs.
+    pub incompatible: bool,
     /// A completed but empty listing is no evidence of support or credentials (Cursor).
     pub empty_is_failure: bool,
 }
@@ -79,17 +82,12 @@ pub(super) fn cache_dir() -> Result<PathBuf, MarsError> {
 }
 
 /// A probe cache's lock, best effort: `None` when another process holds it or the path cannot be
-/// opened, so the caller skips the refresh instead of failing. An open error is logged — it is not
-/// contention, and a silent skip would hide a broken cache directory.
-pub(super) fn probe_lock(file: &str, label: &str) -> Option<crate::fs::FileLock> {
+/// opened, so the caller skips the refresh instead of failing.
+pub(super) fn probe_lock(file: &str) -> Option<crate::fs::FileLock> {
     let dir = cache_dir().ok()?;
-    match crate::fs::FileLock::try_acquire(&dir.join(file)) {
-        Ok(lock) => lock,
-        Err(error) => {
-            eprintln!("debug: {label} probe cache lock failed: {error}");
-            None
-        }
-    }
+    crate::fs::FileLock::try_acquire(&dir.join(file))
+        .ok()
+        .flatten()
 }
 
 /// Wait for a probe cache's lock. `None` when the path cannot be opened: the cache is best effort.

@@ -209,9 +209,11 @@ pub fn resolve_policy(
             )
         }
     };
-    if let Some(warning) = models::refresh_warning(&catalog_outcome) {
-        warnings.push(warning);
-    }
+    warnings.extend(
+        models::refresh_diagnostic(&catalog_outcome)
+            .filter(|diagnostic| diagnostic.shown(false))
+            .map(|diagnostic| diagnostic.message),
+    );
     let catalog_slugs = models::catalog_model_slugs(&cache);
     let primary_model = model::resolve_model(
         &input,
@@ -321,27 +323,38 @@ pub fn resolve_policy(
                 first_unverified.get_or_insert(attempt);
             }
             Ok(harness::HarnessAttempt::Exhausted(trace)) => {
-                let excluded_pin = input.harness_override.is_some()
-                    && trace.assessments.iter().any(|assessment| {
-                        matches!(
-                            assessment.skip_reason,
-                            Some("disabled_target" | "excluded_by_caller")
-                        )
-                    });
+                let pin_denial = input.harness_override.and_then(|_| {
+                    trace.assessments.iter().find_map(|assessment| {
+                        assessment.skip_reason.filter(|reason| {
+                            matches!(
+                                *reason,
+                                "disabled_target" | "excluded_by_caller" | routing::NOT_LAUNCHED
+                            )
+                        })
+                    })
+                });
                 report.push(
                     &candidate.model_token,
                     &candidate.model,
                     candidate.model_source.label(),
                     &trace,
                 );
-                if excluded_pin {
+                if let Some(reason) = pin_denial {
                     report.outcome = routing::report::SelectionOutcome::ExplicitConstraintError;
                     return Err(MarsError::Selection {
                         code: "explicit_harness_excluded",
-                        message: format!(
-                            "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
-                            input.harness_override.unwrap()
-                        ),
+                        message: {
+                            let harness = input.harness_override.unwrap();
+                            if reason == routing::NOT_LAUNCHED {
+                                format!(
+                                    "explicit_harness_excluded: Meridian does not launch `{harness}`"
+                                )
+                            } else {
+                                format!(
+                                    "explicit_harness_excluded: harness `{harness}` is not permitted by configured targets and caller exclusions"
+                                )
+                            }
+                        },
                         report: Box::new(report),
                     });
                 }
@@ -543,10 +556,9 @@ pub fn resolve_policy(
             .map(|agent| format!("agent {agent}"))
             .unwrap_or_else(|| "requested model".to_string());
         let requested = requested.as_str();
-        let harness = registry::descriptor(
-            tiered_harness.expect("a tier failure comes from a harness with tiers"),
-        )
-        .display_name;
+        let harness = tiered_harness
+            .expect("a tier failure comes from a harness with tiers")
+            .display_name();
         let message = match failure {
             TierFailure::ListingUnavailable => format!(
                 "{actor} selected effort {requested}; {harness} model list was unavailable; rerun without --no-refresh-models or with --refresh-models."

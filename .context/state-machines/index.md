@@ -68,7 +68,7 @@ it:
 | Plugin publication order | One plugin build across the tree swap, the root files and the marker | [build](../../src/build/.context/state-machines.md) |
 | Skill resolution in a launch | One skill the agent profile asks for | [build](../../src/build/.context/state-machines.md) |
 | Launch policy | One launch request's model and harness | [build/policy](../../src/build/policy/.context/state-machines.md) |
-| Slug tier effort | Whether a requested effort level reached the model slug of a harness that folds tiers into its slugs (Cursor) | [build/policy](../../src/build/policy/.context/state-machines.md) |
+| Slug tier effort | Whether a requested effort level reached the model slug of a harness that folds tiers into its slugs (Cursor, Antigravity) | [build/policy](../../src/build/policy/.context/state-machines.md) |
 
 ## CLI and targets
 
@@ -102,4 +102,4 @@ it:
 | Probe loading and known providers | Which probes one command has loaded | [harness](../../src/harness/.context/state-machines.md) |
 | Harness routing scan | Which harness candidate the evaluator accepted | [routing](../../src/routing/.context/state-machines.md) |
 | Curation fold | Whether one possible model row is shown | [curation](../../src/curation/.context/state-machines.md) |
-| Target provenance | Which config file set `targets` and `managed_root` | [config](../../src/config/.context/state-machines.md) |
+| Target provenance | Which config file set `targets` | [config](../../src/config/.context/state-machines.md) |

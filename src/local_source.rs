@@ -226,7 +226,7 @@ pub(crate) fn flat_skill_excluded_paths(
         excluded.extend(
             mars_schema::harness::ALL
                 .iter()
-                .map(|h| PathBuf::from(crate::harness::registry::descriptor(*h).default_target)),
+                .map(|h| PathBuf::from(h.target_dir())),
         );
     }
     for target in targets {

@@ -36,7 +36,7 @@ mars init [TARGET] [--link DIR...]
 **Behavior:**
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
 - Creates `.mars/` internal state directory
-- Creates `TARGET`, when given, and records it as `settings.managed_root`
+- Creates `TARGET`, when given, and adds it to `settings.targets`
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
@@ -137,7 +137,7 @@ This is the core operation. It runs the full [sync pipeline](../internals/sync-p
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
-The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)` and counts them as `updated N MCP config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the count as `mcp_files_changed`. `--diff` previews them as `would update N MCP config files`. `already up to date` prints when the sync changed none of the installed items, hook files and MCP files above and raised no warning. A native agent file the sync recreates because you deleted it is not counted, so that sync can print the line too. The exceptions are advisory warnings, which say nothing about whether the sync reached its state: lossiness notes, unset env vars, unknown hook events, skipped or renamed names, and package format or version notices. Any other warning, such as a failed write or an entry Mars left in place because it was edited by hand, withholds the line. A sync that rewrites a hand-edited hook file, native agent or skill copy also warns, so it does not print the line either. `--diff` does not look at every file a real sync rewrites, so with nothing pending it prints `no pending changes found`, not `already up to date`. `--diff` also shows the MCP warnings a real sync would, such as a hand-edited server it would leave alone; `mars validate` does not.
+The summary also lists each MCP config file a run wrote or deleted (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml`, `.opencode/opencode.json`, `.pi/mcp.json`) as `~ <file> (MCP servers, <target>)`; the other files Mars edits by key in the same way (an `agy` plugin's `.agents/plugins.json`, `.agy/plugin.json` and `.agy/hooks.json`) are listed with them, named by what they hold (`plugin entries`, `plugin manifest keys`, `hooks`). All of them count as `updated N config files`, so adding an MCP-only package or a project-root `mcp/` entry is not reported as "already up to date". `--json` carries the MCP files' count as `mcp_files_changed`; the other keyed files are not in it. `--diff` previews them as `would update N config files`. `already up to date` prints when the sync changed none of the installed items, hook files and MCP files above and raised no warning. A native agent file the sync recreates because you deleted it is not counted, so that sync can print the line too. The exceptions are advisory warnings, which say nothing about whether the sync reached its state: lossiness notes, unset env vars, unknown hook events, skipped or renamed names, and package format or version notices. Any other warning, such as a failed write or an entry Mars left in place because it was edited by hand, withholds the line. A sync that rewrites a hand-edited hook file, native agent or skill copy also warns, so it does not print the line either. `--diff` does not look at every file a real sync rewrites, so with nothing pending it prints `no pending changes found`, not `already up to date`. `--diff` also shows the MCP warnings a real sync would, such as a hand-edited server it would leave alone; `mars validate` does not.
 
 ---
 
@@ -348,11 +348,14 @@ mars link <target> [--force]
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
+- A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
+- Linking `.cursor` warns (`deprecated-cursor-target`), and so does every sync while it is a target: Cursor support goes away in the minor after 0.37.0. Run `mars unlink .cursor` to remove it
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
-mars link .cursor            # Copy skills/MCP into .cursor
+mars link .cursor            # Copy skills/MCP into .cursor (deprecated, see below)
+mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
 
@@ -367,10 +370,10 @@ mars unlink <target>
 ```
 
 **Behavior:**
-- Removes `<target>` from `targets` (and `managed_root` if it matches) in `mars.toml` and `mars.local.toml`
+- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
-- Removes only outputs and config entries owned by the target's lock records
+- Removes only outputs and config entries owned by the target's lock records. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays
 - Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
 - Reports if the target was not managed (no-op)
 
@@ -574,7 +577,7 @@ What its files say is the same function `@meridian-flow/mars-schema` exports as 
 | `skill-ref.provider` | error | a ref `<skill>__<provider>` whose provider `[package] uses-providers` doesn't list |
 | `skill.no-definition` | warning | `skills/<dir>/` holds files and no `SKILL.md`, so none of it is installed |
 | `selection.duplicate-slug` | warning, info | two dependencies install one slug (warning); a root item and a dependency's (info: the root's is installed) |
-| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness` |
+| `field.restriction-lost`, `field.execution-ignored` | warning | a translated file lost a restriction, or an ignored `effort`, `mode` or `harness`. A sync reports it as a warning for a dependency's file too, once, with the sync that installs it |
 | `agent.description-missing`, `agent.name-missing`, `definition.name-mismatch`, `frontmatter.repaired` | info | no `description` (Claude doesn't load such an Agent), no `name` (the file name is used), a `name` that differs from the file or folder, a value quoted so YAML could read it |
 
 Every other finding is what `mars sync` applies: definitions against [schema v1](../config/schema-v1.md) (invalid values and malformed YAML are errors, a retired key is a `field.retired` warning, unknown keys are `info`, a package with no `schema` is an error), and a `skills` ref resolves through the package, its `[dependencies]` and their dependencies, fetched for the check. A dependency that can't be fetched is `[dependency-resolution]`, and one the check lacks after the fetch, or one that could not be read (`unreadable_dependencies` of the function's result), is `[dependency-incomplete]`; all are errors. While the function's `missing_dependencies` or `unreadable_dependencies` is not empty its result is not a verdict: no skill ref was judged. `check` ignores `.mars/provided.lock`, so the verdict is the same on every machine. A symlink is read as its target, as `mars sync` reads it.
@@ -656,7 +659,7 @@ Checks:
 - Target health: each managed target has the expected files with correct content
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
-Exit code 0 = healthy, 2 = issues found. See [troubleshooting.md](../dev/troubleshooting.md).
+Exit code 0 = healthy, 2 = an error was found. A skill an Agent names that is not installed is the same warning (`missing-skill`) here as in `mars sync` and `mars validate`; it does not fail the check. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).
 
 ---
 
@@ -853,7 +856,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`; `agy` is refused: Meridian does not launch it). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |

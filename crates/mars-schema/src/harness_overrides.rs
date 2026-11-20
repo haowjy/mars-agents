@@ -349,13 +349,7 @@ pub(crate) fn move_harness_only_keys(
     changes: &mut Vec<SchemaDiagnostic>,
 ) -> bool {
     let (owner, harness_name) = (kind.to_string(), harness.as_str());
-    let title = match harness {
-        HarnessId::Claude => "Claude",
-        HarnessId::Codex => "Codex",
-        HarnessId::Pi => "Pi",
-        HarnessId::OpenCode => "OpenCode",
-        HarnessId::Cursor => "Cursor",
-    };
+    let title = harness.display_name();
     let present = fm
         .keys()
         .into_iter()

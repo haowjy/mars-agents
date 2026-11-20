@@ -1,45 +1,14 @@
-use crate::types::DestPath;
 use indexmap::IndexMap;
-use mars_schema::HarnessId;
-use mars_schema::item::ItemKind;
 use mars_schema::mcp_server::{HeaderValue, McpTransport};
-use mars_schema::mcp_servers::{McpRender, partition_env};
+use mars_schema::mcp_servers::{McpLoss, McpRender, partition_env};
 
-use super::{KeyedSection, McpFile, McpServerEntry, SectionFormat, TargetAdapter};
-
-#[derive(Debug)]
-pub struct CodexAdapter;
-
-impl TargetAdapter for CodexAdapter {
-    fn harness(&self) -> Option<HarnessId> {
-        Some(HarnessId::Codex)
-    }
-
-    fn default_dest_path(&self, kind: ItemKind, name: &str) -> Option<DestPath> {
-        match kind {
-            ItemKind::Skill => Some(DestPath::from(format!("skills/{name}").as_str())),
-            _ => None,
-        }
-    }
-
-    fn mcp_file(&self) -> Option<McpFile> {
-        Some(McpFile {
-            // Codex reads `[mcp_servers.<name>]` from the project's
-            // `.codex/config.toml`, for trusted projects only.
-            at: KeyedSection {
-                path: ".codex/config.toml",
-                format: SectionFormat::TomlTable("mcp_servers"),
-            },
-            render,
-        })
-    }
-}
+use super::McpServerEntry;
 
 // Codex forwards an environment variable to the server by name, in
 // `env_vars = ["VAR"]`. A mapping from a differently named key cannot be
 // written, so a renamed reference is reported as lossy and dropped.
 
-fn render(server: &McpServerEntry) -> McpRender {
+pub(super) fn render(server: &McpServerEntry) -> McpRender {
     match &server.transport {
         McpTransport::Stdio { command, args, env } => {
             let mut entry = serde_json::json!({ "command": command, "args": args });
@@ -51,10 +20,13 @@ fn render(server: &McpServerEntry) -> McpRender {
                 value: entry,
                 lossy: renamed
                     .into_iter()
-                    .map(|(key, variable)| {
-                        format!(
+                    .map(|(key, variable)| McpLoss {
+                        installer_fix: Some(format!(
+                            "Set `{key}` in the environment Codex runs in."
+                        )),
+                        ..McpLoss::new(format!(
                             "Codex forwards `{variable}` by name and cannot set it as `{key}`; `{key}` is not set for the server."
-                        )
+                        ))
                     })
                     .collect(),
             }
@@ -85,10 +57,10 @@ fn render_remote(url: &str, headers: &IndexMap<String, HeaderValue>) -> McpRende
             {
                 entry["bearer_token_env_var"] = env.var_name().into();
             }
-            HeaderValue::Env { env, prefix } => lossy.push(format!(
+            HeaderValue::Env { env, prefix } => lossy.push(McpLoss::new(format!(
                 "Codex reads header `{name}` from `{}` whole and cannot prepend `{prefix}`; `{name}` is not set for the server.",
                 env.var_name()
-            )),
+            ))),
         }
     }
     if !literals.is_empty() {

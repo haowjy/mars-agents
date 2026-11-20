@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::curation::{CuratedRow, CuratedRules, Decision};
+use crate::diagnostic::Diagnostic;
 use crate::error::{ConfigError, MarsError};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession, NativeAuthCache};
 use crate::harness::registry;
@@ -23,6 +24,7 @@ use super::models_common::{
     catalog_providers, load_merged_aliases, load_project_config_layers_optional,
     models_cache_ttl_hours,
 };
+use super::output;
 
 fn catalog(
     ctx: &MarsContext,
@@ -85,7 +87,7 @@ pub(super) fn run_catalog(
             .unwrap()
         );
     } else {
-        print_warning(&outcome);
+        print_cache_warning(&outcome);
         println!(
             "{:<18} {:<36} {:<12} {:>10} {:>10} DESCRIPTION",
             "PROVIDER", "MODEL", "RELEASE", "INPUT", "OUTPUT"
@@ -145,7 +147,7 @@ pub(super) fn run_aliases(
             .unwrap()
         );
     } else {
-        print_warning(&outcome);
+        print_cache_warning(&outcome);
         println!(
             "{:<18} {:<14} {:<36} DESCRIPTION",
             "ALIAS", "MODE", "RESOLVED"
@@ -192,9 +194,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         .unwrap_or_default();
     let mut routing_diagnostics = routing_settings.diagnostic_messages();
     if !json {
-        for message in &routing_diagnostics {
-            eprintln!("warning: {message}");
-        }
+        print_warnings(&routing_diagnostics);
     }
     let scope = &routing_settings.harness_scope;
     let rules = CuratedRules::load(&ctx.project_root)?;
@@ -263,9 +263,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             &known,
         );
         if !json {
-            for message in &unknown {
-                eprintln!("warning: {message}");
-            }
+            print_warnings(&unknown);
         }
         routing_diagnostics.extend(unknown);
     }
@@ -376,10 +374,8 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             .unwrap()
         );
     } else {
-        print_warning(&outcome);
-        for diagnostic in &diagnostics {
-            eprintln!("warning: {diagnostic}");
-        }
+        print_cache_warning(&outcome);
+        print_warnings(&diagnostics);
         let via_width = rows
             .iter()
             .filter_map(|row| row["via"].as_str().map(str::len))
@@ -531,12 +527,18 @@ fn curated_text(row: &serde_json::Value) -> String {
 }
 
 fn warning(outcome: &models::RefreshOutcome) -> Option<String> {
-    models::refresh_warning(outcome)
+    models::refresh_diagnostic(outcome).map(|diagnostic| diagnostic.message)
 }
-fn print_warning(outcome: &models::RefreshOutcome) {
-    if let Some(value) = warning(outcome) {
-        eprintln!("warning: {value}");
-    }
+fn print_cache_warning(outcome: &models::RefreshOutcome) {
+    let shown: Vec<Diagnostic> = models::refresh_diagnostic(outcome).into_iter().collect();
+    output::print_diagnostics(&shown, false);
+}
+fn print_warnings(messages: &[String]) {
+    let diagnostics: Vec<Diagnostic> = messages
+        .iter()
+        .map(|message| Diagnostic::warning("routing-settings", message.as_str()))
+        .collect();
+    output::print_diagnostics(&diagnostics, false);
 }
 fn cost(value: Option<f64>) -> String {
     value

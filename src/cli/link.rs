@@ -4,7 +4,7 @@
 //! content from `.mars/` into that target.
 //! Use `mars unlink <target>` to remove a target.
 
-use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
+use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::error::MarsError;
 use crate::lock::{ItemId, LockFile};
 use crate::surface_ownership::CollisionAdoptHint;
@@ -51,9 +51,10 @@ fn link_target(
     }
 
     if !json && !super::is_recognized_target(target_name) {
-        output::print_warn(&format!(
-            "`{target_name}` is not a recognized tool directory — managing anyway"
-        ));
+        output::warn(
+            "target-unrecognized",
+            format!("`{target_name}` is not a recognized tool directory — managing anyway"),
+        );
     }
 
     let mars_dir = ctx.project_root.join(".mars");
@@ -100,18 +101,18 @@ fn link_target(
 
     let filtered_outcomes;
     let orphan_preserve_paths;
-    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy {
-        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy.launched {
+        crate::compiler::AgentSurfaceMode::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
             (&filtered_outcomes, None)
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(spec) => {
+        crate::compiler::AgentSurfaceMode::EmitSelective(spec) => {
             orphan_preserve_paths =
                 crate::compiler::selective_native_orphan_preserve_paths(&lock, spec);
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&outcomes);
             (&filtered_outcomes, Some(&orphan_preserve_paths))
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => (&outcomes, None),
+        crate::compiler::AgentSurfaceMode::EmitAll => (&outcomes, None),
     };
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock: &lock,
@@ -128,9 +129,7 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    if let Some(diagnostic) = deprecated_agents_target_diagnostic(target_name) {
-        diagnostics.push(diagnostic);
-    }
+    diagnostics.extend(crate::config::targets::target_advisories(&runtime_targets));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
@@ -176,6 +175,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
+        config.settings.managed_root = None;
         config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;
     }
@@ -194,9 +194,7 @@ fn link_target(
             "managed target `{target_name}` (synced {}, removed {})",
             outcome.items_synced, outcome.items_removed
         ));
-        for diagnostic in diagnostics {
-            output::print_warn(&diagnostic.to_string());
-        }
+        output::print_diagnostics(&diagnostics, false);
     }
 
     Ok(0)
@@ -230,19 +228,6 @@ fn ensure_target_list_contains(targets: &mut Vec<String>, target_name: &str) {
     if !targets.iter().any(|target| target == target_name) {
         targets.push(target_name.to_string());
     }
-}
-
-fn deprecated_agents_target_diagnostic(target_name: &str) -> Option<Diagnostic> {
-    (target_name == ".agents").then(|| Diagnostic {
-        level: DiagnosticLevel::Warning,
-        code: "deprecated-agents-target".into(),
-        message: format!(
-            "`.agents` is a deprecated link target. Run `{}` to remove it. Skills are now emitted to native harness dirs automatically.",
-            managed_cmd("mars unlink .agents"),
-        ),
-        context: Some("link target".to_string()),
-        category: Some(DiagnosticCategory::Compatibility),
-    })
 }
 
 fn lock_items_as_sync_outcomes(lock: &LockFile) -> Vec<ActionOutcome> {

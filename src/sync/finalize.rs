@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 
 use crate::diagnostic::DiagnosticCollector;
@@ -9,7 +10,7 @@ use crate::error::MarsError;
 use crate::lock::LockFile;
 use crate::sync::kept_hooks;
 use crate::sync::{SyncReport, SyncRequest, SyncedState, recovery};
-use crate::types::MarsContext;
+use crate::types::{MarsContext, SourceName};
 
 pub(crate) fn finalize(
     ctx: &MarsContext,
@@ -78,14 +79,25 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
+        new_lock.finish(unplaced_hook_records(
+            &state.applied.planned.targeted,
+            &crate::config::targets::managed_targets(
+                &state
+                    .applied
+                    .planned
+                    .targeted
+                    .resolved
+                    .loaded
+                    .effective
+                    .settings,
+            ),
+        )?);
+        diag.settle(old_lock, &new_lock);
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
     }
 
-    for warning in &state.applied.planned.targeted.warnings {
-        diag.warn(warning.code(), warning.message());
-    }
     let dependency_changes = state
         .applied
         .planned
@@ -122,7 +134,7 @@ pub(crate) fn finalize(
         native_emitted,
         native_removed,
         hook_files_rewritten: state.rewritten_hook_files,
-        mcp_files_changed: state.mcp_files_changed,
+        config_files_changed: state.config_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
     })
@@ -152,6 +164,34 @@ fn record_hook_source_paths(
             locked.source_path = source_path;
         }
     }
+}
+
+/// A hook on a target that takes none of it has no output to hang an item on. Its record has
+/// none either, and `LockFile::finish` keeps it: the next sync tells a new or changed hook, or
+/// a new target, from a loss it has already reported by this record.
+fn unplaced_hook_records(
+    targeted: &crate::sync::TargetedState,
+    managed_targets: &[String],
+) -> Result<IndexMap<String, crate::lock::LockedItemV2>, MarsError> {
+    let graph = &targeted.resolved.graph;
+    targeted
+        .target
+        .unplaced_hook_losses(managed_targets)
+        .map(|(hook, target)| {
+            let source = SourceName::from(hook.source_name.as_str());
+            let item = crate::lock::LockedItemV2 {
+                source_path: graph.nodes.get(&source).and_then(|node| {
+                    kept_hooks::lock_source_path(&node.rooted_ref.package_root, &hook.hook_dir)
+                }),
+                source,
+                kind: ItemKind::Hook,
+                version: None,
+                source_checksum: crate::sync::target::hook_checksum(hook)?,
+                outputs: Vec::new(),
+            };
+            Ok((crate::lock::unplaced_hook_key(&hook.def.name, target), item))
+        })
+        .collect()
 }
 
 fn retry_tombstone_removals(

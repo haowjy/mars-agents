@@ -1,14 +1,16 @@
 //! Hook preflight: read, validate and render every selected hook once, before any mutation.
 //! Compile reuses the result.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
 use crate::diagnostic::DiagnosticCollector;
+use crate::lock::RecordRef;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
-use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetAdapter};
+use crate::target::plugin::HOOK_ENTRY_KIND;
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetSpec};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
 use mars_schema::hooks::targets::Profile;
@@ -33,69 +35,108 @@ pub(crate) fn preflight_config_entries(
 ) -> Result<RenderedHooks, crate::error::MarsError> {
     use crate::compiler::hooks::load_output;
     use crate::error::{ConfigError, MarsError};
-    use crate::target::TargetRegistry;
     use mars_schema::hooks::Tokens;
 
     let resolved = &targeted.resolved;
-    let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     let mut rendered = HashMap::new();
     let mut reported: HashMap<(String, String), Vec<Skip>> = HashMap::new();
-    // Targets whose MCP file / hook files this sync reads: those the old lock
-    // has records on, and those with something selected.
-    let mut mcp_targets: BTreeSet<String> = BTreeSet::new();
+    // Targets whose keyed files and hook files this sync reads: those the old lock has records
+    // on, those with something selected, and a managed target's fixed entries.
+    let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
+    let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
-    for (target, records) in &resolved.loaded.old_lock.config_entries {
-        if records
-            .keys()
-            .any(|key| key.starts_with(MCP_KIND.key_prefix))
+    for target in &managed {
+        for (kind, _) in crate::target::spec(target)
+            .into_iter()
+            .flat_map(|spec| spec.fixed_entries(&ctx.project_root))
         {
-            mcp_targets.insert(target.clone());
+            keyed_touched
+                .entry(target.clone())
+                .or_default()
+                .insert(kind.key_prefix);
+        }
+    }
+    for (target, records) in &resolved.loaded.old_lock.config_entries {
+        for (kind, _) in crate::target::spec(target)
+            .into_iter()
+            .flat_map(|spec| spec.keyed_sections())
+        {
+            if records.keys().any(|key| key.starts_with(kind.key_prefix)) {
+                keyed_touched
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(kind.key_prefix);
+            }
         }
         if records.keys().any(|key| key.starts_with(HOOK_KEY_PREFIX)) {
             hook_targets.insert(target.clone());
         }
     }
-    hook_targets.extend(
-        targeted
-            .target
-            .selected_hooks()
-            .map(|(dir, _)| dir.target().to_string()),
-    );
-    mcp_targets.extend(targeted.target.selected_mcp_targets().map(str::to_string));
-    for target_name in mcp_targets.union(&hook_targets) {
-        let touches_mcp = mcp_targets.contains(target_name);
-        let touches_hooks = hook_targets.contains(target_name);
+    for target in targeted.target.selected_mcp_targets() {
+        keyed_touched
+            .entry(target.to_string())
+            .or_default()
+            .insert(MCP_KIND.key_prefix);
+    }
+    for (dir, _) in targeted.target.selected_hooks() {
+        let target = dir.target().to_string();
+        if mars_schema::hooks::targets::target(&target).is_some_and(|t| t.keyed_path().is_some()) {
+            keyed_touched
+                .entry(target.clone())
+                .or_default()
+                .insert(HOOK_ENTRY_KIND.key_prefix);
+        }
+        hook_targets.insert(target);
+    }
+    for target_name in keyed_touched
+        .keys()
+        .chain(hook_targets.iter())
+        .collect::<BTreeSet<_>>()
+    {
         let target_dir = ctx.project_root.join(target_name);
         if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
             errors.push(error);
             continue;
         }
-        if let Some(adapter) = registry.get(target_name) {
-            if touches_mcp && let Some(file) = adapter.mcp_file() {
-                let location = &file.at;
-                let path = ctx.project_root.join(location.path);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                } else if let Err(error) = crate::target::keyed_entries::validate(location, &path) {
-                    errors.push(format!(
-                        "target `{target_name}` reads MCP servers from `{}`: {}",
-                        location.path,
-                        error_message(error)
-                    ));
-                }
+        let Some(spec) = crate::target::spec(target_name) else {
+            continue;
+        };
+        for (kind, location) in spec.keyed_sections() {
+            if !keyed_touched
+                .get(target_name)
+                .is_some_and(|kinds| kinds.contains(kind.key_prefix))
+            {
+                continue;
             }
-            if touches_hooks && let Some(merge) = super::merge_file(target_name) {
-                let path = target_dir.join(merge.file);
-                if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
-                    errors.push(error);
-                }
-                if let Err(error) = crate::target::hook_file::validate(&path) {
-                    errors.push(error_message(error));
-                }
+            let path = ctx.project_root.join(location.path);
+            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                errors.push(error);
+            } else if let Err(error) = crate::target::keyed_entries::validate(&location, &path) {
+                errors.push(format!(
+                    "target `{target_name}` reads {} from `{}`: {}",
+                    kind.plural,
+                    location.path,
+                    error_message(error)
+                ));
+            }
+        }
+        if hook_targets.contains(target_name)
+            && let Some(merge) = super::merge_file(target_name)
+        {
+            let path = target_dir.join(merge.file);
+            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+                errors.push(error);
+            }
+            if let Err(error) = crate::target::hook_file::validate(&path) {
+                errors.push(error_message(error));
             }
         }
     }
+    // A translated hook's command runs the `mars` that wrote it, by absolute path.
+    let mars_exe = invoked_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     for (dir, item) in targeted.target.selected_hooks() {
         let target_name = dir.target();
         let Some(target) = mars_schema::hooks::targets::target(target_name) else {
@@ -105,10 +146,17 @@ pub(crate) fn preflight_config_entries(
             ));
             continue;
         };
-        let installed = installed_token(ctx, dir);
+        // A keyed hook's commands run from the plugin directory, so its directory is the
+        // relative path there and the file stays valid wherever the target is.
+        let installed = if target.keyed_path().is_some() {
+            dir.native()
+        } else {
+            installed_token(ctx, dir)
+        };
         let tokens = Tokens {
             hook_dir: &installed,
             hook_target: target_name,
+            mars_exe: &mars_exe,
             ..Default::default()
         };
         let output = match load_output(item, target, &tokens) {
@@ -119,12 +167,33 @@ pub(crate) fn preflight_config_entries(
             }
         };
         match &output {
-            HookOutput::Merge(merged) => {
+            HookOutput::Merge(merged) | HookOutput::Keyed(merged) => {
+                for file in &merged.files {
+                    let destination = ctx.project_root.join(target_name).join(&file.path);
+                    if let Err(error) =
+                        validate_destination_path(&ctx.project_root, &destination, false)
+                    {
+                        errors.push(error);
+                    }
+                }
+                for limit in &merged.answer_limits {
+                    diag.hold_warning(
+                        RecordRef::Item(dir.lock_key()),
+                        "hook-answer-unsupported",
+                        format!(
+                            "hook `{}` from `{}`: `{target_name}` `{}`: {}",
+                            item.def.name,
+                            item.source_name,
+                            limit.event.as_deref().unwrap_or(""),
+                            limit.reason,
+                        ),
+                    );
+                }
                 for event in &merged.unchecked_events {
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.warn_advisory("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(RecordRef::Item(dir.lock_key()), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -158,7 +227,8 @@ pub(crate) fn preflight_config_entries(
                     );
                 }
                 for limit in &files.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        RecordRef::Item(dir.lock_key()),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -203,9 +273,9 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took. The project's own hooks warn, each skip once. A dependency's
-/// hooks are the consumer's to accept, not fix: one summary line per sync.
+/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target. A
+/// line concerns the hook's item on that target, or its empty record there when the target took
+/// none of it (`TargetState::unplaced_hook_losses`).
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -213,7 +283,6 @@ fn report_skips(
     diag: &mut DiagnosticCollector,
 ) {
     let mut seen = BTreeSet::new();
-    let mut from_dependencies = Vec::new();
     for item in targeted.target.accepted_hooks() {
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
@@ -226,32 +295,24 @@ fn report_skips(
                 continue;
             }
             let lines: Vec<String> = skips.iter().map(skip_text).collect();
-            match item.origin {
-                Origin::Local => {
-                    for line in lines {
-                        diag.warn_advisory(
-                            "hook-event-skipped",
-                            format!("hook `{}`: `{target}` {line}", item.def.name),
-                        );
-                    }
-                }
-                Origin::Dependency => from_dependencies.push(format!(
-                    "{}/{} on `{target}` ({} left out)",
-                    item.source_name,
+            let from = match item.origin {
+                Origin::Local => String::new(),
+                Origin::Dependency => format!(" from `{}`", item.source_name),
+            };
+            let record = RecordRef::Item(targeted.target.placed_hook(item, target).map_or_else(
+                || crate::lock::unplaced_hook_key(&item.def.name, target),
+                PackageDir::lock_key,
+            ));
+            diag.hold_warning(
+                record,
+                "hook-event-skipped",
+                format!(
+                    "hook `{}`{from}: `{target}` {}",
                     item.def.name,
-                    lines.len()
-                )),
-            }
+                    lines.join("; ")
+                ),
+            );
         }
-    }
-    if !from_dependencies.is_empty() {
-        diag.info(
-            "hook-event-skipped",
-            format!(
-                "some events or handlers of dependency hooks have no counterpart on a managed target: {}",
-                from_dependencies.join(", ")
-            ),
-        );
     }
 }
 
@@ -271,11 +332,13 @@ fn hook_key(item: &ParsedHookItem) -> String {
 /// tree is shared by every harness that reads it.
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
-    adapter: &dyn TargetAdapter,
+    target: &TargetSpec,
     shared: Option<&Profile>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
-    let Some(target) = mars_schema::hooks::targets::target(adapter.name()).filter(|t| !t.is_file())
+    let name = target.name();
+    let Some(target) =
+        mars_schema::hooks::targets::target(&name).filter(|t| t.merge_file().is_some())
     else {
         return Vec::new();
     };
@@ -295,14 +358,14 @@ pub(crate) fn lower_hook_entries(
                             "hook `{}` from `{}`: the `{}` plugin tree {}",
                             item.def.name,
                             item.source_name,
-                            adapter.name().trim_start_matches('.'),
+                            name.trim_start_matches('.'),
                             skip_text(skip)
                         ),
                     );
                 }
                 outputs.push((*item, output));
             }
-            Ok(HookOutput::File(_)) => {}
+            Ok(HookOutput::File(_) | HookOutput::Keyed(_)) => {}
             Err(error) => crate::compiler::hooks::report_native_hook(item, &error, diag),
         }
     }
@@ -378,4 +441,23 @@ fn validate_destination_path(
         }
     }
     Ok(())
+}
+
+/// The path this `mars` was invoked by, when that is a link to the running binary: a Homebrew
+/// install links a stable `bin/mars` to a versioned cellar, and `current_exe` resolves the
+/// link, so its answer goes stale at the next upgrade. An absolute `argv[0]`, or the `PATH`
+/// entry a bare name resolves to, stays unresolved; anything else is `current_exe`.
+fn invoked_exe() -> Option<std::path::PathBuf> {
+    let real = std::env::current_exe().ok()?;
+    let argv0 = std::path::PathBuf::from(std::env::args_os().next()?);
+    let invoked = if argv0.is_absolute() {
+        Some(argv0)
+    } else if argv0.components().count() == 1 {
+        which::which(&argv0).ok().filter(|path| path.is_absolute())
+    } else {
+        None
+    };
+    invoked
+        .filter(|path| std::fs::canonicalize(path).ok() == std::fs::canonicalize(&real).ok())
+        .or(Some(real))
 }

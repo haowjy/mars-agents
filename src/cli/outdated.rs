@@ -104,7 +104,10 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             None
         };
         if let Some(reason) = skipped {
-            output::print_warn(&format!("`{name}` {reason}; its versions are not checked"));
+            output::warn(
+                "outdated-unchecked",
+                format!("`{name}` {reason}; its versions are not checked"),
+            );
             entries.push(unchecked("?", "?"));
             continue;
         }
@@ -114,9 +117,10 @@ pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result
             Ok(Some(checked)) => (checked.available, checked.candidate),
             Ok(None) => continue,
             Err(error) => {
-                output::print_warn(&format!(
-                    "could not check newer versions of `{name}`: {error}"
-                ));
+                output::warn(
+                    "outdated-unchecked",
+                    format!("could not check newer versions of `{name}`: {error}"),
+                );
                 entries.push(unchecked("?", "?"));
                 continue;
             }

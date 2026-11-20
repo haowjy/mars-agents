@@ -9,6 +9,7 @@ use serde_json::Number;
 use super::Tokens;
 use super::portable::{Handler, MatcherGroup, NO_COMMAND, PortableHooks};
 use super::targets::{self, Profile, Rules};
+use crate::harness::HarnessId;
 use crate::ordered::OrderedValue;
 
 /// Something a target does not run. `event` is `None` when the whole target is skipped.
@@ -39,6 +40,12 @@ pub enum Output {
     },
     /// The text of the one file generated from the table; `None` when nothing is generated.
     File { text: Option<String> },
+    /// Finished entries per native event for a keyed hook file, and the data file the
+    /// entries' runner reads; `None` when nothing renders.
+    Keyed {
+        events: BTreeMap<String, Vec<OrderedValue>>,
+        data_file: Option<String>,
+    },
 }
 
 impl Rendered {
@@ -52,7 +59,7 @@ impl Rendered {
     /// Whether nothing was rendered.
     pub fn is_empty(&self) -> bool {
         match &self.output {
-            Output::Merge { events, .. } => events.is_empty(),
+            Output::Merge { events, .. } | Output::Keyed { events, .. } => events.is_empty(),
             Output::File { text } => text.is_none(),
         }
     }
@@ -61,7 +68,7 @@ impl Rendered {
     pub fn events(&self) -> &BTreeMap<String, Vec<OrderedValue>> {
         static NONE: BTreeMap<String, Vec<OrderedValue>> = BTreeMap::new();
         match &self.output {
-            Output::Merge { events, .. } => events,
+            Output::Merge { events, .. } | Output::Keyed { events, .. } => events,
             Output::File { .. } => &NONE,
         }
     }
@@ -74,7 +81,10 @@ impl PortableHooks {
         // reports it as skipped.
         let mut events: Vec<_> = self.events().collect();
         let mut unknown = Vec::new();
-        if matches!(profile.rules, Rules::Codex | Rules::TypeScript(_)) {
+        if matches!(
+            profile.rules,
+            Rules::Codex | Rules::TypeScript(_) | Rules::Translated(_)
+        ) {
             events.retain(|(event, _)| {
                 let known = targets::claude_event(event).is_some();
                 if !known {
@@ -103,6 +113,9 @@ impl PortableHooks {
             },
             Rules::TypeScript(harness) => {
                 super::typescript::render(&events, profile, harness, tokens)
+            }
+            Rules::Translated(translation) => {
+                super::agy::render(&events, profile, translation, tokens, cfg!(windows))
             }
         };
         if !unknown.is_empty() {
@@ -177,7 +190,10 @@ fn render_codex(table: &[(&str, &[MatcherGroup])], profile: &Profile) -> Rendere
     let mut rendered_events = BTreeMap::new();
     for &(event, groups) in table {
         let Some(row) = profile.event(event) else {
-            rendered.skip(event, "Codex has no such event".into());
+            rendered.skip(
+                event,
+                format!("{} has no such event", HarnessId::Codex.display_name()),
+            );
             continue;
         };
         let matched = row.matcher.is_some();
@@ -225,7 +241,6 @@ fn render_codex(table: &[(&str, &[MatcherGroup])], profile: &Profile) -> Rendere
 /// backreferences although Claude's JavaScript regex does. Codex reads the matcher only on
 /// the events that have a matcher field (`matcher_pattern_for_event`, events/common.rs).
 fn codex_matcher(pattern: &str) -> Result<(), String> {
-    use regex_syntax::Error;
     if pattern.is_empty()
         || pattern == "*"
         || pattern
@@ -234,6 +249,13 @@ fn codex_matcher(pattern: &str) -> Result<(), String> {
     {
         return Ok(());
     }
+    regex_problem(pattern)
+}
+
+/// Why a Rust `regex` cannot compile `pattern`, which Claude's JavaScript regex may: no
+/// look-around, no backreferences.
+pub(super) fn regex_problem(pattern: &str) -> Result<(), String> {
+    use regex_syntax::Error;
     regex_syntax::Parser::new()
         .parse(pattern)
         .map(drop)

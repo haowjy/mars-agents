@@ -81,7 +81,7 @@ export type Effort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | 
 export type Sandbox = "default" | "read-only" | "workspace-write" | "danger-full-access";
 export type Approval = "default" | "auto" | "confirm" | "never";
 export type Network = "allow" | "deny" | "allowlist";
-export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor";
+export type Harness = "claude" | "codex" | "pi" | "opencode" | "cursor" | "agy";
 
 export interface ToolRule {
   /** A canonical capability, `*`, `mcp`, or the author's spelling of an unknown name. */
@@ -228,7 +228,6 @@ export interface SkillOverlay {
 
 /** `[settings]`, in the spellings Mars writes back; omitted when the file has none. Keys unset in the file are omitted. */
 export interface Settings {
-  managed_root?: string;
   targets?: string[];
   models_cache_ttl_hours?: number;
   min_mars_version?: string;

@@ -24,16 +24,20 @@ pub enum LoweredField {
     Tools,
     Effort,
     Mode,
+    /// `agy`'s `tools`: an allowlist, every known tool when the policy does not restrict, and no
+    /// deny list.
+    AllowlistOrAll,
 }
 
 impl LoweredField {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Identity,
         Self::Model,
         Self::Skills,
         Self::Tools,
         Self::Effort,
         Self::Mode,
+        Self::AllowlistOrAll,
     ];
 
     /// Frontmatter keys this field lowers, whether or not the profile has a value for them.
@@ -45,6 +49,7 @@ impl LoweredField {
             Self::Tools => &["tools", "disallowed-tools"],
             Self::Effort => &["effort"],
             Self::Mode => &["mode"],
+            Self::AllowlistOrAll => &["tools"],
         }
     }
 

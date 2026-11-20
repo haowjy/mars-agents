@@ -238,7 +238,7 @@ fn finish(
     // slugs two packages install (`mars check`, through `mars_schema::check`).
     if options.root.is_none() {
         for diagnostic in &selection.diagnostics {
-            diag.schema(diagnostic, "selection", false);
+            diag.schema(diagnostic, "selection", crate::diagnostic::Owner::Own);
         }
         if let Some(missing) = selection.missing_skills.first() {
             return Err(ResolutionError::SkillNotFound {

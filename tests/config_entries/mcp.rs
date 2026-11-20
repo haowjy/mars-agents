@@ -237,43 +237,6 @@ targets = [".claude"]
 }
 
 #[test]
-fn unlink_clears_matching_managed_root() {
-    let dir = TempDir::new().unwrap();
-    let project = dir.child("project");
-    project.create_dir_all().unwrap();
-    project.child(".agents").create_dir_all().unwrap();
-    project
-        .child("mars.toml")
-        .write_str(
-            r#"
-[settings]
-managed_root = ".agents"
-"#,
-        )
-        .unwrap();
-
-    mars()
-        .args([
-            "unlink",
-            ".agents",
-            "--root",
-            project.path().to_str().unwrap(),
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unlinked `.agents`"));
-
-    let config: Value =
-        toml::from_str(&fs::read_to_string(project.child("mars.toml").path()).unwrap()).unwrap();
-    assert!(
-        config["settings"]
-            .as_table()
-            .is_some_and(|settings| !settings.contains_key("managed_root"))
-    );
-    assert!(!project.child(".agents").exists());
-}
-
-#[test]
 fn unlink_removes_only_owned_outputs_and_preserves_unmanaged_siblings() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
@@ -404,7 +367,7 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
 }
 
 #[test]
-fn link_agents_prints_single_deprecation_warning() {
+fn link_agents_notes_the_deprecation_once_when_asked() {
     let dir = TempDir::new().unwrap();
     let project = dir.child("project");
     project.create_dir_all().unwrap();
@@ -422,7 +385,14 @@ fn link_agents_prints_single_deprecation_warning() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("deprecated link target").count(1));
+        .stdout(predicate::str::contains("deprecated link target").not())
+        .stderr(predicate::str::contains("deprecated link target").not());
+
+    // Nothing is lost by it, so only a command asked for detail says so.
+    mars()
+        .args(["validate", "--root", project.path().to_str().unwrap()])
+        .assert()
+        .stderr(predicate::str::contains("deprecated link target").count(1));
 }
 
 #[test]

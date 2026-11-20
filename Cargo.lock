@@ -1326,6 +1326,7 @@ dependencies = [
  "mars-schema",
  "pathdiff",
  "predicates",
+ "regex",
  "rustversion",
  "semver",
  "serde",

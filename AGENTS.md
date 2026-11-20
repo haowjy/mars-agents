@@ -1,7 +1,7 @@
 # mars-agents
 
 Mars installs agent profiles and skills from git sources into each harness's own
-directories (`.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`), through a canonical
+directories (`.claude/`, `.codex/`, `.opencode/`, `.cursor/`, `.pi/`, `.agy/`), through a canonical
 store in `.mars/`.
 
 ## Who It's For
@@ -40,6 +40,28 @@ they ignore it, and the code that finds the problem states it.
 - `Info`: nothing is lost, and it may be intended. Printed only when asked: `mars validate`,
   `mars check` and `--verbose` ask; a default `mars sync` and a launch bundle do not.
 
+Two things make a problem a `Warning`, and either is enough. **Behaviour differs:** what is
+installed does less than the package declares (a restriction a target cannot carry, a hook or
+item Mars could not install, an MCP key it cannot set, an agent's missing skill). Whoever wrote
+the item, a loss is a `Warning`: the person running agents is the one who gets the behaviour, so
+a dependency's loss is not `Info`. **The user can act:** the project's own item that is wrong but
+changes nothing yet. Only when behaviour is unchanged does the owner decide (`Owner` in
+`diagnostic.rs`): schema advice about a dependency's item is `Info` to the installer, because only
+its author can fix it, and a `Warning` to the author in `mars check` and `mars validate`.
+
+A loss is news once: it is reported by the sync that makes the lock record it concerns new or
+different, and an unchanged sync is silent. Each loss names its record (`lock::RecordRef`: an
+item, an output, a config entry, or every item of a source) when it is found, and
+`DiagnosticCollector::settle` decides all of them in `finalize`, by comparing the lock the sync
+read with the one it wrote: there is no other release rule. `--verbose`, `mars check` and
+`mars validate` list every loss each time. A hook that a managed target takes none of writes
+nothing there; its record is the lock item `hook/<name>@<target>` with no outputs, which
+`LockFile::finish` keeps because the sync resolved it. A loss therefore concerns one (hook,
+target) record, and a target linked later is news for itself only. A sync that fails before it writes the lock has changed no
+record, so the next sync reports the losses it held. A text meant for an installer names the installer's own fix (`mars upgrade
+<source>`, or set the variable). One cause is one line: findings that arise once per item share a
+`warn_each` group, and what follows from an item that was not installed is not reported again.
+
 `Diagnostic::shown` and `output::print_diagnostics` are the whole policy: no reader prints, and
 no reader decides whether its problem is shown. Reducing what users see means changing a site
 from `Warning` to `Info`, or deleting it.
@@ -68,8 +90,9 @@ key. The one other place that names a key from outside is a translator from anot
 - No VCS dependency: find the project by walking `Path::parent()`, not by `.git`.
 - The builtin model aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) appear
   only when neither packages nor the project's config provide any.
-- `.claude`, `.codex` and `.opencode` are first-class targets. `.cursor` is unmaintained:
-  it keeps working but isn't tested or extended. `.pi` is still being designed.
+- `.claude`, `.codex` and `.opencode` are first-class targets. `.cursor` is deprecated:
+  it keeps working but isn't tested or extended, a sync warns while it is a target
+  (`deprecated-cursor-target`), and it goes in the minor after 0.37.0. `.pi` is still being designed. `.agy` (Agy) is a plugin directory that `.agents/plugins.json` points at, not a copy of `.mars/`: its files are written by key (`src/target/AGENTS.md`).
 - Comments only for what the code can't show and a wrong edit would break silently; no
   decision IDs.
 - A state machine's code and its diagram change in the same commit. Every machine, with the

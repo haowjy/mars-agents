@@ -54,26 +54,36 @@ fn print_report(report: &ProvideReport) {
             "provided {}@{} is up to date",
             report.provider, report.version
         )),
-        Status::Busy => output::print_warnings(&[format!(
-            "another process holds `.mars/sync.lock`; {}@{} was not refreshed",
-            report.provider, report.version
-        )]),
-        Status::SyncPending => output::print_warnings(&[format!(
-            "an interrupted `{}` left `.mars/pending-canonical.json`; run `{}` to recover before refreshing {}@{}",
-            crate::types::managed_cmd("mars sync"),
-            crate::types::managed_cmd("mars repair"),
-            report.provider,
-            report.version
-        )]),
+        Status::Busy => output::warn(
+            "provide-busy",
+            format!(
+                "another process holds `.mars/sync.lock`; {}@{} was not refreshed",
+                report.provider, report.version
+            ),
+        ),
+        Status::SyncPending => output::warn(
+            "provide-sync-pending",
+            format!(
+                "an interrupted `{}` left `.mars/pending-canonical.json`; run `{}` to recover before refreshing {}@{}",
+                crate::types::managed_cmd("mars sync"),
+                crate::types::managed_cmd("mars repair"),
+                report.provider,
+                report.version
+            ),
+        ),
         Status::Applied => output::print_info(&applied_summary(report)),
     }
     // Shadowed names and collisions describe the disk, not this run: report them while they last,
     // so a host that fixed the cause sees the signal until the next run installs the skill.
-    output::print_warnings(&leftover_warnings(report));
+    for message in leftover_warnings(report) {
+        output::warn("provided-leftover", message);
+    }
     // Source diagnostics describe the bundle; a launch that wrote nothing must stay quiet. JSON
     // keeps them on every status.
     if report.status == Status::Applied {
-        output::print_warnings(&report.warnings);
+        for message in &report.warnings {
+            output::warn("provided-source", message.as_str());
+        }
     }
 }
 

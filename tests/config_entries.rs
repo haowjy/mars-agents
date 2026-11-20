@@ -1,5 +1,7 @@
 mod common;
 
+#[path = "config_entries/agy.rs"]
+mod agy;
 #[path = "config_entries/file_hooks.rs"]
 mod file_hooks;
 #[path = "config_entries/kept_hooks.rs"]

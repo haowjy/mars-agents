@@ -186,6 +186,123 @@
     }
   ],
   "natives": {
+    "agy": {
+      "agent": {
+        "kind": "no-switch",
+        "note": "agy's subagent tool (`invoke_subagent`) is not a verified `tools` name"
+      },
+      "ask_user": {
+        "kind": "absent"
+      },
+      "bash": {
+        "kind": "tools",
+        "tools": [
+          "run_command"
+        ]
+      },
+      "cron": {
+        "kind": "absent"
+      },
+      "edit": {
+        "kind": "tools",
+        "tools": [
+          "replace_file_content",
+          "multi_replace_file_content",
+          "write_to_file"
+        ]
+      },
+      "glob": {
+        "kind": "tools",
+        "tools": [
+          "find_by_name"
+        ]
+      },
+      "grep": {
+        "kind": "tools",
+        "tools": [
+          "grep_search"
+        ]
+      },
+      "image": {
+        "kind": "absent"
+      },
+      "ls": {
+        "kind": "tools",
+        "tools": [
+          "list_dir"
+        ]
+      },
+      "lsp": {
+        "kind": "absent"
+      },
+      "monitor": {
+        "kind": "absent"
+      },
+      "notebook": {
+        "kind": "absent"
+      },
+      "notifications": {
+        "kind": "absent"
+      },
+      "plan_mode": {
+        "kind": "absent"
+      },
+      "read": {
+        "kind": "tools",
+        "tools": [
+          "read_file"
+        ]
+      },
+      "remote_trigger": {
+        "kind": "absent"
+      },
+      "schedule_wakeup": {
+        "kind": "absent"
+      },
+      "send_user_file": {
+        "kind": "absent"
+      },
+      "skill": {
+        "kind": "no-switch",
+        "note": "agy loads skills by reading files; no switch"
+      },
+      "task": {
+        "kind": "absent"
+      },
+      "tool_search": {
+        "kind": "absent"
+      },
+      "web": {
+        "kind": "tools",
+        "tools": [
+          "search_web"
+        ]
+      },
+      "web_fetch": {
+        "kind": "absent"
+      },
+      "web_search": {
+        "kind": "tools",
+        "tools": [
+          "search_web"
+        ]
+      },
+      "work": {
+        "kind": "absent"
+      },
+      "workflow": {
+        "kind": "absent"
+      },
+      "worktree": {
+        "kind": "absent"
+      },
+      "write": {
+        "kind": "tools",
+        "tools": [
+          "write_to_file"
+        ]
+      }
+    },
     "claude": {
       "agent": {
         "kind": "scoped-tools",

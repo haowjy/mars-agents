@@ -28,16 +28,14 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if unset_managed_root(&mut config.settings.managed_root, &target_name) {
-        settings_updated = true;
-        target_was_managed = true;
-    }
+    let (settings, local_settings) = (&mut config.settings, &mut local.settings);
+    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
+    crate::config::targets::retire_managed_root(
+        &mut local_settings.managed_root,
+        &mut local_settings.targets,
+    );
     if unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
-        target_was_managed = true;
-    }
-    if unset_managed_root(&mut local.settings.managed_root, &target_name) {
-        local_updated = true;
         target_was_managed = true;
     }
     if unset_target(&mut local.settings.targets, &target_name) {
@@ -68,7 +66,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if target_was_managed
         && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
     {
-        output::print_warn(&warning);
+        output::warn("recovery-publish", warning);
     }
 
     if json {
@@ -93,17 +91,6 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     Ok(0)
-}
-
-fn unset_managed_root(managed_root: &mut Option<String>, target_name: &str) -> bool {
-    let matches = managed_root
-        .as_deref()
-        .map(crate::config::migrations::link::normalize_link)
-        .is_some_and(|link| link.target == target_name);
-    if matches {
-        *managed_root = None;
-    }
-    matches
 }
 
 fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
@@ -154,7 +141,6 @@ fn remove_owned_target_content(
         .get(target_name)
         .cloned()
         .unwrap_or_default();
-    let registry = crate::target::TargetRegistry::new();
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
     let retention = crate::surface_ownership::retention::RemovalPlan::build(
         &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
@@ -166,36 +152,27 @@ fn remove_owned_target_content(
         },
         &mut diagnostics,
     );
-    let mut keyed_records = std::collections::BTreeMap::new();
-    let mut keyed_removed = Vec::new();
-    for kind in &crate::target::KEYED_KINDS {
-        let reconciled = crate::compiler::config_entries::reconcile_keyed(
-            &registry,
-            &ctx.project_root,
-            target_name,
-            kind,
-            Some(&previous),
-            &[],
-            false,
-            false,
-            &mut diagnostics,
-        );
-        keyed_records.extend(reconciled.records);
-        keyed_removed.extend(reconciled.removed);
-    }
+    let reconciled = crate::compiler::config_entries::reconcile_all_keyed(
+        &ctx.project_root,
+        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
+        &std::collections::BTreeMap::new(),
+        false,
+        false,
+        &mut diagnostics,
+    );
     crate::compiler::config_entries::report_removed(
         retention.removed_keys(),
-        &std::collections::BTreeMap::from([(target_name.to_string(), keyed_removed)]),
+        &reconciled.removed,
         &mut diagnostics,
     );
     lock.config_entries.remove(target_name);
     lock.config_entries
         .extend(retention.into_retained_records());
-    if !keyed_records.is_empty() {
+    for (target, records) in reconciled.records {
         lock.config_entries
-            .entry(target_name.to_string())
+            .entry(target)
             .or_default()
-            .extend(keyed_records);
+            .extend(records);
     }
 
     Ok((removed.len(), diagnostics.drain()))

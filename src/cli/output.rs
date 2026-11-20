@@ -14,12 +14,6 @@ use crate::sync::SyncReport;
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::managed_cmd;
 
-pub fn print_warnings(warnings: &[String]) {
-    for warning in warnings {
-        eprintln!("warning: {warning}");
-    }
-}
-
 /// One row of the `mars agents` / `mars skills` list table.
 pub struct CatalogRow<'a> {
     pub name: &'a str,
@@ -263,7 +257,11 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
-        mcp_files_changed: report.mcp_files_changed.len(),
+        mcp_files_changed: report
+            .config_files_changed
+            .iter()
+            .filter(|(_, _, kind)| *kind == crate::target::mcp_file::MCP_KIND)
+            .count(),
         upgrades_available: report.upgrades.len(),
         upgrades: &report.upgrades,
         dependencies_moved: &report.dependency_moves,
@@ -346,13 +344,18 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(stdout, "{target_root}/{dest_path} (generated hook file)");
     }
 
-    let mcp_files = report.mcp_files_changed.len();
-    for (target_root, file) in &report.mcp_files_changed {
+    let config_files = report.config_files_changed.len();
+    for (target_root, file, kind) in &report.config_files_changed {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = write!(stdout, "  ~ ");
         let _ = stdout.reset();
-        let _ = writeln!(stdout, "{file} (MCP servers, {target_root})");
+        let _ = writeln!(stdout, "{file} ({}, {target_root})", kind.plural);
     }
+
+    // Copies into target directories (`.claude/skills/...`) that no action outcome names, such as
+    // those a newly added target gets.
+    let target_written: usize = report.target_outcomes.iter().map(|o| o.items_synced).sum();
+    let target_removed: usize = report.target_outcomes.iter().map(|o| o.items_removed).sum();
 
     let _ = writeln!(stdout);
     let dry = is_dry_run(report);
@@ -398,12 +401,20 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
         }
     }
-    if mcp_files > 0 {
-        let noun = if mcp_files == 1 { "file" } else { "files" };
+    if target_written > 0 {
+        let noun = if target_written == 1 { "file" } else { "files" };
+        let _ = writeln!(stdout, "  wrote       {target_written} target {noun}");
+    }
+    if target_removed > 0 {
+        let noun = if target_removed == 1 { "file" } else { "files" };
+        let _ = writeln!(stdout, "  removed     {target_removed} target {noun}");
+    }
+    if config_files > 0 {
+        let noun = if config_files == 1 { "file" } else { "files" };
         if dry {
-            let _ = writeln!(stdout, "  would update {mcp_files} MCP config {noun}");
+            let _ = writeln!(stdout, "  would update {config_files} config {noun}");
         } else {
-            let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+            let _ = writeln!(stdout, "  updated     {config_files} config {noun}");
         }
     }
     for step in &report.dependency_moves {
@@ -421,7 +432,9 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
-        && mcp_files == 0
+        && config_files == 0
+        && target_written == 0
+        && target_removed == 0
         && report.dependency_moves.is_empty()
         && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
@@ -543,47 +556,63 @@ fn print_list_human(entries: &[ListEntry]) {
     }
 }
 
-pub fn print_doctor(errors: &[String], warnings: &[String], json: bool) {
+pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
+    use crate::diagnostic::DiagnosticLevel;
+    let of = |level: DiagnosticLevel| {
+        diagnostics
+            .iter()
+            .filter(move |diagnostic| diagnostic.level == level)
+    };
+    let errors = of(DiagnosticLevel::Error).count();
+    let warnings = of(DiagnosticLevel::Warning).count();
     if json {
+        // `errors` and `warnings` keep the shape older builds printed; `diagnostics` adds the code.
         #[derive(Serialize)]
-        struct DoctorReport {
+        struct DoctorReport<'a> {
             ok: bool,
-            errors: Vec<String>,
-            warnings: Vec<String>,
+            errors: Vec<&'a str>,
+            warnings: Vec<&'a str>,
+            diagnostics: &'a [Diagnostic],
         }
+        let messages = |level| of(level).map(|d| d.message.as_str()).collect();
         let report = DoctorReport {
-            ok: errors.is_empty(),
-            errors: errors.to_vec(),
-            warnings: warnings.to_vec(),
+            ok: errors == 0,
+            errors: messages(DiagnosticLevel::Error),
+            warnings: messages(DiagnosticLevel::Warning),
+            diagnostics,
         };
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
+    } else if diagnostics.is_empty() {
+        let mut stdout = stdout_stream();
+        let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
+        let _ = writeln!(stdout, "  all checks passed");
+        let _ = stdout.reset();
     } else {
         let mut stdout = stdout_stream();
-        if errors.is_empty() && warnings.is_empty() {
-            let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
-            let _ = writeln!(stdout, "  all checks passed");
-            let _ = stdout.reset();
-        } else {
-            for warning in warnings {
-                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
-                let _ = write!(stdout, "  ⚠ ");
+        // Warnings first, then errors, as before; notes last.
+        for level in [
+            DiagnosticLevel::Warning,
+            DiagnosticLevel::Error,
+            DiagnosticLevel::Info,
+        ] {
+            let (color, mark) = match level {
+                DiagnosticLevel::Warning => (Color::Yellow, "⚠"),
+                DiagnosticLevel::Error => (Color::Red, "✗"),
+                DiagnosticLevel::Info => (Color::Cyan, "ℹ"),
+            };
+            for diagnostic in of(level) {
+                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(color)));
+                let _ = write!(stdout, "  {mark} ");
                 let _ = stdout.reset();
-                let _ = writeln!(stdout, "{warning}");
+                let _ = writeln!(stdout, "{}", diagnostic.message);
             }
-
-            for error in errors {
-                let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
-                let _ = write!(stdout, "  ✗ ");
-                let _ = stdout.reset();
-                let _ = writeln!(stdout, "{error}");
-            }
-            let _ = writeln!(stdout);
-            if !warnings.is_empty() {
-                let _ = writeln!(stdout, "  {} warning(s)", warnings.len());
-            }
-            if !errors.is_empty() {
-                let _ = writeln!(stdout, "  {} error(s)", errors.len());
-            }
+        }
+        let _ = writeln!(stdout);
+        if warnings > 0 {
+            let _ = writeln!(stdout, "  {warnings} warning(s)");
+        }
+        if errors > 0 {
+            let _ = writeln!(stdout, "  {errors} error(s)");
         }
     }
 }
@@ -622,6 +651,13 @@ fn write_diagnostics(diagnostics: &[Diagnostic], detail: bool, tagged: bool) {
     }
 }
 
+/// A warning from a command that has no collector of its own: built here, shown by
+/// [`print_diagnostics`] like any other.
+pub fn warn(code: &'static str, message: impl Into<String>) {
+    print_diagnostics(&[Diagnostic::warning(code, message)], false);
+}
+
+/// The closing line of `validate`, which counts warnings it has already listed.
 pub fn print_warn(msg: &str) {
     narrate(Some((Color::Yellow, "⚠")), msg);
 }
@@ -684,7 +720,7 @@ mod tests {
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
-            mcp_files_changed: Vec::new(),
+            config_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
         }

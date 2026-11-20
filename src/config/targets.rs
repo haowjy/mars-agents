@@ -48,7 +48,6 @@ pub enum LinkKind {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LinkSource {
     Targets,
-    ManagedRoot,
     #[default]
     None,
 }
@@ -79,9 +78,7 @@ impl EffectiveLinks {
     pub fn harness_scope(&self) -> HarnessScope {
         match self.source {
             LinkSource::None => HarnessScope::Unrestricted,
-            LinkSource::Targets | LinkSource::ManagedRoot => {
-                HarnessScope::Only(self.linked_harnesses_set())
-            }
+            LinkSource::Targets => HarnessScope::Only(self.linked_harnesses_set()),
         }
     }
 
@@ -125,15 +122,11 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 
     let bare = trimmed.strip_prefix('.').unwrap_or(trimmed);
-    // A link names a harness by its name or by its target directory.
-    let harness = mars_schema::harness::parse(bare)
-        .or_else(|| crate::harness::registry::harness_for_target(&format!(".{bare}")));
+    let harness = mars_schema::harness::parse(bare);
     if let Some(harness) = harness {
         return NormalizedLink {
             raw: raw.to_string(),
-            target: crate::harness::registry::descriptor(harness)
-                .default_target
-                .to_string(),
+            target: harness.target_dir(),
             harness: Some(harness),
             kind: LinkKind::KnownHarness,
         };
@@ -156,7 +149,12 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 }
 pub fn effective_links(settings: &Settings) -> EffectiveLinks {
-    if let Some(targets) = settings.targets.as_deref() {
+    let managed_root = settings.managed_root.as_slice();
+    let targets = settings
+        .targets
+        .as_deref()
+        .or(Some(managed_root).filter(|r| !r.is_empty()));
+    if let Some(targets) = targets {
         return EffectiveLinks {
             links: targets
                 .iter()
@@ -166,23 +164,92 @@ pub fn effective_links(settings: &Settings) -> EffectiveLinks {
         };
     }
 
-    if let Some(managed_root) = settings.managed_root.as_ref() {
-        return EffectiveLinks {
-            links: vec![normalize_link(managed_root)],
-            source: LinkSource::ManagedRoot,
-        };
-    }
-
     EffectiveLinks {
         links: Vec::new(),
         source: LinkSource::None,
     }
 }
 
-/// The managed target directories: `targets` as normalized, else the normalized `managed_root`
-/// (the older spelling), else none (`.mars/` stays the canonical compiled store).
+/// Move a file's `managed_root` into its `targets`, or drop it when `targets` is set. Every
+/// writer of `targets` calls this on the file's own settings first, so a saved file never
+/// carries a `managed_root` that the next read would layer over what the writer meant.
+pub fn retire_managed_root(managed_root: &mut Option<String>, targets: &mut Option<Vec<String>>) {
+    if let Some(root) = managed_root.take()
+        && targets.is_none()
+    {
+        *targets = Some(vec![root]);
+    }
+}
+
+/// The managed target directories: `targets` as normalized, else none (`.mars/` stays the
+/// canonical compiled store).
 pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
+}
+
+/// The advisories about the targets in `managed`: one line each, whatever the number of items.
+pub(crate) fn target_advisories(managed: &[String]) -> Vec<crate::diagnostic::Diagnostic> {
+    agents_target_diagnostic(managed)
+        .into_iter()
+        .chain(cursor_target_diagnostic(managed))
+        .collect()
+}
+
+/// Cursor support is removed in the minor after 0.37.0. Until then it works, so this is the one
+/// notice that tells the user to unlink it.
+fn cursor_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+
+    let cursor = managed.iter().find(|target| {
+        crate::harness::registry::harness_for_target(target) == Some(HarnessId::Cursor)
+    })?;
+    let unlink = format!("mars unlink {cursor}");
+    let unlink = crate::types::managed_cmd(&unlink);
+    Some(Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(
+            DiagnosticLevel::Warning,
+            "deprecated-cursor-target",
+            format!(
+                "Cursor support is deprecated and goes away in the next minor release, so `{cursor}` will stop being written. Run `{unlink}` to remove it."
+            ),
+        )
+    })
+}
+
+/// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
+/// `.agents` is deprecated, which loses nothing; but a harness that also reads `.agents/skills`
+/// (`agy`) then sees every skill twice under one name, and only unlinking `.agents` fixes that.
+/// Neither says the sync fell short of what it wanted.
+fn agents_target_diagnostic(managed: &[String]) -> Option<crate::diagnostic::Diagnostic> {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+    use crate::target::AGENTS_TARGET;
+
+    if !managed.iter().any(|target| target == AGENTS_TARGET) {
+        return None;
+    }
+    let unlink = crate::types::managed_cmd("mars unlink .agents");
+    let reader = managed
+        .iter()
+        .find(|target| crate::target::spec(target).is_some_and(|spec| spec.reads_agents_skills));
+    let (level, message) = match reader {
+        Some(reader) => (
+            DiagnosticLevel::Warning,
+            format!(
+                "`{AGENTS_TARGET}` and `{reader}` are both linked, and the harness for `{reader}` also reads skills from `{AGENTS_TARGET}/skills`, so it sees each skill twice under the same name. Run `{unlink}` to remove it."
+            ),
+        ),
+        None => (
+            DiagnosticLevel::Info,
+            format!(
+                "`{AGENTS_TARGET}` is a deprecated link target. Run `{unlink}` to remove it. Skills are now emitted to native harness dirs automatically."
+            ),
+        ),
+    };
+    Some(Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(level, "deprecated-agents-target", message)
+    })
 }
 
 /// Harnesses that would receive native agent artifacts during sync for these settings.

@@ -42,9 +42,9 @@ pub fn known_providers(
         .collect();
     known.extend(slug_providers(catalog_slugs));
     known.extend(
-        registry::descriptors()
+        mars_schema::harness::ALL
             .iter()
-            .filter_map(|d| registry::native_provider(d.id).map(str::to_string)),
+            .filter_map(|id| registry::native_provider(*id).map(str::to_string)),
     );
     for probe in probes {
         if let ProbeListing::Listed(slugs) = probe {

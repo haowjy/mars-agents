@@ -14,6 +14,7 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
+use crate::target::McpDirs;
 use mars_schema::mcp_server::{
     HeaderValue, MCP_DIR_TOKEN, McpServerDef, McpTransport, ParsedMcpToml, parse_mcp_toml,
 };
@@ -219,7 +220,8 @@ pub fn check_env_refs(
                 if strict {
                     return Err(MarsError::Config(ConfigError::Invalid { message: msg }));
                 }
-                diag.warn_advisory("mcp-env-missing", msg);
+                // The shell that ran sync is not necessarily the one that starts the harness.
+                diag.info("mcp-env-missing", msg);
             }
         }
     }
@@ -242,13 +244,13 @@ fn def_uses_dir_token(def: &McpServerDef) -> bool {
 /// The transport a target writes for a parsed item, with `${MARS_MCP_DIR}`
 /// resolved to the directory this target installs the server's files in.
 /// Env stays symbolic: adapters write each harness's own reference syntax.
-pub fn lower_transport(item: &ParsedMcpItem, mcp_dir: &str) -> McpTransport {
+pub fn lower_transport(item: &ParsedMcpItem, dirs: &McpDirs) -> McpTransport {
     match &item.def.transport {
         McpTransport::Stdio { command, args, env } => McpTransport::Stdio {
-            command: substitute_mcp_dir(command, mcp_dir),
+            command: substitute_mcp_dir(command, &dirs.command),
             args: args
                 .iter()
-                .map(|arg| substitute_mcp_dir(arg, mcp_dir))
+                .map(|arg| substitute_mcp_dir(arg, &dirs.args))
                 .collect(),
             env: env.clone(),
         },
@@ -281,7 +283,8 @@ TOKEN = { from = "env", var = "SECRET_TOKEN" }
         );
         let items =
             discover_mcp_items(tmp.path(), "base", 1, 0, &mut DiagnosticCollector::new()).unwrap();
-        let McpTransport::Stdio { env, .. } = lower_transport(&items[0], "/installed/mcp/server")
+        let McpTransport::Stdio { env, .. } =
+            lower_transport(&items[0], &McpDirs::same("/installed/mcp/server"))
         else {
             panic!("stdio server expected");
         };

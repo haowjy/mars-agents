@@ -369,33 +369,43 @@ include_fanout = false
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `targets` | string[] | unset | Managed target directories copied from `.mars/` |
-| `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
-| `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
+| `targets` | string[] | unset | Managed target directories copied from `.mars/`. `.cursor` is deprecated: a sync warns (`deprecated-cursor-target`) while it is listed, and Mars drops Cursor in the minor after 0.37.0 |
+| `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never`. Under `MERIDIAN_MANAGED=1`, `auto` withholds the agents of harnesses Meridian launches and still writes Antigravity's, which Meridian does not launch |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys this project reads from the shared catalog snapshot (which holds every provider). Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` reads every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
-| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
+| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment. Routing skips a harness Meridian does not launch (`agy`) and says so in the route trace; the setting still loads |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `default-network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
 | `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
 | `tools` | table | `{}` | Project-wide tool denies, written `[settings.tools]`. See [Project-wide tool rules](#project-wide-tool-rules) |
-| `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins |
+| `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins. `agy` may be listed but is skipped: Meridian does not launch it |
 | `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching. Entries are kept as written. `mars models list` warns once for an entry Mars has not seen in its model catalog, a harness probe listing, or a harness's native provider; it only reads probes the listing already loaded. `models resolve`, sync and launch bundles do not check |
 | `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
 
-`.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
+`.mars/` is always the canonical compiled store. Target sync is opt-in: if `targets` is not set, Mars creates no target-sync targets by default. `managed_root`, the older spelling of a single target, is [deprecated](#managed_root).
+
+#### `managed_root`
+
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0. It is deprecated: Mars reads it as `targets = [".claude"]` only when no file (`mars.toml`, `mars.local.toml`) sets `targets`, ignores it otherwise, warns (`field.deprecated`) on every sync, and stops reading it in the minor after 0.37.0. `mars link` and `mars unlink` remove it from the file they edit. Replace it with the same directory in `targets`:
+
+```toml
+# before
+[settings]
+managed_root = ".claude"
+# after
+[settings]
+targets = [".claude"]
+```
 
 Targets also govern launch permission. `targets = [".codex", ".opencode"]` permits
 only those harnesses, regardless of what is installed or logged in. Explicit empty
 or generic/path-only targets permit no harnesses. When targets are absent,
-managed_root supplies the scope; with neither field supplied, routing may discover
-installed harnesses. Physical target directories are not an eligibility check.
+routing may discover installed harnesses. Physical target directories are not an eligibility check.
 
-Local targets replace project targets, even with an empty list. A local
-managed_root does not override project targets. An explicit `--harness` cannot
+Local targets replace project targets, even with an empty list. An explicit `--harness` cannot
 expand target permission; a disabled profile/alias preference is skipped.
 
 Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and
@@ -560,7 +570,7 @@ model = "opus"
 - An `[agents.x]` or `[skills.x]` entry for something a project doesn't have is skipped without a
   diagnostic.
 - A key that belongs to one project is not read from this file: `[overrides]` (it would send
-  every project to a local checkout), `[settings].managed_root` and `[settings].targets`. Like any
+  every project to a local checkout), and `[settings].targets`. Like any
   key Mars does not read, each is an `Info` (`field.unknown`) that `mars validate` shows; none of
   them is a restriction. `min_mars_version` is a restriction, so this
   file's value applies like any other layer's. Every other setting applies, and a value the
@@ -572,14 +582,14 @@ model = "opus"
   project before reading any config; `mars build launch-bundle` is the one command that falls
   back to the user file alone when the project has no `mars.toml`.
 
-`[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
+`[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies, for the harnesses Meridian launches, even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; it selects by model routing, so it never covers Antigravity, whose agents carry no model (`auto` writes those under `MERIDIAN_MANAGED=1`); `agent_emission = "always"` still emits all native agents instead.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `harnesses` | string[] | `[]` | Harnesses to receive selective native agent copies; each harness target must also be an effective managed target |
 | `include_fanout` | bool | `false` | Also qualify agents through their `model-policies` rules |
 
-Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
+Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
 `[settings.meridian.fanout]` names agents that get the `include_fanout` treatment one by one, and that `mars agents` reports with `fanout: true`, so Meridian launches them even where they are native:
 
@@ -623,7 +633,7 @@ agent = "deny"
 |---|---|---|
 | `description` | string | Override the description written to native agent files |
 | `model` | string | Model token or alias for this agent |
-| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`) |
+| `harness` | string | Harness to target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `agy`) |
 | `effort` | string | Effort level: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. See [Effort](schema-v1.md#effort) |
 | `approval` | string | Approval mode: `default`, `auto`, `confirm`, `never` |
 | `sandbox` | string | Sandbox mode: `default`, `read-only`, `workspace-write`, `danger-full-access` |
@@ -730,7 +740,7 @@ Declared-package self inputs always use `mars-native`, without container inferen
 
 A Claude-shaped dependency (a plugin, a marketplace, or a bare tree of `SKILL.md` directories) is read by Claude's rules: a plugin's `skills` list adds to `skills/`, its `agents` list replaces `agents/`, `commands/` are reported and not imported, and a skill's inner `agents/` folder stays payload. Each item lands in the schema v1 layout (`skills/<slug>/`, `agents/<slug>.md`). A marketplace dependency names the plugin it wants with [`plugin`](#marketplace-plugins); without one, a marketplace with one plugin installs it and one with several is an error that lists them.
 
-A translated definition is never refused for its fields; only an authored schema v1 file is read strictly. A Claude definition whose frontmatter is not valid YAML only because a plain value holds `: ` (or holds one of `{}[]*&#!|>%@` or a backtick) is read with that value quoted, the way Claude Code retries it, and `mars check` warns; the same file is refused as schema v1. Claude's own keys are translated: a top-level `type` or `version` moves under `metadata`. An Agent's `tools` entries take the names Claude uses today: `Task` is `Agent`, and `KillShell` is `TaskStop` (the rest of Claude's alias table too), and a tool Claude has removed (`BashOutput`, `TaskOutput`, `NotebookRead`) is dropped with an info message, because Claude ignores it too. Mars reads each remaining name as a capability, and Claude lowers a capability to all of its tools, so an allowlist can grow (`Edit` also enables `Write` and `NotebookEdit`; `TodoWrite` also enables the `Task*` tools); that is the warning `agent.tools-widened`, which names the added tools. `model: inherit` is removed with an info message: a Claude agent with no `model` runs on the model of the session that starts it, except when `CLAUDE_CODE_SUBAGENT_MODEL` is set. Keys only Claude reads are kept, not dropped: an Agent's `color`, `maxTurns`, `autoCompactWindow`, `permissionMode`, `memory`, `background`, `omitClaudeMd`, `experimental`, `isolation`, `initialPrompt` and `hooks`, and a skill's `allowed-tools`, `disallowed-tools`, `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths` and `shell`, move unchanged to `harness-overrides.claude` with an info message, so `.claude/` output has them and the other harnesses' output does not. OpenCode's `tools` booleans become `allow` and `deny`, and its `permission`, `temperature`, `top_p`, `steps`, `maxSteps`, `options`, `hidden`, `disable`, `color` and `prompt` move to `harness-overrides.opencode`. Whatever else the strict reader would still reject (a key or value that is not schema v1) is set aside the same way: moved under `harness-overrides.<dialect>`, or dropped when the dialect has no harness (`agent-skills`), with one warning that names the key. A key Mars lowers itself (an Agent's `model`, `effort`, `tools`, `disallowed-tools`, `skills` and `mode`; a skill's `license`, `metadata`, `user-invocable`, `disable-model-invocation` and `alwaysApply`) is never moved, because native lowering would keep Mars's value and drop the override: an invalid entry of `tools` is dropped and the rest kept, and an invalid scalar such as `effort: ultra` is dropped. A `network-allow` or `network-deny` list is treated the same: one bad host is dropped, reported per entry, and the valid hosts stay. Losing a restriction (a `deny` or `ask` tool entry, a `network-deny` host, `network`, `permission`, `sandbox`, `approval`) is a change coded `field.restriction-lost` that names the agent: `mars sync` prints it on every run. A translated definition that writes `effort`, `mode` or `harness` as something other than a string (`effort: 3`) has it ignored, with a `field.execution-ignored` warning that names the agent, the value and the allowed values; `mars check` prints it, since the author can fix the file; `mars sync` only counts it, once like other set-asides. A lost `sandbox`, `approval` or `network` written as a non-string adds the allowed values to its `field.restriction-lost` line. An authored schema v1 file fails on it instead. `mars sync` shows the count of files translated. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
+A translated definition is never refused for its fields; only an authored schema v1 file is read strictly. A Claude definition whose frontmatter is not valid YAML only because a plain value holds `: ` (or holds one of `{}[]*&#!|>%@` or a backtick) is read with that value quoted, the way Claude Code retries it, and `mars check` warns; the same file is refused as schema v1. Claude's own keys are translated: a top-level `type` or `version` moves under `metadata`. An Agent's `tools` entries take the names Claude uses today: `Task` is `Agent`, and `KillShell` is `TaskStop` (the rest of Claude's alias table too), and a tool Claude has removed (`BashOutput`, `TaskOutput`, `NotebookRead`) is dropped with an info message, because Claude ignores it too. Mars reads each remaining name as a capability, and Claude lowers a capability to all of its tools, so an allowlist can grow (`Edit` also enables `Write` and `NotebookEdit`; `TodoWrite` also enables the `Task*` tools); that is the warning `agent.tools-widened`, which names the added tools. `model: inherit` is removed with an info message: a Claude agent with no `model` runs on the model of the session that starts it, except when `CLAUDE_CODE_SUBAGENT_MODEL` is set. Keys only Claude reads are kept, not dropped: an Agent's `color`, `maxTurns`, `autoCompactWindow`, `permissionMode`, `memory`, `background`, `omitClaudeMd`, `experimental`, `isolation`, `initialPrompt` and `hooks`, and a skill's `allowed-tools`, `disallowed-tools`, `argument-hint`, `arguments`, `model`, `effort`, `context`, `agent`, `hooks`, `paths` and `shell`, move unchanged to `harness-overrides.claude` with an info message, so `.claude/` output has them and the other harnesses' output does not. OpenCode's `tools` booleans become `allow` and `deny`, and its `permission`, `temperature`, `top_p`, `steps`, `maxSteps`, `options`, `hidden`, `disable`, `color` and `prompt` move to `harness-overrides.opencode`. Whatever else the strict reader would still reject (a key or value that is not schema v1) is set aside the same way: moved under `harness-overrides.<dialect>`, or dropped when the dialect has no harness (`agent-skills`), with one warning that names the key. A key Mars lowers itself (an Agent's `model`, `effort`, `tools`, `disallowed-tools`, `skills` and `mode`; a skill's `license`, `metadata`, `user-invocable`, `disable-model-invocation` and `alwaysApply`) is never moved, because native lowering would keep Mars's value and drop the override: an invalid entry of `tools` is dropped and the rest kept, and an invalid scalar such as `effort: ultra` is dropped. A `network-allow` or `network-deny` list is treated the same: one bad host is dropped, reported per entry, and the valid hosts stay. Losing a restriction (a `deny` or `ask` tool entry, a `network-deny` host, `network`, `permission`, `sandbox`, `approval`) is a change coded `field.restriction-lost` that names the agent: `mars sync` prints it as a warning, for a dependency's file as for your own, once with the sync that installs the item (`--verbose`, `mars validate` and `mars check` show it every time). A translated definition that writes `effort`, `mode` or `harness` as something other than a string (`effort: 3`) has it ignored, with a `field.execution-ignored` warning that names the agent, the value and the allowed values; `mars check` prints it, since the author can fix the file; `mars sync` only counts it, once like other set-asides. A lost `sandbox`, `approval` or `network` written as a non-string adds the allowed values to its `field.restriction-lost` line. An authored schema v1 file fails on it instead. `mars sync` shows the count of files translated. To import a package whose actual items live under a hidden foreign container, set both `subpath` and `dialect` explicitly.
 
 ## Renaming
 
@@ -764,7 +774,7 @@ exclude = ["thinking"]
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `harness` | string | yes | Which harness runs this model (`claude`, `codex`, `opencode`, etc.) |
+| `harness` | string | yes | Which harness runs this model (`claude`, `codex`, `opencode`, `agy`, etc.) |
 | `model` | string | no | Explicit model ID. If set, skips auto-resolution. |
 | `provider` | string | no | API provider name for auto-resolution filtering |
 | `description` | string | no | Human-readable alias description shown in `mars models aliases` |

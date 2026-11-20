@@ -4,7 +4,9 @@
 //! rendered for it (for a TypeScript harness, its glue, limits and native hook contract), and
 //! what its generated files are called. A new target is one row here; the binary only places
 //! what the row describes. Nothing about a target is kept anywhere else.
+use super::agy;
 use super::typescript::{self, Harness};
+use crate::harness::{self, HarnessId};
 
 /// A hook event of one target and the input field its `matcher` tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +78,14 @@ pub enum Placement {
     Merge(MergeFile),
     /// The hook is installed as whole files in `dir`, under the target root.
     File { dir: &'static str },
+    /// Each hook is one entry of the JSON object in the file at `path`, relative to the
+    /// project, keyed by the hook's name: the hook's own events, as the harness reads them, are
+    /// the value. A hook that translates `[hooks]` keeps its runner data in `dir`, beside its
+    /// own directory copy, and never inside it: target sync owns that copy as a whole.
+    Keyed {
+        path: &'static str,
+        dir: &'static str,
+    },
 }
 
 /// How `[hooks]` becomes a target's entries.
@@ -87,6 +97,9 @@ pub enum Rules {
     Codex,
     /// Generated TypeScript for the harness (`hooks::typescript`).
     TypeScript(&'static Harness),
+    /// Translated for the harness's own events and answers by a `mars hook run` command
+    /// (`hooks::agy`).
+    Translated(&'static agy::Translation),
     /// Nothing is rendered for the target, as a whole; `reason` says why.
     Withheld { reason: &'static str },
 }
@@ -108,6 +121,15 @@ impl Profile {
     /// The profile's row for `name`.
     pub fn event(&self, name: &str) -> Option<&'static Event> {
         self.events.iter().find(|e| e.name == name)
+    }
+
+    /// The `[hooks]` events a native event stands for: a translating target's event serves
+    /// others (`agy`'s `PreInvocation` is `UserPromptSubmit`); any other serves itself.
+    pub fn served<'a>(&self, native_event: &'a str) -> Vec<&'a str> {
+        match self.rules {
+            Rules::Translated(translation) => translation.serves(native_event).to_vec(),
+            _ => vec![native_event],
+        }
     }
 
     /// Whether the rules render `[hooks]` at all.
@@ -137,11 +159,20 @@ impl Target {
         self.profile.event(event).is_some() || self.other_events.contains(&event)
     }
 
-    /// The file a merge target appends entries to; `None` for a file target.
+    /// The file a merge target appends entries to; `None` for any other placement.
     pub fn merge_file(&self) -> Option<&MergeFile> {
         match &self.placement {
             Placement::Merge(merge) => Some(merge),
-            Placement::File { .. } => None,
+            Placement::File { .. } | Placement::Keyed { .. } => None,
+        }
+    }
+
+    /// The project-relative file whose entries are keyed by hook name; `None` for any other
+    /// placement.
+    pub fn keyed_path(&self) -> Option<&'static str> {
+        match self.placement {
+            Placement::Keyed { path, .. } => Some(path),
+            Placement::Merge(_) | Placement::File { .. } => None,
         }
     }
 
@@ -159,6 +190,12 @@ impl Target {
         matches!(self.placement, Placement::File { .. })
     }
 
+    /// Whether a hook can own files on the target besides its directory copy: the files of
+    /// a file target, or a keyed target's runner data.
+    pub fn installs_files(&self) -> bool {
+        self.is_file() || self.keyed_path().is_some()
+    }
+
     /// The path, relative to the target root, of the hook's own native hook file; `None` for a
     /// merge target, which has no per-hook file.
     pub fn native_hook_path(&self, hook_name: &str) -> Option<String> {
@@ -171,10 +208,13 @@ impl Target {
     /// The path, relative to the target root, of the file generated from the hook's
     /// `[hooks]`; `None` for a merge target.
     pub fn generated_path(&self, hook_name: &str) -> Option<String> {
-        let Placement::File { dir } = self.placement else {
-            return None;
-        };
-        Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.ts"))
+        match self.placement {
+            Placement::File { dir } => Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.ts")),
+            Placement::Keyed { dir, .. } => {
+                Some(format!("{dir}/mars-{hook_name}{GENERATED_SUFFIX}.json"))
+            }
+            Placement::Merge(_) => None,
+        }
     }
 }
 
@@ -271,6 +311,18 @@ const PI_EVENTS: &[Event] = &[
     matched("SessionEnd", "reason"),
 ];
 
+// `agy` reads these six from a plugin's `hooks.json`; the first four take handler objects,
+// the last two `{matcher, hooks}` groups.
+const AGY_EVENTS: &[Event] = &[
+    // The runner gives a SessionStart matcher `startup`, the one source `agy` fires it for.
+    matched("SessionStart", "source"),
+    event("PreInvocation"),
+    event("PostInvocation"),
+    event("Stop"),
+    matched("PreToolUse", "tool_name"),
+    matched("PostToolUse", "tool_name"),
+];
+
 const CLAUDE_VERSION: &str = "Claude Code 2.1.312";
 
 /// What the Claude plugin tree's `hooks/hooks.json` must satisfy: Claude's events under
@@ -281,84 +333,116 @@ pub const PLUGIN_CLAUDE_TREE: Profile = Profile {
     rules: Rules::Codex,
 };
 
-const TARGETS: &[Target] = &[
-    Target {
-        root: ".claude",
-        // Hook commands carry machine-local cache paths, so they belong in the gitignored
-        // `settings.local.json` rather than the committed `settings.json`.
-        placement: Placement::Merge(MergeFile {
-            file: "settings.local.json",
-            top_level: &[],
-            trust_gated: false,
-        }),
-        profile: Profile {
-            events: CLAUDE_EVENTS,
-            verified_against: Some(CLAUDE_VERSION),
-            rules: Rules::Claude,
-        },
-        other_events: &[],
+const CLAUDE: Target = Target {
+    root: ".claude",
+    // Hook commands carry machine-local cache paths, so they belong in the gitignored
+    // `settings.local.json` rather than the committed `settings.json`.
+    placement: Placement::Merge(MergeFile {
+        file: "settings.local.json",
+        top_level: &[],
+        trust_gated: false,
+    }),
+    profile: Profile {
+        events: CLAUDE_EVENTS,
+        verified_against: Some(CLAUDE_VERSION),
+        rules: Rules::Claude,
     },
-    Target {
-        root: ".codex",
-        placement: Placement::Merge(MergeFile {
-            file: "hooks.json",
-            top_level: &[],
-            trust_gated: true,
-        }),
-        profile: Profile {
-            events: CODEX_EVENTS,
-            verified_against: Some("codex-cli 0.164.0"),
-            rules: Rules::Codex,
-        },
-        other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
+    other_events: &[],
+};
+
+const CODEX: Target = Target {
+    root: ".codex",
+    placement: Placement::Merge(MergeFile {
+        file: "hooks.json",
+        top_level: &[],
+        trust_gated: true,
+    }),
+    profile: Profile {
+        events: CODEX_EVENTS,
+        verified_against: Some("codex-cli 0.164.0"),
+        rules: Rules::Codex,
     },
-    Target {
-        root: ".cursor",
-        // Cursor's `hooks.json` is a flat entry array and requires the version wrapper.
-        placement: Placement::Merge(MergeFile {
-            file: "hooks.json",
-            top_level: &[("version", 1)],
-            trust_gated: false,
-        }),
-        profile: Profile {
-            events: CURSOR_EVENTS,
-            verified_against: Some("cursor-agent 2026.07.16"),
-            rules: Rules::Withheld {
-                reason: "mars renders no generated hooks for Cursor before 0.26",
-            },
+    other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
+};
+
+const CURSOR: Target = Target {
+    root: ".cursor",
+    // Cursor's `hooks.json` is a flat entry array and requires the version wrapper.
+    placement: Placement::Merge(MergeFile {
+        file: "hooks.json",
+        top_level: &[("version", 1)],
+        trust_gated: false,
+    }),
+    profile: Profile {
+        events: CURSOR_EVENTS,
+        verified_against: Some("cursor-agent 2026.07.16"),
+        rules: Rules::Withheld {
+            reason: "mars renders no generated hooks for Cursor before 0.26",
         },
-        other_events: &[],
     },
-    Target {
-        root: ".opencode",
-        placement: Placement::File { dir: "plugins" },
-        profile: Profile {
-            events: OPENCODE_EVENTS,
-            verified_against: Some("OpenCode 2.2.0"),
-            rules: Rules::TypeScript(&typescript::OPENCODE),
-        },
-        other_events: &[],
+    other_events: &[],
+};
+
+const OPENCODE: Target = Target {
+    root: ".opencode",
+    placement: Placement::File { dir: "plugins" },
+    profile: Profile {
+        events: OPENCODE_EVENTS,
+        verified_against: Some("OpenCode 2.2.0"),
+        rules: Rules::TypeScript(&typescript::OPENCODE),
     },
-    Target {
-        root: ".pi",
-        placement: Placement::File { dir: "extensions" },
-        profile: Profile {
-            events: PI_EVENTS,
-            verified_against: Some("Pi 1.4.0"),
-            rules: Rules::TypeScript(&typescript::PI),
-        },
-        other_events: &[],
+    other_events: &[],
+};
+
+const PI: Target = Target {
+    root: ".pi",
+    placement: Placement::File { dir: "extensions" },
+    profile: Profile {
+        events: PI_EVENTS,
+        verified_against: Some("Pi 1.4.0"),
+        rules: Rules::TypeScript(&typescript::PI),
     },
-];
+    other_events: &[],
+};
+
+const AGY: Target = Target {
+    root: ".agy",
+    // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
+    placement: Placement::Keyed {
+        path: ".agy/hooks.json",
+        dir: "hooks",
+    },
+    profile: Profile {
+        events: AGY_EVENTS,
+        verified_against: Some("agy 1.5.12"),
+        rules: Rules::Translated(&agy::AGY),
+    },
+    other_events: &[],
+};
+
+/// The hook rules of a harness. A harness with no row here fails to compile.
+fn row(harness: HarnessId) -> &'static Target {
+    match harness {
+        HarnessId::Claude => &CLAUDE,
+        HarnessId::Codex => &CODEX,
+        HarnessId::OpenCode => &OPENCODE,
+        HarnessId::Cursor => &CURSOR,
+        HarnessId::Pi => &PI,
+        HarnessId::Agy => &AGY,
+    }
+}
 
 /// The hook rules of `root`; `None` when it has no hook mechanism.
 pub fn target(root: &str) -> Option<&'static Target> {
-    TARGETS.iter().find(|target| target.root == root)
+    harness::ALL
+        .iter()
+        .find(|harness| harness.target_dir() == root)
+        .map(|&harness| row(harness))
 }
 
 /// Every target that takes hooks.
-pub fn all() -> &'static [Target] {
-    TARGETS
+pub fn all() -> impl Iterator<Item = &'static Target> {
+    harness::ALL.iter().map(|&harness| row(harness))
 }
 
 /// Claude's event of that name: the set a `[hooks]` table may declare.

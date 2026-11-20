@@ -262,8 +262,10 @@ writes them to per-target config files. Target construction resolves MCP name co
 target and makes a token-using winner's directory a target-scoped item, the same way a hook
 directory is installed and pruned; this phase consumes that selection. A hook's or token-using
 server's entry is withheld with a `hook-not-installed` / `mcp-not-installed` warning naming the
-path when target sync did not install that directory: an unmanaged path (preserved without a
-claim) and a user-edited copy (preserved as `target-divergent`) both leave the entry out. A server
+path when target sync did not install that directory and did not already say why: an unmanaged
+path (preserved without a claim, reported as `target-unmanaged-collision`) and a user-edited copy
+(preserved, reported as `target-divergent`) both leave the entry out, and their own line is the
+only one. A server
 that never names the token has no directory and needs none.
 
 **Steps:**
@@ -294,7 +296,7 @@ that never names the token has no directory and needs none.
 9. Compare desired entries against the previous lock and remove stale entries
    before writing replacements. Hook removal is ownership-gated. MCP
    servers skip this step: step 10 removes and writes them in one pass.
-10. Write desired entries to target config files: MCP through each adapter's
+10. Write desired entries to target config files: MCP through each target's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
     pass per file (`keyed_entries::reconcile`: stale owned entries removed, desired
     ones written, one save), hooks through the adapter (`settings.local.json`,
@@ -311,7 +313,7 @@ See [mcp-and-hooks.md](../config/mcp-and-hooks.md) for the full reference.
 
 Copies content from `.mars/` canonical store to each configured target directory (`.claude/`, `.codex/`, etc.). Implemented in `src/target_sync/mod.rs`.
 
-- Targets are the directories in `settings.targets`, which `mars link` writes, or the legacy single `settings.managed_root`. Mars creates none by default: with neither set, a sync copies nothing outside `.mars/`
+- Targets are the directories in `settings.targets`, which `mars link` writes. Mars creates none by default: with none set, a sync copies nothing outside `.mars/`
 - All targets get file copies
 - Uses `platform::fs` for atomic operations (tmp+rename)
 - Orphan cleanup: scoped per target via `output_dest_paths_for_target(target_root)` — only removes paths Mars previously managed **in that target** (`target_root` + `dest_path` on lock `OutputRecord`). A `.mars`-only record does not authorize deletes under `.cursor` or other targets. Untracked collisions are preserved unless `mars sync --force` adopts them (see `src/target_sync/.context/CONTEXT.md`)
@@ -323,7 +325,7 @@ Writes lock and constructs the final `SyncReport`.
 
 - **Lock write**: constructs new `mars.lock` from resolved graph + apply outcomes (checksums). Keys sorted deterministically for clean git diffs. Lock is written **regardless of target sync outcome** — this ensures the lock always reflects what's in `.mars/`, even if a target sync failed.
 - **Model aliases**: persists dependency-only alias winners to committed `mars.lock` (`dependency_model_aliases`). Consumer aliases are not baked into lock state, so `mars models aliases` overlays current consumer config at read time.
-- **Validation warnings**: emits diagnostics for missing skill references in agents.
+- **Validation warnings**: emits diagnostics for missing skill references in agents. A dependency's is held until a sync installs or updates that source's items: `finalize` compares the old lock with the new one (`DiagnosticCollector::settle`).
 - **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 
 ## Project-Local Items (`_self`)

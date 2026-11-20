@@ -53,6 +53,7 @@ walkdir = "2"
 which = "7"
 dunce = "1.0.5"
 wait-timeout = "0.2"
+regex = "1"
 toml_edit = "0.22.27"
 
 [target.'cfg(windows)'.dependencies]

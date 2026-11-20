@@ -115,7 +115,8 @@
           "network-deny",
           1
         ],
-        "message": "agent `n` lost the restriction `network-deny: bad host`: that entry was dropped and the rest of `network-deny` is kept. Schema v1 does not accept it (agent field `network-deny[1]` has invalid value `bad host`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed)"
+        "message": "agent `n` lost the restriction `network-deny: bad host`: that entry was dropped and the rest of `network-deny` is kept. Schema v1 does not accept it (agent field `network-deny[1]` has invalid value `bad host`; allowed: exact host, IP address, *.example.com (subdomains), or **.example.com (apex and subdomains); internationalized names must use punycode; URLs, ports, paths, numeric or hex-looking DNS endings, single-label wildcards, empty strings, and bare * are not allowed)",
+        "lost": true
       },
       {
         "code": "field.restriction-lost",
@@ -123,7 +124,8 @@
         "path": [
           "network"
         ],
-        "message": "agent `n` lost the restriction `network`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (agent field `network` has invalid value `nope`; allowed: allow, deny, allowlist)"
+        "message": "agent `n` lost the restriction `network`: it was moved under `harness-overrides.claude`, which Mars does not enforce. Schema v1 does not accept it (agent field `network` has invalid value `nope`; allowed: allow, deny, allowlist)",
+        "lost": true
       }
     ]
   }

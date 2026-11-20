@@ -412,7 +412,7 @@ fn add_skips_unmanaged_file_collision() {
         ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("collides with unmanaged path"));
+        .stderr(predicate::str::contains("collides with 1 unmanaged path"));
 
     let content = fs::read_to_string(user_file.path()).unwrap();
     assert_eq!(content, "# User-authored");
@@ -1930,7 +1930,7 @@ tools:
         .write_str(&format!(
             r#"
 [settings]
-managed_root = ".claude"
+targets = [".claude"]
 agent_emission = "always"
 
 [dependencies.base]

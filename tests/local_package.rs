@@ -42,10 +42,11 @@ fn full_pipeline_with_local_package_and_custom_target() {
 
     let config: Value = toml::from_str(&config_content).unwrap();
     assert_eq!(
-        config["settings"]["managed_root"].as_str(),
-        Some(".custom"),
-        "managed_root should be persisted"
+        config["settings"]["targets"].as_array().map(Vec::len),
+        Some(1),
+        "target should be persisted"
     );
+    assert_eq!(config["settings"]["targets"][0].as_str(), Some(".custom"));
 
     let mut config_str = config_content.clone();
     config_str.push_str("\n[package]\nname = \"test-project\"\nversion = \"1.0.0\"\nschema = 1\n");

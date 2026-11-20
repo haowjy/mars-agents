@@ -66,7 +66,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         lossiness_mode: if args.verbose {
             crate::diagnostic::LossinessMode::Verbose
         } else {
-            crate::diagnostic::LossinessMode::Surface
+            crate::diagnostic::LossinessMode::Written
         },
     };
 

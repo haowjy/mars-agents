@@ -5,6 +5,7 @@
 //! `last_attempt_at` past `fetched_at`, which is how readers tell a stale-but-failed listing from
 //! a stale-but-healthy one.
 
+use mars_schema::HarnessId;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ const DEFAULT_TTL_SECS: u64 = 60;
 /// A harness's probe result and where its cache lives.
 pub trait CachedProbe: Clone + Serialize + DeserializeOwned {
     /// Name used in logs, the `__refresh-probe --target` argument and the installed set.
-    const HARNESS: &'static str;
+    const HARNESS: HarnessId;
     const CACHE_FILE: &'static str;
     const LOCK_FILE: &'static str;
     /// Bump only when an older file must read as a miss.
@@ -152,18 +153,17 @@ fn read_default_cache<R: CachedProbe>() -> Option<CacheEntry<R>> {
 }
 
 fn write_cache<R: CachedProbe>(path: &Path, entry: &CacheEntry<R>) {
-    let written = serde_json::to_string_pretty(entry)
-        .map_err(|e| MarsError::Internal(format!("{} probe cache serialize: {e}", R::HARNESS)))
-        .and_then(|json| crate::fs::atomic_write(path, json.as_bytes()));
-    if let Err(e) = written {
-        eprintln!("debug: {} probe cache write failed: {e}", R::HARNESS);
+    // Best effort: a probe that cannot be cached is run again next time.
+    if let Ok(json) = serde_json::to_string_pretty(entry) {
+        let _ = crate::fs::atomic_write(path, json.as_bytes());
     }
 }
 
 fn failure_message<R: CachedProbe>(result: &R) -> String {
-    result
-        .error()
-        .map_or_else(|| format!("{} probe failed", R::HARNESS), str::to_string)
+    result.error().map_or_else(
+        || format!("{} probe failed", R::HARNESS.as_str()),
+        str::to_string,
+    )
 }
 
 /// The one write decision, for foreground and detached refreshes alike. Returns the retained
@@ -181,7 +181,7 @@ fn persist_probe_attempt<R: CachedProbe>(
             path,
             &CacheEntry {
                 schema_version: R::SCHEMA_VERSION,
-                harness: R::HARNESS.to_string(),
+                harness: R::HARNESS.as_str().to_string(),
                 fetched_at: last_good.fetched_at,
                 last_attempt_at: now.max(last_good.fetched_at.saturating_add(1)),
                 last_error: Some(failure_message(result)),
@@ -195,7 +195,7 @@ fn persist_probe_attempt<R: CachedProbe>(
         path,
         &CacheEntry {
             schema_version: R::SCHEMA_VERSION,
-            harness: R::HARNESS.to_string(),
+            harness: R::HARNESS.as_str().to_string(),
             fetched_at: if usable { now } else { 0 },
             last_attempt_at: now,
             last_error: (!usable).then(|| failure_message(result)),
@@ -248,7 +248,7 @@ fn probe_cached_observed<R: CachedProbe>(
     mars_offline: bool,
     probe_refresh: ProbeRefreshMode,
 ) -> ObservedOutcome<CachedProbeOutcome<R>> {
-    if mars_offline || !installed.contains(R::HARNESS) {
+    if mars_offline || !installed.contains(R::HARNESS.as_str()) {
         return ObservedOutcome {
             outcome: CachedProbeOutcome::Unavailable,
             observation: None,
@@ -282,11 +282,11 @@ fn probe_cached_observed<R: CachedProbe>(
 }
 
 fn trigger_background_refresh<R: CachedProbe>() {
-    let Some(lock) = super::probe_lock(R::LOCK_FILE, R::HARNESS) else {
+    let Some(lock) = super::probe_lock(R::LOCK_FILE) else {
         return;
     };
     if !read_default_cache::<R>().is_some_and(|entry| is_fresh_and_usable(&entry)) {
-        let _ = spawn_refresh_probe(R::HARNESS);
+        let _ = spawn_refresh_probe(R::HARNESS.as_str());
     }
     drop(lock);
 }

@@ -7,6 +7,7 @@
 
 use super::catalog::Catalog;
 use super::catalog_api::{CATALOG_HTTP_DEADLINE_SECS, fetch_models};
+use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::types::managed_cmd;
 use mars_schema::models::provider_filter;
@@ -115,7 +116,16 @@ pub enum RefreshOutcome {
     Offline,
 }
 
-pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
+/// What a refresh outcome tells the user, or `None` when it needs no word. A stale cache with
+/// a refresh on its way loses nothing, so it is `Info`; a refresh that failed, was held off
+/// after a failure or could not start leaves the user on stale data, so it is a `Warning`.
+pub fn refresh_diagnostic(outcome: &RefreshOutcome) -> Option<Diagnostic> {
+    let retry = managed_cmd("mars models refresh");
+    // None of these says the sync fell short of the state it wanted.
+    let diagnostic = |level, message: String| Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(level, "models-cache-refresh", message)
+    };
     match outcome {
         RefreshOutcome::Stale {
             refresh,
@@ -137,20 +147,31 @@ pub fn refresh_warning(outcome: &RefreshOutcome) -> Option<String> {
                 .as_ref()
                 .map(|reason| format!("; previous refresh failed: {reason}"))
                 .unwrap_or_default();
-            Some(format!(
-                "using stale models cache; {status}{previous} (`{}` retries now)",
-                managed_cmd("mars models refresh")
+            let on_its_way = matches!(
+                refresh,
+                BackgroundRefresh::Spawned | BackgroundRefresh::AlreadyInProgress
+            ) && last_failure.is_none();
+            Some(diagnostic(
+                if on_its_way {
+                    DiagnosticLevel::Info
+                } else {
+                    DiagnosticLevel::Warning
+                },
+                format!("using stale models cache; {status}{previous} (`{retry}` retries now)"),
             ))
         }
-        RefreshOutcome::StaleFallback { reason } => Some(format!(
-            "models cache refresh failed: {reason}; using stale cache (`{}` retries now)",
-            managed_cmd("mars models refresh")
+        RefreshOutcome::StaleFallback { reason } => Some(diagnostic(
+            DiagnosticLevel::Warning,
+            format!(
+                "models cache refresh failed: {reason}; using stale cache (`{retry}` retries now)"
+            ),
         )),
         RefreshOutcome::Refreshed {
             replaced_unreadable: Some(what),
             ..
-        } => Some(format!(
-            "models cache had an unreadable {what}; refetched it"
+        } => Some(diagnostic(
+            DiagnosticLevel::Warning,
+            format!("models cache had an unreadable {what}; refetched it"),
         )),
         _ => None,
     }

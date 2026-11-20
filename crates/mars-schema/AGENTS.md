@@ -154,3 +154,7 @@ Agent deny list (`tool_policy::DISALLOWED_SPELLINGS`) are also read by the trans
 they live there and `retired.rs` takes the Agent and Skill tool-policy rows from them and from
 `skill::tool_keys()`. The other code that names a key from
 outside is a translator from another format (`claude/`, `harness_overrides`, `set_aside`).
+
+## Hook translation
+
+A target's hook rules are one row of `hooks/targets.rs`. A hook for a harness with no Claude-shaped hook file is generated: TypeScript for OpenCode and Pi (`hooks/typescript/core.ts` holds Claude's matcher, `if`, exit-code and answer rules), a data file plus a `mars hook run` command for `agy` (`hooks/agy.rs`; the runner is `src/hook_run`, which cannot live here because it runs processes and needs `regex`). The runner is a Rust port of `core.ts`: a change to a rule there is a change to `src/hook_run/logic.rs` and a case in `fixtures/hook-vectors.json`, which both run (`matcher`, `condition`, `decide` and `fire` with a scripted command result; `expectRust` holds the `PreToolUse` permission answers `core.ts` does not use). `src/hook_run/exec.rs` ports `runCommand` and is checked by process-level tests, not vectors. The runner's regex has no look-around, Claude's has: `agy::matcher_problem` reports such a matcher at sync. `DATA_VERSION` is what a newer `mars` at the same path reads from an older sync: bump it only for a change the old reader cannot take, and keep reading the old one.

@@ -280,11 +280,16 @@ pub enum OutputState {
     PendingDeletion,
 }
 
-/// Whether a lock output is a generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts`
-/// on a file target) rather than the hook's directory copy under `hooks/`. The lock records
-/// the file's plain content hash, not a directory hash.
+/// Whether a lock output is a file Mars generated for a hook (`mars-<name>.ts`,
+/// `mars-<name>.hooks.ts` or an `.agy` `hooks/mars-<name>.hooks.json`) rather than the hook's
+/// directory copy (`hooks/<name>`). The lock records the file's plain content hash, not a
+/// directory hash. The directory a file sits in says nothing: `.agy` keeps its data file
+/// beside the hook's directory.
 pub fn is_generated_hook_file(kind: ItemKind, dest_path: &str) -> bool {
-    kind == ItemKind::Hook && !dest_path.starts_with("hooks/")
+    let file_name = dest_path.rsplit('/').next().unwrap_or(dest_path);
+    kind == ItemKind::Hook
+        && file_name.starts_with("mars-")
+        && (file_name.ends_with(".ts") || file_name.ends_with(".json"))
 }
 
 impl OutputRecord {
@@ -800,22 +805,7 @@ pub fn build(
 
     remove_applied_canonical_outputs(&mut items, &applied.outcomes);
 
-    let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
-    let has_self_items = items.values().any(|item| item.source == local_source_name);
-    if has_self_items {
-        dependencies.insert(
-            local_source_name,
-            LockedDependency {
-                url: None,
-                path: Some(".".into()),
-                subpath: None,
-                version: None,
-                commit: None,
-                plugin: None,
-                content: None,
-            },
-        );
-    }
+    record_local_dependency(&items, &mut dependencies);
 
     for item in items.values() {
         if checksum_is_empty(&item.source_checksum) {
@@ -849,6 +839,28 @@ pub fn build(
         config_entries,
         dependency_model_aliases: IndexMap::new(),
     })
+}
+
+/// A lock whose items come from the project's own package names that package as `_self`.
+fn record_local_dependency(
+    items: &IndexMap<String, LockedItemV2>,
+    dependencies: &mut IndexMap<SourceName, LockedDependency>,
+) {
+    let local_source_name: SourceName = SourceOrigin::LocalPackage.to_string().into();
+    if items.values().any(|item| item.source == local_source_name) {
+        dependencies.insert(
+            local_source_name,
+            LockedDependency {
+                url: None,
+                path: Some(".".into()),
+                subpath: None,
+                version: None,
+                commit: None,
+                plugin: None,
+                content: None,
+            },
+        );
+    }
 }
 
 fn outputs_with_carried_non_canonical(
@@ -1278,7 +1290,6 @@ fn remove_target_output(
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
         });
     }
-    items.retain(|_, item| !item.outputs.is_empty());
 }
 
 fn checksum_is_empty(checksum: &ContentHash) -> bool {
@@ -1292,6 +1303,98 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedDependency {
         node.resolved_ref.commit.as_ref().map(AsRef::as_ref),
         node.rooted_ref.plugin.as_ref(),
     )
+}
+
+/// The lock key of a hook on a managed target that takes none of it (`hook/guard@codex`, as
+/// the item of a copy that is installed there would be). It has no outputs.
+pub fn unplaced_hook_key(name: &str, target: &str) -> String {
+    format!(
+        "{}/{name}@{}",
+        ItemKind::Hook,
+        target.trim_start_matches('.')
+    )
+}
+
+impl LockFile {
+    /// The last step of a sync's lock. An item is gone when it is no longer resolved, and one
+    /// that has no output left is not resolved, except a hook on a target that takes none of it:
+    /// it has nothing to write there, and its record (`unplaced`, by item key) is what makes a
+    /// change to the hook, or a new target, news.
+    ///
+    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and every
+    /// item keeps its `.mars` output, so none is left empty; and only a sync can say which
+    /// hook records stay.
+    pub(crate) fn finish(&mut self, unplaced: IndexMap<String, LockedItemV2>) {
+        self.items.retain(|_, item| !item.outputs.is_empty());
+        self.items.extend(unplaced);
+        self.items.sort_keys();
+        record_local_dependency(&self.items, &mut self.dependencies);
+        self.dependencies.sort_keys();
+    }
+}
+
+/// A record of the lock that something a sync reports concerns. A loss is news when this sync
+/// is the one that made its record new or different: `DiagnosticCollector::settle` asks once,
+/// with the lock the sync read and the lock it wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RecordRef {
+    /// Any item of this source.
+    Source(String),
+    /// One item, by lock key.
+    Item(String),
+    /// One output of a target.
+    Output {
+        target_root: String,
+        dest_path: String,
+    },
+    /// One native config entry of a target, by lock record key.
+    Entry { target_root: String, key: String },
+}
+
+impl RecordRef {
+    pub(crate) fn output(target_root: &str, dest_path: &str) -> Self {
+        Self::Output {
+            target_root: target_root.to_owned(),
+            dest_path: dest_path.to_owned(),
+        }
+    }
+
+    /// Whether `new` holds this record and `old` held it differently or not at all. A record
+    /// the sync removed is not news.
+    pub(crate) fn is_news(&self, old: &LockFile, new: &LockFile) -> bool {
+        fn content(item: &LockedItemV2) -> (&SourceName, &ContentHash) {
+            (&item.source, &item.source_checksum)
+        }
+        match self {
+            Self::Source(source) => new
+                .items
+                .iter()
+                .filter(|(_, item)| item.source.as_ref() == source)
+                .any(|(key, item)| old.items.get(key).map(content) != Some(content(item))),
+            Self::Item(key) => new
+                .items
+                .get(key)
+                .is_some_and(|item| old.items.get(key).map(content) != Some(content(item))),
+            Self::Output {
+                target_root,
+                dest_path,
+            } => {
+                let now = new.installed_checksum_for_output(target_root, dest_path);
+                now.is_some() && now != old.installed_checksum_for_output(target_root, dest_path)
+            }
+            Self::Entry { target_root, key } => {
+                fn record<'a>(
+                    lock: &'a LockFile,
+                    target_root: &str,
+                    key: &str,
+                ) -> Option<&'a ConfigEntryRecord> {
+                    lock.config_entries.get(target_root)?.get(key)
+                }
+                let now = record(new, target_root, key);
+                now.is_some() && now != record(old, target_root, key)
+            }
+        }
+    }
 }
 
 pub fn item_key(id: &ItemId) -> String {

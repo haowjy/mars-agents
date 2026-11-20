@@ -66,16 +66,19 @@ enough. `sync_one_target` and `copy_item_to_target` choose the projection by
 
 ```mermaid
 stateDiagram-v2
- [*] --> NoVariant: adapter.skill_variant_key - is None
+ [*] --> NoVariant: spec.skill_variant_key - is None
  [*] --> Absent
  Absent --> Projected: project and read back its installed checksum
  Projected --> Projected: projection still matches, no bytes moved
- Projected --> Projected: projection diverged, repaired and warned
+ Projected --> Projected: projection differs, rewritten; warned only when disk differs from the lock's record
  Projected --> Failed: variant validation or projection error
  Failed --> Failed: error recorded for the target, other items continue
 ```
 
 - **A projection that cannot be prepared only pushes to `errors`.** The canonical item is not
   installed for that target and nothing else is marked.
+- **"Diverged" means disk differs from the lock's `installed_checksum`.** A projection that
+  differs from what this Mars renders, with the recorded bytes still on disk, is Mars's own format
+  change: rewritten without a warning.
 - **The repair is unconditional and idempotent.** `SKILL.md` is written atomically and the record
   follows, so a killed run leaves a projection the next run recomputes rather than trusts.

@@ -12,12 +12,11 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
-use crate::lock::LockFile;
+use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
 use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
-use crate::types::managed_cmd;
 
 #[derive(Debug, Clone)]
 pub struct TargetSyncedOutput {
@@ -106,20 +105,41 @@ fn target_dest_rel(outcome: &ActionOutcome, target_name: &str) -> Option<String>
     }
 }
 
+/// Whether `dest` holds something other than what the lock records Mars writing there. A native
+/// projection that differs from what this Mars would render, with the recorded bytes still on
+/// disk, is Mars's own format change and an ordinary update; one that differs from the record was
+/// edited.
+fn edited_since_written(
+    dest: &Path,
+    kind: mars_schema::item::ItemKind,
+    target_name: &str,
+    dest_rel: &str,
+    old_lock: &LockFile,
+) -> bool {
+    old_lock
+        .installed_checksum_for_output(target_name, dest_rel)
+        .is_some_and(|recorded| {
+            crate::hash::compute_hash(dest, kind)
+                .map(ContentHash::from)
+                .ok()
+                .as_ref()
+                != Some(recorded)
+        })
+}
+
 /// What a dry run shows of `sync_one_target`'s skill refresh: a native skill projection that
 /// differs from what a real sync would write is repaired, so it is named here as it is there.
 pub fn preview_native_skill_repairs(
     project_root: &Path,
     mars_dir: &Path,
+    old_lock: &LockFile,
     targets: &[String],
     outcomes: &[ActionOutcome],
     diag: &mut DiagnosticCollector,
 ) {
-    let registry = crate::target::TargetRegistry::new();
     for target_name in targets {
-        let Some(variant_key) = registry
-            .get(target_name)
-            .and_then(|adapter| adapter.skill_variant_key())
+        let Some(variant_key) =
+            crate::target::spec(target_name).and_then(|spec| spec.skill_variant_key())
         else {
             continue;
         };
@@ -150,7 +170,15 @@ pub fn preview_native_skill_repairs(
                 )
             })
             .unwrap_or(false);
-            if !matches {
+            if !matches
+                && edited_since_written(
+                    &dest,
+                    outcome.item_id.kind,
+                    target_name,
+                    &dest_rel,
+                    old_lock,
+                )
+            {
                 diag.warn(
                     "target-native-projection-repaired",
                     format!(
@@ -183,15 +211,13 @@ fn sync_one_target(
     std::fs::create_dir_all(target_root)?;
 
     let mut expected_paths: HashSet<String> = HashSet::new();
-    let target_registry = crate::target::TargetRegistry::new();
-    let target_adapter = target_registry.get(target_name);
-    let native_skill_variant_key = target_adapter
-        .and_then(|adapter| adapter.skill_variant_key())
+    let target_spec = crate::target::spec(target_name);
+    let native_skill_variant_key = target_spec
+        .and_then(|spec| spec.skill_variant_key())
         .map(str::to_owned);
-    let target_accepts_canonical_agents = target_adapter
-        .map(|adapter| {
-            adapter
-                .default_dest_path(mars_schema::item::ItemKind::Agent, "__mars_probe__")
+    let target_accepts_canonical_agents = target_spec
+        .map(|spec| {
+            spec.default_dest_path(mars_schema::item::ItemKind::Agent, "__mars_probe__")
                 .is_some()
         })
         .unwrap_or(true);
@@ -305,12 +331,24 @@ fn sync_one_target(
                                     )
                                     .unwrap_or(false);
                                 if target_projection_matches {
+                                    projection.record_lossiness(
+                                        outcome.item_id.name.as_str(),
+                                        &[RecordRef::output(target_name, dest_rel)],
+                                        diag,
+                                    );
                                     synced_outputs.push(TargetSyncedOutput {
                                         dest_path: dest_rel.to_string(),
                                         installed_checksum: projection.installed_checksum,
                                     });
                                     continue;
                                 }
+                                let edited = edited_since_written(
+                                    &dest,
+                                    outcome.item_id.kind,
+                                    target_name,
+                                    dest_rel,
+                                    old_lock,
+                                );
                                 match crate::compiler::variants::project_prepared_skill_for_target(
                                     &source,
                                     &dest,
@@ -320,13 +358,18 @@ fn sync_one_target(
                                         if wrote {
                                             items_synced += 1;
                                         }
+                                        projection.record_lossiness(
+                                            outcome.item_id.name.as_str(),
+                                            &[RecordRef::output(target_name, dest_rel)],
+                                            diag,
+                                        );
                                         synced_outputs.push(TargetSyncedOutput {
                                             dest_path: dest_rel.to_string(),
                                             installed_checksum: projection
                                                 .installed_checksum
                                                 .clone(),
                                         });
-                                        if dest_exists {
+                                        if edited {
                                             diag.warn(
                                                 "target-native-projection-repaired",
                                                 format!(
@@ -344,9 +387,9 @@ fn sync_one_target(
                             match copy_item_to_target(
                                 &source,
                                 &dest,
-                                outcome.item_id.kind,
-                                outcome.item_id.name.as_str(),
+                                outcome,
                                 native_skill_variant_key.as_deref(),
+                                &[RecordRef::output(target_name, dest_rel)],
                                 diag,
                             ) {
                                 Ok(true) => {
@@ -393,15 +436,7 @@ fn sync_one_target(
                                 dest_hash.expect("a present destination has a checksum result");
                             match hash {
                                 Ok(actual) if &actual != expected_checksum => {
-                                    diag.warn(
-                                        "target-divergent",
-                                        format!(
-                                            "target `{target_name}` item `{}` diverged from `.mars` (preserved local content; run `{cmd1}` or `{cmd2}` to reset)",
-                                            dest_rel,
-                                            cmd1 = managed_cmd("mars sync --force"),
-                                            cmd2 = managed_cmd("mars repair"),
-                                        ),
-                                    );
+                                    surface_ownership::warn_diverged(target_name, dest_rel, diag);
                                 }
                                 Ok(_) => {}
                                 Err(e) => errors
@@ -421,9 +456,9 @@ fn sync_one_target(
                     match copy_item_to_target(
                         &source,
                         &dest,
-                        outcome.item_id.kind,
-                        outcome.item_id.name.as_str(),
+                        outcome,
                         native_skill_variant_key.as_deref(),
+                        &[RecordRef::output(target_name, dest_rel)],
                         diag,
                     ) {
                         Ok(true) => {
@@ -583,12 +618,14 @@ fn record_synced_output(
 fn copy_item_to_target(
     source: &Path,
     dest: &Path,
-    kind: mars_schema::item::ItemKind,
-    item_name: &str,
+    outcome: &ActionOutcome,
     native_skill_variant_key: Option<&str>,
+    concerns: &[RecordRef],
     diag: &mut DiagnosticCollector,
 ) -> Result<bool, MarsError> {
+    let kind = outcome.item_id.kind;
     if kind == mars_schema::item::ItemKind::Skill && native_skill_variant_key.is_some() {
+        let item_name = outcome.item_id.name.as_str();
         crate::compiler::variants::validate_skill_variants(source, item_name, diag);
         return crate::compiler::variants::project_skill_for_target(
             source,
@@ -596,6 +633,7 @@ fn copy_item_to_target(
             native_skill_variant_key,
             diag,
             item_name,
+            concerns,
         );
     }
 
@@ -916,9 +954,7 @@ mod tests {
         assert!(
             diagnostics.iter().any(|diagnostic| {
                 diagnostic.code == "target-unmanaged-collision"
-                    && diagnostic
-                        .message
-                        .contains("has no installed-content claim")
+                    && diagnostic.message.contains("no installed-content claim")
             }),
             "a pending-deletion record carries no installed-content authority"
         );

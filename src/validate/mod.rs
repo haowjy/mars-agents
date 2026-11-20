@@ -1,78 +1,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::diagnostic::{Diagnostic, DiagnosticLevel, Owner};
 use crate::error::MarsError;
-use crate::lock::ItemId;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValidationWarning {
-    MissingSkill {
-        agent: ItemId,
-        skill_name: String,
-        suggestion: Option<String>,
-    },
-    /// An agent references `x__p`, its package declares provider `p`, and `p` has not provided
-    /// the skill here. Sync continues: the package works wherever the provider supplies it.
-    ProvidedSkillUnavailable {
-        agent: ItemId,
-        skill_name: String,
-        provider: String,
-    },
-    /// An agent in a package references a skill a provider has provided here, but the package
-    /// does not declare that provider, so consumers without it would not resolve the ref.
-    ProvidedSkillUndeclared {
-        agent: ItemId,
-        skill_name: String,
-        provider: String,
-    },
-}
-
-impl ValidationWarning {
-    pub(crate) fn code(&self) -> &'static str {
-        match self {
-            Self::MissingSkill { .. } => "missing-skill",
-            Self::ProvidedSkillUnavailable { .. } => "provided-skill-unavailable",
-            Self::ProvidedSkillUndeclared { .. } => "provided-skill-undeclared",
-        }
-    }
-
-    pub(crate) fn message(&self) -> String {
-        match self {
-            Self::MissingSkill {
-                agent,
-                skill_name,
-                suggestion,
-            } => match suggestion {
-                Some(s) => format!(
-                    "agent `{}` references missing skill `{skill_name}` (did you mean `{s}`?)",
-                    agent.name
-                ),
-                None => format!(
-                    "agent `{}` references missing skill `{skill_name}`",
-                    agent.name
-                ),
-            },
-            Self::ProvidedSkillUnavailable {
-                agent,
-                skill_name,
-                provider,
-            } => format!(
-                "agent `{}` references skill `{skill_name}`, which provider `{provider}` supplies; \
-                 it is not provided here, so the agent runs without it",
-                agent.name
-            ),
-            Self::ProvidedSkillUndeclared {
-                agent,
-                skill_name,
-                provider,
-            } => format!(
-                "agent `{}` references skill `{skill_name}`, provided here by `{provider}`, but this \
-                 package's `[package] uses-providers` does not list `{provider}`; consumers will not resolve it",
-                agent.name
-            ),
-        }
-    }
-}
 
 /// The callers read files Mars or a provider wrote — an installed Agent under `.mars/`. Returns the `skills` list, or an empty vec if there is no
 /// frontmatter, no `skills` field, or malformed YAML, and reads only the frontmatter block
@@ -85,50 +15,97 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
         .unwrap_or_default())
 }
 
-/// `declared` is the Agent's package's `uses-providers`: `Some` for a package, `None` for a
-/// consumer project's own items, which need no declaration. `provided_here` is whether this
-/// machine's `.mars/provided.lock` supplies the name.
+/// What an Agent's skill ref needs checked: `declared` is the Agent's package's
+/// `uses-providers`, `Some` for a package and `None` for a consumer project's own items, which
+/// need no declaration. `provided_here` is whether this machine's `.mars/provided.lock`
+/// supplies the name.
+pub(crate) struct SkillRef<'a> {
+    pub agent: &'a str,
+    pub skill_name: &'a str,
+    pub owner: Owner<'a>,
+    pub declared: Option<&'a [String]>,
+    pub provided_here: bool,
+}
+
+/// The report for one skill ref the installed skills do not satisfy, or `None` when they do.
+/// The one place a ref is judged, so sync, validate, doctor and plugin builds word it alike.
 pub(crate) fn classify_skill_ref(
-    agent: ItemId,
-    skill_name: String,
+    reference: &SkillRef<'_>,
     available_skills: &HashSet<String>,
-    declared: Option<&[String]>,
-    provided_here: bool,
-) -> Option<ValidationWarning> {
-    if available_skills.contains(&skill_name) {
+) -> Option<Diagnostic> {
+    let SkillRef {
+        agent,
+        skill_name,
+        owner,
+        declared,
+        provided_here,
+    } = *reference;
+    if available_skills.contains(skill_name) {
         return None;
     }
-    Some(match mars_schema::provider::provider_of(&skill_name) {
+    let (own_level, dependency) = match owner {
+        Owner::Own => (DiagnosticLevel::Warning, None),
+        Owner::Dependency(source) => (DiagnosticLevel::Info, Some(source)),
+    };
+    let whose = dependency.map_or(String::new(), |source| format!(" (from `{source}`)"));
+    Some(match mars_schema::provider::provider_of(skill_name) {
         // The package declares the provider: the ref is valid wherever it supplies the skill, and
         // says so where it does not.
         Some(provider)
-            if mars_schema::provider::deferred_provider(&skill_name, declared).is_some() =>
+            if mars_schema::provider::deferred_provider(skill_name, declared).is_some() =>
         {
             if provided_here {
                 return None;
             }
-            ValidationWarning::ProvidedSkillUnavailable {
-                agent,
-                provider: provider.to_string(),
-                skill_name,
-            }
+            Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "provided-skill-unavailable",
+                format!(
+                    "agent `{agent}`{whose} references skill `{skill_name}`, which provider \
+                     `{provider}` supplies; it is not provided here, so the agent runs without it"
+                ),
+            )
         }
         // Provided here. A consumer project's own items have no `[package]` table, so nothing
         // needs declaring and the ref is satisfied; a package that does not declare the provider
         // would not resolve it for consumers.
         Some(provider) if provided_here => {
             declared?;
-            ValidationWarning::ProvidedSkillUndeclared {
-                agent,
-                provider: provider.to_string(),
-                skill_name,
-            }
+            Diagnostic::new(
+                own_level,
+                "provided-skill-undeclared",
+                format!(
+                    "agent `{agent}`{whose} references skill `{skill_name}`, provided here by \
+                     `{provider}`, but this package's `[package] uses-providers` does not list \
+                     `{provider}`; consumers will not resolve it"
+                ),
+            )
         }
-        _ => ValidationWarning::MissingSkill {
-            agent,
-            suggestion: find_suggestion(&skill_name, available_skills),
-            skill_name,
-        },
+        _ => {
+            let suggestion = find_suggestion(skill_name, available_skills)
+                .map_or(String::new(), |name| format!(" (did you mean `{name}`?)"));
+            let fix = match dependency {
+                Some(source) => format!(
+                    "; its author has to ship the skill, and `mars upgrade {source}` takes a newer release"
+                ),
+                None if suggestion.is_empty()
+                    && mars_schema::provider::provider_of(skill_name).is_none() =>
+                {
+                    format!(
+                        "; add a source that provides it, or create it locally in skills/{skill_name}/"
+                    )
+                }
+                None => String::new(),
+            };
+            // The agent runs without a skill it declares, so this is a warning whoever shipped it.
+            Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "missing-skill",
+                format!(
+                    "agent `{agent}`{whose} references missing skill `{skill_name}`{suggestion}{fix}"
+                ),
+            )
+        }
     })
 }
 

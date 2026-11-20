@@ -126,7 +126,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
                 ..SyncOptions::default()
             },
             recovery: Default::default(),
-            lossiness_mode: crate::diagnostic::LossinessMode::Surface,
+            lossiness_mode: crate::diagnostic::LossinessMode::Written,
         };
 
         let report = crate::sync::execute(ctx, &request)?;
@@ -148,7 +148,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             ..SyncOptions::default()
         },
         recovery: Default::default(),
-        lossiness_mode: crate::diagnostic::LossinessMode::Surface,
+        lossiness_mode: crate::diagnostic::LossinessMode::Written,
     };
 
     let report = crate::sync::execute(ctx, &request)?;
@@ -284,7 +284,7 @@ fn derive_dependency_name(
 fn print_dependency_messages(changes: &[DependencyUpsertChange]) {
     for change in changes {
         if change.already_exists {
-            output::print_warn(&format!(
+            output::print_info(&format!(
                 "dependency `{}` already exists — updated",
                 change.name
             ));

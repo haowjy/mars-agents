@@ -434,11 +434,9 @@ fn unrelated_malformed_mcp_file_cannot_retain_removed_hook_ownership() {
             .is_some_and(|records| records.contains_key("hook:SessionStart:audit")),
         "confirmed hook removal must not leave ghost ownership"
     );
-    let settings: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(project.child(".claude/settings.local.json").path()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(settings, serde_json::json!({}));
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::path::missing());
     project
         .child(".claude/hooks/audit")
         .assert(predicate::path::missing());

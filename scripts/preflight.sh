@@ -25,6 +25,7 @@ case "$MODE" in
     fi
     run_step cargo test -p mars-schema
     run_step cargo build --release
+    run_step node tools/atlas/check.mjs docs/atlas/atlas.config.mjs
     ;;
   *)
     printf 'Usage: preflight.sh [fast|full]\n' >&2

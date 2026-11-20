@@ -23,7 +23,6 @@ use crate::compiler::agents::tool_loss::{self, Allowlist, Carries, DenyCarry};
 /// unclassified site is loud. Codex lowers `network` as dropped, because its native artifact
 /// carries `sandbox_mode`, so a natively run Codex agent keeps Codex's own network default.
 pub use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, ProjectLoss};
-use crate::harness::registry;
 use mars_schema::HarnessId;
 use mars_schema::agent::{AgentProfile, LoweredField};
 use mars_schema::frontmatter::SkillsSpec;
@@ -426,7 +425,7 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn target_name(&self) -> &'static str {
-        registry::descriptor(self.harness).display_name
+        self.harness.display_name()
     }
 
     fn insert_identity(&mut self) {

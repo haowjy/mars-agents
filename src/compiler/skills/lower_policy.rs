@@ -3,7 +3,6 @@
 use serde_yaml::{Mapping, Value};
 
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost, LoweredOutput, LoweredSibling};
-use crate::harness::registry;
 use mars_schema::HarnessId;
 use mars_schema::skill::{self, SkillProfile};
 
@@ -89,7 +88,7 @@ fn insert_overrides(
         if reserved.contains(&key.as_str()) || yaml.contains_key(yk(key)) {
             lossy_fields.push(dropped(
                 &format!("harness-overrides.{harness}.{key}"),
-                registry::descriptor(harness).display_name,
+                harness.display_name(),
             ));
         } else {
             yaml.insert(
@@ -178,7 +177,7 @@ pub(super) fn lower_skill_with_policy(
     let mut yaml = Mapping::new();
     let mut lossy_fields = Vec::new();
     let mut siblings = Vec::new();
-    let target_name = registry::descriptor(harness).display_name;
+    let target_name = harness.display_name();
 
     insert_identity(&mut yaml, profile);
     match harness {

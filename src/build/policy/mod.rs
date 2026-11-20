@@ -545,10 +545,9 @@ pub fn resolve_policy(
             .map(|agent| format!("agent {agent}"))
             .unwrap_or_else(|| "requested model".to_string());
         let requested = requested.as_str();
-        let harness = registry::descriptor(
-            tiered_harness.expect("a tier failure comes from a harness with tiers"),
-        )
-        .display_name;
+        let harness = tiered_harness
+            .expect("a tier failure comes from a harness with tiers")
+            .display_name();
         let message = match failure {
             TierFailure::ListingUnavailable => format!(
                 "{actor} selected effort {requested}; {harness} model list was unavailable; rerun without --no-refresh-models or with --refresh-models."

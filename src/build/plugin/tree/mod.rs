@@ -402,7 +402,6 @@ impl ModelFallbackCounts {
 
     fn emit(&self, profile: &TreeProfile, diag: &mut DiagnosticCollector) {
         if !self.via_policy.is_empty() {
-            let descriptor = profile.descriptor();
             let agents = self
                 .via_policy
                 .iter()
@@ -419,7 +418,7 @@ impl ModelFallbackCounts {
                 format!(
                     "{} {noun} {verb} a model-policies fallback model in the {} tree: {agents}",
                     self.via_policy.len(),
-                    descriptor.display_name
+                    profile.harness.display_name()
                 ),
             );
         }
@@ -427,25 +426,24 @@ impl ModelFallbackCounts {
         if total == 0 {
             return;
         }
-        let descriptor = profile.descriptor();
         let agents = if total == 1 { "agent" } else { "agents" };
         let verb = if total == 1 { "uses" } else { "use" };
         let reason = match (self.not_package_alias, self.no_deterministic_id) {
             (0, _) => format!(
                 "configured models have no deterministic {} id",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
             (_, 0) => "configured model tokens are not package aliases".to_string(),
             (not_aliases, no_ids) => format!(
                 "{not_aliases} model tokens are not package aliases and {no_ids} have no deterministic {} id",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
         };
         diag.info(
             "plugin-model-default",
             format!(
                 "{total} {agents} {verb} the {} harness default because {reason}",
-                descriptor.display_name
+                profile.harness.display_name()
             ),
         );
     }

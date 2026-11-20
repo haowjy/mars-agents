@@ -62,7 +62,6 @@ pub enum ListingAuth {
 /// are not stored. Lowering policy is a match on `HarnessId` in the compiler.
 pub struct HarnessDescriptor {
     pub id: HarnessId,
-    pub display_name: &'static str,
     pub binary: &'static str,
     pub default_target: &'static str,
     pub class: HarnessClass,
@@ -89,7 +88,6 @@ pub fn default_harness_order_names() -> Vec<String> {
 const DESCRIPTORS: &[HarnessDescriptor] = &[
     HarnessDescriptor {
         id: HarnessId::Claude,
-        display_name: "Claude",
         binary: "claude",
         default_target: ".claude",
         class: HarnessClass::Native {
@@ -98,14 +96,12 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::Codex,
-        display_name: "Codex",
         binary: "codex",
         default_target: ".codex",
         class: HarnessClass::Native { provider: "openai" },
     },
     HarnessDescriptor {
         id: HarnessId::Pi,
-        display_name: "Pi",
         binary: "pi",
         default_target: ".pi",
         class: HarnessClass::ProbeBacked(ProbeSpec {
@@ -117,7 +113,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::OpenCode,
-        display_name: "OpenCode",
         binary: "opencode",
         default_target: ".opencode",
         class: HarnessClass::ProbeBacked(ProbeSpec {
@@ -129,7 +124,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::Cursor,
-        display_name: "Cursor",
         binary: "cursor",
         default_target: ".cursor",
         class: HarnessClass::ProbeBacked(ProbeSpec {
@@ -144,7 +138,6 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
     },
     HarnessDescriptor {
         id: HarnessId::Agy,
-        display_name: "Antigravity",
         binary: "agy",
         default_target: ".agy",
         class: HarnessClass::ProbeBacked(ProbeSpec {

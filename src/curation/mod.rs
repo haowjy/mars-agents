@@ -444,7 +444,7 @@ impl CuratedRules {
                     view.diagnostics.push(format!(
                         "{}: {} declaration `{}` cannot have a provider",
                         tier.path.display(),
-                        registry::descriptor(harness).display_name,
+                        harness.display_name(),
                         rule.model
                     ));
                     continue;

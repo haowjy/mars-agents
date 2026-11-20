@@ -134,10 +134,20 @@ pub(crate) fn compile_config_entries(
         for (dir, item) in &installed_hooks {
             match rendered_hooks.get(dir) {
                 HookOutput::Merge(output) => merge_outputs.push((*item, output)),
-                HookOutput::Keyed(output) => keyed_hooks.push(keyed_entries::Rendered {
-                    name: item.def.name.clone(),
-                    value: output.keyed_value(),
-                }),
+                HookOutput::Keyed(output) => {
+                    keyed_hooks.push(keyed_entries::Rendered {
+                        name: item.def.name.clone(),
+                        value: output.keyed_value(),
+                    });
+                    for file in &output.files {
+                        desired_file_outputs.insert((target_root.clone(), file.path.clone()));
+                        file_writes.push((
+                            dir.canonical().as_str().to_string(),
+                            file.path.clone(),
+                            file.content.clone(),
+                        ));
+                    }
+                }
                 HookOutput::File(output) => {
                     for file in &output.files {
                         desired_file_outputs.insert((target_root.clone(), file.path.clone()));

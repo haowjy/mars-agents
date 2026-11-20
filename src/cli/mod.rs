@@ -195,6 +195,10 @@ pub enum Command {
 
     /// List and inspect skills.
     Skills(skills::SkillsArgs),
+
+    /// Run a translated hook; written into a harness's hook file by `mars sync`.
+    #[command(hide = true)]
+    Hook(crate::hook_run::HookArgs),
 }
 
 pub fn dispatch(cli: Cli) -> i32 {
@@ -245,6 +249,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
+        Command::Hook(args) => Ok(crate::hook_run::run(args)),
         Command::Models(models::ModelsArgs {
             command: models::ModelsCommand::RefreshCatalog(args),
         }) => models::run_refresh_catalog(args),
@@ -334,7 +339,11 @@ fn dispatch_with_root(
         Command::Build(args) => build::run(args, ctx, explicit_root, json),
         Command::Agents(args) => agents::run(args, ctx, json),
         Command::Skills(args) => skills::run(args, ctx, json),
-        Command::Init(_) | Command::Check(_) | Command::Cache(_) | Command::Provide(_) => {
+        Command::Init(_)
+        | Command::Check(_)
+        | Command::Cache(_)
+        | Command::Provide(_)
+        | Command::Hook(_) => {
             unreachable!()
         }
     }

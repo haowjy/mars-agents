@@ -24,6 +24,7 @@ fn rendered_typescript_matches_the_golden_files() {
                 hook_dir: "/p/hooks/case",
                 hook_target: root,
                 hook_name: "",
+                ..Default::default()
             };
             let Ok(HookOutput::File(output)) = def.output(target, None, Origin::Local, &tokens)
             else {
@@ -83,6 +84,7 @@ fn run_opencode(hook_toml: &str, script: &str) -> Option<String> {
         hook_dir: "/p/hooks/perm",
         hook_target: ".opencode",
         hook_name: "",
+        ..Default::default()
     };
     let Ok(HookOutput::File(output)) = def.output(target, None, Origin::Local, &tokens) else {
         panic!("opencode is a file target");
@@ -228,4 +230,77 @@ console.log(existsSync("done") ? "finished" : "killed");"#,
         return;
     };
     assert_eq!(out.trim(), "finished");
+}
+
+/// `core.ts` against `fixtures/hook-vectors.json`, which the agy runner's Rust port
+/// (`src/hook_run/logic.rs`) is tested against too, so the two cannot drift apart.
+#[test]
+fn core_decides_the_shared_vectors() {
+    const DRIVER: &str = r#"import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const core = await import(pathToFileURL(process.argv[2]).href);
+const vectors = JSON.parse(readFileSync(process.argv[3], "utf8"));
+const bad = [];
+for (const v of vectors.matcher) {
+  if (core.matcherAccepts(v.pattern, v.value) !== v.accepts) bad.push(["matcher", v]);
+}
+for (const v of vectors.condition) {
+  if (core.conditionHolds(v.rule, v.tool, v.input) !== v.holds) bad.push(["condition", v]);
+}
+for (const v of vectors.decide) {
+  const got = core.decide(v.event, v.handler, v.run) ?? {};
+  const answered = { block: got.block, context: got.context };
+  if (JSON.stringify(answered) !== JSON.stringify({ block: v.expect.block, context: v.expect.context })) {
+    bad.push(["decide", v, got]);
+  }
+}
+for (const v of vectors.fire) {
+  core.HOOK.events = { [v.event]: v.groups };
+  const runs = [...v.runs];
+  const run = async (handler) => {
+    if (handler.async) return { ok: true, status: 0, stdout: "", stderr: "", why: "exit 0" };
+    return { ok: true, why: `exit ${runs[0]?.status}`, stdout: "", stderr: "", ...runs.shift() };
+  };
+  const moment = { cwd: "/p", sessionId: "s", matcher: v.matcher ?? undefined, tool: v.tool, fields: {} };
+  const got = await core.fire(v.event, moment, run);
+  const answered = { block: got.block, context: got.context };
+  if (JSON.stringify(answered) !== JSON.stringify({ block: v.expect.block, context: v.expect.context }) || runs.length) {
+    bad.push(["fire", v, got, runs]);
+  }
+}
+console.log(JSON.stringify(bad));
+"#;
+    let dir = std::env::temp_dir().join(format!("mars-ts-vectors-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let core = include_str!("../src/hooks/typescript/core.ts");
+    std::fs::write(
+        dir.join("core.ts"),
+        format!(
+            "const HOOK: any = {{ name: \"vec\", harness: \"vec\", events: {{}} }};\n{core}\nexport {{ HOOK, matcherAccepts, conditionHolds, decide, fire }};\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.join("drive.mjs"), DRIVER).unwrap();
+    let vectors =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/hook-vectors.json");
+    let run = std::process::Command::new("node")
+        .arg(dir.join("drive.mjs"))
+        .arg(dir.join("core.ts"))
+        .arg(vectors)
+        .output();
+    std::fs::remove_dir_all(&dir).ok();
+    let run = match run {
+        Ok(run) => run,
+        Err(error) if std::env::var_os("CI").is_none() => {
+            eprintln!("node is not installed ({error}); skipping");
+            return;
+        }
+        Err(error) => panic!("CI needs node to run the generated TypeScript: {error}"),
+    };
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8(run.stdout).unwrap().trim(), "[]");
 }

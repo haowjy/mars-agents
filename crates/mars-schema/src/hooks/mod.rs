@@ -8,6 +8,7 @@
 //! Nothing here touches the filesystem: the caller reads the bytes and places the result,
 //! and adds the location (a path, or a package and version) to the path-free diagnostics.
 
+pub mod antigravity;
 mod output;
 pub mod portable;
 mod read;
@@ -56,6 +57,12 @@ pub struct Tokens<'a> {
     /// The hook's name, which a generated file carries as its identity. Not a token: no
     /// authored text is substituted with it.
     pub hook_name: &'a str,
+    /// The `mars` binary a translated hook's command runs, by absolute path. Not a token:
+    /// no authored text is substituted with it.
+    pub mars_exe: &'a str,
+    /// Where a translated hook's runner data is written, relative to the target root; the
+    /// hook's command names it. Set by [`HookDef::output`] from the target's row.
+    pub generated_file: &'a str,
 }
 
 impl Tokens<'_> {

@@ -1,4 +1,4 @@
-//! File-placement hook outputs (OpenCode, Pi): which files the lock says a hook owns, and
+//! Hook outputs written as files (OpenCode and Pi's hooks; `.agy`'s runner data): which files the lock says a hook owns, and
 //! writing them.
 
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ fn owned_files(item: &crate::lock::LockedItemV2) -> Vec<(String, String)> {
         .filter(|output| output.target_root != crate::lock::CANONICAL_TARGET_ROOT)
         .filter(|output| {
             mars_schema::hooks::targets::target(&output.target_root)
-                .is_some_and(mars_schema::hooks::targets::Target::is_file)
+                .is_some_and(mars_schema::hooks::targets::Target::installs_files)
         })
         .filter(|output| {
             !dir_copies.iter().any(|dir| {

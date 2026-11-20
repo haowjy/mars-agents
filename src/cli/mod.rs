@@ -138,7 +138,7 @@ pub enum Command {
     /// Rename a managed item.
     Rename(rename::RenameArgs),
 
-    /// Mark conflicts as resolved.
+    /// Deprecated: mark conflicts as resolved (removed in the next minor).
     Resolve(resolve_cmd::ResolveArgs),
 
     /// Set a local dev override for a source.

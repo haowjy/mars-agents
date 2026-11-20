@@ -90,7 +90,7 @@ Mars accepts several source forms:
 | Document | Contents |
 |---|---|
 | [config/schema-v1.md](config/schema-v1.md) | The schema v1 contract: agent, skill and manifest keys, effort, model-policy precedence, tool capabilities, fixtures |
-| [config/retired-keys.md](config/retired-keys.md) | Keys Mars stopped reading, what each became, and a package with no `schema` |
+| [config/retired-keys.md](config/retired-keys.md) | Keys Mars stopped reading, what each became, the deprecated `mars resolve`, and a package with no `schema` |
 | [config/mars-toml.md](config/mars-toml.md) | `mars.toml` reference: dependencies (marketplace plugins, dialect), settings, overlays, model aliases |
 | [config/mars-curated.md](config/mars-curated.md) | `mars.curated.toml`: the display-only model rules `mars models list` layers and merges |
 | [config/agent-profiles.md](config/agent-profiles.md) | Agent profile format: every field, allowed values, tools, harness-overrides, model-policies, examples |

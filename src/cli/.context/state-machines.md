@@ -155,7 +155,7 @@ stateDiagram-v2
 
 - **Mars never creates a conflicted item.** No writer emits conflict markers; the state comes from
   a git merge in the user's repository. Mars observes and resolves it, and does not drive it.
-- `mars resolve` re-stamps `OutputRecord::mark_installed` for each item whose markers are gone and
+- `mars resolve` (deprecated in 0.39.0, removed in the next minor) re-stamps `OutputRecord::mark_installed` for each item whose markers are gone and
   whose hash differs from the record, then writes the lock once if anything changed. Killed
   before that, nothing changed.
 - `list --status`, `doctor` (`TargetDivergence`) and `target_sync` (`resolve_copy`) each

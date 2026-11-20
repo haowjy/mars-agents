@@ -1583,7 +1583,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_crash_between_the_two_lock_writes_leaves_provided_records_loadable() {
         let dir = TempDir::new().unwrap();
@@ -1619,6 +1618,7 @@ mod tests {
         assert_eq!(load(dir.path()).unwrap().items, lock.items);
     }
 
+    #[cfg(unix)]
     #[test]
     fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;

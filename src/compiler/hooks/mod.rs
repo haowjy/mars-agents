@@ -76,7 +76,8 @@ pub struct InvalidHook {
     /// The names the last sync may have installed it under: the `name` the file still
     /// declares, then its directory's. A hook is found by the first one the lock holds.
     pub installed_names: Vec<String>,
-    pub exported: bool,
+    /// `None` when the file does not say, which a file that cannot be read often does not.
+    pub exported: Option<bool>,
     pub order: i32,
     pub error: MarsError,
     pub removed_schema: bool,
@@ -98,7 +99,7 @@ impl InvalidHook {
             slug: crate::discover::hook_slug(text, dir_name),
             hook_dir: hook_dir.to_path_buf(),
             installed_names,
-            exported: declared(text, "visibility").is_some_and(|v| v.as_str() == Some("exported")),
+            exported: declared(text, "visibility").map(|v| v.as_str() == Some("exported")),
             order: declared(text, "order")
                 .and_then(|order| order.as_integer())
                 .and_then(|order| i32::try_from(order).ok())
@@ -113,7 +114,7 @@ impl InvalidHook {
             slug: item.def.name.clone(),
             hook_dir: item.hook_dir.clone(),
             installed_names: vec![item.def.name.clone()],
-            exported: item.def.visibility == mars_schema::visibility::Visibility::Exported,
+            exported: Some(item.def.visibility == mars_schema::visibility::Visibility::Exported),
             order: item.def.order,
             error,
             removed_schema: false,

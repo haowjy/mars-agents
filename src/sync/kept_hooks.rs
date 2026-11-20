@@ -22,6 +22,9 @@ pub(crate) struct InvalidDependencyHook {
     pub source_path: Option<String>,
     /// Names the last sync may have installed the hook under, most likely first.
     pub installed_names: Vec<String>,
+    /// The file did not say whether the hook is exported. Only a hook the last sync installed was
+    /// (a dependency installs exported hooks only), so one with no install is not reported.
+    pub visibility_unread: bool,
     /// Where the hook sorted in the last sync, so its kept entries keep their place.
     pub rank: HookRank,
     pub message: String,
@@ -118,6 +121,9 @@ pub(super) fn settle(
                 dirs,
             })
         });
+        if kept.is_none() && invalid.visibility_unread {
+            continue;
+        }
         let outcome = if kept.is_some() {
             "keeping what the last sync installed"
         } else {

@@ -520,7 +520,7 @@ pub(crate) fn build_with_collisions_and_diag(
                 // A hook the consumer filtered out or is not shown is not theirs to hear about,
                 // and keeps nothing.
                 Err(invalid)
-                    if invalid.exported
+                    if invalid.exported != Some(false)
                         && selected.contains(&(
                             source_name.as_str(),
                             ItemKind::Hook,
@@ -534,6 +534,7 @@ pub(crate) fn build_with_collisions_and_diag(
                             &invalid.hook_dir,
                         ),
                         installed_names: invalid.installed_names,
+                        visibility_unread: invalid.exported.is_none(),
                         rank: crate::compiler::hooks::HookRank {
                             package_depth,
                             decl_order,

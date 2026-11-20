@@ -75,11 +75,10 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         .as_ref()
         .map(|manifest| &manifest.models)
         .unwrap_or(&empty_model_aliases);
-    let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
-        .then(|| {
-            NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
-                .with_settings(settings.clone())
-        });
+    let mut model_router = (!policy.emits_nothing()).then(|| {
+        NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+            .with_settings(settings.clone())
+    });
 
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);

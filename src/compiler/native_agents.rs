@@ -5,11 +5,11 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
-use super::AgentSurfacePolicy;
 use super::agent_copy;
 use super::agents::opencode_permission;
 use super::effective_tools::effective_tools;
 use super::lossiness::{Lossiness, LossyField, ProjectLoss};
+use super::{AgentSurfaceMode, AgentSurfacePolicy};
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::DiagnosticCollector;
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
@@ -732,7 +732,7 @@ pub(crate) fn compile_native_agents<'a>(
     model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<CompiledNativeOutput> {
-    if matches!(policy, AgentSurfacePolicy::SuppressAll) {
+    if policy.emits_nothing() {
         return Vec::new();
     }
 
@@ -908,53 +908,57 @@ pub(crate) fn qualifying_agent_emissions(
     let AgentRef { profile, overlay } = agent;
     let in_scope = |harness: &HarnessId| harness_scope.is_none_or(|scope| scope.contains(harness));
 
-    match policy {
-        AgentSurfacePolicy::SuppressAll => Vec::new(),
-        AgentSurfacePolicy::EmitAll => {
-            let mut emissions = Vec::new();
-            for harness in configured_emit_harnesses {
-                if !in_scope(harness) {
-                    continue;
-                }
-                let (model, resolved) = match model_router
-                    .decision_for_profile(profile, overlay, harness, true, true)
-                {
-                    NativeModelDecision::Set { model_id, token } => (
-                        crate::compiler::agents::lower::NativeModel::Set(model_id),
-                        model_router.profile_for_token(profile, overlay, Some(&token), *harness),
-                    ),
-                    NativeModelDecision::Clear | NativeModelDecision::Skip => (
-                        crate::compiler::agents::lower::NativeModel::Clear,
-                        model_router.profile_for_token(profile, overlay, None, *harness),
-                    ),
-                };
-                emissions.push(NativeEmission::new(*harness, model, resolved));
-            }
-            emissions
+    let mut emissions = Vec::new();
+    let launched = crate::harness::registry::launched_by_meridian;
+    // Every configured harness the policy emits for, in configured order.
+    let emits_all = |harness: &HarnessId| match &policy.launched {
+        AgentSurfaceMode::EmitAll => true,
+        AgentSurfaceMode::EmitSelective(_) | AgentSurfaceMode::SuppressAll => {
+            !launched(*harness) && policy.emit_unlaunched
         }
-        AgentSurfacePolicy::EmitSelective(spec) => {
-            let effective_fanout = spec.include_fanout
-                || fanout_agents
-                    .iter()
-                    .any(|n| n.eq_ignore_ascii_case(agent_name));
-            let mut emissions = Vec::new();
-            for harness in &spec.harnesses {
-                if !in_scope(harness) {
-                    continue;
-                }
-                if let NativeModelDecision::Set { model_id, token } = model_router
-                    .decision_for_profile(profile, overlay, harness, effective_fanout, false)
-                {
-                    emissions.push(NativeEmission::new(
-                        *harness,
-                        crate::compiler::agents::lower::NativeModel::Set(model_id),
-                        model_router.profile_for_token(profile, overlay, Some(&token), *harness),
-                    ));
-                }
+    };
+    for harness in configured_emit_harnesses {
+        if !in_scope(harness) || !emits_all(harness) {
+            continue;
+        }
+        let (model, resolved) =
+            match model_router.decision_for_profile(profile, overlay, harness, true, true) {
+                NativeModelDecision::Set { model_id, token } => (
+                    crate::compiler::agents::lower::NativeModel::Set(model_id),
+                    model_router.profile_for_token(profile, overlay, Some(&token), *harness),
+                ),
+                NativeModelDecision::Clear | NativeModelDecision::Skip => (
+                    crate::compiler::agents::lower::NativeModel::Clear,
+                    model_router.profile_for_token(profile, overlay, None, *harness),
+                ),
+            };
+        emissions.push(NativeEmission::new(*harness, model, resolved));
+    }
+    if let AgentSurfaceMode::EmitSelective(spec) = &policy.launched {
+        let effective_fanout = spec.include_fanout
+            || fanout_agents
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(agent_name));
+        for harness in spec.harnesses.iter().filter(|harness| launched(**harness)) {
+            if !in_scope(harness) {
+                continue;
             }
-            emissions
+            if let NativeModelDecision::Set { model_id, token } = model_router.decision_for_profile(
+                profile,
+                overlay,
+                harness,
+                effective_fanout,
+                false,
+            ) {
+                emissions.push(NativeEmission::new(
+                    *harness,
+                    crate::compiler::agents::lower::NativeModel::Set(model_id),
+                    model_router.profile_for_token(profile, overlay, Some(&token), *harness),
+                ));
+            }
         }
     }
+    emissions
 }
 
 /// What each target's files leave out of the project-wide tool rules, found across all agents
@@ -1318,7 +1322,7 @@ pub(crate) fn materialize_native_agents_after_link(
         .unwrap_or_else(|_| crate::models::ModelsCache::default());
     let model_aliases = crate::models::merged_model_aliases(input.graph, input.effective, diag);
     let routing_settings = ResolvedRoutingSettings::from_settings(&input.effective.settings);
-    let mut model_router = (!matches!(policy, AgentSurfacePolicy::SuppressAll)).then(|| {
+    let mut model_router = (!policy.emits_nothing()).then(|| {
         NativeModelRoutingRuntime::collect(&model_aliases, &models_cache, routing_settings)
             .with_settings(input.effective.settings.clone())
     });
@@ -1336,7 +1340,7 @@ pub(crate) fn materialize_native_agents_after_link(
         selective_harness_scope: harness_scope,
     };
     let ownership_lock;
-    let compile_ctx = if matches!(policy, AgentSurfacePolicy::SuppressAll) {
+    let compile_ctx = if policy.emits_nothing() {
         None
     } else {
         ownership_lock =

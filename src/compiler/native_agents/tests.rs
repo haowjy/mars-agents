@@ -167,7 +167,10 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
             },
             fanout_agents: &[],
         },
-        &AgentSurfacePolicy::EmitAll,
+        &AgentSurfacePolicy {
+            launched: AgentSurfaceMode::EmitAll,
+            emit_unlaunched: true,
+        },
         &[agent],
         &mut router,
         &mut diag,
@@ -244,7 +247,10 @@ fn compile_emit_all_with_overlays(
     let mut router = test_router(aliases, &models_cache);
     compile_native_agents(
         &ctx,
-        &AgentSurfacePolicy::EmitAll,
+        &AgentSurfacePolicy {
+            launched: AgentSurfaceMode::EmitAll,
+            emit_unlaunched: true,
+        },
         &resolved,
         &mut router,
         &mut diag,

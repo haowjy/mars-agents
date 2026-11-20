@@ -770,16 +770,16 @@ pub(crate) fn sync_targets(
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;
-    let target_outcomes_source = match &agent_surface_policy {
-        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+    let target_outcomes_source = match &agent_surface_policy.launched {
+        crate::compiler::AgentSurfaceMode::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(_) => {
+        crate::compiler::AgentSurfaceMode::EmitSelective(_) => {
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => &applied.applied.outcomes,
+        crate::compiler::AgentSurfaceMode::EmitAll => &applied.applied.outcomes,
     };
     let mut orphan_preserve_paths =
         crate::compiler::config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);

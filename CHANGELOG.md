@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.3] - 2026-11-20
+
+### Fixed
+- With `MERIDIAN_MANAGED=1` (any sync run through `meridian`), every `mars sync` removed `.agy/agents/<name>.md`, wrote it again and printed `removed 1 target file`. A second sync now says `already up to date`.
+
 ## [0.37.2] - 2026-11-20
 
 ### Fixed

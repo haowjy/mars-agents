@@ -14,7 +14,7 @@
 //! - Losing a restriction (a `deny` or `ask` tool entry, `permission`, `sandbox`, `approval`,
 //!   `network`, `network-deny`) is
 //!   one of the changes like any other, with its own code ([`RESTRICTION_LOST`]) that names the
-//!   agent. A sync prints it on every run
+//!   agent. It is marked `lost`, and a sync reports it with the install that wrote the file
 //!   (`Prepared::lost_restrictions`).
 //! - A top-level `effort`, `mode` or `harness` that is not a string restricts nothing, so it is an
 //!   ordinary change ([`EXECUTION_IGNORED`]) that is listed once; `mars check` also prints it
@@ -336,12 +336,12 @@ impl Report<'_> {
                 format!("`{shown}` is not valid in schema v1 ({why}); {what}"),
             ),
         };
-        self.changes.push(SchemaDiagnostic::new(
-            code,
-            Severity::Warning,
-            path.to_vec(),
-            message,
-        ));
+        let change = SchemaDiagnostic::new(code, Severity::Warning, path.to_vec(), message);
+        self.changes.push(if code == RESTRICTION_LOST {
+            change.losing()
+        } else {
+            change
+        });
     }
 }
 

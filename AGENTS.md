@@ -40,14 +40,24 @@ they ignore it, and the code that finds the problem states it.
 - `Info`: nothing is lost, and it may be intended. Printed only when asked: `mars validate`,
   `mars check` and `--verbose` ask; a default `mars sync` and a launch bundle do not.
 
-Who can act decides the level. A problem in the project's own item is a `Warning`; the same
-problem in a dependency's item is `Info` to the installer, because only its author can fix it
-(`Owner` in `diagnostic.rs`; `mars check` and `mars validate` of the package itself see its own
-items, so its author gets the `Warning`). A text meant for an installer names the installer's own
-fix (`mars upgrade <source>`, or set the variable). A loss in a native file is reported by the
-sync that writes or changes that file (`record_lossy_fields(.., written)`); `--verbose` lists it
-every time. One cause is one line: findings that arise once per item share a `warn_each` group,
-and what follows from an item that was not installed is not reported again.
+Two things make a problem a `Warning`, and either is enough. **Behaviour differs:** what is
+installed does less than the package declares (a restriction a target cannot carry, a hook or
+item Mars could not install, an MCP key it cannot set, an agent's missing skill). Whoever wrote
+the item, a loss is a `Warning`: the person running agents is the one who gets the behaviour, so
+a dependency's loss is not `Info`. **The user can act:** the project's own item that is wrong but
+changes nothing yet. Only when behaviour is unchanged does the owner decide (`Owner` in
+`diagnostic.rs`): schema advice about a dependency's item is `Info` to the installer, because only
+its author can fix it, and a `Warning` to the author in `mars check` and `mars validate`.
+
+A loss is news once: it is reported by the sync that writes or changes the affected files, and an
+unchanged sync is silent (`record_lossy_fields(.., written)` for a native file;
+`hold_until_written` for what a package's install loses: `SchemaDiagnostic::lost`, a skill's
+`missing-skill`; `hold`, keyed to a native entry, for MCP and hook-event losses, released when
+the entry is written or changes). `--verbose`, `mars check` and `mars validate` list it every
+time. A hook that renders on no managed target writes nothing; its loss is released when its own
+lock record (`hook/<name>`, no outputs) is new or changed. A text meant for an installer names the installer's own fix (`mars upgrade
+<source>`, or set the variable). One cause is one line: findings that arise once per item share a
+`warn_each` group, and what follows from an item that was not installed is not reported again.
 
 `Diagnostic::shown` and `output::print_diagnostics` are the whole policy: no reader prints, and
 no reader decides whether its problem is shown. Reducing what users see means changing a site

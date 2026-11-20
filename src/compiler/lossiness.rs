@@ -127,7 +127,6 @@ pub fn record_project_network_loss(
         diag.record_lossy_fields(
             "project",
             key,
-            None,
             &[LossyField {
                 field: format!(
                     "not projected; native {target} agents keep {target}'s own network default"
@@ -155,8 +154,6 @@ pub(crate) struct LossRecord {
     pub field: LossyField,
     /// This run wrote or changed the item's native file, so the loss is news.
     pub written: bool,
-    /// The dependency the item came from; `None` for the project's own.
-    pub from: Option<String>,
 }
 
 /// An Agent whose effort moved to a level the model and harness take, found at sync.
@@ -262,21 +259,13 @@ pub(crate) fn render(records: &[LossRecord], mode: LossinessMode, rerun: &str) -
         render_per_item(records, &mut out);
         render_meridian_only(records, &mut out);
     } else {
+        // A lost restriction is a warning whoever wrote the item: the installed file does less
+        // than the package says.
         let news: Vec<&LossRecord> = records
             .iter()
             .filter(|record| record.written || mode != LossinessMode::Written)
             .collect();
-        // A dependency's loss is its author's to fix: the installer is told at `Info`.
-        let (dependency, own): (Vec<&LossRecord>, Vec<&LossRecord>) =
-            news.into_iter().partition(|record| record.from.is_some());
-        render_dropped_rollup(&own, DiagnosticLevel::Warning, "", rerun, &mut out);
-        render_dropped_rollup(
-            &dependency,
-            DiagnosticLevel::Info,
-            " from dependencies",
-            rerun,
-            &mut out,
-        );
+        render_dropped_rollup(&news, rerun, &mut out);
     }
     out
 }
@@ -359,13 +348,7 @@ fn counted(count: usize) -> (usize, &'static str) {
 /// separate sets and claims nothing about which combination applies: each listed item loses at
 /// least one of the listed kinds on at least one of the listed targets. The per-item, per-target,
 /// per-field detail is `--verbose`.
-fn render_dropped_rollup(
-    records: &[&LossRecord],
-    level: DiagnosticLevel,
-    whose: &str,
-    rerun: &str,
-    out: &mut Vec<Diagnostic>,
-) {
+fn render_dropped_rollup(records: &[&LossRecord], rerun: &str, out: &mut Vec<Diagnostic>) {
     let dropped: Vec<(&LossRecord, Lost)> = records
         .iter()
         .copied()
@@ -398,7 +381,7 @@ fn render_dropped_rollup(
         if !names.is_empty() {
             let plural = if names.len() == 1 { "" } else { "s" };
             subjects.push(format!(
-                "{} {noun}{plural}{whose} ({})",
+                "{} {noun}{plural} ({})",
                 names.len(),
                 name_list(names)
             ));
@@ -419,7 +402,7 @@ fn render_dropped_rollup(
         .map(|t| target_label(t).to_string())
         .collect();
     out.push(diagnostic(
-        level,
+        DiagnosticLevel::Warning,
         "agent-restriction-dropped",
         format!(
             "{} {verb} restrictions across {} ({}) that the target does not apply; run `{rerun}` for the rules per item and target",
@@ -516,7 +499,7 @@ mod tests {
                     field("approval", target, Lossiness::MeridianOnly),
                 ];
                 for name in ["a", "b", "c", "d", "e"] {
-                    d.record_lossy_fields("agent", name, None, &lossy, true);
+                    d.record_lossy_fields("agent", name, &lossy, true);
                 }
             }
         };
@@ -544,7 +527,6 @@ mod tests {
             d.record_lossy_fields(
                 "agent",
                 "a",
-                None,
                 &[
                     field(
                         "tools (deny bash(x))",
@@ -558,7 +540,6 @@ mod tests {
             d.record_lossy_fields(
                 "agent",
                 "b",
-                None,
                 &[field("x", "Pi", Lossiness::Dropped(Lost::Policy))],
                 true,
             );
@@ -575,7 +556,6 @@ mod tests {
             d.record_lossy_fields(
                 "agent",
                 "coder",
-                None,
                 &[
                     field("tools (deny edit)", "Codex", Lossiness::Quiet { why: "w" }),
                     field("approval", "Codex", Lossiness::MeridianOnly),

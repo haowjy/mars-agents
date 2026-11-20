@@ -302,8 +302,6 @@ fn sync_one_target(
                                 if target_projection_matches {
                                     projection.record_lossiness(
                                         outcome.item_id.name.as_str(),
-                                        crate::diagnostic::Owner::of(outcome.source_name.as_str())
-                                            .dependency(),
                                         false,
                                         diag,
                                     );
@@ -324,10 +322,6 @@ fn sync_one_target(
                                         }
                                         projection.record_lossiness(
                                             outcome.item_id.name.as_str(),
-                                            crate::diagnostic::Owner::of(
-                                                outcome.source_name.as_str(),
-                                            )
-                                            .dependency(),
                                             wrote,
                                             diag,
                                         );
@@ -598,7 +592,6 @@ fn copy_item_to_target(
             native_skill_variant_key,
             diag,
             item_name,
-            crate::diagnostic::Owner::of(outcome.source_name.as_str()).dependency(),
         );
     }
 

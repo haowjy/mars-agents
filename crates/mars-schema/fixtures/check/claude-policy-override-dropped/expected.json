@@ -10,7 +10,8 @@
           "override",
           "sandbox"
         ],
-        "message": "agent `g` lost the restriction `model-policies.0.override.sandbox`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[0].override.sandbox` has invalid value `nonsense`; allowed: default, read-only, workspace-write, danger-full-access); use default, read-only, workspace-write or danger-full-access"
+        "message": "agent `g` lost the restriction `model-policies.0.override.sandbox`: that override was dropped and the rest of the rule is kept. Schema v1 does not accept it (agent field `model-policies[0].override.sandbox` has invalid value `nonsense`; allowed: default, read-only, workspace-write, danger-full-access); use default, read-only, workspace-write or danger-full-access",
+        "lost": true
       },
       {
         "code": "field.execution-ignored",

@@ -9,7 +9,7 @@ use mars_schema::mcp_servers::{Flavor, McpRender, render};
 
 use super::McpServerEntry;
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
-use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
+use crate::diagnostic::DiagnosticCollector;
 
 pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
     key_prefix: "mcp:",
@@ -46,8 +46,8 @@ pub(crate) fn render_all(
         .iter()
         .map(|server| {
             let rendered = (file.render)(server);
-            // Only the server's author can change what a native shape cannot carry; whoever
-            // installed it from a package is told what is theirs to do.
+            // The native entry does less than the server declares, whoever wrote it; the text names
+            // the step that is the reader's own.
             let own = server.is_own();
             for lost in rendered.lossy {
                 let message = if own {
@@ -60,18 +60,7 @@ pub(crate) fn render_all(
                         lost.text(false)
                     )
                 };
-                let level = if own {
-                    DiagnosticLevel::Warning
-                } else {
-                    DiagnosticLevel::Info
-                };
-                diag.hold(
-                    file.at.entry_key(&server.name),
-                    Diagnostic {
-                        category: Some(DiagnosticCategory::Advisory),
-                        ..Diagnostic::new(level, "mcp-lossy", message)
-                    },
-                );
+                diag.hold_warning(file.at.entry_key(&server.name), "mcp-lossy", message);
             }
             Rendered {
                 name: server.name.clone(),

@@ -289,7 +289,7 @@ fn write_generated_hook(
         );
     }
     for limit in &answer_limits {
-        diag.info(
+        diag.warn_advisory(
             "hook-answer-unsupported",
             format!(
                 "hook `{}` from `{}`: `{TARGET_ROOT}` `{}`: {}",

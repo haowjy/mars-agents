@@ -26,8 +26,8 @@ use crate::fs::FileLock;
 use crate::lock::LockFile;
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
-use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
+use crate::sync::apply::{ActionTaken, ApplyResult};
 use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
@@ -741,6 +741,14 @@ pub(crate) fn sync_targets(
     agent_surface_policy: crate::compiler::AgentSurfacePolicy,
     diag: &mut DiagnosticCollector,
 ) -> SyncedState {
+    for outcome in &applied.applied.outcomes {
+        if matches!(
+            outcome.action,
+            ActionTaken::Installed | ActionTaken::Updated
+        ) {
+            diag.release_written(crate::diagnostic::Owner::of(outcome.source_name.as_str()));
+        }
+    }
     if request.options.dry_run {
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,

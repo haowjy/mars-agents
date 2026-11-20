@@ -7,9 +7,23 @@ use serde::{Deserialize, Serialize};
 use crate::agent::EffortLevel;
 use crate::tool_natives;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HarnessId {
+/// Declares [`HarnessId`] and [`ALL`] from one list, so a variant cannot be left out of `ALL`.
+macro_rules! harnesses {
+    ($($(#[$meta:meta])* $variant:ident),* $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum HarnessId {
+            $($(#[$meta])* $variant),*
+        }
+
+        /// Every harness, in the order error messages list them. A new variant is added here and
+        /// to [`HarnessId::as_str`], [`Host::spec`] and the hook row (`hooks::targets::row`),
+        /// which the compiler enforces.
+        pub const ALL: &[HarnessId] = &[$(HarnessId::$variant),*];
+    };
+}
+
+harnesses! {
     Claude,
     Codex,
     Pi,
@@ -206,17 +220,6 @@ impl Serialize for Host {
         serializer.serialize_str(self.as_str())
     }
 }
-
-/// Every harness, in the order error messages list them. A new variant is added here and to
-/// [`HarnessId::as_str`] and [`Host::spec`], which the compiler enforces.
-pub const ALL: &[HarnessId] = &[
-    HarnessId::Claude,
-    HarnessId::Codex,
-    HarnessId::Pi,
-    HarnessId::OpenCode,
-    HarnessId::Cursor,
-    HarnessId::Agy,
-];
 
 /// The harness names in `ALL`'s order, as error messages list them.
 pub fn names() -> String {

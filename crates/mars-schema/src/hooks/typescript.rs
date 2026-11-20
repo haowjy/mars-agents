@@ -13,6 +13,7 @@ use super::Tokens;
 use super::portable::{MatcherGroup, NO_COMMAND};
 use super::render::{Output, Rendered, Skip};
 use super::targets::{self, Profile};
+use crate::harness::HarnessId;
 
 const CORE: &str = include_str!("typescript/core.ts");
 
@@ -20,8 +21,8 @@ const CORE: &str = include_str!("typescript/core.ts");
 /// contract of a native hook file written for it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Harness {
-    /// The harness's display name, in the generated file and in skip reasons.
-    pub name: &'static str,
+    /// Names the harness in the generated file and in skip reasons, by its display name.
+    id: HarnessId,
     glue: &'static str,
     /// Events the harness has no native callback for, with why.
     unsupported_events: &'static [(&'static str, &'static str)],
@@ -32,7 +33,7 @@ pub struct Harness {
 }
 
 pub(super) const OPENCODE: Harness = Harness {
-    name: "OpenCode",
+    id: HarnessId::OpenCode,
     glue: include_str!("typescript/opencode.ts"),
     unsupported_events: &[
         (
@@ -66,7 +67,7 @@ pub(super) const OPENCODE: Harness = Harness {
 };
 
 pub(super) const PI: Harness = Harness {
-    name: "Pi",
+    id: HarnessId::Pi,
     glue: include_str!("typescript/pi.ts"),
     unsupported_events: &[("PermissionRequest", "Pi has no permission system")],
     answer_limits: &[(
@@ -214,7 +215,7 @@ pub(super) fn render(
     harness: &Harness,
     tokens: &Tokens<'_>,
 ) -> Rendered {
-    let harness_name = harness.name;
+    let harness_name = harness.id.display_name();
     let mut skips = Vec::new();
     let mut answer_limits = Vec::new();
     let mut events = Map::new();

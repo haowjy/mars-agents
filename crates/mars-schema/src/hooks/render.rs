@@ -9,6 +9,7 @@ use serde_json::Number;
 use super::Tokens;
 use super::portable::{Handler, MatcherGroup, NO_COMMAND, PortableHooks};
 use super::targets::{self, Profile, Rules};
+use crate::harness::HarnessId;
 use crate::ordered::OrderedValue;
 
 /// Something a target does not run. `event` is `None` when the whole target is skipped.
@@ -189,7 +190,10 @@ fn render_codex(table: &[(&str, &[MatcherGroup])], profile: &Profile) -> Rendere
     let mut rendered_events = BTreeMap::new();
     for &(event, groups) in table {
         let Some(row) = profile.event(event) else {
-            rendered.skip(event, "Codex has no such event".into());
+            rendered.skip(
+                event,
+                format!("{} has no such event", HarnessId::Codex.display_name()),
+            );
             continue;
         };
         let matched = row.matcher.is_some();

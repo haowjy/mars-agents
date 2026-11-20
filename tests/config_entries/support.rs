@@ -202,6 +202,7 @@ fn assert_config_entry_consistency_with_diagnostics(
                     ".cursor" => (".cursor/mcp.json", "mcpServers"),
                     ".opencode" => (".opencode/opencode.json", "mcp"),
                     ".pi" => (".pi/mcp.json", "mcpServers"),
+                    ".agy" => (".agy/mcp_config.json", "mcpServers"),
                     _ => continue,
                 };
                 let path = project.child(file);

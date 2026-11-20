@@ -18,6 +18,7 @@ use super::render::{self, Output, Rendered, Skip};
 use super::targets::{self, Profile};
 use super::typescript::{GroupRules, surviving_groups};
 use super::{HOOK_DIR_TOKEN, Tokens};
+use crate::harness::HarnessId;
 
 /// The data file's format version. The runner treats any other version by the hook's
 /// failure rule.
@@ -315,7 +316,7 @@ pub(super) fn render(
                 .iter()
                 .find(|(name, _)| *name == event)
                 .map_or_else(
-                    || "agy has no such event".to_owned(),
+                    || format!("{} has no such event", HarnessId::Agy.display_name()),
                     |(_, reason)| (*reason).to_owned(),
                 );
             skip(event, reason);
@@ -339,7 +340,7 @@ pub(super) fn render(
                 groups,
                 claude,
                 &GroupRules {
-                    harness_name: "agy",
+                    harness_name: HarnessId::Agy.display_name(),
                     supplies_matcher: row.matcher.is_some(),
                     tokens: &deferred,
                     matcher_problem: &matcher_problem,

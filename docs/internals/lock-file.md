@@ -25,6 +25,30 @@ Narrower predicates exist and do not replace it: sync recovery asks whether a jo
 already published to `mars.lock` and reads `mars.lock` alone; linked targets have their own
 per-target records (below).
 
+## Two files
+
+`mars.lock` is committed and shared. `.mars/machine.lock` (the same schema, never committed) holds
+what only this machine has: provided content (`mars provide`), and every record that serves a
+target `mars.toml` does not name, which only this machine's `mars.local.toml` asked for. A teammate
+never sees those records, so their sync neither warns about nor removes them.
+
+- **Which file.** A record goes to `mars.lock` when it is shared (`.mars` outputs, dependencies,
+  records of a target `mars.toml` names) and to `machine.lock` otherwise. Every writer (`sync`,
+  `link`, `unlink`, `resolve`) writes through `lock::write`, given the targets `mars.toml` names.
+- **Joining.** Loading joins the files per output and per config entry, not per item: a skill's
+  `.mars` output stays in `mars.lock` and its output on a local-only target is in `machine.lock`.
+  A record both files hold takes the `machine.lock` value, and the next write collapses the pair.
+- **Moving.** Naming a target in `mars.toml` moves its records to `mars.lock` on the next write,
+  and naming it only in `mars.local.toml` moves them back. The write is ordered so a kill leaves a
+  record in both files, never in neither.
+- **`provided_entries`.** `machine.lock` lists the config entries provided content wrote, because
+  a local-only target's entries sit in the same file and must follow their target when it moves.
+  Mars 0.38.0 wrote `machine.lock` without the list; there every config entry is provided.
+- **Older Mars.** Mars 0.38.0 reads `machine.lock` too, but replaces a whole item with the
+  machine file's copy. A skill that has a local-only output then loses its `.mars` output in memory,
+  and 0.38.0's sync stops with `blocked by unmanaged destination` until `mars sync --force`.
+  Nothing on disk is lost, and the next sync of this version restores the two files.
+
 ## Format
 
 TOML format with deterministically sorted keys for clean git diffs.

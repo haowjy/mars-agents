@@ -1633,6 +1633,28 @@ mod tests {
     }
 
     #[test]
+    fn a_machine_file_from_mars_0_38_holds_provided_entries_only() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
+        let old = "version = 3\n[config_entries.\".agy\".\"mcp:srv\"]\nemitted_json = '{}'\n";
+        std::fs::write(dir.path().join(MACHINE_LOCK_FILE), old).unwrap();
+        let lock = load(dir.path()).unwrap();
+        assert!(
+            lock.provided_entries
+                .contains(&(".agy".into(), "mcp:srv".into()))
+        );
+
+        // Written again with no provided entry, the file says so, so the next load does not
+        // take a local-only target's entries for provided ones.
+        let mut lock = lock;
+        lock.provided_entries.clear();
+        write(dir.path(), &lock, &Default::default()).unwrap();
+        assert!(load(dir.path()).unwrap().provided_entries.is_empty());
+        let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
+        assert!(!committed.contains("provided_entries") && !committed.contains(".agy"));
+    }
+
+    #[test]
     fn a_crash_between_the_two_lock_writes_leaves_provided_records_loadable() {
         let dir = TempDir::new().unwrap();
         let mut lock = sample_lock();

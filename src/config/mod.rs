@@ -1782,6 +1782,53 @@ only_skills = true
         }
     }
 
+    #[test]
+    fn local_targets_add_to_the_projects_and_empty_adds_nothing() {
+        let project = |targets: Option<Vec<&str>>| Config {
+            settings: Settings {
+                targets: targets.map(|t| t.into_iter().map(String::from).collect()),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+        let local = |targets: Option<Vec<&str>>| LocalConfig {
+            settings: LocalSettings {
+                targets: targets.map(|t| t.into_iter().map(String::from).collect()),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+        let user = LocalConfig::default();
+        for (config, local_config, expected, origin) in [
+            (
+                vec![".claude"],
+                vec![".agy", ".claude"],
+                vec![".claude", ".agy"],
+                targets::TargetOrigin::Local,
+            ),
+            (
+                vec![".claude"],
+                vec![],
+                vec![".claude"],
+                targets::TargetOrigin::Project,
+            ),
+            (
+                vec![],
+                vec![".agy"],
+                vec![".agy"],
+                targets::TargetOrigin::Local,
+            ),
+        ] {
+            let layers = layering::compose_layers(
+                &project((!config.is_empty()).then_some(config)),
+                &local(Some(local_config)),
+                &user,
+            );
+            assert_eq!(targets::managed_targets(&layers.settings), expected);
+            assert_eq!(layers.target_source.origin, origin);
+        }
+    }
+
     // === local-dependencies tests ===
 
     #[test]

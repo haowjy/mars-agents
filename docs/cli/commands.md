@@ -339,16 +339,18 @@ Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL fo
 Add a managed target directory.
 
 ```bash
-mars link <target> [--force]
+mars link <target> [--force] [--local]
 ```
 
 | Flag | Description |
 |---|---|
 | `--force` | Adopt collisions without an installed-content claim (overwrite + record in lock) |
+| `--local` | Add the target to `mars.local.toml` instead of `mars.toml`: only this machine syncs it, and its lock records go to `.mars/machine.lock`, so `mars.toml` and the committed `mars.lock` do not change |
 
 **Behavior:**
 - Adds `<target>` as a managed target directory and copies content from `.mars/` into it
-- Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
+- Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records. Linking a target `mars.local.toml` names moves it: it leaves `mars.local.toml`, and its records move from `.mars/machine.lock` to `mars.lock`
+- With `--local`, a target `mars.toml` already names stays a project target and nothing is written; otherwise the target is added to `mars.local.toml` and its records go to `.mars/machine.lock` ([lock files](../internals/lock-file.md#two-files))
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
 - `mars link cursor` fails: Mars no longer writes `.cursor` ([Cursor](../config/retired-keys.md#cursor)). A project whose `targets` still names it gets a `retired-target` warning on every sync
@@ -359,6 +361,7 @@ mars link .claude            # Copy managed content into .claude/
 mars link .opencode          # Copy skills/MCP into .opencode
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
+mars link .agy --local       # Sync .agy on this machine only
 ```
 
 ---
@@ -368,11 +371,15 @@ mars link .claude --force    # Adopt collisions without an installed-content cla
 Stop managing a target and remove Mars-owned content from it.
 
 ```bash
-mars unlink <target>
+mars unlink <target> [--local]
 ```
 
+| Flag | Description |
+|---|---|
+| `--local` | Remove `<target>` from `mars.local.toml` only. A target `mars.toml` also names stays linked and keeps its files; one it does not name is removed as below |
+
 **Behavior:**
-- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
+- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml` (`--local`: `mars.local.toml` only)
 - Runs the removal a sync runs for a target you took out of `targets` by hand: the next `mars sync` removes what Mars installed there the same way, so `unlink` is for removing it now and for a retired target the config still names
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
@@ -384,6 +391,7 @@ mars unlink <target>
 ```bash
 mars unlink .agents          # Remove deprecated .agents target
 mars unlink .claude          # Stop managing .claude
+mars unlink .agy --local     # Stop syncing .agy on this machine; the project's own link stays
 ```
 
 ---
@@ -660,7 +668,7 @@ Checks:
 - Each locked item of a managed target and of `.mars`: file exists on disk, no conflict markers, checksum computability
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
-- Targets the sync does not manage (a retired one, or one `mars.local.toml`'s `targets` leaves out): their records and `.mars/<surface>/<target>/` copies are not checked
+- Targets the sync does not manage (a retired one the config still names): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 

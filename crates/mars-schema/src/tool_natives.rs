@@ -451,12 +451,13 @@ const CURSOR: Table = &[
 /// §1, §2, §10). An agent's `tools` list loaded with `find_by_name`, `grep_search`,
 /// `list_dir`, `multi_replace_file_content`, `read_file`, `replace_file_content`,
 /// `run_command`, `search_web` and `write_to_file` together, and a shell call ran;
-/// `call_mcp_tool` loaded alone. `view_file` is the same tool as `read_file`: listing both
+/// `view_file` is the same tool as `read_file`: listing both
 /// fails. `browser_subagent`, `codebase_search`, `view_code_item` and `view_file_outline` did
 /// not resolve. One unknown name makes the agent fail at its first prompt, so a row holds only
 /// a name a probe loaded, and a tool nobody loaded is `Absent` here, which means "Mars knows
-/// no name to write", not "agy has no such tool". `agy` reaches every MCP server through the
-/// one `call_mcp_tool` tool, so MCP rules lower onto it (`tool_project`). The subagent tool is
+/// no name to write", not "agy has no such tool". `agy` gives every agent every MCP server whatever
+/// `tools` says, and `call_mcp_tool` in `tools` fails the agent at its first prompt, so no name
+/// is written for MCP (`tool_project`). The subagent tool is
 /// `invoke_subagent` in permission requests, but no probe listed it in `tools`, so `agent` is
 /// `NoSwitch` until one does. `agy` loads a skill by reading its `SKILL.md` with `read_file`.
 const AGY: Table = &[
@@ -503,9 +504,6 @@ const AGY: Table = &[
     ("image", Absent),
 ];
 
-/// The one tool `agy` reaches every MCP server through (`server` and `tool` are arguments).
-pub const AGY_MCP_GATEWAY: &[&str] = &["call_mcp_tool"];
-
 /// Every tool name Mars writes into an `agy` agent file, sorted. `agy` 1.5.13 has no wildcard
 /// (`*` and `all` fail the agent at its first prompt) and gives an agent with no `tools` key no
 /// write or shell, so an agent that restricts nothing lists all of them.
@@ -513,7 +511,6 @@ pub fn agy_every_tool() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = AGY
         .iter()
         .flat_map(|(_, native)| native.native_tools().iter().copied())
-        .chain(AGY_MCP_GATEWAY.iter().copied())
         .collect();
     names.sort_unstable();
     names.dedup();
@@ -690,7 +687,6 @@ mod tests {
             ],
             // `agy` 1.5.12: the names the probes in the `AGY` doc comment loaded as agent tools.
             HarnessId::Antigravity => &[
-                "call_mcp_tool",
                 "find_by_name",
                 "grep_search",
                 "list_dir",

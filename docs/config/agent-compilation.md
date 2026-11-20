@@ -478,9 +478,9 @@ frontmatter keys it does not know.
 
 `tools` is always written, because an `agy` agent with no `tools` key has no write and no shell.
 `agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::agy_every_tool`). With an allowlist (`"*": deny` plus allows)
-it is the native names of the allowed tools, plus `call_mcp_tool` when any MCP tool is allowed:
-`agy` reaches every MCP server through that one tool, so an MCP grant opens every server
-(reported as approximate). `agy`'s agent file has no deny list and `*` minus a name cannot be
+it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: an agent whose
+`tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
+`tools` says. `agy`'s agent file has no deny list and `*` minus a name cannot be
 written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction;
 Meridian enforces it through `agy`'s permission requests. An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
@@ -586,7 +586,7 @@ broaden permissions) and recorded as approximate lossiness.
 | `mcp(*/tool)` | — (lossy) | `Mcp(*:tool)` | `*_tool` | — | — |
 | `mcp(*/*)` | `mcp__*` | `Mcp(*:*)` | `*_*` | — | — |
 
-**Antigravity** — every `mcp(...)` rule projects to `call_mcp_tool`, the one tool `agy` reaches MCP servers through, with a note that the rule is not scoped: a grant opens every server, a deny or `ask` reaches every server.
+**Antigravity** — `agy` gives every agent every MCP server and no `tools` entry names one. An `mcp(...)` allow writes nothing and loses nothing. A deny or `ask` cannot be applied: it is reported as a lost restriction.
 
 **Codex** — per-tool MCP gating lives in server config (`mcp_servers.enabled_tools`), not
 the agent tool list. Tool-list `mcp(...)` refs record lossiness; whole-server enable is
@@ -602,7 +602,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 | Claude agent native | Projected `mcp__…` tokens merged into Claude's `tools:` (allowlist) and `disallowedTools:` (denials) |
 | Skill native files | None: a skill carries no tool policy |
 | OpenCode agent native | An MCP ref is a `permission` entry (`<server>_<tool>: <effect>`) |
-| Antigravity agent native | An allowed MCP tool adds `call_mcp_tool` to `tools:`; a deny is lost |
+| Antigravity agent native | Nothing is written for MCP; a deny or `ask` is reported as lost |
 | Codex / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
@@ -703,7 +703,7 @@ Compact per-field, per-target classification:
 | `model-invocable`, `user-invocable` | preserved | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` |
 | `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped | exact allowlist; denials dropped |
 | `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped | dropped |
-| `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate | approximate (`call_mcp_tool`) |
+| `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate | allow exact (nothing to write); deny and `ask` dropped |
 | `effort` | preserved | exact (moved to a level the model takes, with a warning) | exact (same) | approximate | approximate | approximate | meridian-only (not written) |
 | `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate | approximate (body line) |
 | `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate | approximate |

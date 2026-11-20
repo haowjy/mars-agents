@@ -307,8 +307,8 @@ const ANTIGRAVITY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
-            mcp_remainder: Some(Lossiness::Approximate {
-                note: "agy reaches every MCP server through one tool, so an MCP grant opens all of them",
+            mcp_remainder: Some(Lossiness::Quiet {
+                why: "agy gives every agent every MCP server, so an MCP grant restricts nothing",
             }),
         }),
         AgentLossinessStep::EffortMeridianOnly,

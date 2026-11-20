@@ -328,7 +328,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("- run_command\n") && text.contains("- call_mcp_tool\n"),
+            text.contains("- run_command\n") && !text.contains("call_mcp_tool"),
             "{text}"
         );
         assert!(
@@ -343,12 +343,12 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_allowlist_lists_native_names_and_the_mcp_gateway() {
+    fn antigravity_allowlist_lists_native_names_and_no_mcp_name() {
         let (text, lossy) = antigravity(
             "---\nname: r\nmode: subagent\ntools:\n  \"*\": deny\n  read: allow\n  bash: allow\n  mcp(srv/ping): allow\n---\n# body",
         );
         assert!(
-            text.contains("tools:\n- read_file\n- run_command\n- call_mcp_tool\n"),
+            text.contains("tools:\n- read_file\n- run_command\n"),
             "{text}"
         );
         assert!(

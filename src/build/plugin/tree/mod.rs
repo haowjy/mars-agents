@@ -539,13 +539,7 @@ fn lower_agent(
     }
     let lowered =
         lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
-    diag.record_lossy_fields(
-        "agent",
-        item.id.name.as_str(),
-        None,
-        &lowered.lossy_fields,
-        true,
-    );
+    diag.record_lossy_fields("agent", item.id.name.as_str(), &lowered.lossy_fields, true);
 
     let lowered = String::from_utf8(lowered.bytes).map_err(|error| {
         MarsError::Internal(format!(

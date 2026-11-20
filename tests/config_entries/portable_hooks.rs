@@ -239,7 +239,7 @@ fn a_dependency_hook_with_an_unknown_event_installs_its_other_events() {
 }
 
 #[test]
-fn a_dependency_hook_left_out_of_a_target_is_reported_only_with_verbose() {
+fn a_dependency_hook_left_out_of_a_target_is_reported_by_the_sync_that_installs_it() {
     let dir = TempDir::new().unwrap();
     let source = dir.child("source");
     source.create_dir_all().unwrap();
@@ -256,13 +256,16 @@ fn a_dependency_hook_left_out_of_a_target_is_reported_only_with_verbose() {
         "guard",
         &format!("visibility = \"exported\"\n{GUARD}"),
     );
+    sync(&project).success().stderr(predicate::str::contains(
+        "hooks from `tool` have no counterpart",
+    ));
     sync(&project)
         .success()
         .stderr(predicate::str::contains("no counterpart on a managed target").not());
     sync_verbose(&project)
         .success()
         .stderr(predicate::str::contains(
-            "tool/guard on `.opencode` (1 left out)",
+            "guard on `.opencode` (1 left out)",
         ));
 }
 

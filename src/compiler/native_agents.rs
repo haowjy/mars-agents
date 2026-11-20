@@ -991,7 +991,7 @@ impl ProjectLosses {
             if key == opencode_permission::OUTSIDE_RULES_KEY && !outside {
                 continue;
             }
-            diag.record_lossy_fields("project", &key, None, &[field], written);
+            diag.record_lossy_fields("project", &key, &[field], written);
         }
     }
 }
@@ -1066,13 +1066,7 @@ fn emit_lowered_native_agent(
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report. A
     // file this run leaves as it was reports it only under `--verbose`.
-    diag.record_lossy_fields(
-        "agent",
-        agent.agent_name,
-        None,
-        &lowered.lossy_fields,
-        !unchanged,
-    );
+    diag.record_lossy_fields("agent", agent.agent_name, &lowered.lossy_fields, !unchanged);
     if let Some(moved) = agent.effort_moved {
         diag.record_effort_move(agent.agent_name, agent.harness.as_str(), moved, !unchanged);
     }

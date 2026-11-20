@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, Owner};
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
 use crate::target::plugin::HOOK_ENTRY_KIND;
@@ -275,8 +275,8 @@ pub(crate) fn preflight_config_entries(
 }
 
 /// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took. The project's own hooks warn, each skip once. A dependency's
-/// hooks are the consumer's to accept, not fix: one summary line per sync.
+/// was selected there, and for a hook no target took. The project's own hooks warn, each skip
+/// once. A dependency's hooks are one line per source, from the sync that installs them.
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -284,7 +284,7 @@ fn report_skips(
     diag: &mut DiagnosticCollector,
 ) {
     let mut seen = BTreeSet::new();
-    let mut from_dependencies = Vec::new();
+    let mut from_dependencies: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for item in targeted.target.accepted_hooks() {
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
@@ -306,21 +306,27 @@ fn report_skips(
                         );
                     }
                 }
-                Origin::Dependency => from_dependencies.push(format!(
-                    "{}/{} on `{target}` ({} left out)",
-                    item.source_name,
-                    item.def.name,
-                    lines.len()
-                )),
+                Origin::Dependency => from_dependencies
+                    .entry(item.source_name.as_str())
+                    .or_default()
+                    .push(format!(
+                        "{} on `{target}` ({} left out)",
+                        item.def.name,
+                        lines.len()
+                    )),
             }
         }
     }
-    if !from_dependencies.is_empty() {
-        diag.info(
-            "hook-event-skipped",
-            format!(
-                "some events or handlers of dependency hooks have no counterpart on a managed target: {}",
-                from_dependencies.join(", ")
+    for (source, hooks) in from_dependencies {
+        diag.hold_until_written(
+            Owner::Dependency(source),
+            Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "hook-event-skipped",
+                format!(
+                    "some events or handlers of hooks from `{source}` have no counterpart on a managed target, so they are not installed: {}",
+                    hooks.join(", ")
+                ),
             ),
         );
     }

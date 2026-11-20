@@ -164,7 +164,7 @@ fn collect_agent_content_lossiness(
     ) {
         codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(&harness, &profile, &body, &model);
-        diag.record_lossy_fields("agent", agent_name, None, &lowered.lossy_fields, true);
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields, true);
         if let Some(moved) = effort_moved {
             diag.record_effort_move(agent_name, harness.as_str(), &moved, true);
         }

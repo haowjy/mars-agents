@@ -77,7 +77,7 @@ pub(crate) fn validate_skill_refs(
                 provided_here: provided.is_some_and(|names| names.provides(skill_name)),
             };
             if let Some(found) = classify_skill_ref(&reference, &available_skills) {
-                diag.push(found);
+                diag.hold_until_written(owner, found);
             }
         }
     }

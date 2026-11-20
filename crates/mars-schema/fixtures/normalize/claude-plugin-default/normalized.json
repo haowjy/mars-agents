@@ -438,7 +438,8 @@
               "code": "import.commands-dropped",
               "severity": "warning",
               "path": [],
-              "message": "commands are not imported (convert one to a skill): commands/deploy.md"
+              "message": "commands are not imported (convert one to a skill): commands/deploy.md",
+              "lost": true
             }
           ],
           "hooks/hooks.json": [
@@ -446,7 +447,8 @@
               "code": "import.hooks-not-converted",
               "severity": "warning",
               "path": [],
-              "message": "hooks are not converted yet"
+              "message": "hooks are not converted yet",
+              "lost": true
             }
           ]
         },

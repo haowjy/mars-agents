@@ -763,46 +763,17 @@ pub(crate) fn sync_targets(
         };
     }
 
-    let mars_dir = ctx.project_root.join(".mars");
     let targets = crate::config::targets::managed_targets(
         &applied.planned.targeted.resolved.loaded.effective.settings,
     );
-    let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
-
-    let filtered_outcomes;
-    let target_outcomes_source = match &agent_surface_policy.launched {
-        crate::compiler::AgentSurfaceMode::SuppressAll => {
-            filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
-            &filtered_outcomes
-        }
-        crate::compiler::AgentSurfaceMode::EmitSelective(_) => {
-            filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
-            &filtered_outcomes
-        }
-        crate::compiler::AgentSurfaceMode::EmitAll => &applied.applied.outcomes,
-    };
-    let mut orphan_preserve_paths =
-        crate::compiler::config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
-    for (target, paths) in crate::compiler::native_agent_orphan_preserve_paths(old_lock, &targets) {
-        orphan_preserve_paths
-            .entry(target)
-            .or_default()
-            .extend(paths);
-    }
-    let orphan_preserve = (!orphan_preserve_paths.is_empty()).then_some(&orphan_preserve_paths);
-
-    let target_sync_ctx = crate::target_sync::TargetSyncContext {
-        old_lock,
-        force: request.options.force,
-        collision_hint: crate::surface_ownership::CollisionAdoptHint::SyncForce,
-        orphan_preserve_paths: orphan_preserve,
-    };
-    let target_outcomes = crate::target_sync::sync_managed_targets(
+    let target_outcomes = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
-        &mars_dir,
         &targets,
-        target_outcomes_source,
-        &target_sync_ctx,
+        &applied.applied.outcomes,
+        &agent_surface_policy,
+        &applied.planned.targeted.resolved.loaded.old_lock,
+        request.options.force,
+        crate::surface_ownership::CollisionAdoptHint::SyncForce,
         diag,
     );
 

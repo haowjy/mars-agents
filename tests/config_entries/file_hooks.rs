@@ -21,6 +21,25 @@ fn opencode_file_hook_ignores_malformed_unrelated_config() {
 }
 
 #[test]
+fn relinking_a_target_keeps_its_generated_hook_file() {
+    for (target, destination) in file_native_hook_targets() {
+        let dir = TempDir::new().unwrap();
+        let project = dir.child("project");
+        configure_file_native_hook(&project, target);
+        sync(&project).success();
+        let placed = project.child(target).child(destination);
+        placed.assert(predicate::path::exists());
+
+        mars()
+            .args(["link", target, "--root", project.path().to_str().unwrap()])
+            .assert()
+            .success();
+
+        placed.assert(predicate::path::exists());
+    }
+}
+
+#[test]
 fn file_native_hooks_place_substitute_remove_and_resync_idempotently() {
     for (target, destination, export) in [
         (

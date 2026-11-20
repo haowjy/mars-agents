@@ -207,8 +207,8 @@ function decide(event: string, handler: any, run: Run): Outcome | null {
   return readAnswer(event, run.stdout);
 }
 
-async function runHandler(event: string, handler: any, stdin: string, cwd: string): Promise<Outcome | null> {
-  return decide(event, handler, await runCommand(handler, stdin, cwd));
+async function runHandler(event: string, handler: any, stdin: string, cwd: string, run = runCommand): Promise<Outcome | null> {
+  return decide(event, handler, await run(handler, stdin, cwd));
 }
 
 type Moment = {
@@ -223,7 +223,8 @@ type Moment = {
 
 // Runs the event's matching handlers in order. The first block (or deny) wins over any allow; the context
 // of every handler before it is joined. A handler marked `async` runs without being awaited.
-async function fire(event: string, moment: Moment): Promise<Outcome> {
+// `run` is runCommand, except where hook-vectors.json scripts it.
+async function fire(event: string, moment: Moment, run = runCommand): Promise<Outcome> {
   const stdin = JSON.stringify({
     session_id: moment.sessionId,
     cwd: moment.cwd,
@@ -237,10 +238,10 @@ async function fire(event: string, moment: Moment): Promise<Outcome> {
     for (const handler of group.handlers) {
       if (handler.if && moment.tool && !conditionHolds(handler.if, moment.tool.name, moment.tool.input)) continue;
       if (handler.async) {
-        void runHandler(event, handler, stdin, moment.cwd);
+        void runHandler(event, handler, stdin, moment.cwd, run);
         continue;
       }
-      const answer = await runHandler(event, handler, stdin, moment.cwd);
+      const answer = await runHandler(event, handler, stdin, moment.cwd, run);
       if (!answer) continue;
       if (answer.context) contexts.push(answer.context);
       if (answer.permission?.behavior === "allow") outcome.permission = answer.permission;

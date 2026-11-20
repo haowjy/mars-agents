@@ -1056,10 +1056,16 @@ builds Claude's (`tool_name` and `tool_input` through the tool and argument tabl
 commands with Claude's matcher, `if`, timeout and exit-code rules (the same as the generated
 TypeScript for OpenCode and Pi; `crates/mars-schema/fixtures/hook-vectors.json` pins the two),
 and answers in the form `agy` reads for that event. The hook's commands run with the `cwd` `agy`
-reports (the project), and `${MARS_HOOK_DIR}` is the hook's directory.
+reports (the project), and `${MARS_HOOK_DIR}` is the hook's directory. A command runs as on the
+TypeScript targets: one deadline covers the shell's exit and its pipes closing, then the
+shell's process group is killed (so a background job cannot outlast the timeout); an `async`
+handler gets its whole stdin and no stdout or stderr, and is left running when the runner
+returns. On Windows the shell is Git's `bash` (found as `core.ts` finds it, never WSL's
+`System32\bash.exe`); that path is written but never run.
 
-The command names the `mars` that ran the sync by absolute path, so `hooks.json` is
-machine-local (the same reason Claude's hooks go to `settings.local.json`): moving the binary
+The command names the `mars` that ran the sync by absolute path, as invoked when that is a
+link to the running binary (a Homebrew `bin/mars` rather than its versioned cellar, which an
+upgrade removes), so `hooks.json` is machine-local (the same reason Claude's hooks go to `settings.local.json`): moving the binary
 needs a `mars sync`. On Windows `agy` runs `cmd /c` and the command is a `cmd` form of the same
 guard, written but never run. A guard in front of `mars` settles a missing binary by the hook's
 failure rule: exit 0 with no output leaves the call alone, and exit 1 blocks it when a handler of
@@ -1071,7 +1077,7 @@ file of a version this `mars` does not read is settled the same way, with a mess
 | `PreToolUse` | `PreToolUse` | `deny`, `ask`, `allow` and `updatedInput` (as `overwrite`, top-level keys only) answers and exit 2; no opinion is empty output, which leaves the call to `agy`'s own permission flow. `additionalContext` is dropped |
 | `PostToolUse`, `PostToolUseFailure` | `PostToolUse` | `agy` passes no tool output and reads no answer: the hook runs, its answers are dropped; the failure event is the call's `error` being set |
 | `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, not on resume, so `source` is always `startup` |
-| `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`); `stop_hook_active` is `agy`'s `continuationActive` |
+| `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`), including a failing hook's `onFailure = "block"`; `stop_hook_active` is `agy`'s `continuationActive` |
 | `UserPromptSubmit` | `PreInvocation` | runs on the first invocation of a prompt (`invocationNum` 0); a `block` answer ends the turn with the reason as an error message; context becomes a system message |
 
 Any other Claude event is skipped and reported. Sync reports (`hook-answer-unsupported`) each

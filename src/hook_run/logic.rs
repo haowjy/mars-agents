@@ -8,12 +8,14 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use mars_schema::hooks::antigravity::BLOCKING;
+use mars_schema::hooks::antigravity::{BLOCKING, plain_names};
 
 /// A hook's data file, as far as the runner reads it.
 #[derive(Debug, Deserialize)]
 pub(super) struct Data {
     pub name: String,
+    /// The hook's directory, relative to `.agy/`.
+    pub dir: String,
     /// `agy` event → the Claude events it serves.
     pub serves: std::collections::BTreeMap<String, Vec<String>>,
     /// Claude event → matcher groups.
@@ -70,11 +72,8 @@ pub(crate) fn matcher_accepts(pattern: Option<&str>, value: &str) -> bool {
     let Some(pattern) = pattern.filter(|p| !p.is_empty() && *p != "*") else {
         return true;
     };
-    if pattern
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ' ' | ',' | '|' | '-'))
-    {
-        return pattern.split(['|', ',']).any(|name| name.trim() == value);
+    if let Some(names) = plain_names(pattern) {
+        return names.contains(&value);
     }
     match regex::Regex::new(pattern) {
         Ok(regex) => regex.is_match(value),
@@ -221,8 +220,6 @@ pub(super) struct Moment<'a> {
     pub tool: Option<(&'a str, &'a Value)>,
     /// The JSON on every handler's stdin.
     pub stdin: &'a str,
-    /// A `Stop` that continues one: a failing handler must not ask to continue again.
-    pub stop_active: bool,
 }
 
 /// Runs the event's matching handlers in order. The first block wins over any allow or
@@ -253,11 +250,6 @@ pub(super) fn fire(
                 continue; // started, not awaited
             };
             let mut answer = decide_outcome(event, &data.name, handler, &finished);
-            let failed = !finished.ok || !matches!(finished.status, Some(0 | 2));
-            if event == "Stop" && moment.stop_active && failed {
-                // A block made of a failure would ask for another turn that fails the same way.
-                answer.block = None;
-            }
             if let Some(context) = answer.context.take() {
                 contexts.push(context);
             }
@@ -334,6 +326,64 @@ mod tests {
             let expect = |key: &str| case["expect"][key].as_str().map(str::to_owned);
             assert_eq!(outcome.block, expect("block"), "{case}");
             assert_eq!(outcome.context, expect("context"), "{case}");
+        }
+    }
+
+    #[test]
+    fn fire_vectors() {
+        for case in vectors()["fire"].as_array().unwrap() {
+            let event = case["event"].as_str().unwrap();
+            let events = serde_json::json!({ event: case["groups"] });
+            let data: Data = serde_json::from_value(serde_json::json!({
+                "name": "vec", "dir": "hooks/vec", "serves": {}, "events": events,
+            }))
+            .unwrap();
+            let mut runs = case["runs"].as_array().unwrap().iter();
+            let tool = case["tool"]
+                .as_object()
+                .map(|t| (t["name"].as_str().unwrap(), &t["input"]));
+            let moment = Moment {
+                cwd: Path::new("/p"),
+                matcher: case["matcher"].as_str(),
+                tool,
+                stdin: "{}",
+            };
+            let outcome = fire(&data, event, &moment, &mut |handler| {
+                if handler.is_async {
+                    return None;
+                }
+                let mut run =
+                    serde_json::json!({"ok": true, "stdout": "", "stderr": "", "why": ""});
+                run.as_object_mut()
+                    .unwrap()
+                    .extend(runs.next().unwrap().as_object().unwrap().clone());
+                if run["why"] == "" {
+                    run["why"] = format!("exit {}", run["status"]).into();
+                }
+                Some(serde_json::from_value(run).unwrap())
+            });
+            assert!(
+                runs.next().is_none(),
+                "a scripted run was never asked for: {case}"
+            );
+            let expect = |key: &str| case["expect"][key].as_str().map(str::to_owned);
+            assert_eq!(outcome.block, expect("block"), "{case}");
+            assert_eq!(outcome.context, expect("context"), "{case}");
+            if let Some(rust) = case.get("expectRust") {
+                let permission = match rust["permission"].as_str() {
+                    Some("ask") => Some(Permission::Ask),
+                    Some("allow") => Some(Permission::Allow),
+                    _ => None,
+                };
+                assert_eq!(outcome.permission, permission, "{case}");
+                assert_eq!(
+                    outcome.updated_input.map(Value::Object),
+                    rust["updatedInput"]
+                        .as_object()
+                        .map(|o| Value::Object(o.clone())),
+                    "{case}"
+                );
+            }
         }
     }
 }

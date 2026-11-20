@@ -254,6 +254,20 @@ for (const v of vectors.decide) {
     bad.push(["decide", v, got]);
   }
 }
+for (const v of vectors.fire) {
+  core.HOOK.events = { [v.event]: v.groups };
+  const runs = [...v.runs];
+  const run = async (handler) => {
+    if (handler.async) return { ok: true, status: 0, stdout: "", stderr: "", why: "exit 0" };
+    return { ok: true, why: `exit ${runs[0]?.status}`, stdout: "", stderr: "", ...runs.shift() };
+  };
+  const moment = { cwd: "/p", sessionId: "s", matcher: v.matcher ?? undefined, tool: v.tool, fields: {} };
+  const got = await core.fire(v.event, moment, run);
+  const answered = { block: got.block, context: got.context };
+  if (JSON.stringify(answered) !== JSON.stringify({ block: v.expect.block, context: v.expect.context }) || runs.length) {
+    bad.push(["fire", v, got, runs]);
+  }
+}
 console.log(JSON.stringify(bad));
 "#;
     let dir = std::env::temp_dir().join(format!("mars-ts-vectors-{}", std::process::id()));
@@ -262,7 +276,7 @@ console.log(JSON.stringify(bad));
     std::fs::write(
         dir.join("core.ts"),
         format!(
-            "const HOOK: any = {{ name: \"vec\", harness: \"vec\", events: {{}} }};\n{core}\nexport {{ matcherAccepts, conditionHolds, decide }};\n"
+            "const HOOK: any = {{ name: \"vec\", harness: \"vec\", events: {{}} }};\n{core}\nexport {{ HOOK, matcherAccepts, conditionHolds, decide, fire }};\n"
         ),
     )
     .unwrap();

@@ -2,9 +2,10 @@
 //! commands on its own events with its own payloads and replies.
 //!
 //! Mars writes, per hook, a data file (`hooks/mars-<name>.hooks.json`, beside the hook's
-//! directory: the surviving Claude matcher groups, as the TypeScript targets' literal holds
-//! them, and the Claude event each `agy` event serves) and one `hooks.json` handler per `agy` event, which runs `mars hook
-//! run` on that file. The runner (`src/hook_run`) turns `agy`'s payload into Claude's, applies
+//! directory, which the file names in `dir`) holding the surviving Claude matcher groups as the
+//! TypeScript targets' literal holds them and the Claude events each `agy` event serves, and
+//! one `hooks.json` handler per `agy` event, which runs `mars hook run` on that file. The
+//! runner (`src/hook_run`) turns `agy`'s payload into Claude's, applies
 //! Claude's matcher, `if`, exit-code and answer rules, and answers in `agy`'s form. This
 //! module is the rendering side; what the runner reads is [`DATA_VERSION`] of the file.
 
@@ -179,8 +180,8 @@ pub fn agy_args(claude_arg: &str) -> &'static [&'static str] {
 }
 
 /// Claude's matcher as a list of plain names (`A|B`, `A,B`), or `None` when it is a regular
-/// expression. The runner's own test of the same rule is in `src/hook_run`.
-fn plain_names(pattern: &str) -> Option<Vec<&str>> {
+/// expression. The runner (`src/hook_run`) matches by the same rule.
+pub fn plain_names(pattern: &str) -> Option<Vec<&str>> {
     (!pattern.is_empty()
         && pattern
             .chars()
@@ -286,8 +287,8 @@ pub fn runner_command(
 }
 
 /// `table` (the events Claude knows) translated for `agy`, with `tokens` substituted.
-/// `${MARS_HOOK_DIR}` stays in the data file: the runner resolves it to the directory named
-/// as the hook, beside the data file, so the file holds no machine path.
+/// `${MARS_HOOK_DIR}` stays in the data file: the runner resolves it from the file's `dir`
+/// (the hook's directory relative to `.agy/`), so the file holds no machine path.
 pub(super) fn render(
     table: &[(&str, &[MatcherGroup])],
     profile: &Profile,
@@ -396,6 +397,7 @@ pub(super) fn render(
         let data = json!({
             "version": DATA_VERSION,
             "name": tokens.hook_name,
+            "dir": tokens.hook_dir,
             "verified": profile.verified_against,
             "serves": serves,
             "events": by_claude,

@@ -157,7 +157,7 @@ pub(crate) fn preflight_config_entries(
         }
     }
     // A translated hook's command runs the `mars` that wrote it, by absolute path.
-    let mars_exe = std::env::current_exe()
+    let mars_exe = invoked_exe()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
     for (dir, item) in targeted.target.selected_hooks() {
@@ -470,4 +470,23 @@ fn validate_destination_path(
         }
     }
     Ok(())
+}
+
+/// The path this `mars` was invoked by, when that is a link to the running binary: a Homebrew
+/// install links a stable `bin/mars` to a versioned cellar, and `current_exe` resolves the
+/// link, so its answer goes stale at the next upgrade. An absolute `argv[0]`, or the `PATH`
+/// entry a bare name resolves to, stays unresolved; anything else is `current_exe`.
+fn invoked_exe() -> Option<std::path::PathBuf> {
+    let real = std::env::current_exe().ok()?;
+    let argv0 = std::path::PathBuf::from(std::env::args_os().next()?);
+    let invoked = if argv0.is_absolute() {
+        Some(argv0)
+    } else if argv0.components().count() == 1 {
+        which::which(&argv0).ok().filter(|path| path.is_absolute())
+    } else {
+        None
+    };
+    invoked
+        .filter(|path| std::fs::canonicalize(path).ok() == std::fs::canonicalize(&real).ok())
+        .or(Some(real))
 }

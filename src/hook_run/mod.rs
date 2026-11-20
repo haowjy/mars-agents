@@ -95,13 +95,8 @@ fn answer(args: &RunArgs) -> Result<Option<String>, String> {
     }
     let mut data: Data = serde_json::from_value(value)
         .map_err(|error| format!("{} is not a hook: {error}", path.display()))?;
-    // The hook's directory sits beside its data file, under the hook's name.
-    let hook_dir = path
-        .parent()
-        .unwrap_or(&cwd)
-        .join(&data.name)
-        .to_string_lossy()
-        .into_owned();
+    // `agy` runs the command from `.agy/`, which `data.dir` is relative to.
+    let hook_dir = cwd.join(&data.dir).to_string_lossy().into_owned();
     for group in data.events.values_mut().flatten() {
         for handler in &mut group.handlers {
             expand_hook_dir(handler, &hook_dir);
@@ -208,10 +203,6 @@ fn translate(data: &Data, agy_event: &str, payload: &Value) -> Option<String> {
         matcher,
         tool: tool_ref,
         stdin: &stdin,
-        stop_active: payload
-            .get("continuationActive")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
     };
     let outcome = fire(data, claude_event, &moment, &mut |handler| {
         exec::run(handler, moment.stdin, moment.cwd)
@@ -293,4 +284,88 @@ fn reply(agy_event: &str, outcome: &Outcome, args: &Map<String, Value>) -> Optio
         _ => json!({}),
     };
     Some(reply.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(block: Option<&str>, context: Option<&str>) -> Outcome {
+        Outcome {
+            block: block.map(str::to_owned),
+            context: context.map(str::to_owned),
+            ..Outcome::default()
+        }
+    }
+
+    fn permitted(permission: Permission, updated: Option<Value>) -> Outcome {
+        Outcome {
+            permission: Some(permission),
+            updated_input: updated.and_then(|v| v.as_object().cloned()),
+            ..Outcome::default()
+        }
+    }
+
+    /// One stray field on a reply blocks a tool or is read as another event's answer, so
+    /// each event's reply is pinned whole.
+    #[test]
+    fn replies_carry_only_what_agy_reads_on_the_event() {
+        let args = json!({"CommandLine": "ls", "Path": "/a"});
+        let args = args.as_object().unwrap();
+        let cases: Vec<(&str, Outcome, Option<Value>)> = vec![
+            ("PreToolUse", Outcome::default(), None),
+            (
+                "PreToolUse",
+                outcome(Some("no"), Some("ctx")),
+                Some(json!({"decision": "deny", "reason": "no"})),
+            ),
+            ("PreToolUse", outcome(None, Some("ctx")), None),
+            (
+                "PreToolUse",
+                permitted(Permission::Ask, None),
+                Some(json!({"decision": "ask"})),
+            ),
+            (
+                "PreToolUse",
+                permitted(
+                    Permission::Allow,
+                    Some(json!({"command": "ls -l", "file_path": "/b"})),
+                ),
+                Some(
+                    json!({"decision": "allow", "overwrite": {"CommandLine": "ls -l", "Path": "/b"}}),
+                ),
+            ),
+            (
+                "PostToolUse",
+                outcome(Some("no"), Some("ctx")),
+                Some(json!({})),
+            ),
+            ("Stop", Outcome::default(), Some(json!({}))),
+            (
+                "Stop",
+                outcome(Some("again"), None),
+                Some(json!({"decision": "continue", "reason": "again"})),
+            ),
+            ("SessionStart", Outcome::default(), Some(json!({}))),
+            (
+                "SessionStart",
+                outcome(None, Some("ctx")),
+                Some(json!({"injectSteps": [{"systemMessage": {"systemMessage": "ctx"}}]})),
+            ),
+            (
+                "PreInvocation",
+                outcome(Some("no"), Some("ctx")),
+                Some(json!({
+                    "injectSteps": [{"errorMessage": {"userMessage": "no"}}],
+                    "terminationBehavior": "terminate",
+                })),
+            ),
+            ("PreInvocation", Outcome::default(), Some(json!({}))),
+        ];
+        for (event, outcome, expected) in cases {
+            let got = reply(event, &outcome, args)
+                .map(|text| serde_json::from_str::<Value>(&text).unwrap());
+            assert_eq!(got, expected, "{event} {outcome:?}");
+        }
+    }
 }

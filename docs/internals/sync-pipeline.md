@@ -296,7 +296,7 @@ that never names the token has no directory and needs none.
 9. Compare desired entries against the previous lock and remove stale entries
    before writing replacements. Hook removal is ownership-gated. MCP
    servers skip this step: step 10 removes and writes them in one pass.
-10. Write desired entries to target config files: MCP through each adapter's
+10. Write desired entries to target config files: MCP through each target's
     `McpFile` spec (`.mcp.json`, `.codex/config.toml`, etc.), reconciled in one
     pass per file (`keyed_entries::reconcile`: stale owned entries removed, desired
     ones written, one save), hooks through the adapter (`settings.local.json`,

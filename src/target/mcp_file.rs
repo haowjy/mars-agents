@@ -1,7 +1,7 @@
-//! The MCP spec per adapter: where a harness reads MCP servers and how one
+//! The MCP spec per target: where a harness reads MCP servers and how one
 //! [`McpServerEntry`] renders there.
 //!
-//! An adapter declares [`McpFile`]; preflight, the reconcile and the lock record
+//! A target row declares [`McpFile`]; preflight, the reconcile and the lock record
 //! all derive from it, so a harness's file location or shape is stated exactly
 //! once. Ownership and reconcile are the shared keyed-entries engine.
 
@@ -27,6 +27,14 @@ pub struct McpFile {
 /// The entry Claude and Pi share: `${VAR}` references, remote servers typed `http`.
 pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
     render(&server.transport, Flavor::Claude)
+}
+
+pub(super) fn cursor_render(server: &McpServerEntry) -> McpRender {
+    render(&server.transport, Flavor::Cursor)
+}
+
+pub(super) fn agy_render(server: &McpServerEntry) -> McpRender {
+    render(&server.transport, Flavor::Agy)
 }
 
 pub(crate) fn render_all(
@@ -77,7 +85,6 @@ pub(crate) fn render_all(
 mod tests {
     use super::*;
     use crate::lock::ConfigEntryRecord;
-    use crate::target::TargetRegistry;
     use crate::target::keyed_entries::reconcile;
     use mars_schema::mcp_server::McpTransport;
     use serde_json::Value;
@@ -113,8 +120,7 @@ mod tests {
         desired: &[McpServerEntry],
         force: bool,
     ) -> (BTreeMap<String, ConfigEntryRecord>, Vec<String>) {
-        let registry = TargetRegistry::new();
-        let file = registry.get(target).unwrap().mcp_file().unwrap();
+        let file = crate::target::spec(target).unwrap().mcp.unwrap();
         let mut diag = DiagnosticCollector::new();
         let rendered = render_all(&file, desired, &mut diag);
         let records = reconcile(
@@ -143,11 +149,7 @@ mod tests {
     }
 
     fn record_of(target: &str, server: &McpServerEntry) -> ConfigEntryRecord {
-        let file = TargetRegistry::new()
-            .get(target)
-            .unwrap()
-            .mcp_file()
-            .unwrap();
+        let file = crate::target::spec(target).unwrap().mcp.unwrap();
         render_all(
             &file,
             std::slice::from_ref(server),
@@ -171,10 +173,8 @@ mod tests {
         )
         .unwrap();
         let entry = server("srv", &[("TOKEN", "TOKEN")]);
-        let registry = TargetRegistry::new();
-        let adapter = registry.get(".codex").unwrap();
         let mut diag = DiagnosticCollector::new();
-        let file = adapter.mcp_file().unwrap();
+        let file = crate::target::spec(".codex").unwrap().mcp.unwrap();
         render_all(&file, &[server("r", &[("A", "B")])], &mut diag);
         // The loss is held until the entry is written.
         diag.release(&file.at.entry_key("r"));

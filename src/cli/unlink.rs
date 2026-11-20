@@ -154,7 +154,6 @@ fn remove_owned_target_content(
         .get(target_name)
         .cloned()
         .unwrap_or_default();
-    let registry = crate::target::TargetRegistry::new();
     let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
     let retention = crate::surface_ownership::retention::RemovalPlan::build(
         &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
@@ -167,7 +166,6 @@ fn remove_owned_target_content(
         &mut diagnostics,
     );
     let reconciled = crate::compiler::config_entries::reconcile_all_keyed(
-        &registry,
         &ctx.project_root,
         &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
         &std::collections::BTreeMap::new(),

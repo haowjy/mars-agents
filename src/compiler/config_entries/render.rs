@@ -9,7 +9,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
 use crate::target::plugin::HOOK_ENTRY_KIND;
-use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetAdapter};
+use crate::target::{HOOK_KEY_PREFIX, HookEntry, TargetSpec};
 use crate::types::MarsContext;
 use mars_schema::hooks::render::Skip;
 use mars_schema::hooks::targets::Profile;
@@ -34,11 +34,9 @@ pub(crate) fn preflight_config_entries(
 ) -> Result<RenderedHooks, crate::error::MarsError> {
     use crate::compiler::hooks::load_output;
     use crate::error::{ConfigError, MarsError};
-    use crate::target::TargetRegistry;
     use mars_schema::hooks::Tokens;
 
     let resolved = &targeted.resolved;
-    let registry = TargetRegistry::new();
     let mut errors = Vec::new();
     let mut rendered = HashMap::new();
     let mut reported: HashMap<(String, String), Vec<Skip>> = HashMap::new();
@@ -48,10 +46,9 @@ pub(crate) fn preflight_config_entries(
     let mut keyed_touched: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     let mut hook_targets: BTreeSet<String> = BTreeSet::new();
     for target in &managed {
-        for (kind, _) in registry
-            .get(target)
+        for (kind, _) in crate::target::spec(target)
             .into_iter()
-            .flat_map(|a| a.fixed_entries(&ctx.project_root))
+            .flat_map(|spec| spec.fixed_entries(&ctx.project_root))
         {
             keyed_touched
                 .entry(target.clone())
@@ -60,10 +57,9 @@ pub(crate) fn preflight_config_entries(
         }
     }
     for (target, records) in &resolved.loaded.old_lock.config_entries {
-        for (kind, _) in registry
-            .get(target)
+        for (kind, _) in crate::target::spec(target)
             .into_iter()
-            .flat_map(|adapter| adapter.keyed_sections())
+            .flat_map(|spec| spec.keyed_sections())
         {
             if records.keys().any(|key| key.starts_with(kind.key_prefix)) {
                 keyed_touched
@@ -102,10 +98,10 @@ pub(crate) fn preflight_config_entries(
             errors.push(error);
             continue;
         }
-        let Some(adapter) = registry.get(target_name) else {
+        let Some(spec) = crate::target::spec(target_name) else {
             continue;
         };
-        for (kind, location) in adapter.keyed_sections() {
+        for (kind, location) in spec.keyed_sections() {
             if !keyed_touched
                 .get(target_name)
                 .is_some_and(|kinds| kinds.contains(kind.key_prefix))
@@ -342,12 +338,13 @@ fn hook_key(item: &ParsedHookItem) -> String {
 /// tree is shared by every harness that reads it.
 pub(crate) fn lower_hook_entries(
     hooks: &[(String, &ParsedHookItem)],
-    adapter: &dyn TargetAdapter,
+    target: &TargetSpec,
     shared: Option<&Profile>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<HookEntry> {
+    let name = target.name();
     let Some(target) =
-        mars_schema::hooks::targets::target(&adapter.name()).filter(|t| t.merge_file().is_some())
+        mars_schema::hooks::targets::target(&name).filter(|t| t.merge_file().is_some())
     else {
         return Vec::new();
     };
@@ -367,7 +364,7 @@ pub(crate) fn lower_hook_entries(
                             "hook `{}` from `{}`: the `{}` plugin tree {}",
                             item.def.name,
                             item.source_name,
-                            adapter.name().trim_start_matches('.'),
+                            name.trim_start_matches('.'),
                             skip_text(skip)
                         ),
                     );

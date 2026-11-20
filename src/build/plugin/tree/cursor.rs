@@ -48,7 +48,7 @@ fn write_config_entries(
         super::write_pretty_json(
             &root.join("mcp.json"),
             &serde_json::json!({
-                "mcpServers": super::render_servers(&crate::target::cursor::CursorAdapter, mcp)
+                "mcpServers": super::render_servers(crate::target::for_harness(HarnessId::Cursor), mcp)
             }),
             "Cursor MCP configuration",
         )?;

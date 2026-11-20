@@ -69,14 +69,14 @@ pub(super) fn pretty_json_bytes(
     Ok(bytes)
 }
 
-/// Render servers through the sync adapter's own MCP spec, keyed by name.
+/// Render servers through the sync target's own MCP spec, keyed by name.
 pub(super) fn render_servers(
-    adapter: &dyn crate::target::TargetAdapter,
+    target: &crate::target::TargetSpec,
     servers: &[McpServerEntry],
 ) -> serde_json::Map<String, serde_json::Value> {
-    let file = adapter
-        .mcp_file()
-        .expect("a plugin tree profile renders through an adapter that takes MCP servers");
+    let file = target
+        .mcp
+        .expect("a plugin tree profile renders through a target that takes MCP servers");
     servers
         .iter()
         .map(|server| (server.name.clone(), (file.render)(server).value))
@@ -341,14 +341,11 @@ pub(super) fn write_tree(
             ))
         })
         .collect::<Result<Vec<_>, MarsError>>()?;
-    let registry = crate::target::TargetRegistry::new();
-    let adapter = registry
-        .get(&target_dir)
-        .expect("harness descriptor names a registered target");
+    let target = crate::target::for_harness(profile.harness);
     let mcp_servers = crate::compiler::config_entries::lower_mcp_servers(&mcp);
     let hook_entries = crate::compiler::config_entries::render::lower_hook_entries(
         &hooks,
-        adapter,
+        target,
         profile.shared_hook_profile,
         diag,
     );

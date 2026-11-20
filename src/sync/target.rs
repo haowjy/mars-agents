@@ -527,14 +527,9 @@ pub(crate) fn build_with_collisions_and_diag(
 }
 
 pub(crate) fn mcp_config_targets(managed_targets: &[String]) -> Vec<String> {
-    let registry = crate::target::TargetRegistry::new();
     managed_targets
         .iter()
-        .filter(|target| {
-            registry
-                .get(target)
-                .is_some_and(|adapter| adapter.mcp_file().is_some())
-        })
+        .filter(|target| crate::target::spec(target).is_some_and(|spec| spec.mcp.is_some()))
         .cloned()
         .collect()
 }

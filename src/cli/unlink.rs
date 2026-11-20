@@ -65,7 +65,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         (0, Vec::new())
     };
     if target_was_managed {
-        remove_empty_ancestors(&target_dir, &target_dir)?;
+        remove_empty_ancestors(&target_dir, &target_dir);
     }
     let removed_dir = target_was_managed && had_dir && !target_dir.exists();
 

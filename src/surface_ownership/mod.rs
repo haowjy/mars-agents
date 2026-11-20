@@ -48,10 +48,6 @@ pub fn target_dest_exists(dest: &Path) -> bool {
     dest.exists() || dest.symlink_metadata().is_ok()
 }
 
-pub fn may_delete(old_lock: &LockFile, target_root: &str, dest_path: &str) -> bool {
-    old_lock.contains_output(target_root, dest_path)
-}
-
 /// What sits at a path Mars is about to write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DestState {
@@ -241,16 +237,5 @@ mod tests {
 
         assert!(!resolve(&lock, false, false).0);
         assert!(resolve(&lock, false, true).0);
-        assert!(
-            may_delete(&lock, ".cursor", "agents/coder.md"),
-            "a tombstone still carries deletion authority"
-        );
-    }
-
-    #[test]
-    fn may_delete_requires_per_target_output_record() {
-        let lock = lock_with_output(".mars", "agents/coder.md");
-        assert!(!may_delete(&lock, ".cursor", "agents/coder.md"));
-        assert!(may_delete(&lock, ".mars", "agents/coder.md"));
     }
 }

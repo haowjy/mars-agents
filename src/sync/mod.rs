@@ -52,6 +52,8 @@ pub struct SyncReport {
     /// dry run, would remove), and the `(target_root, dest_path)` of each output in them. Config
     /// entries and the canonical-store copies of per-target items are not listed.
     pub dropped_targets: Vec<String>,
+    /// Dropped targets Mars could not finish removing: it keeps their records and retries.
+    pub pending_targets: Vec<String>,
     pub dropped_outputs: Vec<(String, String)>,
     /// Native harness agent outputs emitted this run that are new or content-changed
     /// vs the previous lock, as `(target_root, dest_path)`. Surfaced so native
@@ -125,7 +127,7 @@ pub(crate) struct LoadedConfig {
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     /// The records that serve a target the config names but this sync does not manage (a retired
-    /// one, or one `mars.local.toml`'s `targets` leaves out), merged back on write.
+    /// one), merged back on write.
     pub carried: LockFile,
     /// The records that serve a target no config file names: the sync removes what they record.
     pub dropped: LockFile,
@@ -201,6 +203,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             target_outcomes: Vec::new(),
             dry_run: request.options.dry_run,
             dropped_targets: Vec::new(),
+            pending_targets: Vec::new(),
             dropped_outputs: Vec::new(),
             native_emitted: Vec::new(),
             native_removed: Vec::new(),

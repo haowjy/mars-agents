@@ -206,6 +206,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         kept: usize,
         skipped: usize,
         dropped_targets: &'a [String],
+        pending_targets: &'a [String],
         dropped_outputs: Vec<String>,
         native_emitted: usize,
         native_removed: usize,
@@ -257,6 +258,7 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         kept,
         skipped,
         dropped_targets: &report.dropped_targets,
+        pending_targets: &report.pending_targets,
         dropped_outputs: report
             .dropped_outputs
             .iter()
@@ -308,6 +310,10 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         return;
     }
 
+    // Diagnostics go to stderr so machine-readable stdout remains stable. They come before the
+    // lists of what changed: a misspelt `targets` is read before the sync removes what that
+    // leaves unnamed.
+    print_diagnostics(&report.diagnostics, detail);
     let mut stdout = stdout_stream();
 
     let mut installed = 0usize;
@@ -402,6 +408,13 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             "  {verb} what Mars installed in {targets}, which `targets` no longer names"
         );
     }
+    if !report.pending_targets.is_empty() {
+        let _ = writeln!(
+            stdout,
+            "  pending     what Mars installed in {} could not be removed; the next sync retries",
+            report.pending_targets.join(", ")
+        );
+    }
     if native_emitted > 0 {
         if dry {
             let _ = writeln!(stdout, "  would emit   {native_emitted} native agents");
@@ -452,6 +465,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && removed == 0
         && kept == 0
         && report.dropped_targets.is_empty()
+        && report.pending_targets.is_empty()
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
@@ -473,8 +487,6 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = stdout.reset();
     }
 
-    // Diagnostics go to stderr so machine-readable stdout remains stable.
-    print_diagnostics(&report.diagnostics, detail);
     let mut stderr = stderr_stream();
 
     if !report.upgrades.is_empty() && !report.dry_run && !no_upgrade_hint {
@@ -741,6 +753,7 @@ mod tests {
             target_outcomes: Vec::new(),
             dry_run: false,
             dropped_targets: Vec::new(),
+            pending_targets: Vec::new(),
             dropped_outputs: Vec::new(),
             native_emitted: Vec::new(),
             native_removed: Vec::new(),

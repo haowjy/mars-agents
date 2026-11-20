@@ -160,7 +160,7 @@ pub(crate) fn remove_served(
             Removal::Removed => {
                 removed.insert((root.clone(), dest_path.to_string()));
                 if let Some(parent) = path.parent() {
-                    remove_empty_ancestors(parent, &root_dir)?;
+                    remove_empty_ancestors(parent, &root_dir);
                 }
             }
             Removal::Kept => report_kept(&root, dest_path, &mut diagnostics),
@@ -236,7 +236,7 @@ pub(crate) fn remove_served(
     // Removing config entries can empty a directory the outputs loop already passed.
     for target in targets {
         let dir = project_root.join(&target);
-        remove_empty_ancestors(&dir, &dir)?;
+        remove_empty_ancestors(&dir, &dir);
     }
     Ok(Removed {
         outputs: removed.into_iter().collect(),
@@ -245,32 +245,23 @@ pub(crate) fn remove_served(
 }
 
 /// Remove `start` and each parent up to and including `target_dir` while they are empty.
-/// Whether `target_dir` itself went.
-pub(crate) fn remove_empty_ancestors(start: &Path, target_dir: &Path) -> std::io::Result<bool> {
+/// Best effort: no lock record depends on an empty directory, so the first error ends the walk
+/// and a directory Mars cannot remove stays. Whether `target_dir` itself went.
+pub(crate) fn remove_empty_ancestors(start: &Path, target_dir: &Path) -> bool {
     let mut current = Some(start);
-    let mut removed_target = false;
     while let Some(path) = current {
         if !path.starts_with(target_dir) {
-            break;
+            return false;
         }
         match std::fs::remove_dir(path) {
-            Ok(()) => {
-                removed_target |= path == target_dir;
-                current = path.parent();
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                current = path.parent();
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                break;
-            }
-            Err(error) => return Err(error),
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return false,
         }
+        if path == target_dir {
+            return true;
+        }
+        current = path.parent();
     }
-    Ok(removed_target)
+    false
 }

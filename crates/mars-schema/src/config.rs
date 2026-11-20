@@ -421,7 +421,10 @@ pub struct Read<T> {
 }
 
 /// Read a `mars.toml`-shaped file. `Err` is the TOML or serde error as the parser words it.
-pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Error> {
+pub fn read<T: DeserializeOwned>(
+    content: &str,
+    document: keys::Document,
+) -> Result<Read<T>, toml::de::Error> {
     let mut ignored = Vec::new();
     let value = serde_ignored::deserialize(toml::Deserializer::new(content), |at| {
         ignored.push(segments(&at));
@@ -429,7 +432,7 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     let mut unknown_keys = unknown_notes(ignored, &[]);
     let table = content.parse::<toml::Table>().ok();
     unknown_keys.extend(table.iter().flat_map(crate::retired::config_notes));
-    let floor = table.and_then(|table| keys::floor(keys::used(&table, keys::Document::Consumer)));
+    let floor = table.and_then(|table| keys::floor(keys::used(&table, document)));
     Ok(Read {
         value,
         unknown_keys,
@@ -484,7 +487,7 @@ pub struct ConsumerRead {
 /// `read('mars.toml')` share. The whole file is read in one serde pass; when that fails, each
 /// table is read apart, so one broken value costs its own table and nothing else.
 pub fn read_consumer(content: &str) -> ConsumerRead {
-    match read::<Config>(content) {
+    match read::<Config>(content, keys::Document::Consumer) {
         Ok(read) => {
             let mut config = read.value;
             config.unknown_keys = read.unknown_keys;

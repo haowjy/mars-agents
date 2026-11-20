@@ -5,7 +5,7 @@ machines here are the commands that carry a multi-step change of their own: whic
 command runs against, claiming and releasing a target, adopting a file, resolving conflicts,
 releasing and scaffolding. Two authorities sit outside this page and are named once: the lock
 (`OutputState`, `ConfigEntryRecord.emitted_json`; see [lock](../../lock/.context/state-machines.md))
-and surface ownership (`may_delete`, `resolve_copy`; see
+and surface ownership (`resolve_copy`; see
 [surface ownership](../../surface_ownership/.context/CONTEXT.md)). The index of all machines is
 [state-machines/index.md](../../../.context/state-machines/index.md).
 

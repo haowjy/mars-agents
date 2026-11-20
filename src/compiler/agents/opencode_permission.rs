@@ -664,9 +664,8 @@ fn deny_overlapping_globs(keys: &mut [Key], notes: &mut Notes<'_>) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::lower::lower_to_opencode;
     use super::*;
-    use crate::compiler::agents::lower::NativeModel;
+    use crate::compiler::agents::lower::{NativeModel, lower_for_harness_with_model};
     use mars_schema::frontmatter::Frontmatter;
 
     /// A call: the OpenCode action as loaded, and its argument.
@@ -765,7 +764,12 @@ mod tests {
         let reading = mars_schema::agent::read(&content);
         let profile = reading.fields.unwrap();
         let fm = Frontmatter::parse(&content).unwrap();
-        let out = lower_to_opencode(&profile, fm.body(), &NativeModel::Inherit);
+        let out = lower_for_harness_with_model(
+            HarnessId::OpenCode,
+            &profile,
+            fm.body(),
+            &NativeModel::Inherit,
+        );
         let text = String::from_utf8(out.bytes).unwrap();
         let doc: Value = serde_yaml::from_str(text.split("---").nth(1).unwrap()).unwrap();
         let map = match doc.get("permission") {

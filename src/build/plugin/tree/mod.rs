@@ -486,7 +486,9 @@ fn lower_agent(
     effective
         .name
         .get_or_insert_with(|| item.id.name.to_string());
-    if tree_profile.harness == mars_schema::HarnessId::Claude && effective.description.is_none() {
+    if crate::compiler::lowering::lowering(tree_profile.harness).needs_description
+        && effective.description.is_none()
+    {
         diag.warn(
             "native-agent-no-description",
             format!(
@@ -536,7 +538,7 @@ fn lower_agent(
         );
     }
     let lowered =
-        lower_for_harness_with_model(&tree_profile.harness, &effective, &body, &model.native);
+        lower_for_harness_with_model(tree_profile.harness, &effective, &body, &model.native);
     diag.record_lossy_fields(
         "agent",
         item.id.name.as_str(),

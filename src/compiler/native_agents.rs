@@ -682,11 +682,9 @@ fn desired_native_agent_outputs(
             ctx.configured_emit_harnesses,
             model_router,
         ) {
-            let extension = if harness == mars_schema::HarnessId::Codex {
-                "toml"
-            } else {
-                "md"
-            };
+            let extension = crate::compiler::lowering::lowering(harness)
+                .agent
+                .extension();
             desired.insert((
                 harness.target_dir(),
                 format!("agents/{}.{extension}", agent.agent_name),
@@ -1002,14 +1000,14 @@ fn emit_lowered_native_agent(
     use crate::surface_ownership::{self, SurfaceCopyDecision};
 
     let lowered =
-        lower_for_harness_with_model(agent.harness, agent.profile, agent.body, agent.model);
+        lower_for_harness_with_model(*agent.harness, agent.profile, agent.body, agent.model);
 
     let harness_dir = ctx.project_root.join(agent.harness.target_dir());
     let native_agents_dir = harness_dir.join("agents");
-    let file_name = match agent.harness {
-        mars_schema::HarnessId::Codex => format!("{}.toml", agent.agent_name),
-        _ => format!("{}.md", agent.agent_name),
-    };
+    let extension = crate::compiler::lowering::lowering(*agent.harness)
+        .agent
+        .extension();
+    let file_name = format!("{}.{extension}", agent.agent_name);
     let native_path = native_agents_dir.join(&file_name);
     let dest_rel = format!("agents/{file_name}");
     let target_dir = &agent.harness.target_dir();
@@ -1071,7 +1069,9 @@ fn emit_lowered_native_agent(
     for loss in lowered.project_losses {
         project_losses.add(loss, !unchanged);
     }
-    if *agent.harness == mars_schema::HarnessId::Claude && agent.profile.description.is_none() {
+    if crate::compiler::lowering::lowering(*agent.harness).needs_description
+        && agent.profile.description.is_none()
+    {
         undescribed.insert(agent.agent_name.to_string());
     }
 

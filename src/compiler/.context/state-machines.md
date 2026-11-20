@@ -77,7 +77,7 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 
 Which model string goes into one native agent file for one harness (`Set`), or that the file is
 emitted with no model (`Clear`), or not emitted at all (`Skip`). `NativeModelDecision` is in
-`native_agents.rs`, over `NativeModel` (`agents/lower_policy.rs`). `decision_for_profile` walks
+`native_agents.rs`, over `NativeModel` (`agents/lower.rs`). `decision_for_profile` walks
 the candidates; `route_candidate` (memoised per run) calls `route_candidate_uncached`,
 `route_model_ids`, acceptance and `native_model_id`. The routing evaluator is `crate::routing`
 (see [harness routing](../../routing/.context/state-machines.md)).

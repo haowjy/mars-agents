@@ -280,11 +280,16 @@ pub enum OutputState {
     PendingDeletion,
 }
 
-/// Whether a lock output is a generated hook file (`mars-<name>.ts` or `mars-<name>.hooks.ts`
-/// on a file target) rather than the hook's directory copy under `hooks/`. The lock records
-/// the file's plain content hash, not a directory hash.
+/// Whether a lock output is a file Mars generated for a hook (`mars-<name>.ts`,
+/// `mars-<name>.hooks.ts` or an `.agy` `hooks/mars-<name>.hooks.json`) rather than the hook's
+/// directory copy (`hooks/<name>`). The lock records the file's plain content hash, not a
+/// directory hash. The directory a file sits in says nothing: `.agy` keeps its data file
+/// beside the hook's directory.
 pub fn is_generated_hook_file(kind: ItemKind, dest_path: &str) -> bool {
-    kind == ItemKind::Hook && !dest_path.starts_with("hooks/")
+    let file_name = dest_path.rsplit('/').next().unwrap_or(dest_path);
+    kind == ItemKind::Hook
+        && file_name.starts_with("mars-")
+        && (file_name.ends_with(".ts") || file_name.ends_with(".json"))
 }
 
 impl OutputRecord {

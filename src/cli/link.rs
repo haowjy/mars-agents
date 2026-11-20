@@ -168,6 +168,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
+        // The key is retired; leaving it beside the `targets` just written would only warn.
         config.settings.managed_root = None;
         config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;

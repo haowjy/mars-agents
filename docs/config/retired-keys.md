@@ -92,11 +92,24 @@ A skill carries no tool policy of Mars's own, so `tools` and `allowed_tools` hav
 
 `disable-model-invocation: true` became `model-invocable: false`. `invocation` and `allow_implicit_invocation` have no replacement; delete them.
 
+## managed_root
+
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0, and Mars 0.37.0 read it as `targets` while no file set `targets`. Mars no longer reads it, so a project that relied on it has no targets: a sync writes nothing to `.claude/`, and the project's routing is no longer limited to the harnesses it named. What earlier syncs installed there (copied skills, MCP servers, hook entries) stays until `mars unlink .claude`, and every sync warns about it (`unmanaged-target`). Each file that still has the key warns (`field.retired`) with the `targets` to write if you still want its target. `mars link` and `mars init <target>` remove the key from `mars.toml` when they write `targets`; `mars unlink` leaves it. Replace it with the same directory in `targets`:
+
+```toml
+# before
+[settings]
+managed_root = ".claude"
+# after
+[settings]
+targets = [".claude"]
+```
+
 ## Cursor
 
 Mars no longer supports Cursor: `cursor` is not a harness and `.cursor` is not a target. What a project that names it gets:
 
-- `cursor` or `.cursor` in `[settings] targets` (or `managed_root`) is warned about on every sync (`retired-target`) and not synced to. Neither copied skills nor generated files are written there, and the files earlier syncs wrote stay where they are.
+- `cursor` or `.cursor` in `[settings] targets` is warned about on every sync (`retired-target`) and not synced to. Neither copied skills nor generated files are written there, and the files earlier syncs wrote stay where they are.
 - `mars link cursor` fails. `mars unlink .cursor` removes exactly what `mars.lock` records for it: the skills, agents and hook directories Mars copied, the MCP servers it added to `.cursor/mcp.json` and the hook entries it added to `.cursor/hooks.json`. A server or hook entry you wrote, and any other file in `.cursor/`, stays. An entry you edited after Mars wrote it also stays. If `.cursor/hooks.json` held only Mars's entries, it is left holding `{"version": 1}`: delete it by hand.
 - `cursor` as `[models.<alias>] harness`, `default_harness` or an entry of `harness_order` is a `field.retired` warning on every sync: naming it has no effect, so delete it. A sync also leaves what it installed in a `.cursor` that `targets` no longer names, as for any target the config does not name (`unnamed-target`), until `mars unlink .cursor`.
 - `harness-overrides.cursor` is a retired key (`field.retired`): the block has no effect.

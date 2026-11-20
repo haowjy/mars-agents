@@ -153,7 +153,8 @@ fn persist_target(project_root: &Path, target: &str) -> Result<(), MarsError> {
     let target = crate::config::migrations::link::normalize_link(target).target;
     let mut config = crate::config::load(project_root)?;
     let settings = &mut config.settings;
-    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
+    // The key is retired; leaving it beside the `targets` just written would only warn.
+    settings.managed_root = None;
     let targets = settings.targets.get_or_insert_with(Vec::new);
     if !targets.contains(&target) {
         targets.push(target);

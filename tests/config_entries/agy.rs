@@ -164,3 +164,21 @@ fn an_invalid_plugin_list_fails_the_sync_before_anything_is_written() {
         r#"{"entries": 3}"#
     );
 }
+
+#[test]
+fn files_a_sync_wrote_before_its_lock_write_failed_are_adopted_quietly() {
+    let dir = TempDir::new().unwrap();
+    let project = agy_project(&dir);
+    sync(&project).success();
+    fs::remove_file(project.child("mars.lock").path()).unwrap();
+
+    let assertion = sync(&project).success();
+
+    assert!(
+        !stderr(&assertion).contains("no installed-content claim"),
+        "{}",
+        stderr(&assertion)
+    );
+    let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
+    assert!(lock.contains("skills/plain"), "{lock}");
+}

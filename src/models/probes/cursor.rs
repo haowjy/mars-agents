@@ -1,12 +1,9 @@
-use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use mars_schema::agent::EffortLevel;
-use mars_schema::effort::Levels;
 use serde::{Deserialize, Serialize};
 use wait_timeout::ChildExt;
 
@@ -176,165 +173,11 @@ fn parse_cursor_models_output(stdout: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn normalize_slug(s: &str) -> String {
-    s.to_ascii_lowercase().replace('.', "-")
-}
-
-pub fn find_cursor_prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Vec<&'a str> {
-    let normalized_model = normalize_slug(model_id);
-    slugs
-        .iter()
-        .filter(|slug| {
-            let normalized_slug = normalize_slug(slug);
-            normalized_slug == normalized_model
-                || normalized_slug.starts_with(&format!("{normalized_model}-"))
-        })
-        .map(String::as_str)
-        .collect()
-}
-
-/// The effort tiers Cursor lists for one model: each slug folds one reasoning level into the
-/// model name (`gpt-5.5-high`), and the bare slug (`gpt-5.5`) stands for `medium`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CursorTiers {
-    /// The slug for each level the model lists. A level with several slugs keeps the first, or a
-    /// Claude `-thinking-` one.
-    pub slug_by_level: BTreeMap<EffortLevel, String>,
-    /// Every slug of the model, for diagnostics.
-    pub candidate_slugs: Vec<String>,
-}
-
-impl CursorTiers {
-    /// The levels the model lists, as the harness's own set for this model.
-    pub fn levels(&self) -> Levels {
-        Levels::only(self.slug_by_level.keys().copied())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CursorTiersError {
-    NoProbeSlugs,
-    NoModelPrefixMatch,
-}
-
-/// Why a launch could not learn which slug carries an effort.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CursorEffortFailure {
-    ProbeUnavailable,
-    ProbeFailed { error: Option<String> },
-    ProbeReturnedNoSlugs,
-    NoModelPrefixMatch,
-}
-
-/// The tiers the probe lists for `model_id`, which is the base model: never a slug that
-/// already carries a tier.
-pub fn cursor_tiers_from_probe(
-    model_id: &str,
-    probe: Option<&super::Listing>,
-) -> Result<CursorTiers, CursorEffortFailure> {
-    if model_id.trim().is_empty() {
-        return Err(CursorEffortFailure::NoModelPrefixMatch);
-    }
-    let probe = probe.ok_or(CursorEffortFailure::ProbeUnavailable)?;
-    if !probe.succeeded {
-        return Err(CursorEffortFailure::ProbeFailed {
-            error: probe.error.clone(),
-        });
-    }
-    cursor_tiers(model_id, &probe.slugs).map_err(|error| match error {
-        CursorTiersError::NoProbeSlugs => CursorEffortFailure::ProbeReturnedNoSlugs,
-        CursorTiersError::NoModelPrefixMatch => CursorEffortFailure::NoModelPrefixMatch,
-    })
-}
-
-/// The tiers `slugs` list for `model_id`, under the id Cursor itself spells it with when that
-/// differs from models.dev's.
-pub fn cursor_tiers(model_id: &str, slugs: &[String]) -> Result<CursorTiers, CursorTiersError> {
-    let tiers = tiers_of_id(model_id, slugs);
-    match cursor_probe_model_id_shim(model_id) {
-        Some(shimmed) if tiers.is_err() => tiers_of_id(&shimmed, slugs),
-        _ => tiers,
-    }
-}
-
 /// Cursor's spelling of a model models.dev spells differently.
-pub fn cursor_probe_model_id_shim(model_id: &str) -> Option<String> {
+pub fn model_id_shim(model_id: &str) -> Option<String> {
     match model_id.to_ascii_lowercase().as_str() {
         "claude-opus-4-6" => Some("claude-4.6-opus".to_string()),
         "claude-sonnet-4-6" => Some("claude-4.6-sonnet".to_string()),
         _ => None,
     }
-}
-
-/// `slug` without the effort tier Cursor folded into it (`gpt-5.5-high` is `gpt-5.5`), or
-/// `None` when it names no tier. A model's own name can end in a level (`gpt-5.1-codex-max`):
-/// the catalog, not this function, says which reading is right.
-pub fn without_tier(slug: &str) -> Option<&str> {
-    let slug = slug.strip_suffix("-thinking").unwrap_or(slug);
-    EffortLevel::LADDER
-        .into_iter()
-        .filter(|level| *level != EffortLevel::None)
-        .find_map(|level| slug.strip_suffix(level.as_str())?.strip_suffix('-'))
-}
-
-fn tiers_of_id(model_id: &str, slugs: &[String]) -> Result<CursorTiers, CursorTiersError> {
-    if slugs.is_empty() {
-        return Err(CursorTiersError::NoProbeSlugs);
-    }
-    let prefix_matches = find_cursor_prefix_matches(model_id, slugs);
-    if prefix_matches.is_empty() {
-        return Err(CursorTiersError::NoModelPrefixMatch);
-    }
-    let normalized_model = normalize_slug(model_id);
-    let mut slug_by_level = BTreeMap::new();
-    for level in EffortLevel::LADDER {
-        let matches: Vec<&str> = prefix_matches
-            .iter()
-            .copied()
-            .filter(|slug| slug_matches_level(&normalized_model, &normalize_slug(slug), level))
-            .collect();
-        if !matches.is_empty() {
-            slug_by_level.insert(
-                level,
-                choose_cursor_slug(&normalized_model, matches).to_string(),
-            );
-        }
-    }
-    Ok(CursorTiers {
-        slug_by_level,
-        candidate_slugs: prefix_matches.iter().map(|slug| slug.to_string()).collect(),
-    })
-}
-
-fn slug_matches_level(normalized_model: &str, normalized_slug: &str, level: EffortLevel) -> bool {
-    if normalized_slug == normalized_model {
-        return level == EffortLevel::Medium;
-    }
-    let level = level.as_str();
-    let Some(suffix) = normalized_slug
-        .strip_prefix(normalized_model)
-        .and_then(|rest| rest.strip_prefix('-'))
-    else {
-        return false;
-    };
-    suffix == level
-        || suffix.ends_with(&format!("-{level}"))
-        || suffix.contains(&format!("-{level}-"))
-}
-
-fn choose_cursor_slug<'a>(normalized_model: &str, matches: Vec<&'a str>) -> &'a str {
-    if matches.len() == 1 {
-        return matches[0];
-    }
-
-    if normalized_model.starts_with("claude")
-        && let Some(thinking) = matches
-            .iter()
-            .copied()
-            .find(|slug| normalize_slug(slug).contains("-thinking-"))
-    {
-        return thinking;
-    }
-
-    matches[0]
 }

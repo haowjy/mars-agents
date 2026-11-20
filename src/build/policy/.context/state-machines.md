@@ -45,34 +45,35 @@ An instance of [an ordered fallback walk](../../../../.context/state-machines/fa
 - `PolicySource` (`mod.rs`) and the routing layer's `RouteSource` have the same variants with a
   `From` impl in both directions; add a variant to both.
 
-## Cursor effort
+## Slug tier effort
 
-Whether a requested effort level reached the Cursor model slug, in `runnable.rs`. Cursor's levels
-are an input to the effort rule: the suffixes its probe slugs list for the model (the bare slug is
-`medium`), so the rule picks the level and `cursor_tiers` only finds its slug. Tiers are read for the base model
+Whether a requested effort level reached the model slug of a harness whose slugs carry a tier
+(`SlugTiers` on its registry row; Cursor today), in `runnable.rs`. That harness's levels are an
+input to the effort rule: the suffixes its listing's slugs carry for the model (Cursor's bare slug
+is `medium`), so the rule picks the level and `slug_tiers` only finds its slug. Tiers are read for the base model
 (`reasoning::catalog_identity` takes the tier off a slug that carries one) and only when the model
 could take an effort: a model that does not reason needs no slug and never fails the launch.
 
 ```mermaid
 stateDiagram-v2
   [*] --> NotRequested
-  NotRequested --> Applied: Cursor, a level requested, slug found among the model's tiers
+  NotRequested --> Applied: a tiered harness, a level requested, slug found among the model's tiers
   NotRequested --> NotRequested: no level requested, or the rule sends none (the routed id stands)
-  NotRequested --> ProbeUnavailable: a level requested, no probe result
-  NotRequested --> ProbeFailed: the probe ran and failed
-  NotRequested --> ProbeReturnedNoSlugs: the probe listed no slugs
+  NotRequested --> ListingUnavailable: a level requested, no listing
+  NotRequested --> ListingFailed: the listing ran and failed
+  NotRequested --> ListingEmpty: the listing had no slugs
   NotRequested --> NoModelPrefixMatch: slugs listed, none for this model
   Applied --> [*]: harness model replaced by the tier's slug
-  ProbeUnavailable --> [*]: launch fails
-  ProbeFailed --> [*]: launch fails
-  ProbeReturnedNoSlugs --> [*]: launch fails
+  ListingUnavailable --> [*]: launch fails
+  ListingFailed --> [*]: launch fails
+  ListingEmpty --> [*]: launch fails
   NoModelPrefixMatch --> [*]: launch fails
 ```
 
 - A request the model's tiers lack does not fail: it moves to the nearest tier and warns, like
-  every harness. The only failures are "probe unavailable" and "no slug for this model", and each
+  every harness. The only failures are "listing unavailable" and "no slug for this model", and each
   fails the launch with `invalid_execution_policy`.
-- With no probe at all (sync with no listing, a plugin build), Cursor's set is `Any` and the routed
+- With no listing at all (sync with no listing, a plugin build), a tiered harness's set is `Any` and the routed
   id stands.
 
 ## Effort resolution

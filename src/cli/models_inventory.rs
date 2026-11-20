@@ -1,5 +1,7 @@
 //! Human model inventory. Curation is confined to this display command.
 
+use std::collections::BTreeMap;
+
 use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::curation::{CuratedRow, CuratedRules, Decision};
 use crate::error::{ConfigError, MarsError};
@@ -8,8 +10,8 @@ use crate::harness::registry;
 use crate::models::catalog::Catalog;
 use crate::models::harness_model::resolve_harness_model;
 use crate::models::possible::{ListingIssue, Provenance, SessionPossibleSource};
-use crate::models::probes::cursor::cursor_tiers;
 use crate::models::reasoning;
+use crate::models::slug_tiers::tiers;
 use crate::models::{self, ModelsCache};
 use crate::routing::{self, RoutingInput, slug};
 use crate::types::MarsContext;
@@ -277,12 +279,15 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     let resolved = models::resolve_all_static(&aliases, &cache);
     let native_auth = NativeAuthCache::default();
     let catalog_slugs = models::catalog_model_slugs(&cache);
-    let cursor_slugs: Vec<String> = view
-        .rows
-        .iter()
-        .filter(|row| row.key.harness == HarnessId::Cursor)
-        .map(|row| row.key.harness_model_id.clone())
-        .collect();
+    let mut listed_slugs: BTreeMap<HarnessId, Vec<String>> = BTreeMap::new();
+    for row in &view.rows {
+        if registry::slug_tiers(row.key.harness).is_some() {
+            listed_slugs
+                .entry(row.key.harness)
+                .or_default()
+                .push(row.key.harness_model_id.clone());
+        }
+    }
     let mut rows = Vec::new();
     let mut effort_texts = Vec::new();
     for row in &view.rows {
@@ -335,7 +340,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             Decision::Hidden { tier } => ("hidden", tier),
             Decision::Unmatched => ("unmatched", None),
         };
-        let reasoning = reasoning_of(row, &cache.catalog, &cursor_slugs);
+        let reasoning = reasoning_of(row, &cache.catalog, &listed_slugs);
         effort_texts.push(
             reasoning
                 .as_ref()
@@ -410,12 +415,12 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     Ok(0)
 }
 
-/// The levels a row can send. Cursor's depend on its probe slugs, which the listing already
-/// holds as rows; every other harness has one table.
+/// The levels a row can send. A harness that folds tiers into its slugs takes the tiers of its
+/// listed slugs, which the listing already holds as rows; every other harness has one table.
 fn reasoning_of(
     row: &CuratedRow,
     catalog: &Catalog,
-    cursor_slugs: &[String],
+    listed_slugs: &BTreeMap<HarnessId, Vec<String>>,
 ) -> Option<reasoning::ReasoningListing> {
     let harness = row.key.harness;
     let identity = reasoning::catalog_identity(
@@ -424,10 +429,11 @@ fn reasoning_of(
         &row.key.model_id,
         &row.key.harness_model_id,
     )?;
-    let harness_set = if harness == HarnessId::Cursor {
-        cursor_tiers(&identity.model, cursor_slugs).map_or(Levels::Any, |tiers| tiers.levels())
-    } else {
-        reasoning::harness_set(harness)
+    let harness_set = match registry::slug_tiers(harness) {
+        Some(spec) => listed_slugs.get(&harness).map_or(Levels::Any, |slugs| {
+            tiers(spec, &identity.model, slugs).map_or(Levels::Any, |tiers| tiers.levels())
+        }),
+        None => reasoning::harness_set(harness),
     };
     reasoning::listing(reasoning::catalog_row(catalog, &identity), &harness_set)
 }

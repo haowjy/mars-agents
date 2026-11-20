@@ -1,5 +1,8 @@
-use crate::models::probes::{CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver};
+use crate::models::probes::{
+    CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver, cursor,
+};
 use mars_schema::HarnessId;
+use mars_schema::agent::EffortLevel;
 
 /// How a harness proves runtime support and authentication.
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +21,19 @@ pub struct ProbeSpec {
     pub probe: ProbeDriver,
     pub listing: ListingAuth,
     pub slugs: SlugShape,
+    /// Set when the harness folds an effort level into its slugs.
+    pub tiers: Option<SlugTiers>,
+}
+
+/// How a harness folds an effort level into a model's slugs (`<model>-<level>`); the module
+/// `models/slug_tiers.rs` splits and joins them.
+#[derive(Debug, Clone, Copy)]
+pub struct SlugTiers {
+    /// The level a slug with no suffix stands for, if it stands for one.
+    pub bare_level: Option<EffortLevel>,
+    /// The harness's own spelling of a model models.dev spells differently, tried when the
+    /// models.dev spelling lists no slug.
+    pub respell: fn(&str) -> Option<String>,
 }
 
 /// How a probe-backed harness spells the models it lists.
@@ -94,6 +110,7 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
             probe: ProbeDriver::of::<PiProbeResult>(),
             listing: ListingAuth::Gated,
             slugs: SlugShape::Qualified,
+            tiers: None,
         }),
     },
     HarnessDescriptor {
@@ -105,6 +122,7 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
             probe: ProbeDriver::of::<OpenCodeProbeResult>(),
             listing: ListingAuth::Ungated,
             slugs: SlugShape::Qualified,
+            tiers: None,
         }),
     },
     HarnessDescriptor {
@@ -116,6 +134,10 @@ const DESCRIPTORS: &[HarnessDescriptor] = &[
             probe: ProbeDriver::of::<CursorProbeResult>(),
             listing: ListingAuth::Gated,
             slugs: SlugShape::Bare,
+            tiers: Some(SlugTiers {
+                bare_level: Some(EffortLevel::Medium),
+                respell: cursor::model_id_shim,
+            }),
         }),
     },
 ];
@@ -137,6 +159,11 @@ pub fn probe_spec(id: HarnessId) -> Option<ProbeSpec> {
         HarnessClass::ProbeBacked(spec) => Some(spec),
         HarnessClass::Native { .. } => None,
     }
+}
+
+/// How the harness folds an effort level into its slugs, or `None` when it does not.
+pub fn slug_tiers(id: HarnessId) -> Option<SlugTiers> {
+    probe_spec(id)?.tiers
 }
 
 pub fn native_provider(id: HarnessId) -> Option<&'static str> {

@@ -709,16 +709,33 @@ pub(crate) fn create_plan(
     })
 }
 
+/// Refuses only a sync that would change `mars.lock`. An `Install` of an item the lock already
+/// records unchanged (a fresh clone, a deleted `.mars/`) restores files and leaves the lock as
+/// it is.
+///
 /// A host's hooks and MCP servers change with the host, not with the lock a team commits, so
 /// they never trip the gate: a CI machine without the host has none, and one with it is not
 /// asking for a lock change.
 pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError> {
+    let lock_index = crate::lock::LockIndex::new(&planned.targeted.resolved.loaded.old_lock);
     let has_changes = planned.plan.actions.iter().any(|a| {
-        !crate::provided::is_provided_source(a.source_name().as_ref())
-            && !matches!(
-                a,
-                plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. }
-            )
+        if crate::provided::is_provided_source(a.source_name().as_ref()) {
+            return false;
+        }
+        match a {
+            plan::PlannedAction::Skip { .. } | plan::PlannedAction::KeepLocal { .. } => false,
+            plan::PlannedAction::Install { target } => {
+                let recorded = lock_index
+                    .find_output(crate::lock::CANONICAL_TARGET_ROOT, &target.dest_path)
+                    .zip(target.expected_installed_hash().ok());
+                !recorded.is_some_and(|(locked, installed)| {
+                    locked.source == target.source_name
+                        && locked.source_checksum == target.source_hash
+                        && locked.installed_checksum == installed
+                })
+            }
+            plan::PlannedAction::Overwrite { .. } | plan::PlannedAction::Remove { .. } => true,
+        }
     });
     if has_changes {
         return Err(MarsError::FrozenViolation {

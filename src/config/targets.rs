@@ -257,26 +257,34 @@ pub(crate) fn unnamed_target_diagnostics(
     config: &super::Config,
     local: &super::LocalConfig,
 ) -> Vec<crate::diagnostic::Diagnostic> {
-    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
-
     let named = named_targets(config, local);
     rest.recorded_targets()
         .iter()
         .filter(|target| !named.contains(*target))
-        .map(|target| {
-            let unlink = crate::types::managed_cmd(&format!("mars unlink {target}")).into_owned();
-            Diagnostic {
-                category: Some(DiagnosticCategory::Advisory),
-                ..Diagnostic::new(
-                    DiagnosticLevel::Warning,
-                    "unnamed-target",
-                    format!(
-                        "`{target}` is not in `targets`, so sync no longer updates what it installed there. Run `{unlink}` to remove it, or add `{target}` to `targets`."
-                    ),
-                )
-            }
-        })
+        .map(|target| unsynced_target_diagnostic(target))
         .collect()
+}
+
+/// The advice for a target that has records and that sync does not update. A target `mars link`
+/// refuses gets the retired wording, whether or not `targets` names it; any other may be named
+/// in `targets` again.
+fn unsynced_target_diagnostic(target: &str) -> crate::diagnostic::Diagnostic {
+    use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
+
+    if let Some(retired) = mars_schema::retired::retired_target(target) {
+        return retired_target_diagnostic(retired);
+    }
+    let unlink = crate::types::managed_cmd(&format!("mars unlink {target}")).into_owned();
+    Diagnostic {
+        category: Some(DiagnosticCategory::Advisory),
+        ..Diagnostic::new(
+            DiagnosticLevel::Warning,
+            "unnamed-target",
+            format!(
+                "`{target}` is not in `targets`, so sync no longer updates what it installed there. Run `{unlink}` to remove it, or add `{target}` to `targets`."
+            ),
+        )
+    }
 }
 
 /// What linking `.agents` among `managed` means for the user, or `None` when it is not linked.
@@ -329,4 +337,23 @@ pub fn linked_harnesses(settings: &Settings) -> Vec<String> {
         .into_iter()
         .map(|harness| harness.to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod unsynced_target_tests {
+    use super::unsynced_target_diagnostic;
+
+    #[test]
+    fn a_retired_target_is_never_offered_back_and_any_other_is() {
+        let retired = unsynced_target_diagnostic(".cursor");
+        assert_eq!(retired.code, "retired-target");
+        assert!(!retired.message.contains("add `.cursor`"), "{retired:?}");
+
+        let other = unsynced_target_diagnostic(".claude");
+        assert_eq!(other.code, "unnamed-target");
+        assert!(
+            other.message.contains("add `.claude` to `targets`"),
+            "{other:?}"
+        );
+    }
 }

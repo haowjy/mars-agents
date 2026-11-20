@@ -1,6 +1,8 @@
 //! A target that is a plugin directory the harness loads through a pointer file: its entries
 //! live in files the user may also edit, so Mars owns them by key (`keyed_entries`).
 
+use std::path::Path;
+
 use serde_json::json;
 
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
@@ -29,9 +31,8 @@ pub(crate) const HOOK_ENTRY_KIND: KeyedKind = KeyedKind {
     plural: "hooks",
 };
 
-/// The manifest `agy plugin validate --strict` accepts: a plugin with no `version` is flagged
-/// as unlistable in the marketplace.
-const MANIFEST_NAME: &str = "mars";
+/// `agy plugin validate --strict` flags a plugin with no `version` as unlistable in the
+/// marketplace.
 const MANIFEST_VERSION: &str = "1.0.0";
 
 /// Where a plugin target keeps the files Mars edits by key.
@@ -54,7 +55,7 @@ impl PluginTarget {
     }
 
     /// What a managed plugin target always has: its pointer and the manifest keys Mars owns.
-    pub fn fixed_entries(&self, target: &str) -> Vec<(KeyedKind, Rendered)> {
+    pub fn fixed_entries(&self, target: &str, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
         let entry = |kind, name: &str, value| {
             (
                 kind,
@@ -66,8 +67,28 @@ impl PluginTarget {
         };
         vec![
             entry(POINTER_KIND, target, json!({ "path": target })),
-            entry(MANIFEST_KIND, "name", json!(MANIFEST_NAME)),
+            entry(MANIFEST_KIND, "name", json!(plugin_name(project_root))),
             entry(MANIFEST_KIND, "version", json!(MANIFEST_VERSION)),
         ]
     }
+}
+
+/// `mars-` and the project directory's name, narrowed to `[a-z0-9-]`. `agy` hides the hooks of a
+/// second plugin with the same name, so projects Mars manages inside one another must differ.
+fn plugin_name(project_root: &Path) -> String {
+    let dir = project_root
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let narrowed: String = dir
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("mars-{narrowed}")
 }

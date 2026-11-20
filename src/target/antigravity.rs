@@ -30,6 +30,9 @@ impl TargetAdapter for AntigravityAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render,
+            unreached: Some(
+                "sessions started over `agy acp`, which Meridian spawns use, did not reach plugin MCP servers in the one probe that ran them; plain `agy` did",
+            ),
         })
     }
 

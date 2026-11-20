@@ -20,6 +20,7 @@ use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 pub use mcp_file::McpFile;
 use plugin::PluginTarget;
+use std::path::Path;
 
 pub(crate) const AGENTS_TARGET: &str = ".agents";
 
@@ -125,9 +126,9 @@ pub trait TargetAdapter: std::fmt::Debug + Send + Sync {
     }
 
     /// Entries the target has whenever it is managed, whatever packages install.
-    fn fixed_entries(&self) -> Vec<(KeyedKind, Rendered)> {
+    fn fixed_entries(&self, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
         self.plugin()
-            .map(|plugin| plugin.fixed_entries(self.name()))
+            .map(|plugin| plugin.fixed_entries(self.name(), project_root))
             .unwrap_or_default()
     }
 }

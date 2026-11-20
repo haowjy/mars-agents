@@ -30,7 +30,7 @@ pub(crate) struct ConfigEntryCompilation {
     pub rewritten_outputs: Vec<(String, String)>,
     /// Keyed-entry config files this run wrote or deleted, as `(target_root, file path, what
     /// it holds)`.
-    pub mcp_files_changed: Vec<(String, String, &'static str)>,
+    pub config_files_changed: Vec<(String, String, &'static str)>,
     pub removed_outputs: Vec<(String, String)>,
 }
 
@@ -256,7 +256,7 @@ pub(crate) fn compile_config_entries(
         let keyed: Vec<(KeyedKind, keyed_entries::Rendered)> = rendered
             .into_iter()
             .map(|server| (MCP_KIND, server))
-            .chain(adapter.fixed_entries())
+            .chain(adapter.fixed_entries(&ctx.project_root))
             .chain(keyed_hooks.into_iter().map(|hook| (HOOK_ENTRY_KIND, hook)))
             .collect();
         let target_records: BTreeMap<_, _> = keyed
@@ -370,7 +370,7 @@ pub(crate) fn compile_config_entries(
         } else {
             &mut scratch
         };
-        let mcp_files_changed = reconcile_all_keyed(
+        let config_files_changed = reconcile_all_keyed(
             &registry,
             &ctx.project_root,
             previous_records,
@@ -384,7 +384,7 @@ pub(crate) fn compile_config_entries(
             records: desired_records,
             emitted_outputs,
             rewritten_outputs,
-            mcp_files_changed,
+            config_files_changed,
             removed_outputs,
         };
     }
@@ -438,7 +438,7 @@ pub(crate) fn compile_config_entries(
     let KeyedReconciliation {
         records: keyed_records,
         removed: keyed_removed,
-        files_changed: mcp_files_changed,
+        files_changed: config_files_changed,
     } = reconcile_all_keyed(
         &registry,
         &ctx.project_root,
@@ -464,7 +464,7 @@ pub(crate) fn compile_config_entries(
         emitted_outputs,
         removed_outputs,
     );
-    compiled.mcp_files_changed = mcp_files_changed;
+    compiled.config_files_changed = config_files_changed;
     for (target_root, records) in keyed_records {
         compiled
             .records
@@ -754,7 +754,7 @@ fn apply_replacement_writes(
         records,
         emitted_outputs,
         rewritten_outputs,
-        mcp_files_changed: Vec::new(),
+        config_files_changed: Vec::new(),
         removed_outputs,
     }
 }

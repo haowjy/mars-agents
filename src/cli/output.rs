@@ -263,7 +263,11 @@ pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
         native_emitted: report.native_emitted.len(),
         native_removed: report.native_removed.len(),
         hook_files_rewritten: report.hook_files_rewritten.len(),
-        mcp_files_changed: report.mcp_files_changed.len(),
+        mcp_files_changed: report
+            .config_files_changed
+            .iter()
+            .filter(|(_, _, what)| *what == crate::target::mcp_file::MCP_KIND.plural)
+            .count(),
         upgrades_available: report.upgrades.len(),
         upgrades: &report.upgrades,
         dependencies_moved: &report.dependency_moves,
@@ -346,8 +350,8 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(stdout, "{target_root}/{dest_path} (generated hook file)");
     }
 
-    let mcp_files = report.mcp_files_changed.len();
-    for (target_root, file, what) in &report.mcp_files_changed {
+    let config_files = report.config_files_changed.len();
+    for (target_root, file, what) in &report.config_files_changed {
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = write!(stdout, "  ~ ");
         let _ = stdout.reset();
@@ -398,12 +402,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
             let _ = writeln!(stdout, "  wrote       {hook_files} generated hook files");
         }
     }
-    if mcp_files > 0 {
-        let noun = if mcp_files == 1 { "file" } else { "files" };
+    if config_files > 0 {
+        let noun = if config_files == 1 { "file" } else { "files" };
         if dry {
-            let _ = writeln!(stdout, "  would update {mcp_files} MCP config {noun}");
+            let _ = writeln!(stdout, "  would update {config_files} config {noun}");
         } else {
-            let _ = writeln!(stdout, "  updated     {mcp_files} MCP config {noun}");
+            let _ = writeln!(stdout, "  updated     {config_files} config {noun}");
         }
     }
     for step in &report.dependency_moves {
@@ -421,7 +425,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         && native_emitted == 0
         && native_removed == 0
         && hook_files == 0
-        && mcp_files == 0
+        && config_files == 0
         && report.dependency_moves.is_empty()
         && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
     {
@@ -684,7 +688,7 @@ mod tests {
             native_emitted: Vec::new(),
             native_removed: Vec::new(),
             hook_files_rewritten: Vec::new(),
-            mcp_files_changed: Vec::new(),
+            config_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
         }

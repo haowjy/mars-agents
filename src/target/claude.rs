@@ -29,6 +29,7 @@ impl TargetAdapter for ClaudeAdapter {
                 format: SectionFormat::JsonSection("mcpServers"),
             },
             render: super::mcp_file::claude_render,
+            unreached: None,
         })
     }
 }

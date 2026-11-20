@@ -6,6 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 ///
 /// Paths use `/` separators, are never absolute, and contain no empty, `.` or
 /// `..` components. The empty path names the tree root for directory queries.
+///
+/// A path that does not exist is absent, not an error, and so is a path below a file: `read`
+/// and `is_file` answer `None` and `false` for `agents/x.md/anything`.
 pub trait TreeSource {
     fn read(&self, path: &str) -> Option<Vec<u8>>;
     fn is_file(&self, path: &str) -> bool;

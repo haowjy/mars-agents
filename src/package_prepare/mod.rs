@@ -69,7 +69,16 @@ impl DiskTreeSource {
                 });
                 None
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            // A path below a file (`agents/x.md/.mars-plugin.json`) is absent, as in `FileTree`:
+            // callers probe every prefix of a path they were given.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                None
+            }
             Err(source) => {
                 self.latch(MarsError::Io {
                     operation: "resolve authored package entry".to_string(),
@@ -463,4 +472,23 @@ pub(crate) fn prepare_tree_for_test(
     };
     let mut normalized = normalize(&request);
     std::sync::Arc::new(normalized.packages.remove(0).prepared)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plugin lists `./agent.md`; discovery then asks whether `agent.md/.mars-plugin.json`
+    /// holds a generated-tree marker. A file has no children: that is absent, not an I/O error.
+    #[test]
+    fn a_path_below_a_file_is_absent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        fs::write(dir.path().join("agent.md"), "body").unwrap();
+        let source = DiskTreeSource::new(dir.path()).unwrap();
+
+        assert_eq!(source.read("agent.md/.mars-plugin.json"), None);
+        assert!(!source.is_file("agent.md/.mars-plugin.json"));
+        assert!(!source.is_dir("agent.md/x"));
+        assert!(source.take_error().is_none());
+    }
 }

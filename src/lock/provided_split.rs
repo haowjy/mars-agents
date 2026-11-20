@@ -1,4 +1,4 @@
-//! Which records of a lock belong in `provided-outputs.lock` rather than `mars.lock`.
+//! Which records of a lock belong in `machine.lock` rather than `mars.lock`.
 //!
 //! `mars.lock` is committed and shared; the records of provided content name a path of one
 //! machine and exist only where the host is installed, so they live in a machine-local file of

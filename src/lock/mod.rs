@@ -27,7 +27,7 @@ pub struct LockFile {
     #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
     /// `(target, record key)` of the config entries a host's provided content wrote. They are not
-    /// a field of the file: [`write`] saves exactly these records in `provided-outputs.lock`, and
+    /// a field of the file: [`write`] saves exactly these records in `machine.lock`, and
     /// [`load_with_diagnostics`] rebuilds the set from the keys it finds there.
     #[serde(skip)]
     pub provided_entries: std::collections::BTreeSet<(String, String)>,
@@ -395,7 +395,7 @@ mod lock_kind {
 
 const LOCK_FILE: &str = "mars.lock";
 /// The records of provided content (`mars provide`): machine-local, beside `provided.lock`.
-const PROVIDED_OUTPUTS_FILE: &str = ".mars/provided-outputs.lock";
+const MACHINE_LOCK_FILE: &str = ".mars/machine.lock";
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
@@ -476,12 +476,12 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
     Ok(lock)
 }
 
-/// The lock of a project: `mars.lock` with the machine-local `provided-outputs.lock` merged in,
+/// The lock of a project: `mars.lock` with the machine-local `machine.lock` merged in,
 /// so every reader sees one lock. A key held by both files takes the machine-local value, which
 /// [`write`] saves first and is therefore the newer after a crash between the two writes.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE))?;
-    let local_path = root.join(PROVIDED_OUTPUTS_FILE);
+    let local_path = root.join(MACHINE_LOCK_FILE);
     if !local_path.exists() {
         return Ok((committed, diagnostics));
     }
@@ -668,7 +668,7 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
 /// outputs owned, where the reverse order would leave them unowned.
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let (committed, local) = provided_split::split(lock);
-    let local_path = root.join(PROVIDED_OUTPUTS_FILE);
+    let local_path = root.join(MACHINE_LOCK_FILE);
     if local.is_empty() {
         crate::platform::fs::safe_remove(&local_path)?;
     } else {

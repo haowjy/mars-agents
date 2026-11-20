@@ -743,7 +743,7 @@ text prints source diagnostics (schema warnings) only for `applied`; `--json`
 carries them in `warnings` on every status.
 
 Mars's records of what sync installed from a host are machine-local too, in
-`.mars/provided-outputs.lock` (the schema of `mars.lock`), never in `mars.lock`. A provided hook, MCP
+`.mars/machine.lock` (the schema of `mars.lock`), never in `mars.lock`. A provided hook, MCP
 server or skill whose name a package or `.mars-src/` also provides is skipped with a
 `provided-shadowed` warning, and the package's is installed. A provided hook in a hook
 schema this Mars retired keeps what the last sync installed and warns; it never fails

@@ -97,7 +97,7 @@ fn a_hosts_content_is_recorded_beside_mars_lock_not_in_it() {
             "mars.lock holds `{internal}`:\n{committed}"
         );
     }
-    let local = fs::read_to_string(root.join(".mars/provided-outputs.lock")).unwrap();
+    let local = fs::read_to_string(root.join(".mars/machine.lock")).unwrap();
     // The skill has target outputs only: its item is built from the sync's outputs.
     assert!(
         local.contains("[items.\"skill/probe__meridian\"]")

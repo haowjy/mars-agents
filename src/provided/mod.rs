@@ -12,7 +12,7 @@
 //! content into the targets that take it (`harness::registry::takes_provided`): skills through
 //! [`skill_outcomes`], hooks and MCP servers through the staged directory, which it resolves as
 //! the path dependency `_provided-<provider>`. Everything sync records for them goes in
-//! `.mars/provided-outputs.lock`, so `mars.lock` stays the same with or without the host.
+//! `.mars/machine.lock`, so `mars.lock` stays the same with or without the host.
 //!
 //! ```text
 //! cli/provide.rs ─→ reconcile                               design steps 2-8

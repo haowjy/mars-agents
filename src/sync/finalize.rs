@@ -191,7 +191,7 @@ fn record_hook_source_paths(
 }
 
 /// The config entries a host's provided content wrote, which the lock saves in
-/// `provided-outputs.lock`. A record carries no source, so this reads the selection: an entry is
+/// `machine.lock`. A record carries no source, so this reads the selection: an entry is
 /// the host's when a selected hook or MCP server of a provided source has its key. One no
 /// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
 fn provided_entries(

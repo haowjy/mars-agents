@@ -15,9 +15,9 @@ stateDiagram-v2
   [*] --> Unset: the user file cannot set a link, so the fold starts unset
   Unset --> Local: mars.toml set targets, labelled Local until the next step
   Unset --> Unset: mars.toml did not set targets
-  Local --> Project: mars.local.toml did not set targets, so the project's link stands
-  Local --> Local: mars.local.toml set targets
-  Unset --> Local: mars.local.toml set targets
+  Local --> Project: mars.local.toml added no target, so the project's link stands
+  Local --> Local: mars.local.toml added targets
+  Unset --> Local: mars.local.toml added targets
   Project --> [*]: reported as mars.toml
   Local --> [*]: reported as mars.local.toml
   Unset --> [*]: reported as unset
@@ -34,3 +34,8 @@ stateDiagram-v2
   No `TargetOrigin` value could name the user file.
 - `TargetSource.path` is `None` until `effective_project_config` fills it, so a `TargetSource` read
   anywhere else has a dead `path` field.
+- **A layer's `targets` adds to the layers below it** (`overlay_settings`), so `mars link --local .agy`
+  does not stop the machine syncing the project's `.claude`. Origin is `Local` only when the local file
+  adds a target the layers below don't name; the wire contract has no value for "both". An empty
+  local list adds nothing and leaves the origin alone, except with no list below it: then it states
+  there are none, as `targets = []` in `mars.toml` does.

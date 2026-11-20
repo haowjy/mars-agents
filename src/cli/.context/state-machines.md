@@ -47,7 +47,7 @@ One target directory going from "not managed" to "managed by Mars": a settings e
 target and lock records. `mars link` (`link.rs`). The order of writes in `link_target` is files
 (`sync_managed_targets`), native agent materialization, the lock (`apply_target_sync_outputs`,
 `persist_lock_then_native_agent_manifest`), then `settings.targets`. The collision check runs
-twice, before and after native materialization.
+twice, before and after native materialization. `--local` writes `mars.local.toml` where this says `settings.targets`, and the lock publish files the records in `.mars/machine.lock` for a target `mars.toml` does not name; plain `link` also removes the target from `mars.local.toml`.
 
 ```mermaid
 stateDiagram-v2

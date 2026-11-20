@@ -2058,13 +2058,12 @@ fn lock_outputs(project: &assert_fs::fixture::ChildPath) -> Vec<(String, Vec<(St
         .collect()
 }
 
-/// `.claude` stays in `mars.toml` while this machine's `mars.local.toml` manages only `.codex`:
-/// named, not managed.
+/// Takes `.claude` out of `mars.toml` by hand, as the first of two `targets` entries.
 fn leave_claude_unmanaged(project: &assert_fs::fixture::ChildPath) {
-    project
-        .child("mars.local.toml")
-        .write_str("[settings]\ntargets = ['.codex']\n")
-        .unwrap();
+    let path = project.child("mars.toml");
+    let text = fs::read_to_string(path.path()).unwrap();
+    assert!(text.contains("'.claude', "));
+    path.write_str(&text.replace("'.claude', ", "")).unwrap();
 }
 
 fn project_with_skills(dir: &TempDir, targets: &str) -> assert_fs::fixture::ChildPath {
@@ -2135,10 +2134,7 @@ fn doctor_skips_the_mars_copies_of_an_unmanaged_target() {
     let dir = TempDir::new().unwrap();
     let project = project_with_config_entries(&dir, "['.claude', '.opencode']");
     sync_project(&dir, &project);
-    project
-        .child("mars.local.toml")
-        .write_str("[settings]\ntargets = ['.opencode']\n")
-        .unwrap();
+    leave_claude_unmanaged(&project);
     sync_project(&dir, &project);
     for copies in [".mars/hooks", ".mars/mcp"] {
         let _ = fs::remove_dir_all(project.child(copies).path());

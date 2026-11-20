@@ -66,27 +66,6 @@ fn explicit_empty_targets_do_not_autodiscover() {
 }
 
 #[test]
-fn local_empty_targets_override_project_targets() {
-    let (output, calls) = launch_with_scope(
-        "targets = [\".claude\"]",
-        Some("[settings]\ntargets = []"),
-        &[],
-    );
-    assert!(
-        !output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(calls.is_empty(), "{calls}");
-    let error = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        error.contains("model fallback candidates exhausted")
-            && error.contains("on linked harnesses"),
-        "{error}"
-    );
-}
-
-#[test]
 fn excluded_profile_harness_cannot_escape_target_scope() {
     let (output, calls) = launch_with_scope("targets = [\".codex\"]", None, &[]);
     assert!(

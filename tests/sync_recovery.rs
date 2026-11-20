@@ -181,7 +181,7 @@ fn stale_or_corrupt_intent_does_not_claim_unowned_outputs() {
             dir.child(INTENT).write_str("{broken").unwrap();
         } else {
             // Replacing the ownership registry invalidates the old intent.
-            lock::write(dir.path(), &lock::LockFile::empty()).unwrap();
+            lock::write(dir.path(), &lock::LockFile::empty(), &Default::default()).unwrap();
         }
         let lock_before = fs::read(dir.path().join("mars.lock")).ok();
         let intent_before = fs::read(dir.path().join(INTENT)).unwrap();
@@ -352,7 +352,7 @@ fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     sync(dir.path()).assert().success();
     let mut previous = lock::load(dir.path()).unwrap();
     previous.items.get_mut("agent/muse").unwrap().outputs[0].mark_pending_deletion();
-    lock::write(dir.path(), &previous).unwrap();
+    lock::write(dir.path(), &previous, &previous.recorded_targets()).unwrap();
     fs::remove_file(dir.path().join(".mars/agents/muse.md")).unwrap();
     dir.child("skills/craft/SKILL.md")
         .write_str("# Craft\n")

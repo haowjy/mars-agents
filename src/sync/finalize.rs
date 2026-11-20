@@ -116,13 +116,14 @@ pub(crate) fn finalize(
         )?);
         diag.settle(old_lock, &new_lock);
         let loaded = &state.applied.planned.targeted.resolved.loaded;
-        new_lock.merge_targets(loaded.carried.clone());
+        new_lock.join(loaded.carried.clone());
         diag.extend(crate::target_sync::removal::remove_served(
             project_root,
             &mut new_lock,
             loaded.dropped.clone(),
         )?);
-        if let Some(warning) = recovery::publish(project_root, &new_lock)? {
+        let project_targets = crate::config::targets::project_targets(&loaded.config);
+        if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
             diag.warn("native-agent-manifest-write", warning);
         }
     }

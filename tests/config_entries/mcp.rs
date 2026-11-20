@@ -341,7 +341,7 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
         })
         .expect("native output");
     pending.mark_pending_deletion();
-    mars_agents::lock::write(project.path(), &lock).unwrap();
+    mars_agents::lock::write(project.path(), &lock, &lock.recorded_targets()).unwrap();
 
     mars()
         .args([

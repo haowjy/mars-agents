@@ -107,6 +107,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
             let link_args = super::link::LinkArgs {
                 target: link_target.clone(),
                 force: false,
+                local: false,
             };
             super::link::run(&link_args, &ctx, json)?;
         }

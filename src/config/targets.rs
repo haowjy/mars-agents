@@ -234,19 +234,27 @@ fn retired_target_diagnostic(retired: &RetiredTarget) -> crate::diagnostic::Diag
     }
 }
 
+/// The targets `mars.toml` names, retired spellings included. Their lock records are committed
+/// in `mars.lock`; a target only `mars.local.toml` names has them in `.mars/machine.lock`.
+pub(crate) fn project_targets(config: &super::Config) -> BTreeSet<String> {
+    named_in(config.settings.targets.as_deref())
+}
+
 /// The targets a project file or `mars.local.toml` names on this machine, retired spellings
-/// included. The local file's `targets` replaces the project's when merging, so a target can be
-/// named here and not managed.
+/// included.
 pub(crate) fn named_targets(
     config: &super::Config,
     local: &super::LocalConfig,
 ) -> BTreeSet<String> {
-    let (project, local) = (&config.settings, &local.settings);
-    project
-        .targets
-        .iter()
+    let mut named = project_targets(config);
+    named.extend(named_in(local.settings.targets.as_deref()));
+    named
+}
+
+fn named_in(targets: Option<&[String]>) -> BTreeSet<String> {
+    targets
+        .into_iter()
         .flatten()
-        .chain(local.targets.iter().flatten())
         .map(|raw| normalize_link(raw).target)
         .collect()
 }

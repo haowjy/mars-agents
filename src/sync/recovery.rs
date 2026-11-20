@@ -277,10 +277,16 @@ pub(crate) fn load_lock(root: &Path) -> Result<LockFile, MarsError> {
     Ok(lock)
 }
 
-/// The publish step for every writer of `mars.lock`: ownership first, then the journal
+/// The publish step for every writer of `mars.lock`, given the targets `mars.toml` names (they
+/// decide which lock file a record goes to): ownership first, then the journal
 /// goes. Returns the native-agent manifest warning, if any.
-pub(crate) fn publish(root: &Path, lock: &LockFile) -> Result<Option<String>, MarsError> {
-    let warning = crate::compiler::persist_lock_then_native_agent_manifest(root, lock)?;
+pub(crate) fn publish(
+    root: &Path,
+    lock: &LockFile,
+    project_targets: &std::collections::BTreeSet<String>,
+) -> Result<Option<String>, MarsError> {
+    let warning =
+        crate::compiler::persist_lock_then_native_agent_manifest(root, lock, project_targets)?;
     complete(root)?;
     Ok(warning)
 }

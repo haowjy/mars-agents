@@ -167,6 +167,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         project_config
             .as_ref()
             .map(|loaded| &loaded.effective.settings),
+        &lock,
         &mut diag,
     );
 
@@ -198,6 +199,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 fn check_legacy_agents_directory(
     project_root: &std::path::Path,
     settings: Option<&crate::config::Settings>,
+    lock: &crate::lock::LockFile,
     diag: &mut DiagnosticCollector,
 ) {
     let agents_dir = project_root.join(".agents");
@@ -211,9 +213,15 @@ fn check_legacy_agents_directory(
             .any(|target| target == ".agents")
     });
 
-    // An empty directory is harmless; only content is worth a word.
+    // An empty directory is harmless, and so is a file holding only entries Mars wrote (an
+    // `.agy` plugin's pointer in `plugins.json`); only the rest is worth a word.
     let has_content = std::fs::read_dir(&agents_dir)
-        .map(|mut entries| entries.next().is_some())
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                let rel = format!(".agents/{}", entry.file_name().to_string_lossy());
+                !crate::target::keyed_entries::holds_only_owned(project_root, &rel, lock)
+            })
+        })
         // A directory we cannot read may hold content; a file or dangling link holds none.
         .unwrap_or_else(|err| err.kind() == std::io::ErrorKind::PermissionDenied);
 
@@ -585,6 +593,7 @@ mod tests {
         check_legacy_agents_directory(
             temp.path(),
             Some(&crate::config::Settings::default()),
+            &crate::lock::LockFile::empty(),
             &mut diag,
         );
         assert!(
@@ -596,6 +605,7 @@ mod tests {
         check_legacy_agents_directory(
             temp.path(),
             Some(&crate::config::Settings::default()),
+            &crate::lock::LockFile::empty(),
             &mut diag,
         );
 
@@ -616,9 +626,81 @@ mod tests {
             ..crate::config::Settings::default()
         };
         let mut diag = DiagnosticCollector::new();
-        check_legacy_agents_directory(temp.path(), Some(&settings), &mut diag);
+        check_legacy_agents_directory(
+            temp.path(),
+            Some(&settings),
+            &crate::lock::LockFile::empty(),
+            &mut diag,
+        );
 
         let warnings = messages(&mut diag);
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    fn agy_lock() -> crate::lock::LockFile {
+        let mut lock = crate::lock::LockFile::empty();
+        let data = crate::hash::hash_bytes(b"data");
+        lock.items.insert(
+            "hook/guard@agy".into(),
+            crate::lock::LockedItemV2 {
+                source: "_self".into(),
+                kind: mars_schema::item::ItemKind::Hook,
+                version: None,
+                source_checksum: data.clone().into(),
+                source_path: None,
+                outputs: vec![crate::lock::OutputRecord::installed(
+                    ".agy".to_string(),
+                    "hooks/mars-guard.hooks.json".into(),
+                    data.into(),
+                )],
+            },
+        );
+        lock.config_entries
+            .entry(".agy".into())
+            .or_default()
+            .insert(
+                "pointer:.agy".into(),
+                crate::lock::ConfigEntryRecord {
+                    emitted_json: r#"{"path":".agy"}"#.into(),
+                },
+            );
+        lock
+    }
+
+    #[test]
+    fn agy_files_mars_wrote_are_not_reported_but_user_files_are() {
+        let temp = TempDir::new().expect("create temp dir");
+        let root = temp.path();
+        fs::create_dir_all(root.join(".agy/hooks")).unwrap();
+        fs::create_dir_all(root.join(".agents")).unwrap();
+        fs::write(root.join(".agy/hooks/mars-guard.hooks.json"), "data").unwrap();
+        fs::write(
+            root.join(".agents/plugins.json"),
+            r#"{"entries":[{"path":".agy"}]}"#,
+        )
+        .unwrap();
+        let lock = agy_lock();
+        let targets = [".agy".to_string()];
+        let settings = crate::config::Settings::default();
+
+        let mut diag = DiagnosticCollector::new();
+        check_legacy_agents_directory(root, Some(&settings), &lock, &mut diag);
+        check_target_divergence(root, &lock, &targets, &mut diag);
+        let warnings = messages(&mut diag);
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+        fs::write(
+            root.join(".agents/plugins.json"),
+            r#"{"entries":[{"path":".agy"},{"path":"mine"}]}"#,
+        )
+        .unwrap();
+        fs::write(root.join(".agy/hooks/stray.txt"), "mine").unwrap();
+        check_legacy_agents_directory(root, Some(&settings), &lock, &mut diag);
+        assert!(
+            messages(&mut diag)
+                .iter()
+                .any(|w| w.contains("`.agents/` has content")),
+            "a user's plugin entry is unread content"
+        );
     }
 }

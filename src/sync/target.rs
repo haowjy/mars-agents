@@ -83,16 +83,40 @@ impl TargetState {
         &self.accepted_hooks
     }
 
-    /// Accepted hooks no managed target takes. No item installs them, so the lock records
-    /// each one on its own (`hook/<name>`) and a change to that record is what makes a loss
-    /// worth reporting again.
-    pub(crate) fn unplaced_hooks<'a>(
+    /// The (hook, managed target) pairs where `[hooks]` leaves something out and no copy of the
+    /// hook is installed on the target. No item records them, so the lock keeps an empty
+    /// one (`hook/<name>@<target>`): a change to the hook, or the target becoming new, is what
+    /// makes the loss worth reporting again.
+    pub(crate) fn unplaced_hook_losses<'a>(
         &'a self,
         managed_targets: &'a [String],
-    ) -> impl Iterator<Item = &'a crate::compiler::hooks::ParsedHookItem> {
+    ) -> impl Iterator<Item = (&'a crate::compiler::hooks::ParsedHookItem, &'a str)> {
         self.accepted_hooks
             .iter()
-            .filter(|hook| hook.def.select(managed_targets).is_empty())
+            .filter(|hook| hook.def.portable().is_some())
+            .flat_map(move |hook| {
+                managed_targets
+                    .iter()
+                    .map(String::as_str)
+                    .filter(move |target| {
+                        self.placed_hook(hook, target).is_none()
+                            && !hook.def.skips_for(target).is_empty()
+                    })
+                    .map(move |target| (hook, target))
+            })
+    }
+
+    /// The directory that installs `hook` on `target`, if any.
+    pub(crate) fn placed_hook(
+        &self,
+        hook: &crate::compiler::hooks::ParsedHookItem,
+        target: &str,
+    ) -> Option<&PackageDir> {
+        self.selected_hooks_for_target(target)
+            .find(|(_, placed)| {
+                placed.source_name == hook.source_name && placed.def.name == hook.def.name
+            })
+            .map(|(dir, _)| dir)
     }
 
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {

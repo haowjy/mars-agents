@@ -54,9 +54,10 @@ different, and an unchanged sync is silent. Each loss names its record (`lock::R
 item, an output, a config entry, or every item of a source) when it is found, and
 `DiagnosticCollector::settle` decides all of them in `finalize`, by comparing the lock the sync
 read with the one it wrote: there is no other release rule. `--verbose`, `mars check` and
-`mars validate` list every loss each time. A hook that renders on no managed target writes
-nothing; its record is the lock item `hook/<name>` with no outputs, which `LockFile::finish`
-keeps because the sync resolved it. A sync that fails before it writes the lock has changed no
+`mars validate` list every loss each time. A hook that a managed target takes none of writes
+nothing there; its record is the lock item `hook/<name>@<target>` with no outputs, which
+`LockFile::finish` keeps because the sync resolved it. A loss therefore concerns one (hook,
+target) record, and a target linked later is news for itself only. A sync that fails before it writes the lock has changed no
 record, so the next sync reports the losses it held. A text meant for an installer names the installer's own fix (`mars upgrade
 <source>`, or set the variable). One cause is one line: findings that arise once per item share a
 `warn_each` group, and what follows from an item that was not installed is not reported again.

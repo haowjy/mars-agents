@@ -1300,16 +1300,25 @@ fn to_locked_source(node: &crate::resolve::ResolvedNode) -> LockedDependency {
     )
 }
 
-/// The lock key of a hook no managed target takes, which has no per-target item.
-pub fn unplaced_hook_key(name: &str) -> String {
-    format!("{}/{name}", ItemKind::Hook)
+/// The lock key of a hook on a managed target that takes none of it (`hook/guard@codex`, as
+/// the item of a copy that is installed there would be). It has no outputs.
+pub fn unplaced_hook_key(name: &str, target: &str) -> String {
+    format!(
+        "{}/{name}@{}",
+        ItemKind::Hook,
+        target.trim_start_matches('.')
+    )
 }
 
 impl LockFile {
     /// The last step of a sync's lock. An item is gone when it is no longer resolved, and one
-    /// that has no output left is not resolved, except a hook no managed target takes: it has
-    /// nothing to write, and its record (`unplaced`, by item key) is what makes a change to it
-    /// news.
+    /// that has no output left is not resolved, except a hook on a target that takes none of it:
+    /// it has nothing to write there, and its record (`unplaced`, by item key) is what makes a
+    /// change to the hook, or a new target, news.
+    ///
+    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and every
+    /// item keeps its `.mars` output, so none is left empty; and only a sync can say which
+    /// hook records stay.
     pub(crate) fn finish(&mut self, unplaced: IndexMap<String, LockedItemV2>) {
         self.items.retain(|_, item| !item.outputs.is_empty());
         self.items.extend(unplaced);

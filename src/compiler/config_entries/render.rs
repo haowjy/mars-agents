@@ -274,9 +274,8 @@ pub(crate) fn preflight_config_entries(
 }
 
 /// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target. A
-/// line concerns the hook's item on that target, or the hook's own record when no managed target
-/// took it. A hook that some targets take and others do not has no record for the pair that
-/// was not taken, so only a command that lists every loss shows that line.
+/// line concerns the hook's item on that target, or its empty record there when the target took
+/// none of it (`TargetState::unplaced_hook_losses`).
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -300,14 +299,10 @@ fn report_skips(
                 Origin::Local => String::new(),
                 Origin::Dependency => format!(" from `{}`", item.source_name),
             };
-            let record = targeted
-                .target
-                .selected_hooks_for_target(target)
-                .find(|(_, placed)| hook_key(placed) == hook_key(item))
-                .map_or_else(
-                    || RecordRef::Item(crate::lock::unplaced_hook_key(&item.def.name)),
-                    |(dir, _)| RecordRef::Item(dir.lock_key()),
-                );
+            let record = RecordRef::Item(targeted.target.placed_hook(item, target).map_or_else(
+                || crate::lock::unplaced_hook_key(&item.def.name, target),
+                PackageDir::lock_key,
+            ));
             diag.hold_warning(
                 record,
                 "hook-event-skipped",

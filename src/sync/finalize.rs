@@ -79,7 +79,7 @@ pub(crate) fn finalize(
             old_lock,
             &confirmed_output_removals,
         );
-        new_lock.finish(unplaced_hook_items(
+        new_lock.finish(unplaced_hook_records(
             &state.applied.planned.targeted,
             &crate::config::targets::managed_targets(
                 &state
@@ -166,18 +166,18 @@ fn record_hook_source_paths(
     }
 }
 
-/// A hook no managed target takes has no output to hang an item on. Its record has none
-/// either, and `LockFile::finish` keeps it: the next sync tells a new or changed hook from one
-/// it has already reported by this record.
-fn unplaced_hook_items(
+/// A hook on a target that takes none of it has no output to hang an item on. Its record has
+/// none either, and `LockFile::finish` keeps it: the next sync tells a new or changed hook, or
+/// a new target, from a loss it has already reported by this record.
+fn unplaced_hook_records(
     targeted: &crate::sync::TargetedState,
     managed_targets: &[String],
 ) -> Result<IndexMap<String, crate::lock::LockedItemV2>, MarsError> {
     let graph = &targeted.resolved.graph;
     targeted
         .target
-        .unplaced_hooks(managed_targets)
-        .map(|hook| {
+        .unplaced_hook_losses(managed_targets)
+        .map(|(hook, target)| {
             let source = SourceName::from(hook.source_name.as_str());
             let item = crate::lock::LockedItemV2 {
                 source_path: graph.nodes.get(&source).and_then(|node| {
@@ -189,7 +189,7 @@ fn unplaced_hook_items(
                 source_checksum: crate::sync::target::hook_checksum(hook)?,
                 outputs: Vec::new(),
             };
-            Ok((crate::lock::unplaced_hook_key(&hook.def.name), item))
+            Ok((crate::lock::unplaced_hook_key(&hook.def.name, target), item))
         })
         .collect()
 }

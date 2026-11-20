@@ -115,17 +115,24 @@ pub(crate) fn harness_diagnostic(name: &str, path: Vec<PathSegment>) -> Option<S
     ))
 }
 
-/// The warnings for a retired harness named in a config file's `settings.default_harness`,
-/// `settings.harness_order` or a `[models.<alias>] harness`.
-pub(crate) fn config_harness_diagnostics(table: &toml::Table) -> Vec<SchemaDiagnostic> {
+/// The warnings a config file earns for what Mars retired: `settings.managed_root`, and a retired
+/// harness named in `settings.default_harness`, `settings.harness_order` or a
+/// `[models.<alias>] harness`. The one place the CLI and the WASM reader find them.
+pub(crate) fn config_notes(table: &toml::Table) -> Vec<SchemaDiagnostic> {
     let key = |part: &str| PathSegment::Key(part.to_owned());
-    let mut diagnostics = Vec::new();
+    let settings = table.get("settings").and_then(toml::Value::as_table);
+    let mut diagnostics: Vec<SchemaDiagnostic> = managed_root_note(
+        settings
+            .and_then(|settings| settings.get("managed_root"))
+            .and_then(toml::Value::as_str),
+    )
+    .into_iter()
+    .collect();
     let mut check = |value: Option<&toml::Value>, path: Vec<PathSegment>| {
         if let Some(name) = value.and_then(toml::Value::as_str) {
             diagnostics.extend(harness_diagnostic(name, path));
         }
     };
-    let settings = table.get("settings").and_then(toml::Value::as_table);
     check(
         settings.and_then(|settings| settings.get("default_harness")),
         vec![key("settings"), key("default_harness")],
@@ -173,6 +180,23 @@ impl RetiredTarget {
             self.dir, self.anchor
         )
     }
+}
+
+/// The `field.retired` note for a file's `managed_root`, which Mars no longer reads. It is built
+/// from the file alone, so the CLI and the WASM reader say the same thing.
+fn managed_root_note(managed_root: Option<&str>) -> Option<SchemaDiagnostic> {
+    let managed_root = managed_root?;
+    Some(SchemaDiagnostic::new(
+        "field.retired",
+        Severity::Warning,
+        vec![
+            PathSegment::Key("settings".to_owned()),
+            PathSegment::Key("managed_root".to_owned()),
+        ],
+        format!(
+            "`settings.managed_root` is a key Mars no longer reads, so it has no effect. Write `targets = [\"{managed_root}\"]` under `[settings]` if you still want `{managed_root}`, and delete `managed_root`. Without `targets`, routing is no longer limited to the harnesses the project named: {DOCS}/retired-keys.md#managed_root"
+        ),
+    ))
 }
 
 fn anchor(scope: Scope, key: &str) -> Option<&'static str> {

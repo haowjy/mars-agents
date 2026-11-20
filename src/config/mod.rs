@@ -303,12 +303,7 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
         return Err(parse_failed(path, &error));
     }
     refuse(path, &read.issues)?;
-    let mut config = read.config;
-    // `project_config_diagnostics` words it from the layers; the file alone can't know.
-    config
-        .unknown_keys
-        .retain(|note| !mars_schema::config::is_managed_root_note(note));
-    Ok(config)
+    Ok(read.config)
 }
 
 fn parse_failed(path: &Path, error: &toml::de::Error) -> MarsError {
@@ -500,28 +495,6 @@ fn project_config_diagnostics(
     user: &UserConfig,
 ) -> Vec<Diagnostic> {
     let user_file = user.path.display().to_string();
-    // `managed_root` counts while no layer sets `targets`, and the local file's replaces the
-    // project's.
-    let targets_set = config.settings.targets.is_some() || local.settings.targets.is_some();
-    let local_root = local.settings.managed_root.is_some();
-    let managed_root_notes = [
-        (
-            CONFIG_FILE,
-            config.settings.managed_root.as_deref(),
-            !targets_set && !local_root,
-        ),
-        (
-            LOCAL_CONFIG_FILE,
-            local.settings.managed_root.as_deref(),
-            !targets_set,
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(file, root, in_effect)| {
-        let note = mars_schema::config::managed_root_note(root, in_effect)?;
-        let message = format!("{file}: {}", note.message);
-        Some(Diagnostic::from_schema(&note, message))
-    });
     let unknown_keys = [
         (user_file.as_str(), &user.local.unknown_keys),
         (CONFIG_FILE, &config.unknown_keys),
@@ -552,10 +525,7 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    unknown_keys
-        .chain(managed_root_notes)
-        .chain(floors)
-        .collect()
+    unknown_keys.chain(floors).collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {

@@ -181,12 +181,7 @@ pub fn normalize_link(raw: &str) -> NormalizedLink {
     }
 }
 pub fn effective_links(settings: &Settings) -> EffectiveLinks {
-    let managed_root = settings.managed_root.as_slice();
-    let targets = settings
-        .targets
-        .as_deref()
-        .or(Some(managed_root).filter(|r| !r.is_empty()));
-    if let Some(targets) = targets {
+    if let Some(targets) = settings.targets.as_deref() {
         return EffectiveLinks {
             links: targets
                 .iter()
@@ -199,17 +194,6 @@ pub fn effective_links(settings: &Settings) -> EffectiveLinks {
     EffectiveLinks {
         links: Vec::new(),
         source: LinkSource::None,
-    }
-}
-
-/// Move a file's `managed_root` into its `targets`, or drop it when `targets` is set. Every
-/// writer of `targets` calls this on the file's own settings first, so a saved file never
-/// carries a `managed_root` that the next read would layer over what the writer meant.
-pub fn retire_managed_root(managed_root: &mut Option<String>, targets: &mut Option<Vec<String>>) {
-    if let Some(root) = managed_root.take()
-        && targets.is_none()
-    {
-        *targets = Some(vec![root]);
     }
 }
 
@@ -259,9 +243,7 @@ fn named_targets(config: &super::Config, local: &super::LocalConfig) -> BTreeSet
         .targets
         .iter()
         .flatten()
-        .chain(&project.managed_root)
         .chain(local.targets.iter().flatten())
-        .chain(&local.managed_root)
         .map(|raw| normalize_link(raw).target)
         .collect()
 }

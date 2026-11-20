@@ -28,12 +28,6 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    let (settings, local_settings) = (&mut config.settings, &mut local.settings);
-    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
-    crate::config::targets::retire_managed_root(
-        &mut local_settings.managed_root,
-        &mut local_settings.targets,
-    );
     if unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
         target_was_managed = true;

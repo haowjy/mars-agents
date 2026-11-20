@@ -171,15 +171,14 @@ fn compile_inner(
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =
         crate::config::routing_settings::ResolvedRoutingSettings::from_settings(effective_settings);
-    let mut native_model_router =
-        (!matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll)).then(|| {
-            native_agents::NativeModelRoutingRuntime::collect(
-                &model_aliases,
-                &models_cache,
-                routing_settings,
-            )
-            .with_settings(effective_settings.clone())
-        });
+    let mut native_model_router = (!agent_surface_policy.emits_nothing()).then(|| {
+        native_agents::NativeModelRoutingRuntime::collect(
+            &model_aliases,
+            &models_cache,
+            routing_settings,
+        )
+        .with_settings(effective_settings.clone())
+    });
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
     // Nothing is lost: the stale-cache line already says the catalog is refreshing, so this
     // is not repeated beside it.
@@ -236,7 +235,7 @@ fn compile_inner(
         dry_run: request.options.dry_run,
         selective_harness_scope: None,
     };
-    let native_compile_ctx = if matches!(agent_surface_policy, AgentSurfacePolicy::SuppressAll) {
+    let native_compile_ctx = if agent_surface_policy.emits_nothing() {
         None
     } else {
         Some(native_agents::NativeAgentCompileCtx {
@@ -272,9 +271,20 @@ fn compile_inner(
     finalize(ctx, synced, request, diag)
 }
 
-/// Describes what happens to agent artifacts on target surfaces.
+/// What happens to agent artifacts on target surfaces.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentSurfacePolicy {
+pub struct AgentSurfacePolicy {
+    /// What applies to canonical agent copies and to the native agents of harnesses Meridian
+    /// launches (`launched_by_meridian`).
+    pub launched: AgentSurfaceMode,
+    /// Whether the native agents of a harness Meridian does not launch are written: a harness
+    /// run by hand has no other source for its agents, so only `agent_emission = "never"`
+    /// withholds them.
+    pub emit_unlaunched: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSurfaceMode {
     /// Emit lowered native agents and copy canonical agents to managed targets.
     EmitAll,
     /// Emit only agents whose model resolves to configured harnesses.
@@ -283,20 +293,31 @@ pub enum AgentSurfacePolicy {
     SuppressAll,
 }
 
+impl AgentSurfacePolicy {
+    /// No harness gets a native agent.
+    pub fn emits_nothing(&self) -> bool {
+        self.launched == AgentSurfaceMode::SuppressAll && !self.emit_unlaunched
+    }
+}
+
 pub fn agent_surface_policy(
     agent_emission: Option<&AgentEmission>,
     agent_copy: Option<&agent_copy::AgentCopySpec>,
     meridian_managed: bool,
 ) -> AgentSurfacePolicy {
-    match agent_emission.unwrap_or(&AgentEmission::Auto) {
-        AgentEmission::Always => AgentSurfacePolicy::EmitAll,
-        AgentEmission::Auto if !meridian_managed => AgentSurfacePolicy::EmitAll,
-        AgentEmission::Auto | AgentEmission::Never => match agent_copy {
-            Some(spec) if !spec.harnesses.is_empty() => {
-                AgentSurfacePolicy::EmitSelective(spec.clone())
-            }
-            _ => AgentSurfacePolicy::SuppressAll,
-        },
+    let under_meridian = || match agent_copy {
+        Some(spec) if !spec.harnesses.is_empty() => AgentSurfaceMode::EmitSelective(spec.clone()),
+        _ => AgentSurfaceMode::SuppressAll,
+    };
+    let (launched, emit_unlaunched) = match agent_emission.unwrap_or(&AgentEmission::Auto) {
+        AgentEmission::Always => (AgentSurfaceMode::EmitAll, true),
+        AgentEmission::Auto if !meridian_managed => (AgentSurfaceMode::EmitAll, true),
+        AgentEmission::Auto => (under_meridian(), true),
+        AgentEmission::Never => (under_meridian(), false),
+    };
+    AgentSurfacePolicy {
+        launched,
+        emit_unlaunched,
     }
 }
 

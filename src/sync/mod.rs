@@ -26,8 +26,8 @@ use crate::fs::FileLock;
 use crate::lock::LockFile;
 use crate::resolve::{ResolveOptions, ResolvedGraph};
 use crate::source::GlobalCache;
+use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
-use crate::sync::apply::{ActionTaken, ApplyResult};
 use crate::sync::target::TargetState;
 use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
@@ -507,7 +507,6 @@ pub(crate) fn build_target(
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
 
     let mut built = build_target_state(
@@ -535,7 +534,7 @@ pub(crate) fn build_target(
     // not also reported as missing it.
     let mut held_back_skills = std::collections::HashSet::new();
     for collision in target::check_unmanaged_collisions(
-        managed_root,
+        &mars_dir,
         &resolved.loaded.ownership(),
         &built.target,
         request.options.force,
@@ -547,8 +546,8 @@ pub(crate) fn build_target(
                 item.id.kind,
                 mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
             ) || local_items::force_adoptable_self_destination(
-                &collision.path.resolve(managed_root),
-                managed_root,
+                &collision.path.resolve(&mars_dir),
+                &mars_dir,
                 item.id.kind,
             )
         });
@@ -660,10 +659,9 @@ pub(crate) fn create_plan(
     diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
     let mars_dir = ctx.project_root.join(".mars");
-    let managed_root = &mars_dir;
 
     let sync_diff = diff::compute(
-        managed_root,
+        &mars_dir,
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,
@@ -741,18 +739,11 @@ pub(crate) fn sync_targets(
     agent_surface_policy: crate::compiler::AgentSurfacePolicy,
     diag: &mut DiagnosticCollector,
 ) -> SyncedState {
-    for outcome in &applied.applied.outcomes {
-        if matches!(
-            outcome.action,
-            ActionTaken::Installed | ActionTaken::Updated
-        ) {
-            diag.release_written(crate::diagnostic::Owner::of(outcome.source_name.as_str()));
-        }
-    }
     if request.options.dry_run {
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,
             &ctx.project_root.join(".mars"),
+            &applied.planned.targeted.resolved.loaded.old_lock,
             &crate::config::targets::managed_targets(
                 &applied.planned.targeted.resolved.loaded.effective.settings,
             ),
@@ -779,16 +770,16 @@ pub(crate) fn sync_targets(
     let old_lock = &applied.planned.targeted.resolved.loaded.old_lock;
 
     let filtered_outcomes;
-    let target_outcomes_source = match &agent_surface_policy {
-        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+    let target_outcomes_source = match &agent_surface_policy.launched {
+        crate::compiler::AgentSurfaceMode::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(_) => {
+        crate::compiler::AgentSurfaceMode::EmitSelective(_) => {
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&applied.applied.outcomes);
             &filtered_outcomes
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => &applied.applied.outcomes,
+        crate::compiler::AgentSurfaceMode::EmitAll => &applied.applied.outcomes,
     };
     let mut orphan_preserve_paths =
         crate::compiler::config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);

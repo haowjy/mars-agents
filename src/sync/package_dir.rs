@@ -103,6 +103,11 @@ impl PackageDir {
         format!("{}@{}", self.name, canonical_target(&self.target))
     }
 
+    /// `hook/guard@claude`: the key of this copy's item in the lock.
+    pub(crate) fn lock_key(&self) -> String {
+        format!("{}/{}", self.kind, self.lock_name())
+    }
+
     pub(crate) fn not_installed_label(&self) -> (&'static str, &'static str) {
         match self.kind {
             ItemKind::McpServer => ("mcp-not-installed", "MCP server"),

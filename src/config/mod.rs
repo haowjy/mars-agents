@@ -136,6 +136,7 @@ pub struct LocalConfig {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalSettings {
+    /// As in `Settings`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -302,7 +303,12 @@ pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsErr
         return Err(parse_failed(path, &error));
     }
     refuse(path, &read.issues)?;
-    Ok(read.config)
+    let mut config = read.config;
+    // `project_config_diagnostics` words it from the layers; the file alone can't know.
+    config
+        .unknown_keys
+        .retain(|note| !mars_schema::config::is_managed_root_note(note));
+    Ok(config)
 }
 
 fn parse_failed(path: &Path, error: &toml::de::Error) -> MarsError {
@@ -494,6 +500,28 @@ fn project_config_diagnostics(
     user: &UserConfig,
 ) -> Vec<Diagnostic> {
     let user_file = user.path.display().to_string();
+    // `managed_root` counts while no layer sets `targets`, and the local file's replaces the
+    // project's.
+    let targets_set = config.settings.targets.is_some() || local.settings.targets.is_some();
+    let local_root = local.settings.managed_root.is_some();
+    let managed_root_notes = [
+        (
+            CONFIG_FILE,
+            config.settings.managed_root.as_deref(),
+            !targets_set && !local_root,
+        ),
+        (
+            LOCAL_CONFIG_FILE,
+            local.settings.managed_root.as_deref(),
+            !targets_set,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(file, root, in_effect)| {
+        let note = mars_schema::config::managed_root_note(root, in_effect)?;
+        let message = format!("{file}: {}", note.message);
+        Some(Diagnostic::from_schema(&note, message))
+    });
     let unknown_keys = [
         (user_file.as_str(), &user.local.unknown_keys),
         (CONFIG_FILE, &config.unknown_keys),
@@ -501,13 +529,9 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .flat_map(|(file, notes)| {
-        notes.iter().map(move |note| Diagnostic {
-            level: DiagnosticLevel::Info,
-            code: note.code.clone().into(),
-            message: format!("{file}: {}", note.message),
-            context: None,
-            category: Some(DiagnosticCategory::Validation),
-        })
+        notes
+            .iter()
+            .map(move |note| Diagnostic::from_schema(note, format!("{file}: {}", note.message)))
     });
     let floors = [
         (
@@ -528,7 +552,10 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    unknown_keys.chain(floors).collect()
+    unknown_keys
+        .chain(managed_root_notes)
+        .chain(floors)
+        .collect()
 }
 
 pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
@@ -581,9 +608,9 @@ pub fn merge_with_root(
     let mut diagnostics = project_config_diagnostics(&config, &local, user);
     let local_source_name = SourceOrigin::LocalPackage.to_string();
 
-    diagnostics.extend(targets::agents_target_diagnostic(
-        &targets::managed_targets(&merged_settings),
-    ));
+    diagnostics.extend(targets::target_advisories(&targets::managed_targets(
+        &merged_settings,
+    )));
 
     // Process both regular and local dependencies into the same effective map.
     // Local deps are installed locally but not exported to consumers via manifest.
@@ -934,7 +961,6 @@ path = "../local-agents"
 exclude = ["experimental"]
 
 [settings]
-managed_root = ".custom-agents"
 targets = [".claude", ".cursor"]
 harness_order = ["pi", "opencode", "codex"]
 "#;
@@ -956,10 +982,6 @@ harness_order = ["pi", "opencode", "codex"]
         assert_eq!(
             reloaded.dependencies["local"].path.as_deref(),
             Some(Path::new("../local-agents"))
-        );
-        assert_eq!(
-            reloaded.settings.managed_root.as_deref(),
-            Some(".custom-agents")
         );
         assert_eq!(
             reloaded.settings.targets,
@@ -1554,7 +1576,6 @@ version = "v1.0"
 agents = ["coder"]
 
 [settings]
-managed_root = ".agents"
 targets = [".claude"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
@@ -1585,7 +1606,6 @@ targets = [".claude"]
             reloaded.dependencies["base"].filter.agents.as_deref(),
             Some(&["coder".into()][..])
         );
-        assert_eq!(reloaded.settings.managed_root.as_deref(), Some(".agents"));
         assert!(reloaded.settings.targets.is_none());
     }
 
@@ -1763,7 +1783,7 @@ only_skills = true
     // === managed_targets tests ===
 
     #[test]
-    fn managed_targets_precedence() {
+    fn managed_targets_are_the_targets() {
         for (settings, expected) in [
             (Settings::default(), vec![]),
             (
@@ -1772,21 +1792,6 @@ only_skills = true
                     ..Settings::default()
                 },
                 vec![".claude"],
-            ),
-            (
-                Settings {
-                    managed_root: Some(".claude".into()),
-                    ..Settings::default()
-                },
-                vec![".claude"],
-            ),
-            (
-                Settings {
-                    managed_root: Some(".cursor".into()),
-                    targets: Some(vec![".codex".into()]),
-                    ..Settings::default()
-                },
-                vec![".codex"],
             ),
         ] {
             assert_eq!(crate::config::targets::managed_targets(&settings), expected);

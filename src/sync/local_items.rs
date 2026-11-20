@@ -35,7 +35,7 @@ pub(super) fn merge_local_items(
         local_source_name: SourceOrigin::LocalPackage.to_string().into(),
         owns: resolved.loaded.ownership(),
         // `.mars/` is the canonical content root for diff and collision checks.
-        managed_root: ctx.project_root.join(".mars"),
+        mars_dir: ctx.project_root.join(".mars"),
     };
     let managed_targets =
         crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
@@ -60,7 +60,7 @@ struct LocalMerge<'a> {
     request: &'a SyncRequest,
     local_source_name: SourceName,
     owns: Ownership<'a>,
-    managed_root: std::path::PathBuf,
+    mars_dir: std::path::PathBuf,
 }
 
 impl LocalMerge<'_> {
@@ -91,7 +91,7 @@ impl LocalMerge<'_> {
                 );
             }
             target_state.select_hook(&target_name, &target_item, hook.clone());
-            let disk_path = dest_path.resolve(&self.managed_root);
+            let disk_path = dest_path.resolve(&self.mars_dir);
             if !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok() {
                 diag.warn(
                     "unmanaged-collision",
@@ -185,10 +185,10 @@ impl LocalMerge<'_> {
             );
         }
 
-        let disk_path = dest_path.resolve(&self.managed_root);
+        let disk_path = dest_path.resolve(&self.mars_dir);
         let unowned_collision = !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok();
-        let adoptable = unowned_collision
-            && force_adoptable_self_destination(&disk_path, &self.managed_root, kind);
+        let adoptable =
+            unowned_collision && force_adoptable_self_destination(&disk_path, &self.mars_dir, kind);
         if unowned_collision && !(self.request.options.force && adoptable) {
             let guidance = if adoptable {
                 format!(
@@ -247,19 +247,19 @@ impl LocalMerge<'_> {
 
 pub(super) fn force_adoptable_self_destination(
     path: &Path,
-    managed_root: &Path,
+    mars_dir: &Path,
     kind: ItemKind,
 ) -> bool {
-    let Some(relative) = path.strip_prefix(managed_root).ok() else {
+    let Some(relative) = path.strip_prefix(mars_dir).ok() else {
         return false;
     };
-    let Ok(root_metadata) = managed_root.symlink_metadata() else {
+    let Ok(root_metadata) = mars_dir.symlink_metadata() else {
         return false;
     };
     if root_metadata.file_type().is_symlink() {
         return false;
     }
-    let mut current = managed_root.to_path_buf();
+    let mut current = mars_dir.to_path_buf();
     for component in relative.components() {
         current.push(component.as_os_str());
         let Ok(metadata) = current.symlink_metadata() else {

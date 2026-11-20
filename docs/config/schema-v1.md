@@ -47,7 +47,7 @@ An installed `.mars/` tree is read by the same readers, with one exception: an A
 |---|---|---|
 | `name` | non-empty string | Optional. The file name is the Agent's identity when omitted. |
 | `description` | string | Shown in listings and written to native files. |
-| `harness` | `claude`, `codex`, `opencode`, `cursor`, `pi`, `agy` | Optional routing hint. An unknown name is an error. |
+| `harness` | `claude`, `codex`, `opencode`, `cursor`, `pi`, `agy` | Optional routing hint. An unknown name is an error. `agy` is accepted but never routed to: Meridian does not launch it. |
 | `model` | string | An alias from `[models]` or a concrete model ID. |
 | `mode` | `primary`, `subagent` | |
 | `model-invocable` | boolean, default `true` | Whether another model can invoke this Agent. |

@@ -49,13 +49,16 @@ changes nothing yet. Only when behaviour is unchanged does the owner decide (`Ow
 `diagnostic.rs`): schema advice about a dependency's item is `Info` to the installer, because only
 its author can fix it, and a `Warning` to the author in `mars check` and `mars validate`.
 
-A loss is news once: it is reported by the sync that writes or changes the affected files, and an
-unchanged sync is silent (`record_lossy_fields(.., written)` for a native file;
-`hold_until_written` for what a package's install loses: `SchemaDiagnostic::lost`, a skill's
-`missing-skill`; `hold`, keyed to a native entry, for MCP and hook-event losses, released when
-the entry is written or changes). `--verbose`, `mars check` and `mars validate` list it every
-time. A hook that renders on no managed target writes nothing; its loss is released when its own
-lock record (`hook/<name>`, no outputs) is new or changed. A text meant for an installer names the installer's own fix (`mars upgrade
+A loss is news once: it is reported by the sync that makes the lock record it concerns new or
+different, and an unchanged sync is silent. Each loss names its record (`lock::RecordRef`: an
+item, an output, a config entry, or every item of a source) when it is found, and
+`DiagnosticCollector::settle` decides all of them in `finalize`, by comparing the lock the sync
+read with the one it wrote: there is no other release rule. `--verbose`, `mars check` and
+`mars validate` list every loss each time. A hook that a managed target takes none of writes
+nothing there; its record is the lock item `hook/<name>@<target>` with no outputs, which
+`LockFile::finish` keeps because the sync resolved it. A loss therefore concerns one (hook,
+target) record, and a target linked later is news for itself only. A sync that fails before it writes the lock has changed no
+record, so the next sync reports the losses it held. A text meant for an installer names the installer's own fix (`mars upgrade
 <source>`, or set the variable). One cause is one line: findings that arise once per item share a
 `warn_each` group, and what follows from an item that was not installed is not reported again.
 
@@ -87,8 +90,9 @@ key. The one other place that names a key from outside is a translator from anot
 - No VCS dependency: find the project by walking `Path::parent()`, not by `.git`.
 - The builtin model aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) appear
   only when neither packages nor the project's config provide any.
-- `.claude`, `.codex` and `.opencode` are first-class targets. `.cursor` is unmaintained:
-  it keeps working but isn't tested or extended. `.pi` is still being designed. `.agy` (Agy) is a plugin directory that `.agents/plugins.json` points at, not a copy of `.mars/`: its files are written by key (`src/target/AGENTS.md`).
+- `.claude`, `.codex` and `.opencode` are first-class targets. `.cursor` is deprecated:
+  it keeps working but isn't tested or extended, a sync warns while it is a target
+  (`deprecated-cursor-target`), and it goes in the minor after 0.37.0. `.pi` is still being designed. `.agy` (Agy) is a plugin directory that `.agents/plugins.json` points at, not a copy of `.mars/`: its files are written by key (`src/target/AGENTS.md`).
 - Comments only for what the code can't show and a wrong edit would break silently; no
   decision IDs.
 - A state machine's code and its diagram change in the same commit. Every machine, with the

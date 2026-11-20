@@ -369,33 +369,43 @@ include_fanout = false
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `targets` | string[] | unset | Managed target directories copied from `.mars/` |
-| `managed_root` | string | unset | Legacy single target directory; used only when `targets` is unset |
-| `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never` |
+| `targets` | string[] | unset | Managed target directories copied from `.mars/`. `.cursor` is deprecated: a sync warns (`deprecated-cursor-target`) while it is listed, and Mars drops Cursor in the minor after 0.37.0 |
+| `agent_emission` | string | `"auto"` | Native harness agent emission: `auto`, `always`, or `never`. Under `MERIDIAN_MANAGED=1`, `auto` withholds the agents of harnesses Meridian launches and still writes Antigravity's, which Meridian does not launch |
 | `agent_copy` | table | unset | Selective native agent copy override under managed mode / `agent_emission = "never"` |
 | `min_mars_version` | string | unset | Minimum Mars binary version required for this project, written as `requires-mars` is (a bare `0.30.0` means that or newer, and a range is accepted); a value that does not parse fails the load of every file that holds it. A Mars older than this fails `mars sync` and `mars build launch-bundle` with `[compat-version]` (exit 2) and changes nothing on disk; `mars validate` reports the same error. `--ignore-requires-mars` does not waive it. It applies from the user config too. `mars sync` and `mars validate` warn, once per file, when a key in that file needs a Mars newer than 0.30.0 and the file's own `min_mars_version` is missing or lower; the warning prints the line to write, and Mars never edits the file. Mars before 0.30.0 does not read this key, so a floor of 0.30.0 or lower protects nothing and gets no warning; no key needs more today |
 | `models_cache_ttl_hours` | integer | `24` | models.dev catalog refresh-after interval, not a read expiry. Stale usable data returns immediately while a background refresh runs; `0` makes every normal command eligible to schedule refresh. |
 | `catalog_providers` | string[] | unset | models.dev provider keys this project reads from the shared catalog snapshot (which holds every provider). Unset uses `anthropic`, `openai`, `google`, `meta`, `deepseek`, `xai`, `openrouter`. Set replaces that list. `["*"]` reads every provider. Catalog-only: a pin still works if the harness can resolve the provider. |
-| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment |
+| `default_harness` | string | unset | Harness preference after harness_order; must pass the same route assessment. Routing skips a harness Meridian does not launch (`agy`) and says so in the route trace; the setting still loads |
 | `default_model` | string | unset | Project-wide default model token when neither `--model` nor the agent profile sets one. |
 | `default-network` | string | unset | Project-wide network mode (`allow`, `deny`, `allowlist`) when no higher policy layer sets one. |
 | `network-allow` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Allowed host permission set. Plain lists add across user/project/local/profile/overlay/CLI; `{ replace = [...] }` clears lower entries. |
 | `network-deny` | string[] or [replace table](#adding-to-or-replacing-a-permission-list) | `[]` | Denied host permission set, with the same merge rule. Denies win at enforcement. |
 | `tools` | table | `{}` | Project-wide tool denies, written `[settings.tools]`. See [Project-wide tool rules](#project-wide-tool-rules) |
-| `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins |
+| `harness_order` | string[] | unset | Ordered harness preference for launch-bundle candidate selection; the first installed candidate wins. `agy` may be listed but is skipped: Meridian does not launch it |
 | `provider_order` | string[] | unset | Provider preference for model-first routing tie-breaks, used after model-name matching. Entries are kept as written. `mars models list` warns once for an entry Mars has not seen in its model catalog, a harness probe listing, or a harness's native provider; it only reads probes the listing already loaded. `models resolve`, sync and launch bundles do not check |
 | `model-policies` | rule[] | `[]` | Model policy rules for every agent, written `[[settings.model-policies]]`; they apply after an agent's own rules. See [Model policies](schema-v1.md#model-policies) |
 
-`.mars/` is always the canonical compiled store. Target sync is opt-in: if neither `targets` nor legacy `managed_root` is set, Mars creates no target-sync targets by default.
+`.mars/` is always the canonical compiled store. Target sync is opt-in: if `targets` is not set, Mars creates no target-sync targets by default. `managed_root`, the older spelling of a single target, is [deprecated](#managed_root).
+
+#### `managed_root`
+
+`mars init .claude` wrote `[settings] managed_root = ".claude"` before 0.37.0. It is deprecated: Mars reads it as `targets = [".claude"]` only when no file (`mars.toml`, `mars.local.toml`) sets `targets`, ignores it otherwise, warns (`field.deprecated`) on every sync, and stops reading it in the minor after 0.37.0. `mars link` and `mars unlink` remove it from the file they edit. Replace it with the same directory in `targets`:
+
+```toml
+# before
+[settings]
+managed_root = ".claude"
+# after
+[settings]
+targets = [".claude"]
+```
 
 Targets also govern launch permission. `targets = [".codex", ".opencode"]` permits
 only those harnesses, regardless of what is installed or logged in. Explicit empty
 or generic/path-only targets permit no harnesses. When targets are absent,
-managed_root supplies the scope; with neither field supplied, routing may discover
-installed harnesses. Physical target directories are not an eligibility check.
+routing may discover installed harnesses. Physical target directories are not an eligibility check.
 
-Local targets replace project targets, even with an empty list. A local
-managed_root does not override project targets. An explicit `--harness` cannot
+Local targets replace project targets, even with an empty list. An explicit `--harness` cannot
 expand target permission; a disabled profile/alias preference is skipped.
 
 Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and
@@ -560,7 +570,7 @@ model = "opus"
 - An `[agents.x]` or `[skills.x]` entry for something a project doesn't have is skipped without a
   diagnostic.
 - A key that belongs to one project is not read from this file: `[overrides]` (it would send
-  every project to a local checkout), `[settings].managed_root` and `[settings].targets`. Like any
+  every project to a local checkout), and `[settings].targets`. Like any
   key Mars does not read, each is an `Info` (`field.unknown`) that `mars validate` shows; none of
   them is a restriction. `min_mars_version` is a restriction, so this
   file's value applies like any other layer's. Every other setting applies, and a value the
@@ -572,14 +582,14 @@ model = "opus"
   project before reading any config; `mars build launch-bundle` is the one command that falls
   back to the user file alone when the project has no `mars.toml`.
 
-`[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; `agent_emission = "always"` still emits all native agents instead.
+`[settings.meridian.agent_copy]` is the intentional exception to blanket native-agent suppression. It emits selected harness-native copies, for the harnesses Meridian launches, even when `MERIDIAN_MANAGED=1` or `agent_emission = "never"`; it selects by model routing, so it never covers Antigravity, whose agents carry no model (`auto` writes those under `MERIDIAN_MANAGED=1`); `agent_emission = "always"` still emits all native agents instead.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `harnesses` | string[] | `[]` | Harnesses to receive selective native agent copies; each harness target must also be an effective managed target |
 | `include_fanout` | bool | `false` | Also qualify agents through their `model-policies` rules |
 
-Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`, or legacy `managed_root` when `targets` is unset) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
+Qualifying agents have a matching `harness:`, a `model:` alias that resolves to the listed harness, or — with `include_fanout = true` — a matching `model-policies` rule. For Claude, use `harnesses = ["claude"]` with `.claude` as an effective managed target (from `settings.targets`) to materialize Claude-native `Agent()` copies while Meridian continues to use `.mars/agents/` for normal `meridian spawn` delegation.
 
 `[settings.meridian.fanout]` names agents that get the `include_fanout` treatment one by one, and that `mars agents` reports with `fanout: true`, so Meridian launches them even where they are native:
 

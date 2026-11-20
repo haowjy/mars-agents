@@ -12,7 +12,7 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Canonical store** (`.mars/`) is where Mars installs resolved content. Gitignored. Rebuilt by `mars sync` from sources + lock.
 
-**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `settings.managed_root` is the older spelling of a single target, and `.agents` is a deprecated one.
+**Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` and `.cursor` are deprecated ones; a sync warns (`deprecated-cursor-target`) while `.cursor` is a target, because Mars drops Cursor in the minor after 0.37.0.
 
 **`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
 

@@ -215,8 +215,17 @@ pub fn project_skill_for_target(
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
+    concerns: &[crate::lock::RecordRef],
 ) -> Result<bool, MarsError> {
-    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, true)
+    project_skill_for_target_impl(
+        source,
+        dest,
+        harness_variant_key,
+        diag,
+        skill_name,
+        concerns,
+        true,
+    )
 }
 
 /// Project after the caller has emitted the base skill's schema diagnostics once.
@@ -228,7 +237,15 @@ pub(crate) fn project_skill_for_target_with_checked_schema(
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
 ) -> Result<bool, MarsError> {
-    project_skill_for_target_impl(source, dest, harness_variant_key, diag, skill_name, false)
+    project_skill_for_target_impl(
+        source,
+        dest,
+        harness_variant_key,
+        diag,
+        skill_name,
+        &[],
+        false,
+    )
 }
 
 fn project_skill_for_target_impl(
@@ -237,6 +254,7 @@ fn project_skill_for_target_impl(
     harness_variant_key: Option<&str>,
     diag: &mut crate::diagnostic::DiagnosticCollector,
     skill_name: &str,
+    concerns: &[crate::lock::RecordRef],
     emit_schema_diags: bool,
 ) -> Result<bool, MarsError> {
     let native_projection = match harness_variant_key {
@@ -251,7 +269,7 @@ fn project_skill_for_target_impl(
     };
     let wrote = project_prepared_skill_for_target(source, dest, native_projection.as_ref())?;
     if let Some(projection) = &native_projection {
-        projection.record_lossiness(skill_name, wrote, diag);
+        projection.record_lossiness(skill_name, concerns, diag);
     }
     Ok(wrote)
 }
@@ -265,15 +283,15 @@ pub(crate) struct NativeSkillProjection {
 }
 
 impl NativeSkillProjection {
-    /// Record what the projection leaves out. `written` is whether this run wrote the native
-    /// copy: a projection left as it was is news only under `--verbose`.
+    /// Record what the projection leaves out. `concerns` are the lock records of the native
+    /// copy: a projection the sync leaves as it was is news only under `--verbose`.
     pub(crate) fn record_lossiness(
         &self,
         skill_name: &str,
-        written: bool,
+        concerns: &[crate::lock::RecordRef],
         diag: &mut crate::diagnostic::DiagnosticCollector,
     ) {
-        diag.record_lossy_fields("skill", skill_name, &self.lossy_fields, written);
+        diag.record_lossy_fields("skill", skill_name, &self.lossy_fields, concerns);
     }
 }
 
@@ -397,7 +415,7 @@ pub(crate) fn emit_prepared_skill_lossiness_for_harness(
         diag,
         true,
     )? {
-        diag.record_lossy_fields("skill", skill_name, &lowered.lossy_fields, true);
+        diag.record_lossy_fields("skill", skill_name, &lowered.lossy_fields, &[]);
     }
     Ok(())
 }

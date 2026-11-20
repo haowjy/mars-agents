@@ -167,7 +167,10 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
             },
             fanout_agents: &[],
         },
-        &AgentSurfacePolicy::EmitAll,
+        &AgentSurfacePolicy {
+            launched: AgentSurfaceMode::EmitAll,
+            emit_unlaunched: true,
+        },
         &[agent],
         &mut router,
         &mut diag,
@@ -218,6 +221,27 @@ fn compile_emit_all_with_overlays(
     aliases: &IndexMap<String, ModelAlias>,
     overlays: &IndexMap<String, crate::config::AgentOverlay>,
 ) -> Vec<CompiledNativeOutput> {
+    compile_with_policy(
+        dir,
+        configured_harnesses,
+        agents,
+        aliases,
+        overlays,
+        &AgentSurfacePolicy {
+            launched: AgentSurfaceMode::EmitAll,
+            emit_unlaunched: true,
+        },
+    )
+}
+
+fn compile_with_policy(
+    dir: &Path,
+    configured_harnesses: &[HarnessId],
+    agents: &[MarsCanonicalAgent],
+    aliases: &IndexMap<String, ModelAlias>,
+    overlays: &IndexMap<String, crate::config::AgentOverlay>,
+    policy: &AgentSurfacePolicy,
+) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
     let models_cache = empty_models_cache();
     let ctx = NativeAgentCompileCtx {
@@ -242,13 +266,30 @@ fn compile_emit_all_with_overlays(
         },
     );
     let mut router = test_router(aliases, &models_cache);
-    compile_native_agents(
-        &ctx,
-        &AgentSurfacePolicy::EmitAll,
-        &resolved,
-        &mut router,
-        &mut diag,
-    )
+    compile_native_agents(&ctx, policy, &resolved, &mut router, &mut diag)
+}
+
+/// Under Meridian a launched harness reads its agents from Meridian, so only a harness it does
+/// not launch (`agy`) keeps native agents, unless `agent_emission = "never"`.
+#[test]
+fn native_agents_under_meridian_go_only_to_unlaunched_harnesses() {
+    let agent = parse_mars_agent("---\nname: worker\n---\n# Worker\n", "worker");
+    let emitted = |emission: crate::config::AgentEmission| {
+        let dir = TempDir::new().unwrap();
+        let policy = crate::compiler::agent_surface_policy(Some(&emission), None, true);
+        compile_with_policy(
+            dir.path(),
+            &[HarnessId::Claude, HarnessId::Agy],
+            std::slice::from_ref(&agent),
+            &IndexMap::new(),
+            &IndexMap::new(),
+            &policy,
+        )
+        .len()
+    };
+    assert_eq!(emitted(crate::config::AgentEmission::Auto), 1);
+    assert_eq!(emitted(crate::config::AgentEmission::Never), 0);
+    assert_eq!(emitted(crate::config::AgentEmission::Always), 2);
 }
 
 #[test]

@@ -192,7 +192,6 @@ mod tests {
     use super::*;
     fn settings_with_links(targets: Option<Vec<&str>>) -> Settings {
         Settings {
-            managed_root: None,
             targets: targets.map(|values| values.into_iter().map(str::to_string).collect()),
             ..Settings::default()
         }

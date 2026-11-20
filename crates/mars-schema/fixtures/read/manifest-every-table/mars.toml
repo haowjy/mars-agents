@@ -22,7 +22,6 @@ path = "../helper"
 dir = "plugin"
 
 [settings]
-managed_root = ".claude"
 targets = [".claude", ".codex"]
 models_cache_ttl_hours = 12
 min_mars_version = ">=0.34.0"

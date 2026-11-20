@@ -11,7 +11,7 @@ Mars materializes harness-native artifacts for multiple targets:
 | `.claude` | First-class | Claude Code agents, skills, MCP, hooks, and settings surfaces. |
 | `.codex` | First-class | Codex project instruction and agent-facing surfaces, MCP servers, and hooks. |
 | `.opencode` | First-class | OpenCode agent and permission surfaces, MCP servers, and hooks. |
-| `.cursor` | Unmaintained | Cursor CLI/config support still ships but is no longer tested or extended; it may break without notice. |
+| `.cursor` | Deprecated | Still works, untested and not extended. Mars warns (`deprecated-cursor-target`) on every sync while it is a target, and drops Cursor in the minor after 0.37.0. Run `mars unlink .cursor`. |
 | `.agy` | New | Antigravity (`agy`): written as an `agy` plugin (skills, agents, hooks, MCP servers) that the project's `.agents/plugins.json` points at. Portable `[hooks]` are not translated yet; a native `agy.json` hook is. |
 | `.pi` | Future first-class | Receives MCP servers and hooks today. The Meridian-owned Pi flavor and extension surface is under active design/development. |
 

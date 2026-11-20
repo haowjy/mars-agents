@@ -101,18 +101,18 @@ fn link_target(
 
     let filtered_outcomes;
     let orphan_preserve_paths;
-    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy {
-        crate::compiler::AgentSurfacePolicy::SuppressAll => {
+    let (sync_outcomes, orphan_preserve) = match &agent_surface_policy.launched {
+        crate::compiler::AgentSurfaceMode::SuppressAll => {
             filtered_outcomes = crate::compiler::suppress_agent_outcomes(&outcomes);
             (&filtered_outcomes, None)
         }
-        crate::compiler::AgentSurfacePolicy::EmitSelective(spec) => {
+        crate::compiler::AgentSurfaceMode::EmitSelective(spec) => {
             orphan_preserve_paths =
                 crate::compiler::selective_native_orphan_preserve_paths(&lock, spec);
             filtered_outcomes = crate::compiler::omit_agent_outcomes(&outcomes);
             (&filtered_outcomes, Some(&orphan_preserve_paths))
         }
-        crate::compiler::AgentSurfacePolicy::EmitAll => (&outcomes, None),
+        crate::compiler::AgentSurfaceMode::EmitAll => (&outcomes, None),
     };
     let target_sync_ctx = crate::target_sync::TargetSyncContext {
         old_lock: &lock,
@@ -129,9 +129,7 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    diagnostics.extend(crate::config::targets::agents_target_diagnostic(
-        &runtime_targets,
-    ));
+    diagnostics.extend(crate::config::targets::target_advisories(&runtime_targets));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
@@ -177,6 +175,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
+        config.settings.managed_root = None;
         config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;
     }

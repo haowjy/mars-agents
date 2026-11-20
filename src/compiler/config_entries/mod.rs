@@ -87,8 +87,6 @@ pub(crate) fn compile_config_entries(
     let mut pending_hooks: BTreeMap<String, Vec<HookEntry>> = BTreeMap::new();
     let mut pending_file_writes: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     let mut desired_file_outputs = std::collections::BTreeSet::new();
-    // Each installed hook with the files it writes on a target, for releasing its held losses.
-    let mut installed_hook_outputs: Vec<(String, String, Vec<String>)> = Vec::new();
     let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
 
@@ -134,17 +132,6 @@ pub(crate) fn compile_config_entries(
         let mut file_writes = Vec::new();
         for (dir, item) in &installed_hooks {
             let output = rendered_hooks.get(dir);
-            installed_hook_outputs.push((
-                target_root.clone(),
-                item.def.name.clone(),
-                match output {
-                    HookOutput::Merge(out) | HookOutput::Keyed(out) => &out.files,
-                    HookOutput::File(out) => &out.files,
-                }
-                .iter()
-                .map(|file| file.path.clone())
-                .collect(),
-            ));
             match output {
                 HookOutput::Merge(output) => merge_outputs.push((*item, output)),
                 HookOutput::Keyed(output) => {
@@ -241,7 +228,7 @@ pub(crate) fn compile_config_entries(
         // they run even on dry runs.
         let rendered = spec
             .mcp
-            .map(|file| mcp_file::render_all(&file, &mcp_servers, diag))
+            .map(|file| mcp_file::render_all(&file, target_root, &mcp_servers, diag))
             .unwrap_or_default();
         let mut rendered = rendered;
         if applied.planned.targeted.target.mcp_scan_failed() {
@@ -484,74 +471,7 @@ pub(crate) fn compile_config_entries(
             .extend(records);
     }
     warn_untrusted(&trust_before, &trust_snapshots(ctx, &target_roots), diag);
-    release_written_hooks(&installed_hook_outputs, previous_records, &compiled, diag);
-    release_unplaced_hooks(applied, &target_roots, diag);
     compiled
-}
-
-/// A loss in a hook's output on a target is news when this sync wrote or changed that output:
-/// its config entries differ from the lock's, or one of its files was rewritten.
-fn release_written_hooks(
-    installed: &[(String, String, Vec<String>)],
-    previous: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
-    compiled: &ConfigEntryCompilation,
-    diag: &mut DiagnosticCollector,
-) {
-    fn entries_of<'a>(
-        records: Option<&'a BTreeMap<String, ConfigEntryRecord>>,
-        name: &str,
-    ) -> BTreeMap<&'a String, &'a ConfigEntryRecord> {
-        records
-            .into_iter()
-            .flatten()
-            .filter(|(key, _)| {
-                **key == HOOK_ENTRY_KIND.key(name)
-                    || key
-                        .strip_prefix(HOOK_KEY_PREFIX)
-                        .and_then(|rest| rest.split_once(':'))
-                        .is_some_and(|(_, hook)| hook == name)
-            })
-            .collect()
-    }
-    for (target, name, files) in installed {
-        let rewritten = files.iter().any(|file| {
-            compiled
-                .rewritten_outputs
-                .iter()
-                .any(|(root, path)| root == target && path == file)
-        });
-        if rewritten
-            || entries_of(compiled.records.get(target), name)
-                != entries_of(previous.get(target), name)
-        {
-            diag.release(&render::hook_entry_key(target, name));
-        }
-    }
-}
-
-/// A hook no managed target takes writes nothing, so its loss is news when its own lock
-/// record (source, checksum) is new or changed.
-fn release_unplaced_hooks(
-    applied: &AppliedState,
-    target_roots: &[String],
-    diag: &mut DiagnosticCollector,
-) {
-    let targeted = &applied.planned.targeted;
-    let old_items = &targeted.resolved.loaded.old_lock.items;
-    for hook in targeted.target.unplaced_hooks(target_roots) {
-        let unchanged = old_items
-            .get(&crate::lock::unplaced_hook_key(&hook.def.name))
-            .is_some_and(|old| {
-                old.source.as_ref() == hook.source_name
-                    && crate::sync::target::hook_checksum(hook)
-                        .is_ok_and(|now| now == old.source_checksum)
-            });
-        if !unchanged {
-            for target in target_roots {
-                diag.release(&render::hook_entry_key(target, &hook.def.name));
-            }
-        }
-    }
 }
 
 type TrustSnapshots = BTreeMap<String, (String, crate::target::hook_file::TrustPositions)>;

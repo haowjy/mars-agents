@@ -12,7 +12,7 @@ use serde_ignored::Path as IgnoredPath;
 
 use crate::alias::ModelAlias;
 use crate::dependency::RawEntry;
-use crate::diagnostic::{PathSegment, SchemaDiagnostic, unknown_field};
+use crate::diagnostic::{DOCS, PathSegment, SchemaDiagnostic, Severity, unknown_field};
 use crate::keys;
 use crate::model_policy::ModelPolicyRule;
 use crate::names::SourceName;
@@ -213,17 +213,13 @@ impl SkillOverlay {
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
-    /// Custom managed output directory (e.g. ".claude").
-    ///
-    /// When unset, mars no longer creates a generic `.agents` target by default;
-    /// `.mars/` is the canonical compiled store and native emission is handled
-    /// by target-specific compiler paths.
+    /// The v0.36 spelling of one target. Read for one more minor release, and only when no layer
+    /// sets `targets` (`effective_links`); every writer of `targets` removes it first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_root: Option<String>,
     /// Managed target directories materialized from .mars/ canonical store.
-    /// When set, only listed targets are populated. When unset, `managed_root`
-    /// is used for backwards compatibility; otherwise no target-sync targets
-    /// are enabled by default.
+    /// When set, only listed targets are populated. When unset, no target-sync
+    /// targets are enabled by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     /// Unset means `DEFAULT_MODELS_CACHE_TTL_HOURS`; read it through `models_cache_ttl_hours()`.
@@ -344,6 +340,10 @@ pub enum AgentEmission {
 const DEFAULT_MODELS_CACHE_TTL_HOURS: u32 = 24;
 
 impl Settings {
+    fn managed_root_note(&self) -> Option<SchemaDiagnostic> {
+        managed_root_note(self.managed_root.as_deref(), self.targets.is_none())
+    }
+
     pub fn models_cache_ttl_hours(&self) -> u32 {
         self.models_cache_ttl_hours
             .unwrap_or(DEFAULT_MODELS_CACHE_TTL_HOURS)
@@ -442,6 +442,37 @@ pub fn read<T: DeserializeOwned>(content: &str) -> Result<Read<T>, toml::de::Err
     })
 }
 
+/// The `field.deprecated` note for a file's `managed_root`, worded for whether it takes effect
+/// (`in_effect`): the key counts only while no layer sets `targets`, and a higher file's
+/// `managed_root` replaces a lower one's. A reader of one file alone (`read_consumer`, for the
+/// WASM) cannot see the other layers and passes whether the file itself sets `targets`; the CLI
+/// drops that note (`is_managed_root_note`) and words its own from the layered result. The key
+/// goes in the minor after 0.37.0, with `targets` alone left.
+pub fn managed_root_note(managed_root: Option<&str>, in_effect: bool) -> Option<SchemaDiagnostic> {
+    let managed_root = managed_root?;
+    let as_target = format!("[\"{managed_root}\"]");
+    let message = if in_effect {
+        format!(
+            "`settings.managed_root` is deprecated and goes away in the next minor release; Mars reads it as `targets = {as_target}`. Replace it with `targets = {as_target}`: {DOCS}/mars-toml.md#managed_root"
+        )
+    } else {
+        format!(
+            "`settings.managed_root` is deprecated and goes away in the next minor release; it has no effect because another setting overrides it. Delete it: {DOCS}/mars-toml.md#managed_root"
+        )
+    };
+    Some(SchemaDiagnostic::new(
+        "field.deprecated",
+        Severity::Warning,
+        key_path(&["settings", "managed_root"]),
+        message,
+    ))
+}
+
+/// Whether `note` is the one [`managed_root_note`] builds.
+pub fn is_managed_root_note(note: &SchemaDiagnostic) -> bool {
+    note.code == "field.deprecated" && note.path == key_path(&["settings", "managed_root"])
+}
+
 /// One `field.unknown` note for each key a serde pass left unread, `prefix` being where the
 /// pass started.
 fn unknown_notes(ignored: Vec<Vec<PathSegment>>, prefix: &[PathSegment]) -> Vec<SchemaDiagnostic> {
@@ -493,6 +524,9 @@ pub fn read_consumer(content: &str) -> ConsumerRead {
         Ok(read) => {
             let mut config = read.value;
             config.unknown_keys = read.unknown_keys;
+            config
+                .unknown_keys
+                .extend(config.settings.managed_root_note());
             config.unknown_keys.extend(config.dependency_unknown_keys());
             config.floor = read.floor;
             let issues = settings_refusals(
@@ -542,6 +576,7 @@ fn read_tables(content: &str, whole: &toml::de::Error) -> (Config, Vec<ConfigIss
     if let Some(value) = table.get("settings") {
         match read_value::<Settings>(value, key_path(&["settings"]), &mut unknown) {
             Ok(settings) => {
+                unknown.extend(settings.managed_root_note());
                 issues.extend(settings_refusals(
                     Some(&settings.tools),
                     settings.min_mars_version.as_deref(),

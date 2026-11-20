@@ -38,7 +38,7 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 
 | Value | Behavior |
 |---|---|
-| `auto` (default) | Emit native artifacts in standalone mode; suppress when `MERIDIAN_MANAGED=1` |
+| `auto` (default) | Emit native artifacts in standalone mode; when `MERIDIAN_MANAGED=1`, suppress them for the harnesses Meridian launches and emit them for the one it does not (Antigravity) |
 | `always` | Always emit native artifacts, even in Meridian-managed mode |
 | `never` | Never emit native artifacts |
 
@@ -47,7 +47,7 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Set `agent_emission = "always"` to emit all native artifacts.
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs by hand with `agy --agent <profile>`, so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
 
 Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 
@@ -62,7 +62,7 @@ include_fanout = false
 ```
 
 Each harness in `harnesses` must also have an effective managed target (from
-`settings.targets`, or legacy `managed_root` when `targets` is unset). Mars
+`settings.targets`). Mars
 then emits only agents that qualify for that harness: profiles with a
 matching `harness:`, profiles whose `model:` alias resolves to that harness,
 and, when `include_fanout = true`, matching `model-policies`. This is the
@@ -477,12 +477,12 @@ frontmatter keys it does not know.
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 
 `tools` is always written, because an `agy` agent with no `tools` key has no write and no shell.
-`agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::agy_every_tool`). With an allowlist (`"*": deny` plus allows)
+`agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::every_tool`). With an allowlist (`"*": deny` plus allows)
 it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: an agent whose
 `tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
 `tools` says. `agy`'s agent file has no deny list and `*` minus a name cannot be
-written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction;
-Meridian enforces it through `agy`'s permission requests. An allowlist that names no tool Mars
+written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction:
+nothing enforces it in `agy` (Meridian runs `agy` only interactively, never as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
 
 ### `.cursor/agents/<name>.md`

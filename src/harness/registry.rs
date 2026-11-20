@@ -67,11 +67,15 @@ pub enum ListingAuth {
 /// Lowering policy is a table in the compiler, so `src/harness` never depends on it.
 pub struct HarnessDescriptor {
     pub class: HarnessClass,
+    /// Whether Meridian launches this harness. Under Meridian a launched harness reads its agents
+    /// from Meridian, so Mars leaves its native agent files out (`agent_emission`); one it does
+    /// not launch is run by hand, and Mars writes its agents.
+    pub launched_by_meridian: bool,
 }
 
 /// Default launch-bundle harness try order when `settings.harness_order` is unset. A harness
-/// joins it only when Meridian can launch it; Antigravity is reached through `harness_order` or
-/// an alias that names it.
+/// joins it only when Meridian can launch it. Routing never picks a harness whose row has
+/// `launched_by_meridian: false`, whoever names it (`routing::permission_denial`).
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,
@@ -92,6 +96,7 @@ const CLAUDE: HarnessDescriptor = HarnessDescriptor {
         provider: "anthropic",
         auth_status: &["auth", "status"],
     },
+    launched_by_meridian: true,
 };
 
 const CODEX: HarnessDescriptor = HarnessDescriptor {
@@ -99,6 +104,7 @@ const CODEX: HarnessDescriptor = HarnessDescriptor {
         provider: "openai",
         auth_status: &["login", "status"],
     },
+    launched_by_meridian: true,
 };
 
 const PI: HarnessDescriptor = HarnessDescriptor {
@@ -108,6 +114,7 @@ const PI: HarnessDescriptor = HarnessDescriptor {
         slugs: SlugShape::Qualified,
         tiers: None,
     }),
+    launched_by_meridian: true,
 };
 
 const OPENCODE: HarnessDescriptor = HarnessDescriptor {
@@ -117,6 +124,7 @@ const OPENCODE: HarnessDescriptor = HarnessDescriptor {
         slugs: SlugShape::Qualified,
         tiers: None,
     }),
+    launched_by_meridian: true,
 };
 
 const CURSOR: HarnessDescriptor = HarnessDescriptor {
@@ -129,6 +137,7 @@ const CURSOR: HarnessDescriptor = HarnessDescriptor {
             respell: cursor::model_id_shim,
         }),
     }),
+    launched_by_meridian: true,
 };
 
 const AGY: HarnessDescriptor = HarnessDescriptor {
@@ -141,7 +150,12 @@ const AGY: HarnessDescriptor = HarnessDescriptor {
             respell: |_| None,
         }),
     }),
+    launched_by_meridian: false,
 };
+
+pub fn launched_by_meridian(id: HarnessId) -> bool {
+    descriptor(id).launched_by_meridian
+}
 
 pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
     match id {

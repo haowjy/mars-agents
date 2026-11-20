@@ -28,16 +28,14 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if unset_managed_root(&mut config.settings.managed_root, &target_name) {
-        settings_updated = true;
-        target_was_managed = true;
-    }
+    let (settings, local_settings) = (&mut config.settings, &mut local.settings);
+    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
+    crate::config::targets::retire_managed_root(
+        &mut local_settings.managed_root,
+        &mut local_settings.targets,
+    );
     if unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
-        target_was_managed = true;
-    }
-    if unset_managed_root(&mut local.settings.managed_root, &target_name) {
-        local_updated = true;
         target_was_managed = true;
     }
     if unset_target(&mut local.settings.targets, &target_name) {
@@ -93,17 +91,6 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     Ok(0)
-}
-
-fn unset_managed_root(managed_root: &mut Option<String>, target_name: &str) -> bool {
-    let matches = managed_root
-        .as_deref()
-        .map(crate::config::migrations::link::normalize_link)
-        .is_some_and(|link| link.target == target_name);
-    if matches {
-        *managed_root = None;
-    }
-    matches
 }
 
 fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {

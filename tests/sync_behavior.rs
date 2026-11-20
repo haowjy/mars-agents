@@ -1930,7 +1930,7 @@ tools:
         .write_str(&format!(
             r#"
 [settings]
-managed_root = ".claude"
+targets = [".claude"]
 agent_emission = "always"
 
 [dependencies.base]

@@ -75,11 +75,10 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         .as_ref()
         .map(|manifest| &manifest.models)
         .unwrap_or(&empty_model_aliases);
-    let mut model_router = (!matches!(policy, crate::compiler::AgentSurfacePolicy::SuppressAll))
-        .then(|| {
-            NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
-                .with_settings(settings.clone())
-        });
+    let mut model_router = (!policy.emits_nothing()).then(|| {
+        NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
+            .with_settings(settings.clone())
+    });
 
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);
@@ -114,7 +113,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
 
     // As in sync: the project's network settings reach no native Codex file.
     if codex_emitted {
-        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", true, &mut diag);
+        lossiness::record_project_network_loss(&settings.network_keys(), "Codex", &[], &mut diag);
     }
     Ok(diag.drain())
 }
@@ -159,9 +158,9 @@ fn collect_agent_content_lossiness(
     ) {
         codex_emitted |= harness == HarnessId::Codex;
         let lowered = lower_for_harness_with_model(harness, &profile, &body, &model);
-        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields, true);
+        diag.record_lossy_fields("agent", agent_name, &lowered.lossy_fields, &[]);
         if let Some(moved) = effort_moved {
-            diag.record_effort_move(agent_name, harness.as_str(), &moved, true);
+            diag.record_effort_move(agent_name, harness.as_str(), &moved, &[]);
         }
     }
     codex_emitted

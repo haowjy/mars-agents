@@ -971,7 +971,7 @@ reorder its file-mode artifact.
 
 | Code | Level | When |
 |---|---|---|
-| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook that no managed target takes (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
+| `hook-event-skipped` | warning; one line per hook and target, on the sync that writes or changes the hook's entry on that target, or installs or changes a hook, or adds a target, that takes none of the hook (`--verbose` and `mars check` list every one) | an event, handler type or matcher field has no counterpart on a managed target |
 | `hook-answer-unsupported` | warning; reported like `hook-event-skipped` | the event renders, but some portable answers do not carry over to that target |
 | `hook-native-overrides` | info | a Claude or Codex native hook declares an event that `[hooks]` also declares |
 | `hook-native-beside-generated` | info | an OpenCode or Pi native hook installs next to the generated file for the same hook |
@@ -1039,13 +1039,19 @@ an `info` that only notes `.agents` is deprecated.
 **MCP servers.** `agy` starts a server with `.agy/` as its working directory, passes it `agy`'s
 own environment, and substitutes `${PLUGIN_ROOT}` in `args` and `env`; it was not shown to do so
 in `command`. So `${MARS_MCP_DIR}` becomes `${PLUGIN_ROOT}/mcp/<name>` in `args` and the
-installed project path in `command`, as for every harness. Every other harness resolves a
-`command` that names a path (`./server.sh`) from the project root, so Mars writes it one level up
-(`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
+installed project path in `command`, as for every harness: an absolute path such as
+`/home/me/proj/.agy/mcp/<name>/server.sh`, which `.agy/` (ignored, like `hooks.json`) can hold
+because it is machine-local. A `command` the author wrote as a path of their own (`./server.sh`)
+is relative to the project root for every other harness, but `agy` runs it from `.agy/`, so Mars
+writes it one level up (`../server.sh`); a bare name (`node`) stays. An `env` entry that passes a variable through under its own
 name is left out: the server inherits it. A renamed one (`KEY = { var = "OTHER" }`) has no
 spelling: `agy` sets env only from plugin `variables`, and declaring one turns the whole plugin
 off until the user fills it in, so Mars leaves it out and warns (`mcp-lossy`). A remote server's `url` and literal headers are
 written as Claude's are; env headers are left out the same way.
+`agy` starts one server per process, during the first prompted turn. In two probes (TUI and
+ACP, `agy` 1.5.13) the model could not use a plugin server's tools on the first prompt and could
+from the second; whether that is timing or the prompts' wording is not yet known. Every `agy`
+agent reaches every server, whatever its `tools` list says.
 
 **Hooks.** `.agy/hooks.json` is `{"<hook-name>": {"enabled"?: bool, "<Event>": [...]}}`.
 A native hook for the target (`[targets.".agy"]`, default file `agy.json`) holds one hook's value,
@@ -1082,7 +1088,7 @@ file of a version this `mars` does not read is settled the same way, with a mess
 |---|---|---|
 | `PreToolUse` | `PreToolUse` | `deny`, `ask`, `allow` and `updatedInput` (as `overwrite`, top-level keys only) answers and exit 2; no opinion is empty output, which leaves the call to `agy`'s own permission flow. `additionalContext` is dropped |
 | `PostToolUse`, `PostToolUseFailure` | `PostToolUse` | `agy` passes no tool output and reads no answer: the hook runs, its answers are dropped; the failure event is the call's `error` being set |
-| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, not on resume, so `source` is always `startup` |
+| `SessionStart` | `SessionStart` | context becomes a system message; `agy` fires it once per conversation, on its first prompt rather than when the TUI opens, and not on resume, so `source` is always `startup` |
 | `Stop` | `Stop` | a `block` answer keeps the agent going (`decision: continue`), including a failing hook's `onFailure = "block"`; `stop_hook_active` is true from the turn's second Stop (`executionNum` above 0), because `agy`'s `continuationActive` is false on every Stop |
 | `UserPromptSubmit` | `PreInvocation` | runs on the first invocation of a prompt (`invocationNum` 0); a `block` answer ends the turn with the reason as an error message; context becomes a system message |
 

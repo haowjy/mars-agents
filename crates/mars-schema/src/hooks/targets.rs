@@ -6,6 +6,7 @@
 //! what the row describes. Nothing about a target is kept anywhere else.
 use super::agy;
 use super::typescript::{self, Harness};
+use crate::harness::{self, HarnessId};
 
 /// A hook event of one target and the input field its `matcher` tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,98 +333,116 @@ pub const PLUGIN_CLAUDE_TREE: Profile = Profile {
     rules: Rules::Codex,
 };
 
-const TARGETS: &[Target] = &[
-    Target {
-        root: ".claude",
-        // Hook commands carry machine-local cache paths, so they belong in the gitignored
-        // `settings.local.json` rather than the committed `settings.json`.
-        placement: Placement::Merge(MergeFile {
-            file: "settings.local.json",
-            top_level: &[],
-            trust_gated: false,
-        }),
-        profile: Profile {
-            events: CLAUDE_EVENTS,
-            verified_against: Some(CLAUDE_VERSION),
-            rules: Rules::Claude,
-        },
-        other_events: &[],
+const CLAUDE: Target = Target {
+    root: ".claude",
+    // Hook commands carry machine-local cache paths, so they belong in the gitignored
+    // `settings.local.json` rather than the committed `settings.json`.
+    placement: Placement::Merge(MergeFile {
+        file: "settings.local.json",
+        top_level: &[],
+        trust_gated: false,
+    }),
+    profile: Profile {
+        events: CLAUDE_EVENTS,
+        verified_against: Some(CLAUDE_VERSION),
+        rules: Rules::Claude,
     },
-    Target {
-        root: ".codex",
-        placement: Placement::Merge(MergeFile {
-            file: "hooks.json",
-            top_level: &[],
-            trust_gated: true,
-        }),
-        profile: Profile {
-            events: CODEX_EVENTS,
-            verified_against: Some("codex-cli 0.164.0"),
-            rules: Rules::Codex,
-        },
-        other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
+    other_events: &[],
+};
+
+const CODEX: Target = Target {
+    root: ".codex",
+    placement: Placement::Merge(MergeFile {
+        file: "hooks.json",
+        top_level: &[],
+        trust_gated: true,
+    }),
+    profile: Profile {
+        events: CODEX_EVENTS,
+        verified_against: Some("codex-cli 0.164.0"),
+        rules: Rules::Codex,
     },
-    Target {
-        root: ".cursor",
-        // Cursor's `hooks.json` is a flat entry array and requires the version wrapper.
-        placement: Placement::Merge(MergeFile {
-            file: "hooks.json",
-            top_level: &[("version", 1)],
-            trust_gated: false,
-        }),
-        profile: Profile {
-            events: CURSOR_EVENTS,
-            verified_against: Some("cursor-agent 2026.07.16"),
-            rules: Rules::Withheld {
-                reason: "mars renders no generated hooks for Cursor before 0.26",
-            },
+    other_events: &["PreModelRequest", "PostModelRequest", "Interrupt"],
+};
+
+const CURSOR: Target = Target {
+    root: ".cursor",
+    // Cursor's `hooks.json` is a flat entry array and requires the version wrapper.
+    placement: Placement::Merge(MergeFile {
+        file: "hooks.json",
+        top_level: &[("version", 1)],
+        trust_gated: false,
+    }),
+    profile: Profile {
+        events: CURSOR_EVENTS,
+        verified_against: Some("cursor-agent 2026.07.16"),
+        rules: Rules::Withheld {
+            reason: "mars renders no generated hooks for Cursor before 0.26",
         },
-        other_events: &[],
     },
-    Target {
-        root: ".opencode",
-        placement: Placement::File { dir: "plugins" },
-        profile: Profile {
-            events: OPENCODE_EVENTS,
-            verified_against: Some("OpenCode 2.2.0"),
-            rules: Rules::TypeScript(&typescript::OPENCODE),
-        },
-        other_events: &[],
+    other_events: &[],
+};
+
+const OPENCODE: Target = Target {
+    root: ".opencode",
+    placement: Placement::File { dir: "plugins" },
+    profile: Profile {
+        events: OPENCODE_EVENTS,
+        verified_against: Some("OpenCode 2.2.0"),
+        rules: Rules::TypeScript(&typescript::OPENCODE),
     },
-    Target {
-        root: ".pi",
-        placement: Placement::File { dir: "extensions" },
-        profile: Profile {
-            events: PI_EVENTS,
-            verified_against: Some("Pi 1.4.0"),
-            rules: Rules::TypeScript(&typescript::PI),
-        },
-        other_events: &[],
+    other_events: &[],
+};
+
+const PI: Target = Target {
+    root: ".pi",
+    placement: Placement::File { dir: "extensions" },
+    profile: Profile {
+        events: PI_EVENTS,
+        verified_against: Some("Pi 1.4.0"),
+        rules: Rules::TypeScript(&typescript::PI),
     },
-    Target {
-        root: ".agy",
-        // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
-        placement: Placement::Keyed {
-            path: ".agy/hooks.json",
-            dir: "hooks",
-        },
-        profile: Profile {
-            events: AGY_EVENTS,
-            verified_against: Some("agy 1.5.12"),
-            rules: Rules::Translated(&agy::AGY),
-        },
-        other_events: &[],
+    other_events: &[],
+};
+
+const AGY: Target = Target {
+    root: ".agy",
+    // `agy` reads `hooks.json` only at the plugin root, one top-level key per hook.
+    placement: Placement::Keyed {
+        path: ".agy/hooks.json",
+        dir: "hooks",
     },
-];
+    profile: Profile {
+        events: AGY_EVENTS,
+        verified_against: Some("agy 1.5.12"),
+        rules: Rules::Translated(&agy::AGY),
+    },
+    other_events: &[],
+};
+
+/// The hook rules of a harness. A harness with no row here fails to compile.
+fn row(harness: HarnessId) -> &'static Target {
+    match harness {
+        HarnessId::Claude => &CLAUDE,
+        HarnessId::Codex => &CODEX,
+        HarnessId::OpenCode => &OPENCODE,
+        HarnessId::Cursor => &CURSOR,
+        HarnessId::Pi => &PI,
+        HarnessId::Agy => &AGY,
+    }
+}
 
 /// The hook rules of `root`; `None` when it has no hook mechanism.
 pub fn target(root: &str) -> Option<&'static Target> {
-    TARGETS.iter().find(|target| target.root == root)
+    harness::ALL
+        .iter()
+        .find(|harness| harness.target_dir() == root)
+        .map(|&harness| row(harness))
 }
 
 /// Every target that takes hooks.
-pub fn all() -> &'static [Target] {
-    TARGETS
+pub fn all() -> impl Iterator<Item = &'static Target> {
+    harness::ALL.iter().map(|&harness| row(harness))
 }
 
 /// Claude's event of that name: the set a `[hooks]` table may declare.

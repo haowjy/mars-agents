@@ -36,7 +36,7 @@ mars init [TARGET] [--link DIR...]
 **Behavior:**
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
 - Creates `.mars/` internal state directory
-- Creates `TARGET`, when given, and records it as `settings.managed_root`
+- Creates `TARGET`, when given, and adds it to `settings.targets`
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
@@ -349,11 +349,12 @@ mars link <target> [--force]
 - Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
 - If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
 - A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
+- Linking `.cursor` warns (`deprecated-cursor-target`), and so does every sync while it is a target: Cursor support goes away in the minor after 0.37.0. Run `mars unlink .cursor` to remove it
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.cursor` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
-mars link .cursor            # Copy skills/MCP into .cursor
+mars link .cursor            # Copy skills/MCP into .cursor (deprecated, see below)
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
 mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
 ```
@@ -369,7 +370,7 @@ mars unlink <target>
 ```
 
 **Behavior:**
-- Removes `<target>` from `targets` (and `managed_root` if it matches) in `mars.toml` and `mars.local.toml`
+- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
 - Removes only outputs and config entries owned by the target's lock records. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays
@@ -855,7 +856,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`, `agy`). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `cursor`, `pi`; `agy` is refused: Meridian does not launch it). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |

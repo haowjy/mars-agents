@@ -228,7 +228,6 @@ export interface SkillOverlay {
 
 /** `[settings]`, in the spellings Mars writes back; omitted when the file has none. Keys unset in the file are omitted. */
 export interface Settings {
-  managed_root?: string;
   targets?: string[];
   models_cache_ttl_hours?: number;
   min_mars_version?: string;

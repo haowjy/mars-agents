@@ -2,7 +2,7 @@
 //!
 //! Backward-compatible migration facade over live `config::targets`.
 
-/// Canonical read-time view of one `settings.targets` / `managed_root` entry.
+/// Canonical read-time view of one `settings.targets` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedLink {
     pub target: String,

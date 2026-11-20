@@ -30,8 +30,9 @@ stateDiagram-v2
 ```
 
 - **A wrong edit changes where files are written**, which is the one thing the CLI can get
-  catastrophically wrong. `MarsContext::from_roots` rejects a managed root that resolves outside
-  the project root, which is what makes a symlinked `.claude` safe.
+  catastrophically wrong. `MarsContext::from_roots` rejects a `.agents` target that resolves
+  outside the project root. No other target is checked there; `managed_root`, which was, no longer
+  exists.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
   also refuses a `--root` that is not itself a project root.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
@@ -100,7 +101,7 @@ stateDiagram-v2
   the next `unlink` finishes it through `lock_claims`.
 - **A target is managed if mars.toml, mars.local.toml or the lock names it** (`target_was_managed`).
   `unlink` edits both settings files; the user config can't list targets (its loader drops
-  `targets` and `managed_root`). An unmanaged target is not touched at all, even if files exist
+  `targets`). An unmanaged target is not touched at all, even if files exist
   there: it prints and exits 0.
 - `settings_updated` and `target_was_managed` are two bools that can disagree (settings changed
   for a target that was not managed); both are set from the same retain and clear block.
@@ -212,14 +213,14 @@ stateDiagram-v2
 
 One directory becoming a Mars project, `mars init` (`init.rs`). `initialize_project` creates
 `.mars`, writes `mars.toml` if absent (`ensure_consumer_config`), then creates and persists
-`managed_root` when a target is given. Auto-init in `dispatch` uses the same function.
+the target in `settings.targets` when one is given. Auto-init in `dispatch` uses the same function.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Bare
   Bare --> HalfInit: .mars created, mars.toml not yet written
-  HalfInit --> Initialized: mars.toml written, managed_root created and persisted
-  Bare --> Initialized: mars.toml already there - already_initialized = true, no target, so settings.managed_root is cleared
+  HalfInit --> Initialized: mars.toml written, target directory created and added to `targets`
+  Bare --> Initialized: mars.toml already there - already_initialized = true; no target leaves settings as they are
   Initialized --> Initialized: re-running is a no-op, then --link targets are linked
 ```
 

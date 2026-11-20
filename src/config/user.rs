@@ -32,11 +32,6 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
     let unread = [
         (
             "settings",
-            "managed_root",
-            local.settings.managed_root.take().is_some(),
-        ),
-        (
-            "settings",
             "targets",
             local.settings.targets.take().is_some(),
         ),

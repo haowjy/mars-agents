@@ -87,7 +87,6 @@
     "dir": "plugin"
   },
   "settings": {
-    "managed_root": ".claude",
     "targets": [
       ".claude",
       ".codex"

@@ -11,6 +11,8 @@ pub(crate) enum Scope {
     Agent,
     Skill,
     Package,
+    /// `[settings]` of `mars.toml` or `mars.local.toml`.
+    Settings,
     /// A name under `harness-overrides`.
     Namespace,
 }
@@ -50,6 +52,7 @@ const RETIRED: &[(Scope, &str, &str)] = &[
         "skill-invocation",
     ),
     (Scope::Package, "visibility", "package-visibility"),
+    (Scope::Settings, "managed_root", "settings-managed_root"),
     (Scope::Namespace, "flow", "host-namespaces"),
     (Scope::Namespace, "meridian", "host-namespaces"),
 ];
@@ -77,6 +80,7 @@ pub(crate) fn diagnostic(
     let anchor = anchor(scope, key)?;
     let name = match scope {
         Scope::Package => format!("package.{key}"),
+        Scope::Settings => format!("settings.{key}"),
         Scope::Namespace => format!("harness-overrides.{key}"),
         Scope::Agent | Scope::Skill => key.to_owned(),
     };

@@ -264,13 +264,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                             initialized.project_root.display()
                         ));
                     }
-                    MarsContext::from_roots(
-                        initialized.project_root.clone(),
-                        initialized
-                            .managed_root
-                            .clone()
-                            .unwrap_or_else(|| initialized.project_root.join(".mars")),
-                    )?
+                    MarsContext::new(initialized.project_root.clone())?
                 }
                 Err(err) if can_run_without_project(cmd, &err) => {
                     let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
@@ -377,12 +371,6 @@ pub fn is_symlink(path: &Path) -> bool {
 fn detect_managed_root(project_root: &Path) -> Result<PathBuf, MarsError> {
     match crate::config::load(project_root) {
         Ok(config) => {
-            if config.settings.managed_root.is_some()
-                && let Some(name) =
-                    crate::config::targets::managed_targets(&config.settings).first()
-            {
-                return Ok(project_root.join(name));
-            }
             if crate::config::targets::managed_targets(&config.settings)
                 .iter()
                 .any(|target| target == WELL_KNOWN[0])
@@ -468,12 +456,12 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn context_rejects_symlinked_managed_root_outside_project() {
+    fn context_rejects_symlinked_agents_target_outside_project() {
         let project_dir = TempDir::new().unwrap();
         let external_dir = TempDir::new().unwrap();
         std::fs::write(
             project_dir.path().join("mars.toml"),
-            "[dependencies]\n\n[settings]\nmanaged_root = \".agents\"\n",
+            "[dependencies]\n\n[settings]\ntargets = [\".agents\"]\n",
         )
         .unwrap();
 
@@ -485,18 +473,6 @@ mod tests {
 
         let result = MarsContext::new(project_dir.path().to_path_buf());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn detect_managed_root_reads_settings() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("mars.toml"),
-            "[dependencies]\n\n[settings]\nmanaged_root = \".claude\"\n",
-        )
-        .unwrap();
-        let result = detect_managed_root(dir.path()).unwrap();
-        assert_eq!(result, dir.path().join(".claude"));
     }
 
     #[test]

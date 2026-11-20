@@ -137,8 +137,6 @@ pub struct LocalConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed_root: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models_cache_ttl_hours: Option<u32>,
@@ -501,13 +499,9 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .flat_map(|(file, notes)| {
-        notes.iter().map(move |note| Diagnostic {
-            level: DiagnosticLevel::Info,
-            code: note.code.clone().into(),
-            message: format!("{file}: {}", note.message),
-            context: None,
-            category: Some(DiagnosticCategory::Validation),
-        })
+        notes
+            .iter()
+            .map(move |note| Diagnostic::from_schema(note, format!("{file}: {}", note.message)))
     });
     let floors = [
         (
@@ -934,7 +928,6 @@ path = "../local-agents"
 exclude = ["experimental"]
 
 [settings]
-managed_root = ".custom-agents"
 targets = [".claude", ".cursor"]
 harness_order = ["pi", "opencode", "codex"]
 "#;
@@ -956,10 +949,6 @@ harness_order = ["pi", "opencode", "codex"]
         assert_eq!(
             reloaded.dependencies["local"].path.as_deref(),
             Some(Path::new("../local-agents"))
-        );
-        assert_eq!(
-            reloaded.settings.managed_root.as_deref(),
-            Some(".custom-agents")
         );
         assert_eq!(
             reloaded.settings.targets,
@@ -1554,7 +1543,6 @@ version = "v1.0"
 agents = ["coder"]
 
 [settings]
-managed_root = ".agents"
 targets = [".claude"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
@@ -1585,7 +1573,6 @@ targets = [".claude"]
             reloaded.dependencies["base"].filter.agents.as_deref(),
             Some(&["coder".into()][..])
         );
-        assert_eq!(reloaded.settings.managed_root.as_deref(), Some(".agents"));
         assert!(reloaded.settings.targets.is_none());
     }
 
@@ -1763,7 +1750,7 @@ only_skills = true
     // === managed_targets tests ===
 
     #[test]
-    fn managed_targets_precedence() {
+    fn managed_targets_are_the_targets() {
         for (settings, expected) in [
             (Settings::default(), vec![]),
             (
@@ -1772,21 +1759,6 @@ only_skills = true
                     ..Settings::default()
                 },
                 vec![".claude"],
-            ),
-            (
-                Settings {
-                    managed_root: Some(".claude".into()),
-                    ..Settings::default()
-                },
-                vec![".claude"],
-            ),
-            (
-                Settings {
-                    managed_root: Some(".cursor".into()),
-                    targets: Some(vec![".codex".into()]),
-                    ..Settings::default()
-                },
-                vec![".codex"],
             ),
         ] {
             assert_eq!(crate::config::targets::managed_targets(&settings), expected);

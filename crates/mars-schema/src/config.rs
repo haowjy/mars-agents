@@ -213,17 +213,9 @@ impl SkillOverlay {
 /// Global settings — extensible via additional fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
-    /// Custom managed output directory (e.g. ".claude").
-    ///
-    /// When unset, mars no longer creates a generic `.agents` target by default;
-    /// `.mars/` is the canonical compiled store and native emission is handled
-    /// by target-specific compiler paths.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub managed_root: Option<String>,
     /// Managed target directories materialized from .mars/ canonical store.
-    /// When set, only listed targets are populated. When unset, `managed_root`
-    /// is used for backwards compatibility; otherwise no target-sync targets
-    /// are enabled by default.
+    /// When set, only listed targets are populated. When unset, no target-sync
+    /// targets are enabled by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
     /// Unset means `DEFAULT_MODELS_CACHE_TTL_HOURS`; read it through `models_cache_ttl_hours()`.
@@ -459,7 +451,12 @@ fn unknown_notes(ignored: Vec<Vec<PathSegment>>, prefix: &[PathSegment]) -> Vec<
         let table = table_name(&at);
         let mut path = at;
         path.push(PathSegment::Key(key.clone()));
-        notes.push(unknown_field(path, &table, &key));
+        let retired = (table == "settings")
+            .then(|| {
+                crate::retired::diagnostic(crate::retired::Scope::Settings, &key, path.clone())
+            })
+            .flatten();
+        notes.push(retired.unwrap_or_else(|| unknown_field(path, &table, &key)));
     }
     notes
 }

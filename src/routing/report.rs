@@ -161,7 +161,6 @@ impl RouteDecisionReport {
                 target_source: TargetSourceReport {
                     field: match source.field {
                         LinkSource::Targets => "targets",
-                        LinkSource::ManagedRoot => "managed_root",
                         LinkSource::None => "none",
                     },
                     origin: match source.origin {

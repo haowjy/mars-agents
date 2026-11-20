@@ -48,7 +48,6 @@ pub enum LinkKind {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LinkSource {
     Targets,
-    ManagedRoot,
     #[default]
     None,
 }
@@ -79,9 +78,7 @@ impl EffectiveLinks {
     pub fn harness_scope(&self) -> HarnessScope {
         match self.source {
             LinkSource::None => HarnessScope::Unrestricted,
-            LinkSource::Targets | LinkSource::ManagedRoot => {
-                HarnessScope::Only(self.linked_harnesses_set())
-            }
+            LinkSource::Targets => HarnessScope::Only(self.linked_harnesses_set()),
         }
     }
 
@@ -164,21 +161,14 @@ pub fn effective_links(settings: &Settings) -> EffectiveLinks {
         };
     }
 
-    if let Some(managed_root) = settings.managed_root.as_ref() {
-        return EffectiveLinks {
-            links: vec![normalize_link(managed_root)],
-            source: LinkSource::ManagedRoot,
-        };
-    }
-
     EffectiveLinks {
         links: Vec::new(),
         source: LinkSource::None,
     }
 }
 
-/// The managed target directories: `targets` as normalized, else the normalized `managed_root`
-/// (the older spelling), else none (`.mars/` stays the canonical compiled store).
+/// The managed target directories: `targets` as normalized, else none (`.mars/` stays the
+/// canonical compiled store).
 pub fn managed_targets(settings: &Settings) -> Vec<String> {
     effective_links(settings).managed_targets()
 }

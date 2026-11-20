@@ -62,7 +62,7 @@ include_fanout = false
 ```
 
 Each harness in `harnesses` must also have an effective managed target (from
-`settings.targets`, or legacy `managed_root` when `targets` is unset). Mars
+`settings.targets`). Mars
 then emits only agents that qualify for that harness: profiles with a
 matching `harness:`, profiles whose `model:` alias resolves to that harness,
 and, when `include_fanout = true`, matching `model-policies`. This is the

@@ -19,7 +19,7 @@ inherit = true           # false drops lower tiers
 default = "show"         # "show" or "hide" for unmatched rows
 
 [[show]]
-harness = "codex"      # claude, codex, pi, opencode, cursor, agy, or "*"
+harness = "codex"      # claude, codex, pi, opencode, agy, or "*"
 model = "gpt-6-*"        # * crosses provider/model slashes
 provider = "openai"     # optional; provider variants such as openai-codex match
 

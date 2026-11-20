@@ -12,8 +12,7 @@ use crate::lock::LockFile;
 
 /// Whether the lock records outputs or config entries for `target`, whatever settings say.
 pub fn lock_claims(lock: &LockFile, target: &str) -> bool {
-    !lock.output_dest_paths_for_target(target).is_empty()
-        || lock.config_entries.contains_key(target)
+    lock.recorded_targets().contains(target)
 }
 
 /// Normalize and validate a target directory name.

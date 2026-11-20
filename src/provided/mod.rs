@@ -1,13 +1,18 @@
-//! `mars provide` — a host installs the skills it ships into `.mars/skills/`.
+//! `mars provide` — a host installs the skills, hooks and MCP servers it ships.
 //!
-//! A host ships skills beside its binary and hands Mars the directory holding them:
+//! A host ships them beside its binary and hands Mars the directory holding them:
 //! `mars provide meridian@0.15.0=<package dir>`. Mars copies the skills into the canonical store
-//! and records their names in `.mars/provided.lock`, which only this command writes.
+//! (`.mars/skills/`, which launched harnesses read directly), stages the validated hooks and MCP
+//! servers at `.mars/provided/<provider>/`, and records the skill names in `.mars/provided.lock`,
+//! which only this command writes.
 //!
 //! The rule behind every edge case here: **a provider never changes committed state.** Nothing
 //! in this module writes `mars.toml`, `mars.lock` or a harness target, so a project stays
-//! byte-identical with or without a host until someone runs `mars sync`. Provided skills are
-//! never projected into targets either, since projection reads only `mars.lock` records.
+//! byte-identical with or without a host until someone runs `mars sync`. Sync then projects the
+//! content into the targets that take it (`harness::registry::takes_provided`): skills through
+//! [`skill_outcomes`], hooks and MCP servers through the staged directory, which it resolves as
+//! the path dependency `_provided-<provider>`. Everything sync records for them goes in
+//! `.mars/machine.lock`, so `mars.lock` stays the same with or without the host.
 //!
 //! ```text
 //! cli/provide.rs ─→ reconcile                               design steps 2-8
@@ -22,12 +27,17 @@ mod entries;
 mod lock;
 mod names;
 mod reconcile;
+mod source;
 mod spec;
 
 use serde::Serialize;
 
-pub(crate) use names::ProvidedNames;
+pub(crate) use names::{ProvidedNames, skill_outcomes};
 pub(crate) use reconcile::reconcile;
+pub(crate) use source::{
+    display_path, is_provided_source, offered_to, provider_label, staged_dependencies,
+    takes_provided_any, yielded,
+};
 use spec::ProvideSpec;
 
 /// What one `mars provide` run did, or why it wrote nothing.

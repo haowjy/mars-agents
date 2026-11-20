@@ -7,7 +7,7 @@
 //!
 //! Pure: the caller (the capability session) supplies the catalog slugs and probe outcomes and
 //! passes the result in as `RoutingInput::known_providers`. A harness whose slugs are `SlugShape::Bare`
-//! (Cursor) is not a source: they carry no provider prefix.
+//! (Antigravity) is not a source: they carry no provider prefix.
 
 use std::collections::HashSet;
 

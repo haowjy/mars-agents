@@ -57,7 +57,7 @@ Mars manual smoke guides should verify Mars-owned behavior:
 - launch-bundle JSON shape
 - native harness config projection
 - Codex rules / prompt surface compilation
-- Pi/OpenCode/Cursor fallback behavior
+- Pi/OpenCode fallback behavior
 
 Meridian-owned behavior belongs in the Meridian repo. Meridian should only smoke
 that it calls Mars and consumes the returned launch bundle correctly.

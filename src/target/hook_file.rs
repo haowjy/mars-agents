@@ -1,5 +1,5 @@
 //! Hook config files: a JSON file whose `hooks` object maps a native event to
-//! an array of entries (Claude `settings.local.json`, Codex and Cursor
+//! an array of entries (Claude `settings.local.json` and Codex
 //! `hooks.json`, the plugin tree's `hooks/hooks.json`).
 //!
 //! Loaded, edited and saved through [`JsonDoc`], so a rewrite keeps the file's
@@ -14,8 +14,8 @@ use indexmap::IndexMap;
 use mars_schema::ordered::OrderedValue;
 use serde_json::Value;
 
+use super::HookEntry;
 use super::config_doc::{JsonDoc, to_ordered};
-use super::{HOOK_KEY_PREFIX, HookEntry};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::{ConfigError, MarsError};
 use crate::lock::ConfigEntryRecord;
@@ -49,15 +49,10 @@ pub(crate) fn validate(path: &Path) -> Result<(), MarsError> {
     load(path).map(|_| ())
 }
 
-/// Append `hooks` to the file at `path`, creating it if needed, after setting
-/// the top-level `top_level` keys (Cursor's `version`).
-pub(crate) fn write(
-    path: &Path,
-    hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
-) -> Result<(), MarsError> {
+/// Append `hooks` to the file at `path`, creating it if needed.
+pub(crate) fn write(path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
-    append(&mut doc, path, hooks, top_level)?;
+    append(&mut doc, path, hooks)?;
     doc.save(path)
 }
 
@@ -69,26 +64,23 @@ pub(crate) fn replace(
     records: &BTreeMap<String, ConfigEntryRecord>,
     target: &str,
     hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let mut doc = load(path)?.unwrap_or_else(|| JsonDoc::new(SECTION));
     let stripped = strip(&mut doc, path, records, target, diag);
-    append(&mut doc, path, hooks, top_level)?;
-    save_or_delete(&doc, path, top_level, stripped)
+    append(&mut doc, path, hooks)?;
+    save_or_delete(&doc, path, &[], stripped)
 }
 
-/// Save `doc`, or delete the file when it holds nothing but what Mars sets (`top_level`). Only
-/// a file this change emptied is deleted: one Mars never touched may be the user's, empty on
-/// purpose.
+/// Save `doc`, or delete the file when it holds nothing but the `ignored` keys. Only a file
+/// this change emptied is deleted: one Mars never touched may be the user's, empty on purpose.
 fn save_or_delete(
     doc: &JsonDoc,
     path: &Path,
-    top_level: &[(&str, i64)],
+    ignored: &[&str],
     changed: bool,
 ) -> Result<(), MarsError> {
-    let keys: Vec<&str> = top_level.iter().map(|(key, _)| *key).collect();
-    if !doc.is_empty_but(&keys) {
+    if !doc.is_empty_but(ignored) {
         return doc.save(path);
     }
     if changed {
@@ -97,15 +89,7 @@ fn save_or_delete(
     Ok(())
 }
 
-fn append(
-    doc: &mut JsonDoc,
-    path: &Path,
-    hooks: &[HookEntry],
-    top_level: &[(&str, i64)],
-) -> Result<(), MarsError> {
-    for (key, value) in top_level {
-        doc.set_top_level(key, Value::from(*value));
-    }
+fn append(doc: &mut JsonDoc, path: &Path, hooks: &[HookEntry]) -> Result<(), MarsError> {
     let section = doc.section_mut();
     for hook in hooks.iter().filter(|hook| !hook.entries.is_empty()) {
         let slot = section
@@ -198,7 +182,7 @@ pub(crate) fn remove_recorded(
     path: &Path,
     records: &BTreeMap<String, ConfigEntryRecord>,
     target: &str,
-    top_level: &[(&str, i64)],
+    ignored: &[&str],
     diag: &mut DiagnosticCollector,
 ) -> Result<(), MarsError> {
     let Some(mut doc) = load(path)? else {
@@ -208,7 +192,7 @@ pub(crate) fn remove_recorded(
         return Ok(());
     }
     doc.drop_section_if_empty();
-    save_or_delete(&doc, path, top_level, true)
+    save_or_delete(&doc, path, ignored, true)
 }
 
 /// Remove the recorded entries from `doc` in memory; whether any went. An entry that has
@@ -225,10 +209,7 @@ fn strip(
     }
     let mut changed = false;
     for (key, record) in records {
-        let Some((event, name)) = key
-            .strip_prefix(HOOK_KEY_PREFIX)
-            .and_then(|rest| rest.split_once(':'))
-        else {
+        let Some((event, name)) = HookEntry::parse_key(key) else {
             continue;
         };
         let Ok(expected) = serde_json::from_str::<Vec<Value>>(&record.emitted_json) else {

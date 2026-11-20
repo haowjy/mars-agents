@@ -11,6 +11,9 @@ use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
+mod provided_split;
+mod targets;
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LockFile {
     pub version: u32,
@@ -23,6 +26,11 @@ pub struct LockFile {
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
+    /// `(target, record key)` of the config entries a host's provided content wrote. They are not
+    /// a field of the file: [`write`] saves exactly these records in `machine.lock`, and
+    /// [`load_with_diagnostics`] rebuilds the set from the keys it finds there.
+    #[serde(skip)]
+    pub provided_entries: std::collections::BTreeSet<(String, String)>,
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
@@ -43,6 +51,7 @@ impl LockFile {
             dependencies: wire.dependencies,
             items: wire.items,
             config_entries,
+            provided_entries: Default::default(),
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
@@ -54,6 +63,7 @@ impl LockFile {
             dependencies: IndexMap::new(),
             items: IndexMap::new(),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -384,6 +394,8 @@ mod lock_kind {
 }
 
 const LOCK_FILE: &str = "mars.lock";
+/// The records of provided content (`mars provide`): machine-local, beside `provided.lock`.
+const MACHINE_LOCK_FILE: &str = ".mars/machine.lock";
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
@@ -464,9 +476,22 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
     Ok(lock)
 }
 
+/// The lock of a project: `mars.lock` with the machine-local `machine.lock` merged in,
+/// so every reader sees one lock. A key held by both files takes the machine-local value, which
+/// [`write`] saves first and is therefore the newer after a crash between the two writes.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let path = root.join(LOCK_FILE);
-    let content = match std::fs::read_to_string(&path) {
+    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE))?;
+    let local_path = root.join(MACHINE_LOCK_FILE);
+    if !local_path.exists() {
+        return Ok((committed, diagnostics));
+    }
+    let (local, local_diagnostics) = read_lock_file(&local_path)?;
+    diagnostics.extend(local_diagnostics);
+    Ok((provided_split::merge(committed, local), diagnostics))
+}
+
+fn read_lock_file(path: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+    let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok((LockFile::empty(), Vec::new()));
@@ -639,25 +664,46 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
     true
 }
 
+/// Saves the machine-local records first, then `mars.lock`: a crash between the two leaves target
+/// outputs owned, where the reverse order would leave them unowned.
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
-    let path = root.join(LOCK_FILE);
+    let (committed, local) = provided_split::split(lock);
+    let local_path = root.join(MACHINE_LOCK_FILE);
+    if local.is_empty() {
+        crate::platform::fs::safe_remove(&local_path)?;
+    } else {
+        write_lock_file(&local_path, &local)?;
+    }
+    write_lock_file(&root.join(LOCK_FILE), &committed)
+}
+
+fn write_lock_file(path: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let mut normalized = lock.clone();
     normalized.version = LOCK_VERSION;
     normalized.dependencies.sort_keys();
     normalized.items.sort_keys();
     normalized.dependency_model_aliases.sort_keys();
+    for item in normalized.items.values_mut() {
+        item.outputs.sort_by(|a, b| {
+            a.target_root
+                .cmp(&b.target_root)
+                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
+        });
+    }
 
     let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
     })?;
-    crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
+    crate::fs::atomic_write_if_changed(path, content.as_bytes()).map(|_| ())
 }
 
-pub fn build(
+pub(crate) fn build(
     graph: &crate::resolve::ResolvedGraph,
     applied: &crate::sync::apply::ApplyResult,
     old_lock: &LockFile,
     config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    provided_entries: std::collections::BTreeSet<(String, String)>,
+    provided: &crate::provided::ProvidedNames,
 ) -> Result<LockFile, MarsError> {
     use crate::sync::apply::ActionTaken;
 
@@ -707,7 +753,15 @@ pub fn build(
     }
 
     for (name, node) in &graph.nodes {
-        dependencies.insert(name.clone(), to_locked_source(node));
+        let mut locked = to_locked_source(node);
+        if crate::provided::is_provided_source(name.as_ref()) {
+            // A staged path dependency has no version of its own; its hooks and MCP servers are
+            // what moves.
+            locked.version = provided
+                .staged_digest(crate::provided::provider_label(name.as_ref()))
+                .map(str::to_owned);
+        }
+        dependencies.insert(name.clone(), locked);
     }
 
     for outcome in &applied.outcomes {
@@ -837,6 +891,7 @@ pub fn build(
         dependencies,
         items,
         config_entries,
+        provided_entries,
         dependency_model_aliases: IndexMap::new(),
     })
 }
@@ -1124,6 +1179,63 @@ pub fn apply_compiled_native_outputs(
     Ok(())
 }
 
+/// Records the provided skills a target sync projected. They have no `.mars` output in the lock
+/// (`mars provide` owns that copy), so [`upsert_target_output`] has no owner to attach a target
+/// output to: the item is built here from what the last sync recorded plus the outputs this one
+/// wrote. Call it before [`apply_target_sync_outputs`], which drops the outputs a sync removed.
+pub(crate) fn record_provided_skills(
+    lock: &mut LockFile,
+    old_lock: &LockFile,
+    outcomes: &[crate::sync::apply::ActionOutcome],
+    target_outcomes: &[crate::target_sync::TargetSyncOutcome],
+) {
+    for outcome in outcomes {
+        let key = item_key(&outcome.item_id);
+        let mut outputs = old_lock
+            .items
+            .get(&key)
+            .map(|item| item.outputs.clone())
+            .unwrap_or_default();
+        for target in target_outcomes {
+            let Some(dest_rel) = crate::target_sync::target_dest_rel(outcome, &target.target)
+            else {
+                continue;
+            };
+            for synced in target
+                .synced_outputs
+                .iter()
+                .filter(|synced| synced.dest_path == dest_rel)
+            {
+                let record = OutputRecord::installed(
+                    target.target.clone(),
+                    DestPath::from(dest_rel.as_str()),
+                    synced.installed_checksum.clone(),
+                );
+                match outputs.iter_mut().find(|output| {
+                    output.target_root == target.target && output.dest_path == record.dest_path
+                }) {
+                    Some(existing) => *existing = record,
+                    None => outputs.push(record),
+                }
+            }
+        }
+        lock.items.insert(
+            key,
+            LockedItemV2 {
+                source: outcome.source_name.clone(),
+                kind: outcome.item_id.kind,
+                version: None,
+                source_checksum: outcome
+                    .source_checksum
+                    .clone()
+                    .expect("a provided skill outcome carries its checksum"),
+                source_path: None,
+                outputs,
+            },
+        );
+    }
+}
+
 /// Preserve unresolved noncanonical removal authority as a retry tombstone.
 ///
 /// A rebuilt lock omits canonical items removed from the source graph. Their
@@ -1227,11 +1339,6 @@ fn upsert_target_output(
             dest,
             installed_checksum.clone(),
         ));
-        item.outputs.sort_by(|a, b| {
-            a.target_root
-                .cmp(&b.target_root)
-                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
-        });
         return;
     }
 }
@@ -1269,11 +1376,6 @@ fn upsert_native_output_on_owner(
             native_dest,
             installed_checksum.clone(),
         ));
-        item.outputs.sort_by(|a, b| {
-            a.target_root
-                .cmp(&b.target_root)
-                .then_with(|| a.dest_path.as_str().cmp(b.dest_path.as_str()))
-        });
         return true;
     }
     false
@@ -1284,12 +1386,15 @@ fn remove_target_output(
     target_root: &str,
     dest_path: &str,
 ) {
-    for item in items.values_mut() {
+    items.retain(|_, item| {
+        let before = item.outputs.len();
         item.outputs.retain(|output| {
             !(output.target_root == target_root
                 && crate::target::dest_paths_equivalent(output.dest_path.as_str(), dest_path))
         });
-    }
+        // An item whose last output this removed is gone; a no-output hook record never had one.
+        before == item.outputs.len() || !item.outputs.is_empty()
+    });
 }
 
 fn checksum_is_empty(checksum: &ContentHash) -> bool {
@@ -1321,9 +1426,8 @@ impl LockFile {
     /// it has nothing to write there, and its record (`unplaced`, by item key) is what makes a
     /// change to the hook, or a new target, news.
     ///
-    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and every
-    /// item keeps its `.mars` output, so none is left empty; and only a sync can say which
-    /// hook records stay.
+    /// `link` and `unlink` do not call this. They add or remove one target's outputs, and an item
+    /// they empty is dropped as its last output goes; only a sync can say which hook records stay.
     pub(crate) fn finish(&mut self, unplaced: IndexMap<String, LockedItemV2>) {
         self.items.retain(|_, item| !item.outputs.is_empty());
         self.items.extend(unplaced);
@@ -1349,6 +1453,10 @@ pub(crate) enum RecordRef {
     },
     /// One native config entry of a target, by lock record key.
     Entry { target_root: String, key: String },
+    /// A dependency's own record, by name.
+    Dependency(String),
+    /// News when any of them is.
+    Any(Vec<RecordRef>),
 }
 
 impl RecordRef {
@@ -1393,6 +1501,11 @@ impl RecordRef {
                 let now = record(new, target_root, key);
                 now.is_some() && now != record(old, target_root, key)
             }
+            Self::Dependency(name) => new
+                .dependencies
+                .get(name.as_str())
+                .is_some_and(|now| old.dependencies.get(name.as_str()) != Some(now)),
+            Self::Any(records) => records.iter().any(|record| record.is_news(old, new)),
         }
     }
 }
@@ -1465,8 +1578,44 @@ mod tests {
             dependencies,
             items,
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         }
+    }
+
+    #[test]
+    fn a_crash_between_the_two_lock_writes_leaves_provided_records_loadable() {
+        let dir = TempDir::new().unwrap();
+        let mut lock = sample_lock();
+        lock.items.insert(
+            "skill/probe__meridian".to_string(),
+            LockedItemV2 {
+                source: "_provided-meridian".into(),
+                kind: ItemKind::Skill,
+                version: None,
+                source_checksum: "sha256:eee".into(),
+                source_path: None,
+                outputs: vec![OutputRecord::installed(
+                    ".agy".to_string(),
+                    "skills/probe__meridian".into(),
+                    "sha256:eee".into(),
+                )],
+            },
+        );
+        // `mars.lock` cannot be written: the machine-local file, saved first, already is.
+        std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
+        write(dir.path(), &lock).unwrap_err();
+        std::fs::remove_dir(dir.path().join(LOCK_FILE)).unwrap();
+
+        let recovered = load(dir.path()).unwrap();
+        assert!(recovered.items.contains_key("skill/probe__meridian"));
+        assert!(!recovered.items.contains_key("agent/coder"));
+
+        // The next write puts each record in its own file.
+        write(dir.path(), &lock).unwrap();
+        let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
+        assert!(committed.contains("agent/coder") && !committed.contains("probe__meridian"));
+        assert_eq!(load(dir.path()).unwrap().items, lock.items);
     }
 
     #[cfg(unix)]
@@ -1579,7 +1728,7 @@ installed_checksum = "sha256:bbb"
         assert_eq!(pi.installed_checksum, "sha256:pi");
         assert!(index.contains_output(".mars", &dest));
         assert!(index.contains_output(".pi", &dest));
-        assert!(!index.contains_output(".cursor", &dest));
+        assert!(!index.contains_output(".opencode", &dest));
     }
 
     #[test]
@@ -1590,18 +1739,18 @@ installed_checksum = "sha256:bbb"
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
 
         let mars_paths = lock.output_dest_paths_for_target(".mars");
         assert!(mars_paths.contains("agents/coder.md"));
         assert!(mars_paths.contains("skills/review"));
 
-        let cursor_paths = lock.output_dest_paths_for_target(".cursor");
-        assert_eq!(cursor_paths.len(), 1);
-        assert!(cursor_paths.contains("agents/coder.md"));
+        let opencode_paths = lock.output_dest_paths_for_target(".opencode");
+        assert_eq!(opencode_paths.len(), 1);
+        assert!(opencode_paths.contains("agents/coder.md"));
         assert!(lock.output_dest_paths_for_target(".claude").is_empty());
     }
 
@@ -1609,19 +1758,19 @@ installed_checksum = "sha256:bbb"
     fn contains_output_matches_target_root_and_dest_path() {
         let mut lock = sample_lock();
         assert!(lock.contains_output(".mars", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
 
         lock.items
             .get_mut("agent/coder")
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
-        assert!(lock.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/missing.md"));
+        assert!(lock.contains_output(".opencode", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/missing.md"));
     }
 
     #[test]
@@ -1712,6 +1861,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -1795,6 +1946,7 @@ installed_checksum = "sha256:bbb"
                 ),
             ]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -1836,6 +1988,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -1876,6 +2030,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -1904,6 +2059,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -1951,6 +2108,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let mut lock = old_lock.clone();
@@ -2051,19 +2209,19 @@ installed_checksum = "sha256:bbb"
             &old_lock,
             &apply_outcomes,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
         assert!(view.contains_output(".mars", "agents/coder.md"));
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
+        assert!(view.contains_output(".opencode", "agents/coder.md"));
         assert!(!old_lock.contains_output(".mars", "agents/coder.md"));
     }
 
@@ -2073,19 +2231,19 @@ installed_checksum = "sha256:bbb"
         let view = ownership_lock_after_target_sync(
             &lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
-        assert!(view.contains_output(".cursor", "agents/coder.md"));
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(view.contains_output(".opencode", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
     }
 
     #[test]
@@ -2094,23 +2252,23 @@ installed_checksum = "sha256:bbb"
         apply_target_sync_outputs(
             &mut lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 1,
                 items_removed: 0,
                 errors: Vec::new(),
                 synced_outputs: vec![crate::target_sync::TargetSyncedOutput {
                     dest_path: "agents/coder.md".to_string(),
-                    installed_checksum: "sha256:cursor".into(),
+                    installed_checksum: "sha256:opencode".into(),
                 }],
                 removed_dest_paths: Vec::new(),
             }],
         );
-        assert!(lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(lock.contains_output(".opencode", "agents/coder.md"));
 
         apply_target_sync_outputs(
             &mut lock,
             &[crate::target_sync::TargetSyncOutcome {
-                target: ".cursor".to_string(),
+                target: ".opencode".to_string(),
                 items_synced: 0,
                 items_removed: 1,
                 errors: Vec::new(),
@@ -2118,7 +2276,7 @@ installed_checksum = "sha256:bbb"
                 removed_dest_paths: vec!["agents/coder.md".to_string()],
             }],
         );
-        assert!(!lock.contains_output(".cursor", "agents/coder.md"));
+        assert!(!lock.contains_output(".opencode", "agents/coder.md"));
         assert!(lock.contains_output(".mars", "agents/coder.md"));
     }
 
@@ -2130,9 +2288,9 @@ installed_checksum = "sha256:bbb"
             .unwrap()
             .outputs
             .push(OutputRecord::installed(
-                ".cursor".to_string(),
+                ".opencode".to_string(),
                 "agents/coder.md".into(),
-                "sha256:cursor".into(),
+                "sha256:opencode".into(),
             ));
 
         let canonical = lock.canonical_flat_items();
@@ -2148,9 +2306,9 @@ installed_checksum = "sha256:bbb"
                 .all(|(_, item)| { lock.contains_output(".mars", item.dest_path.as_str()) })
         );
 
-        let cursor = lock.flat_items_for_target(".cursor");
-        assert_eq!(cursor.len(), 1);
-        assert_eq!(cursor[0].0.as_str(), "agents/coder.md");
+        let opencode = lock.flat_items_for_target(".opencode");
+        assert_eq!(opencode.len(), 1);
+        assert_eq!(opencode[0].0.as_str(), "agents/coder.md");
     }
 
     #[test]
@@ -2242,6 +2400,7 @@ installed_checksum = "sha256:bbb"
             dependencies: old_sources,
             items: IndexMap::new(),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
 
@@ -2250,6 +2409,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2320,6 +2481,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &LockFile::empty(),
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2368,6 +2531,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
@@ -2389,6 +2553,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2438,6 +2604,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap_err();
         let msg = err.to_string();
@@ -2473,6 +2641,7 @@ installed_checksum = "sha256:bbb"
                 },
             )]),
             config_entries: std::collections::BTreeMap::new(),
+            provided_entries: Default::default(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
@@ -2494,6 +2663,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap_err();
         let msg = err.to_string();

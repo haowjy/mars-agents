@@ -11,14 +11,14 @@ FAIL=0
 pass() { echo "PASS: $1"; PASS=$((PASS+1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 
-# --- SMOKE 1: .cursor + never preserves hand-written agents ---
+# --- SMOKE 1: .opencode + never preserves hand-written agents ---
 mkdir -p "$SCRATCH/src/agents"
 echo '# Design lead from Mars' > "$SCRATCH/src/agents/design-lead.md"
 PROJ1="$SCRATCH/smoke1"
 mkdir -p "$PROJ1"
 cat > "$PROJ1/mars.toml" << EOF
 [settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "never"
 
 [dependencies.src]
@@ -27,16 +27,16 @@ EOF
 cd "$PROJ1"
 "$MARS" sync --root . >/dev/null 2>&1
 test -d .mars && pass "SMOKE1: initial sync creates .mars" || fail "SMOKE1: no .mars"
-mkdir -p .cursor/agents
-echo '# custom' > .cursor/agents/cursor-only-test.md
-echo '# hand-written' > .cursor/agents/design-lead.md
+mkdir -p .opencode/agents
+echo '# custom' > .opencode/agents/opencode-only-test.md
+echo '# hand-written' > .opencode/agents/design-lead.md
 "$MARS" sync --root . >/dev/null 2>&1
-if [ "$(cat .cursor/agents/design-lead.md)" = "# hand-written" ]; then
+if [ "$(cat .opencode/agents/design-lead.md)" = "# hand-written" ]; then
   pass "SMOKE1: design-lead preserved after second sync"
 else
-  fail "SMOKE1: design-lead changed: $(cat .cursor/agents/design-lead.md)"
+  fail "SMOKE1: design-lead changed: $(cat .opencode/agents/design-lead.md)"
 fi
-test -f .cursor/agents/cursor-only-test.md && pass "SMOKE1: cursor-only-test preserved" || fail "SMOKE1: cursor-only-test missing"
+test -f .opencode/agents/opencode-only-test.md && pass "SMOKE1: opencode-only-test preserved" || fail "SMOKE1: opencode-only-test missing"
 
 # --- SMOKE 2: link .agents collision (integration-style: no never) ---
 mkdir -p "$SCRATCH/src2/agents"

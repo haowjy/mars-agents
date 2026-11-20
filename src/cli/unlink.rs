@@ -28,12 +28,6 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    let (settings, local_settings) = (&mut config.settings, &mut local.settings);
-    crate::config::targets::retire_managed_root(&mut settings.managed_root, &mut settings.targets);
-    crate::config::targets::retire_managed_root(
-        &mut local_settings.managed_root,
-        &mut local_settings.targets,
-    );
     if unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
         target_was_managed = true;
@@ -51,7 +45,7 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
 
     let target_dir = ctx.project_root.join(&target_name);
     let (removed_outputs, diagnostics) = if target_was_managed {
-        remove_owned_target_content(ctx, &target_name, &target_dir, &mut lock)?
+        remove_owned_target_content(ctx, &target_name, &mut lock)?
     } else {
         (0, Vec::new())
     };
@@ -109,34 +103,38 @@ fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
 fn remove_owned_target_content(
     ctx: &super::MarsContext,
     target_name: &str,
-    target_dir: &std::path::Path,
     lock: &mut crate::lock::LockFile,
 ) -> Result<(usize, Vec<crate::diagnostic::Diagnostic>), MarsError> {
-    let mut owned_paths: Vec<_> = lock
-        .output_dest_paths_for_target(target_name)
-        .into_iter()
+    let (kept, served) = std::mem::replace(lock, crate::lock::LockFile::empty())
+        .split_targets(|target| target != target_name);
+    *lock = kept;
+    let mut owned_paths: Vec<(String, String)> = served
+        .items
+        .values()
+        .flat_map(|item| item.outputs.iter())
+        .map(|output| (output.target_root.clone(), output.dest_path.to_string()))
         .collect();
-    owned_paths.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
+    owned_paths.sort_by_key(|(_, path)| std::cmp::Reverse(path.matches('/').count()));
 
-    let mut removed = Vec::new();
-    for dest_path in owned_paths {
-        let path = target_dir.join(&dest_path);
+    let mut removed = 0;
+    for (root, dest_path) in owned_paths {
+        let root_dir = ctx.project_root.join(&root);
+        let path = root_dir.join(&dest_path);
         match remove_owned_path(&path) {
             Ok(()) => {
-                removed.push((target_name.to_string(), dest_path));
+                removed += 1;
                 if let Some(parent) = path.parent() {
-                    remove_empty_ancestors(parent, target_dir)?;
+                    remove_empty_ancestors(parent, &root_dir)?;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                removed.push((target_name.to_string(), dest_path));
+                removed += 1;
             }
             Err(error) => return Err(error.into()),
         }
     }
-    crate::lock::apply_removed_native_outputs(lock, &removed);
 
-    let previous = lock
+    let previous = served
         .config_entries
         .get(target_name)
         .cloned()
@@ -165,7 +163,6 @@ fn remove_owned_target_content(
         &reconciled.removed,
         &mut diagnostics,
     );
-    lock.config_entries.remove(target_name);
     lock.config_entries
         .extend(retention.into_retained_records());
     for (target, records) in reconciled.records {
@@ -174,8 +171,19 @@ fn remove_owned_target_content(
             .or_default()
             .extend(records);
     }
+    // A record put back stays in the file it came from.
+    let restored: Vec<_> = served
+        .provided_entries
+        .into_iter()
+        .filter(|(target, key)| {
+            lock.config_entries
+                .get(target)
+                .is_some_and(|records| records.contains_key(key))
+        })
+        .collect();
+    lock.provided_entries.extend(restored);
 
-    Ok((removed.len(), diagnostics.drain()))
+    Ok((removed, diagnostics.drain()))
 }
 
 fn remove_owned_path(path: &std::path::Path) -> std::io::Result<()> {

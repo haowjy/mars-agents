@@ -193,7 +193,7 @@ fn declared_uninstalled_and_malformed_curated_are_visible() {
     );
     fs::write(
         root.join("mars.curated.toml"),
-        "[[show]]\nharness=\"cursor\"\nmodel=\"composer-2.5\"\n",
+        "[[show]]\nharness=\"agy\"\nmodel=\"gemini-3.8-flash-low\"\n",
     )
     .unwrap();
     let value = run(
@@ -205,7 +205,7 @@ fn declared_uninstalled_and_malformed_curated_are_visible() {
     );
     let row = &value["models"][0];
     assert_eq!(row["origin"], "declared");
-    assert_eq!(row["harness_model_id"], "composer-2.5");
+    assert_eq!(row["harness_model_id"], "gemini-3.8-flash-low");
     assert!(row["provenance"].is_null());
     assert_eq!(row["eligibility"], "blocked");
     assert_eq!(row["reason"], "not_installed");
@@ -398,7 +398,7 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
     let bin = install_logging_harnesses(temp.path());
     fs::write(
         root.join("mars.toml"),
-        "[settings]\ntargets=[\".pi\",\".cursor\",\".opencode\"]\n",
+        "[settings]\ntargets=[\".pi\",\".agy\",\".opencode\"]\n",
     )
     .unwrap();
     fs::write(
@@ -421,9 +421,9 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
         "model_probe_success":true,"help_surface_tokens_present":[],"help_surface_tokens_missing":[],
         "model_slugs":["openai/gpt-5","openai-codex/gpt-5"],"error":null}
     })).unwrap()).unwrap();
-    fs::write(dir.join("cursor-probe.json"), serde_json::to_vec(&json!({
+    fs::write(dir.join("agy-probe.json"), serde_json::to_vec(&json!({
         "schema_version":1,"fetched_at":old,"last_attempt_at":now,
-        "last_error":"cursor auth expired","result":{"slugs":["composer-2.5"],"model_probe_success":true,"error":null}
+        "last_error":"agy auth expired","result":{"slugs":["gemini-3.8-flash-low"],"model_probe_success":true,"error":null}
     })).unwrap()).unwrap();
     fs::write(dir.join("opencode-probe.json"), serde_json::to_vec(&json!({
         "schema_version":1,"fetched_at":old,"last_attempt_at":now,
@@ -443,7 +443,7 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
     assert_eq!(diagnostics.len(), 3, "{hidden}");
     for (harness, error) in [
         ("pi", "pi refresh timed out"),
-        ("cursor", "cursor auth expired"),
+        ("agy", "agy auth expired"),
         ("opencode", "opencode refresh timed out"),
     ] {
         let expected =
@@ -477,8 +477,10 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
     for row in all["models"].as_array().unwrap() {
         assert_eq!(row["provenance"]["latest_attempt_ok"], false, "{all}");
         assert!(row["provenance"]["last_error"].is_string(), "{all}");
-        if row["harness"] == "pi" || row["harness"] == "cursor" {
-            assert_eq!(row["reason"], "auth_listing_failed", "{all}");
+        match row["harness"].as_str() {
+            Some("pi") => assert_eq!(row["reason"], "auth_listing_failed", "{all}"),
+            Some("agy") => assert_eq!(row["reason"], "not_launched_by_meridian", "{all}"),
+            _ => {}
         }
     }
     let output = mars_cmd(&root, temp.path(), &server.url(API_PATH))
@@ -488,7 +490,7 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
         .unwrap();
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    for harness in ["pi", "cursor", "opencode"] {
+    for harness in ["pi", "agy", "opencode"] {
         assert_eq!(
             stderr
                 .lines()

@@ -1,4 +1,4 @@
-//! The on-disk cache of one harness's model listing, shared by pi, opencode and cursor.
+//! The on-disk cache of one harness's model listing, shared by pi, opencode and agy.
 //!
 //! One JSON file per harness under `availability/`, beside its own lock. A failed attempt never
 //! replaces a usable last-good listing: it keeps `fetched_at` and `result` and only moves
@@ -38,7 +38,7 @@ pub trait CachedProbe: Clone + Serialize + DeserializeOwned {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry<R> {
     schema_version: u32,
-    /// Written for every harness; absent in the files older builds wrote for opencode and cursor.
+    /// Written for every harness; absent in the files older builds wrote for opencode.
     /// Keep writing it: older builds read a `pi.json` without `harness: "pi"` as a miss.
     #[serde(default)]
     harness: String,

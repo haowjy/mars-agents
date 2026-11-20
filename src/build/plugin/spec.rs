@@ -1,7 +1,6 @@
 //! Declarative plugin harness and generated-tree specifications.
 //!
-//! One row per consumer harness (tree, naming, display, README note, verification
-//! evidence) and one row per generated tree (`TREE_PROFILES`, defined beside the
+//! One row per consumer harness (tree, naming, display, README note) and one row per generated tree (`TREE_PROFILES`, defined beside the
 //! writer that emits it). Harness rows point at their tree row directly, so a
 //! harness and its tree cannot disagree and no lookup falls back to a search.
 //! Adding a harness is one row here; adding a tree is one profile in `tree/` plus
@@ -11,7 +10,7 @@
 use std::path::Path;
 
 use super::metadata::PackageMetadata;
-use super::tree::{claude, cursor, opencode};
+use super::tree::{claude, opencode};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::sync::target::TargetItem;
@@ -112,25 +111,6 @@ impl RootFile {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum VerificationLevel {
-    Live,
-    DocsOnly,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Verification {
-    pub level: VerificationLevel,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct VerificationRow {
-    pub skills: Verification,
-    pub agents: Option<Verification>,
-    pub hooks: Verification,
-    pub mcp: Verification,
-}
-
 /// How a tree writes its package-root manifest.
 #[derive(Clone, Copy)]
 pub(super) enum Finish {
@@ -188,13 +168,8 @@ pub(crate) struct PluginHarnessSpec {
     pub(crate) key: &'static str,
     pub(super) name_rule: NameRule,
     pub(super) display_name: &'static str,
-    /// Agent evidence is also the `loads agents` fact: a harness without the
-    /// surface has no evidence, and `support_state` reports it impossible.
-    pub(super) verification: VerificationRow,
-}
-
-const fn verification(level: VerificationLevel) -> Verification {
-    Verification { level }
+    /// Whether the harness loads agents from a plugin; sync reports them impossible when not.
+    pub(super) loads_agents: bool,
 }
 
 const CLAUDE_NAME: NameRule = NameRule {
@@ -209,18 +184,13 @@ const CODEX_NAME: NameRule = NameRule {
     validate: valid_codex_plugin_name,
     message: "Codex names must be 1-64 lowercase letters, digits, dots, or hyphens, start and end with a letter or digit, and contain neither `--` nor `..`",
 };
-const CURSOR_NAME: NameRule = NameRule {
-    validate: valid_cursor_plugin_name,
-    message: "Cursor names must contain only lowercase letters, digits, dots, or hyphens and start and end with a letter or digit",
-};
 const OPENCODE_NAME: NameRule = NameRule {
     validate: valid_npm_package_name,
     message: "OpenCode names must be valid lowercase npm package names",
 };
 
 /// Every generated tree. Adding a tree starts here and in its `tree/` module.
-pub(super) static TREE_PROFILES: &[&TreeProfile] =
-    &[&claude::PROFILE, &cursor::PROFILE, &opencode::PROFILE];
+pub(super) static TREE_PROFILES: &[&TreeProfile] = &[&claude::PROFILE, &opencode::PROFILE];
 
 pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
     PluginHarnessSpec {
@@ -228,60 +198,28 @@ pub(super) static PLUGIN_HARNESS_SPECS: &[PluginHarnessSpec] = &[
         tree: &claude::PROFILE,
         name_rule: CLAUDE_NAME,
         display_name: "Claude",
-        verification: VerificationRow {
-            skills: verification(VerificationLevel::Live),
-            agents: Some(verification(VerificationLevel::Live)),
-            hooks: verification(VerificationLevel::Live),
-            mcp: verification(VerificationLevel::Live),
-        },
+        loads_agents: true,
     },
     PluginHarnessSpec {
         key: "codex",
         tree: &claude::PROFILE,
         name_rule: CODEX_NAME,
         display_name: "Codex",
-        verification: VerificationRow {
-            skills: verification(VerificationLevel::Live),
-            agents: None,
-            hooks: verification(VerificationLevel::Live),
-            mcp: verification(VerificationLevel::Live),
-        },
+        loads_agents: false,
     },
     PluginHarnessSpec {
         key: "grok",
         tree: &claude::PROFILE,
         name_rule: GROK_NAME,
         display_name: "Grok",
-        verification: VerificationRow {
-            skills: verification(VerificationLevel::Live),
-            agents: Some(verification(VerificationLevel::Live)),
-            hooks: verification(VerificationLevel::Live),
-            mcp: verification(VerificationLevel::Live),
-        },
-    },
-    PluginHarnessSpec {
-        key: "cursor",
-        tree: &cursor::PROFILE,
-        name_rule: CURSOR_NAME,
-        display_name: "Cursor",
-        verification: VerificationRow {
-            skills: verification(VerificationLevel::DocsOnly),
-            agents: Some(verification(VerificationLevel::DocsOnly)),
-            hooks: verification(VerificationLevel::DocsOnly),
-            mcp: verification(VerificationLevel::DocsOnly),
-        },
+        loads_agents: true,
     },
     PluginHarnessSpec {
         key: "opencode",
         tree: &opencode::PROFILE,
         name_rule: OPENCODE_NAME,
         display_name: "OpenCode",
-        verification: VerificationRow {
-            skills: verification(VerificationLevel::Live),
-            agents: Some(verification(VerificationLevel::Live)),
-            hooks: verification(VerificationLevel::Live),
-            mcp: verification(VerificationLevel::Live),
-        },
+        loads_agents: true,
     },
 ];
 
@@ -334,7 +272,7 @@ pub(super) fn valid_claude_plugin_name(name: &str) -> bool {
         })
 }
 
-pub(super) fn valid_cursor_plugin_name(name: &str) -> bool {
+pub(super) fn valid_lowercase_plugin_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()
         && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
@@ -348,7 +286,7 @@ pub(super) fn valid_codex_plugin_name(name: &str) -> bool {
     name.len() <= 64
         && !name.contains("--")
         && !name.contains("..")
-        && valid_cursor_plugin_name(name)
+        && valid_lowercase_plugin_name(name)
 }
 
 pub(super) fn valid_npm_package_name(name: &str) -> bool {

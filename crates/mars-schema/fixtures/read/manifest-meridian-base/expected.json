@@ -45,7 +45,18 @@
     }
   },
   "body": null,
-  "diagnostics": [],
+  "diagnostics": [
+    {
+      "code": "field.retired",
+      "severity": "warning",
+      "path": [
+        "models",
+        "composer",
+        "harness"
+      ],
+      "message": "`models.composer.harness` names `cursor`, a harness Mars no longer supports, so naming it has no effect; remove it: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#cursor"
+    }
+  ],
   "local-dependencies": {
     "meridian-prompter": {
       "url": "https://github.com/meridian-flow/meridian-prompter"
@@ -56,7 +67,6 @@
   },
   "models": {
     "composer": {
-      "harness": "cursor",
       "description": "Cheap coder for bounded edits, tests and implementing a settled plan.",
       "model": "composer-2.5",
       "provider": "cursor"

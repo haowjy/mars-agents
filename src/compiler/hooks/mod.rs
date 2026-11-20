@@ -76,7 +76,8 @@ pub struct InvalidHook {
     /// The names the last sync may have installed it under: the `name` the file still
     /// declares, then its directory's. A hook is found by the first one the lock holds.
     pub installed_names: Vec<String>,
-    pub exported: bool,
+    /// `None` when the file does not say, which a file that cannot be read often does not.
+    pub exported: Option<bool>,
     pub order: i32,
     pub error: MarsError,
     pub removed_schema: bool,
@@ -98,7 +99,7 @@ impl InvalidHook {
             slug: crate::discover::hook_slug(text, dir_name),
             hook_dir: hook_dir.to_path_buf(),
             installed_names,
-            exported: declared(text, "visibility").is_some_and(|v| v.as_str() == Some("exported")),
+            exported: declared(text, "visibility").map(|v| v.as_str() == Some("exported")),
             order: declared(text, "order")
                 .and_then(|order| order.as_integer())
                 .and_then(|order| i32::try_from(order).ok())
@@ -113,7 +114,7 @@ impl InvalidHook {
             slug: item.def.name.clone(),
             hook_dir: item.hook_dir.clone(),
             installed_names: vec![item.def.name.clone()],
-            exported: item.def.visibility == mars_schema::visibility::Visibility::Exported,
+            exported: Some(item.def.visibility == mars_schema::visibility::Visibility::Exported),
             order: item.def.order,
             error,
             removed_schema: false,
@@ -189,7 +190,7 @@ pub(crate) fn discover_resolved_hook_items(
                 error,
                 removed_schema: true,
                 ..
-            }) => return Err(error),
+            }) if !crate::provided::is_provided_source(source_name.as_str()) => return Err(error),
             // The one place a dependency's hook is judged invalid: it must also render on
             // every managed target it is installed for.
             Ok(item) => match render_check(&item, managed_targets) {
@@ -303,6 +304,12 @@ fn diagnostic_code(code: &str) -> String {
 fn located(toml_path: &Path, hook_name: &str, source_name: &str, source: HookSource<'_>) -> String {
     match source {
         HookSource::Project => toml_path.display().to_string(),
+        HookSource::Dependency { .. } if crate::provided::is_provided_source(source_name) => {
+            format!(
+                "hook `{hook_name}` from {}",
+                crate::provided::provider_label(source_name)
+            )
+        }
         HookSource::Dependency { version } => {
             format!("source package `{source_name}` version `{version}`, hook `{hook_name}`")
         }
@@ -326,14 +333,24 @@ fn invalid_manifest(
 ) -> MarsError {
     let message = match source {
         HookSource::Project => format!("{}: {message}", toml_path.display()),
+        HookSource::Dependency { .. }
+            if code == hooks::REMOVED_SCHEMA_CODE
+                && crate::provided::is_provided_source(source_name) =>
+        {
+            format!(
+                "{} uses a retired hook schema",
+                located(toml_path, hook_name, source_name, source)
+            )
+        }
         HookSource::Dependency { version } if code == hooks::REMOVED_SCHEMA_CODE => format!(
             "source package `{source_name}` version `{version}` {message}; \
              suggested: `{cmd_upgrade}` or `{cmd_remove}`",
             cmd_upgrade = managed_cmd(&format!("mars upgrade {source_name} --bump")),
             cmd_remove = managed_cmd(&format!("mars remove {source_name}")),
         ),
-        HookSource::Dependency { version } => format!(
-            "source package `{source_name}` version `{version}`, hook `{hook_name}`: {message}"
+        HookSource::Dependency { .. } => format!(
+            "{}: {message}",
+            located(toml_path, hook_name, source_name, source)
         ),
     };
     ConfigError::Invalid { message }.into()
@@ -469,9 +486,7 @@ pub(crate) fn check_hooks(
                 ),
             );
         }
-        // Cursor renders nothing before 0.26, so its one blanket skip is no reason an author
-        // can act on.
-        for target in mars_schema::hooks::targets::all().filter(|target| target.profile.renders()) {
+        for target in mars_schema::hooks::targets::all() {
             for skip in item.def.skips_for(target.root) {
                 diag.warn(
                     "hook-skipped",

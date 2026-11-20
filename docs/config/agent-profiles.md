@@ -134,7 +134,7 @@ model: gpt55                # an alias
 |---|---|
 | Type | string |
 | Required | no |
-| Allowed values | `claude`, `codex`, `opencode`, `cursor`, `pi`, `agy` (case-insensitive) |
+| Allowed values | `claude`, `codex`, `opencode`, `pi`, `agy` (case-insensitive) |
 | Default | none (universal agent) |
 
 Routing and model-selection hint. Native emission is controlled separately by
@@ -340,7 +340,7 @@ skills:
   available: [diagnose]
 ```
 
-Harness-native agent compilation preserves this split. Claude and Cursor put only `load` in
+Harness-native agent compilation preserves this split. Claude puts only `load` in
 their native `skills:` preload field; available-only entries become an end-of-body `/name`
 instruction.
 Codex, OpenCode, and Pi have no per-agent preload field, so both channels become body guidance

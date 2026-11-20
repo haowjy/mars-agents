@@ -1,8 +1,5 @@
-use crate::models::probes::{
-    AgyProbeResult, CursorProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver, cursor,
-};
+use crate::models::probes::{AgyProbeResult, OpenCodeProbeResult, PiProbeResult, ProbeDriver};
 use mars_schema::HarnessId;
-use mars_schema::agent::EffortLevel;
 
 /// How a harness proves runtime support and authentication.
 #[derive(Debug, Clone, Copy)]
@@ -25,19 +22,6 @@ pub struct ProbeSpec {
     pub probe: ProbeDriver,
     pub listing: ListingAuth,
     pub slugs: SlugShape,
-    /// Set when the harness folds an effort level into its slugs.
-    pub tiers: Option<SlugTiers>,
-}
-
-/// How a harness folds an effort level into a model's slugs (`<model>-<level>`); the module
-/// `models/slug_tiers.rs` splits and joins them.
-#[derive(Debug, Clone, Copy)]
-pub struct SlugTiers {
-    /// The level a slug with no suffix stands for, if it stands for one.
-    pub bare_level: Option<EffortLevel>,
-    /// The harness's own spelling of a model models.dev spells differently, tried when the
-    /// models.dev spelling lists no slug.
-    pub respell: fn(&str) -> Option<String>,
 }
 
 /// How a probe-backed harness spells the models it lists.
@@ -45,7 +29,8 @@ pub struct SlugTiers {
 pub enum SlugShape {
     /// `provider/model`: the listing names the providers it serves.
     Qualified,
-    /// The harness's own flat names (Cursor's `gpt-5.5-high`), with no provider.
+    /// The harness's own flat names, with no provider. Antigravity lists one slug per effort level
+    /// of a model, spelled `<model>-<level>` (`gemini-3.8-flash-low`); Mars launches none of them.
     Bare,
 }
 
@@ -53,7 +38,7 @@ pub enum SlugShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingAuth {
     /// The listing requires configured credentials (Pi lists only providers with auth
-    /// configured; Cursor refuses to list when logged out). A successful listing is auth
+    /// configured). A successful listing is auth
     /// evidence: credentials are configured, not proven valid.
     Gated,
     /// The listing enumerates the provider catalog without checking credentials
@@ -80,7 +65,6 @@ pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,
     HarnessId::Pi,
-    HarnessId::Cursor,
     HarnessId::OpenCode,
 ];
 
@@ -112,7 +96,6 @@ const PI: HarnessDescriptor = HarnessDescriptor {
         probe: ProbeDriver::of::<PiProbeResult>(),
         listing: ListingAuth::Gated,
         slugs: SlugShape::Qualified,
-        tiers: None,
     }),
     launched_by_meridian: true,
 };
@@ -122,20 +105,6 @@ const OPENCODE: HarnessDescriptor = HarnessDescriptor {
         probe: ProbeDriver::of::<OpenCodeProbeResult>(),
         listing: ListingAuth::Ungated,
         slugs: SlugShape::Qualified,
-        tiers: None,
-    }),
-    launched_by_meridian: true,
-};
-
-const CURSOR: HarnessDescriptor = HarnessDescriptor {
-    class: HarnessClass::ProbeBacked(ProbeSpec {
-        probe: ProbeDriver::of::<CursorProbeResult>(),
-        listing: ListingAuth::Gated,
-        slugs: SlugShape::Bare,
-        tiers: Some(SlugTiers {
-            bare_level: Some(EffortLevel::Medium),
-            respell: cursor::model_id_shim,
-        }),
     }),
     launched_by_meridian: true,
 };
@@ -145,10 +114,6 @@ const AGY: HarnessDescriptor = HarnessDescriptor {
         probe: ProbeDriver::of::<AgyProbeResult>(),
         listing: ListingAuth::Gated,
         slugs: SlugShape::Bare,
-        tiers: Some(SlugTiers {
-            bare_level: None,
-            respell: |_| None,
-        }),
     }),
     launched_by_meridian: false,
 };
@@ -163,7 +128,6 @@ pub fn descriptor(id: HarnessId) -> &'static HarnessDescriptor {
         HarnessId::Codex => &CODEX,
         HarnessId::Pi => &PI,
         HarnessId::OpenCode => &OPENCODE,
-        HarnessId::Cursor => &CURSOR,
         HarnessId::Agy => &AGY,
     }
 }
@@ -182,11 +146,6 @@ pub fn qualifies_slugs(id: HarnessId) -> bool {
     probe_spec(id).is_some_and(|spec| spec.slugs == SlugShape::Qualified)
 }
 
-/// How the harness folds an effort level into its slugs, or `None` when it does not.
-pub fn slug_tiers(id: HarnessId) -> Option<SlugTiers> {
-    probe_spec(id)?.tiers
-}
-
 pub fn native_provider(id: HarnessId) -> Option<&'static str> {
     match descriptor(id).class {
         HarnessClass::Native { provider, .. } => Some(provider),
@@ -202,6 +161,13 @@ pub fn harness_for_target(target: &str) -> Option<HarnessId> {
         .iter()
         .copied()
         .find(|id| id.as_str() == name)
+}
+
+/// Whether `target` takes the content a host provides (`mars provide`): a native directory of a
+/// harness Meridian does not launch, so nothing else installs a host's skills, hooks and MCP
+/// servers there. `.agents` and a custom directory take none.
+pub fn takes_provided(target: &str) -> bool {
+    harness_for_target(target).is_some_and(|id| !launched_by_meridian(id))
 }
 
 pub fn native_harness_for_provider(provider: &str) -> Option<HarnessId> {
@@ -242,7 +208,6 @@ mod tests {
             (Claude, None),
             (Codex, None),
             (Pi, Some(ListingAuth::Gated)),
-            (Cursor, Some(ListingAuth::Gated)),
             (OpenCode, Some(ListingAuth::Ungated)),
             (Agy, Some(ListingAuth::Gated)),
         ] {
@@ -258,10 +223,10 @@ mod tests {
     fn provider_candidates_prefer_native_then_follow_default_order() {
         use HarnessId::*;
         for (provider, expected) in [
-            ("openai", vec![Codex, Claude, Pi, Cursor, OpenCode]),
-            ("anthropic", vec![Claude, Codex, Pi, Cursor, OpenCode]),
-            ("unknown", vec![Claude, Codex, Pi, Cursor, OpenCode]),
-            ("google", vec![Claude, Codex, Pi, Cursor, OpenCode]),
+            ("openai", vec![Codex, Claude, Pi, OpenCode]),
+            ("anthropic", vec![Claude, Codex, Pi, OpenCode]),
+            ("unknown", vec![Claude, Codex, Pi, OpenCode]),
+            ("google", vec![Claude, Codex, Pi, OpenCode]),
         ] {
             assert_eq!(provider_candidate_order(provider), expected, "{provider}");
         }

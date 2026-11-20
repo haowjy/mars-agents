@@ -354,7 +354,7 @@ fn resolve_unknown_fails_cleanly_when_no_harness_reports_model_slug() {
     assert!(stdout["route_rejection"]["reason"].is_string());
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "opencode"])
     );
     assert!(stdout["route_trace"].is_object());
     assert_eq!(stdout["route_trace"]["version"].as_u64(), Some(3));
@@ -416,7 +416,7 @@ fn resolve_passthrough_pattern_without_match_fails_cleanly() {
     assert_eq!(stdout["resolved_model"].as_str(), Some("claude-brand-new"));
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "opencode"])
     );
 }
 
@@ -441,7 +441,7 @@ fn resolve_passthrough_unrecognized_pattern_opencode_only_fails_closed() {
     assert_eq!(stdout["provider_constraint"], Value::Null);
     assert_eq!(
         stdout["harnesses_tried"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "opencode"])
     );
 }
 
@@ -517,7 +517,7 @@ fn resolve_builtin_gemini_alias_uses_google_candidates_without_gemini_harness() 
     assert_ne!(stdout["harness"].as_str(), Some("gemini"));
     assert_eq!(
         stdout["harness_candidates"],
-        json!(["claude", "codex", "pi", "cursor", "opencode"])
+        json!(["claude", "codex", "pi", "opencode"])
     );
 }
 
@@ -526,11 +526,11 @@ fn resolve_builtin_gemini_alias_uses_google_candidates_without_gemini_harness() 
 fn resolve_exact_alias_respects_settings_harness_order() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
-    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "cursor"]);
+    let bin_dir = install_fake_harnesses(temp.path(), &["pi", "codex"]);
     fs::write(
         project_root.join("mars.toml"),
         r#"[settings]
-harness_order = ["cursor", "pi"]
+harness_order = ["codex", "pi"]
 
 [models.fast]
 model = "gpt-5.4-mini"
@@ -546,7 +546,6 @@ model = "gpt-5.4-mini"
         })],
         &fresh_fetched_at(),
     );
-    write_cursor_probe_cache(temp.path(), vec!["gpt-5.4-mini"]);
 
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["--json", "models", "resolve", "fast"]);
@@ -556,7 +555,7 @@ model = "gpt-5.4-mini"
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
-    assert_eq!(stdout["harness"].as_str(), Some("cursor"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
 }
 
@@ -775,7 +774,7 @@ provider = "anthropic"
     assert_eq!(stdout["route_trace"]["outcome"], "exhausted");
     assert_eq!(
         stdout["route_trace"]["model_attempts"][0]["candidates_tried"],
-        json!(["codex", "claude", "pi", "cursor", "opencode"])
+        json!(["codex", "claude", "pi", "opencode"])
     );
     assert_eq!(stdout["route_trace"]["version"], 3);
     let assessments = stdout["route_trace"]["model_attempts"][0]["assessments"]
@@ -836,7 +835,7 @@ model = "gemini-2.5-pro"
         "expected invalid harness diagnostic, stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("valid harnesses: claude, codex, pi, opencode, cursor"),
+        stderr.contains("valid harnesses: claude, codex, pi, opencode, agy"),
         "expected valid harness list, stderr:\n{stderr}"
     );
 }
@@ -951,7 +950,7 @@ fn resolve_uses_pi_probe_compatibility_for_harness_routing() {
     let server = MockServer::start();
     let (temp, project_root) = setup_project(&server);
     let bin_dir =
-        install_fake_harnesses_with_pi_help(temp.path(), &["pi", "cursor"], "--mode rpc --model");
+        install_fake_harnesses_with_pi_help(temp.path(), &["pi", "codex"], "--mode rpc --model");
     fs::write(
         project_root.join("mars.toml"),
         r#"[settings]
@@ -979,7 +978,7 @@ model = "gpt-5.4-mini"
     let stdout: Value =
         serde_json::from_slice(&output.stdout).expect("resolve --json should return JSON");
 
-    assert_eq!(stdout["harness"].as_str(), Some("cursor"));
+    assert_eq!(stdout["harness"].as_str(), Some("codex"));
     assert_eq!(stdout["harness_source"].as_str(), Some("auto_detected"));
 }
 
@@ -1115,8 +1114,6 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
                 "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo --mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else if *harness == "opencode" {
                 "@echo off\r\nif \"%~1\"==\"models\" (\r\n  echo openai/gpt-5\r\n  echo openai/gpt-5.4-mini\r\n  echo openai/gpt-5.5\r\n  echo anthropic/claude-opus-4-6\r\n  echo anthropic/claude-opus-4-7\r\n  echo google/gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
-            } else if *harness == "cursor" {
-                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
             } else {
                 "@echo off\r\nexit /b 0\r\n"
             };
@@ -1130,8 +1127,6 @@ fn install_fake_harnesses(temp_root: &Path, harnesses: &[&str]) -> PathBuf {
                 "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"--mode rpc --model --append-system-prompt --session --fork --session-dir PI_CODING_AGENT_SESSION_DIR --no-extensions --no-skills --no-context-files --no-prompt-templates -e\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
             } else if *harness == "opencode" {
                 "#!/bin/sh\nif [ \"$1\" = \"models\" ]; then\n  printf '%s\\n' \\\n    'openai/gpt-5' \\\n    'openai/gpt-5.4-mini' \\\n    'openai/gpt-5.5' \\\n    'anthropic/claude-opus-4-6' \\\n    'anthropic/claude-opus-4-7' \\\n    'google/gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
-            } else if *harness == "cursor" {
-                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n"
             } else {
                 "#!/bin/sh\nexit 0\n"
             };
@@ -1160,8 +1155,6 @@ fn install_fake_harnesses_with_pi_help(
                 format!(
                     "@echo off\r\nif \"%~1\"==\"--version\" (\r\n  echo pi 0.0.0-test\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--help\" (\r\n  echo {pi_help_output}\r\n  exit /b 0\r\n)\r\nif \"%~1\"==\"--list-models\" (\r\n  echo openai gpt-5\r\n  echo openai gpt-5.4-mini\r\n  echo openai gpt-5.5\r\n  echo anthropic claude-opus-4-6\r\n  echo anthropic claude-opus-4-7\r\n  echo google gemini-2.5-pro\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n"
                 )
-            } else if *harness == "cursor" {
-                "@echo off\r\nif \"%~1\"==\"agent\" if \"%~2\"==\"--list-models\" (\r\n  echo gpt-5.4-mini - OpenAI\r\n  echo gpt-5.5 - OpenAI\r\n  echo gpt-5.5-high - OpenAI\r\n  echo gpt-5.5-low - OpenAI\r\n  echo gpt-5.5-turbo-high - OpenAI\r\n  echo claude-opus-4-7 - Anthropic\r\n  exit /b 0\r\n)\r\nexit /b 0\r\n".to_string()
             } else {
                 "@echo off\r\nexit /b 0\r\n".to_string()
             };
@@ -1175,8 +1168,6 @@ fn install_fake_harnesses_with_pi_help(
                 format!(
                     "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"pi 0.0.0-test\"\n  exit 0\nfi\nif [ \"$1\" = \"--help\" ]; then\n  echo \"{pi_help_output}\"\n  exit 0\nfi\nif [ \"$1\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'openai gpt-5' \\\n    'openai gpt-5.4-mini' \\\n    'openai gpt-5.5' \\\n    'anthropic claude-opus-4-6' \\\n    'anthropic claude-opus-4-7' \\\n    'google gemini-2.5-pro'\n  exit 0\nfi\nexit 0\n"
                 )
-            } else if *harness == "cursor" {
-                "#!/bin/sh\nif [ \"$1\" = \"agent\" ] && [ \"$2\" = \"--list-models\" ]; then\n  printf '%s\\n' \\\n    'gpt-5.4-mini - OpenAI' \\\n    'gpt-5.5 - OpenAI' \\\n    'gpt-5.5-high - OpenAI' \\\n    'gpt-5.5-low - OpenAI' \\\n    'gpt-5.5-turbo-high - OpenAI' \\\n    'claude-opus-4-7 - Anthropic'\n  exit 0\nfi\nexit 0\n".to_string()
             } else {
                 "#!/bin/sh\nexit 0\n".to_string()
             };
@@ -1192,31 +1183,6 @@ fn install_fake_harnesses_with_pi_help(
 
 fn replace_path_with(bin_dir: &Path) -> String {
     bin_dir.to_string_lossy().into_owned()
-}
-
-fn write_cursor_probe_cache(temp_root: &Path, slugs: Vec<&str>) {
-    let cache_dir = temp_root.join("mars-cache").join("availability");
-    fs::create_dir_all(&cache_dir).expect("failed to create probe cache dir");
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_secs();
-    let payload = json!({
-        "schema_version": 1,
-        "fetched_at": now,
-        "last_attempt_at": now,
-        "last_error": Value::Null,
-        "result": {
-            "slugs": slugs,
-            "model_probe_success": true,
-            "error": Value::Null
-        }
-    });
-    fs::write(
-        cache_dir.join("cursor-probe.json"),
-        serde_json::to_vec_pretty(&payload).expect("failed to serialize probe cache payload"),
-    )
-    .expect("failed to write cursor probe cache");
 }
 
 fn write_opencode_probe_cache(temp_root: &Path, providers: Value, model_slugs: Vec<&str>) {

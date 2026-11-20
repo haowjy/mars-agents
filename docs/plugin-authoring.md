@@ -1,7 +1,7 @@
 # Authoring Harness Plugins
 
 Mars can turn a publishable agent package into committed plugin artifacts for Claude,
-Codex, Grok, Cursor, and OpenCode. The generated files contain the package's published
+Codex, Grok, and OpenCode. The generated files contain the package's published
 items plus the dependency graph selected by its filters, renames, and visibility rules.
 
 The README records the generated [component support](../README.md#component-support),
@@ -28,7 +28,7 @@ dir = "plugin"
 name = "example-agents"
 marketplace = "example-agents"
 description = "Example agents and skills"
-harnesses = ["claude", "codex", "grok", "cursor", "opencode"]
+harnesses = ["claude", "codex", "grok", "opencode"]
 ```
 
 All `[plugin]` fields are optional. The output directory defaults to `plugin`, identity
@@ -41,7 +41,7 @@ set `marketplace-repository = "owner/repo"` in `[plugin]`. The generated
 `.claude-plugin/marketplace.json` then lists the plugin as a `git-subdir` source at
 `v<[package].version>`. The ref is read from `mars.toml` at build time, so `mars version`
 writes the new tag's ref into the release commit. Install from that catalog fails until the tag
-is pushed. Cursor's catalog has no repository form and keeps its relative path.
+is pushed.
 
 Build the configured output with:
 
@@ -49,17 +49,16 @@ Build the configured output with:
 mars build plugin
 ```
 
-Mars writes up to three trees under the configured directory:
+Mars writes up to two trees under the configured directory:
 
 ```text
 plugin/
   claude/    # Claude, Codex, Grok
-  cursor/    # Cursor
   opencode/  # OpenCode
   .mars-plugin.json
 ```
 
-A configured build also writes the Claude and Cursor marketplace catalogs and the root
+A configured build also writes the Claude marketplace catalog and the root
 OpenCode `package.json`. Mars records ownership and file hashes in the sentinel; it
 refuses to replace an unowned non-empty output or conflicting root file.
 
@@ -146,8 +145,7 @@ ships nothing for a `local` one.
 
 Each tree receives the whole `mcp/echo/` directory for a server that names the
 token. The Claude/Codex/Grok tree writes
-`${CLAUDE_PLUGIN_ROOT}/mcp/echo/server.js`, the Cursor tree writes
-`${CURSOR_PLUGIN_ROOT}/mcp/echo/server.js`, and the OpenCode tree keeps
+`${CLAUDE_PLUGIN_ROOT}/mcp/echo/server.js`, and the OpenCode tree keeps
 `${MARS_MCP_DIR}` in `mcp.json` so its `index.mjs` can resolve the path at
 runtime. Entries that do not use the token are written unchanged and ship no
 directory.
@@ -155,8 +153,7 @@ directory.
 ## Remote MCP servers
 
 A server with `url` (and optional `headers`) instead of `command` ships as a remote
-entry: `type: http` in the Claude/Codex/Grok tree, `url` and `headers` in the Cursor
-tree, `type: remote` in the OpenCode `mcp.json`. It has no directory to install.
+entry: `type: http` in the Claude/Codex/Grok tree, `type: remote` in the OpenCode `mcp.json`. It has no directory to install.
 An env header becomes `prefix${VAR}` (`prefix{env:VAR}` for OpenCode, whose
 `index.mjs` resolves it at runtime and drops a header whose variable is unset).
 Codex 0.164.0 passes `${VAR}` in the shared Claude tree literally, so the build warns
@@ -182,10 +179,8 @@ A hook that declares `[hooks]` in its `hook.toml` reaches the Claude/Codex/Grok 
 only: Mars writes `hooks/hooks.json` there, cut down to what Codex can parse, since Codex
 reads that file too. The OpenCode tree gets the TypeScript adapter `mars sync` writes to
 `.opencode/plugins/mars-<name>.hooks.ts`, placed in the hook's directory and loaded by `index.mjs`
-next to the hook's `opencode.ts` native hook, if it has one. The Cursor tree does not get
-`[hooks]`. For each hook that gets nothing in a tree (no native hook, and `[hooks]` render nothing
-there), the build warns `plugin-native-hook-dropped` and names the harnesses that lose it. A
-Cursor hook needs a native hook (`cursor.json`). Inside a plugin build, `${MARS_HOOK_TARGET}` is
+next to the hook's `opencode.ts` native hook, if it has one. For each hook that gets nothing in a tree (no native hook, and `[hooks]` render nothing
+there), the build warns `plugin-native-hook-dropped` and names the harnesses that lose it. Inside a plugin build, `${MARS_HOOK_TARGET}` is
 `plugin` in the Claude tree and `.opencode` in the OpenCode tree, in native hooks and generated
 adapters alike. A hook file may not be named like the generated adapter (`mars-<name>.hooks.ts`);
 the build fails. Events the adapter cannot carry are reported as `hook-event-skipped`.

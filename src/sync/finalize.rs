@@ -1,5 +1,6 @@
 //! Write the lock and build the `SyncReport`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -40,11 +41,18 @@ pub(crate) fn finalize(
         let mut dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
         dep_model_aliases.sort_keys();
 
+        let provided_entries = provided_entries(
+            &state.applied.planned.targeted.target,
+            old_lock,
+            &state.config_entries,
+        );
         let mut new_lock = crate::lock::build(
             graph,
             &state.applied.applied,
             old_lock,
             state.config_entries,
+            provided_entries,
+            &state.applied.planned.targeted.resolved.loaded.provided,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
@@ -60,6 +68,12 @@ pub(crate) fn finalize(
             .collect();
         confirmed_output_removals.extend(state.removed_config_entry_outputs.iter().cloned());
         confirmed_output_removals.extend(state.removed_native_outputs.iter().cloned());
+        crate::lock::record_provided_skills(
+            &mut new_lock,
+            old_lock,
+            &state.provided_skills,
+            &state.target_outcomes,
+        );
         crate::lock::apply_target_sync_outputs(&mut new_lock, &state.target_outcomes);
         crate::lock::apply_removed_native_outputs(
             &mut new_lock,
@@ -93,6 +107,16 @@ pub(crate) fn finalize(
             ),
         )?);
         diag.settle(old_lock, &new_lock);
+        new_lock.merge_targets(
+            state
+                .applied
+                .planned
+                .targeted
+                .resolved
+                .loaded
+                .unscoped
+                .clone(),
+        );
         if let Some(warning) = recovery::publish(project_root, &new_lock)? {
             diag.warn("native-agent-manifest-write", warning);
         }
@@ -166,6 +190,66 @@ fn record_hook_source_paths(
     }
 }
 
+/// The config entries a host's provided content wrote, which the lock saves in
+/// `machine.lock`. A record carries no source, so this reads the selection: an entry is
+/// the host's when a selected hook or MCP server of a provided source has its key. One no
+/// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
+fn provided_entries(
+    target: &crate::sync::target::TargetState,
+    old_lock: &LockFile,
+    records: &BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
+) -> std::collections::BTreeSet<(String, String)> {
+    use crate::target::HookEntry;
+    use crate::target::mcp_file::MCP_KIND;
+    use crate::target::plugin::HOOK_ENTRY_KIND;
+
+    let hooks = target.selected_hooks().map(|(dir, hook)| {
+        let keys: Vec<String> = records
+            .get(dir.target())
+            .into_iter()
+            .flat_map(|records| records.keys())
+            .filter(|key| {
+                **key == HOOK_ENTRY_KIND.key(&hook.def.name)
+                    || HookEntry::parse_key(key).is_some_and(|(_, name)| name == hook.def.name)
+            })
+            .cloned()
+            .collect();
+        (dir.target(), hook.source_name.as_str(), keys)
+    });
+    let servers = target.selected_mcp().map(|(dir, server)| {
+        (
+            dir.target(),
+            server.source_name.as_str(),
+            vec![MCP_KIND.key(&server.name)],
+        )
+    });
+    let mut provided = std::collections::BTreeSet::new();
+    let mut claimed = std::collections::BTreeSet::new();
+    for (target_root, source, keys) in hooks.chain(servers) {
+        for key in keys {
+            let owner = (target_root.to_string(), key);
+            if crate::provided::is_provided_source(source) {
+                provided.insert(owner);
+            } else {
+                claimed.insert(owner);
+            }
+        }
+    }
+    provided.extend(
+        old_lock
+            .provided_entries
+            .iter()
+            .filter(|entry| !claimed.contains(*entry))
+            .cloned(),
+    );
+    provided.retain(|(target_root, key)| {
+        records
+            .get(target_root)
+            .is_some_and(|records| records.contains_key(key))
+    });
+    provided
+}
+
 /// A hook on a target that takes none of it has no output to hang an item on. Its record has
 /// none either, and `LockFile::finish` keeps it: the next sync tells a new or changed hook, or
 /// a new target, from a loss it has already reported by this record.
@@ -208,11 +292,14 @@ fn retry_tombstone_removals(
             .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
     }) {
         for output in &item.outputs {
+            // A tombstone is an output marked pending deletion; one with a checksum is installed.
+            if output.installed_checksum().is_some() {
+                continue;
+            }
             let current_pass_owns_output = current_lock.items.values().any(|current_item| {
                 current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                }) && current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == output.target_root
+                    current_output.installed_checksum().is_some()
+                        && current_output.target_root == output.target_root
                         && crate::target::dest_paths_equivalent(
                             current_output.dest_path.as_str(),
                             output.dest_path.as_str(),

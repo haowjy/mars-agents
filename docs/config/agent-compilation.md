@@ -19,7 +19,6 @@ When native emission selects an agent for a harness, a second artifact is emitte
 | `claude` | `.claude/agents/<name>.md` |
 | `codex` | `.codex/agents/<name>.toml` |
 | `opencode` | `.opencode/agents/<name>.md` |
-| `cursor` | `.cursor/agents/<name>.md` |
 | `pi` | `.pi/agents/<name>.md` |
 | `agy` | `.agy/agents/<name>.md` |
 
@@ -96,7 +95,7 @@ Example: an agent has `effort: low` and `harness-overrides.codex.effort: high`. 
 Native agent files preserve the `skills.load` / `skills.available` distinction instead of
 copying the raw field:
 
-- Claude and Cursor subagents preload only `skills.load` through their native `skills:` field.
+- Claude subagents preload only `skills.load` through their native `skills:` field.
   `skills.available` is never put in that field.
 - Every available-only `skills.available` entry is named in a generated body instruction.
   Harnesses without a per-agent preload field (Codex, OpenCode, and Pi) receive the same kind of
@@ -197,39 +196,39 @@ names) and `mcp(server)` / `mcp(server/tool)` (MCP tools, below). Each cell is w
 bundle's `native` carries for a bare rule; "(scoped: ...)" is the spelling once the rule has
 a pattern. *absent*: the harness has no such tool, so a deny is already met. *no switch*: the
 harness can do it but has no tool to turn off (`native_status: unknown`, with a `note`).
-*unknown*: Mars has no entry for that harness. The table follows
+The table follows
 `crates/mars-schema/src/tool_natives.rs`, which is the source of truth; change both together.
 
-| Capability | Covers | Claude | Codex | OpenCode | Pi | Cursor | Agy |
-|---|---|---|---|---|---|---|---|
-| `bash` | shell commands | `Bash` | `exec_command` | `bash` | `bash` | `Shell` | `run_command` |
-| `read` | read a file | `Read` | no switch | `read` | `read` | `Read` | `read_file` |
-| `write` | create or overwrite a file | `Write` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `write` | `Write` | `write_to_file` |
-| `edit` | change a file (on Claude and Pi this also covers writing) | `Edit`, `Write`, `NotebookEdit` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `edit`, `write` | `StrReplace` | `replace_file_content`, `multi_replace_file_content`, `write_to_file` |
-| `agent` | start or message sub-agents | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent | `Task` | no switch |
-| `task` | the task list (todo tools) | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent | `TodoWrite` | absent |
-| `skill` | load a skill on demand | `Skill` | no switch | `skill` | no switch | `Skill` | no switch |
-| `workflow` | Claude's multi-agent workflow tool | `Workflow` | absent | absent | absent | unknown | absent |
-| `glob` | find files by name | `Glob` (scoped: `Read(path)`) | no switch | `glob` | `find` | `Glob` | `find_by_name` |
-| `grep` | search file contents | `Grep` (scoped: `Read(path)`) | no switch | `grep` | `grep` | `Grep` | `grep_search` |
-| `notebook` | edit a Jupyter notebook | `NotebookEdit` (scoped: `Edit(path)`) | absent | absent | absent | `EditNotebook` | absent |
-| `web` | `web_search` and `web_fetch` together | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent | `WebSearch`, `WebFetch` | `search_web` |
-| `web_search` | search the web | `WebSearch` | `web_search` | `websearch` | absent | `WebSearch` | `search_web` |
-| `web_fetch` | fetch a URL | `WebFetch` | no switch | `webfetch` | absent | `WebFetch` | absent |
-| `ask_user` | ask the human a question | `AskUserQuestion` | `request_user_input` | `question` | absent | `AskQuestion` | absent |
-| `cron` | scheduled jobs | `CronCreate`, `CronDelete`, `CronList` | absent | absent | absent | unknown | absent |
-| `notifications` | push notifications | `PushNotification` | absent | absent | absent | unknown | absent |
-| `plan_mode` | enter or leave plan mode | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent | `SwitchMode` | absent |
-| `worktree` | enter or leave a git worktree | `EnterWorktree`, `ExitWorktree` | absent | absent | absent | unknown | absent |
-| `lsp` | language-server queries | `LSP` | absent | `lsp` | absent | unknown | absent |
-| `monitor` | watch a background process | `Monitor` | absent | absent | absent | unknown | absent |
-| `send_user_file` | send the user a file | `SendUserFile` | absent | absent | absent | unknown | absent |
-| `schedule_wakeup` | schedule its own wake-up | `ScheduleWakeup` | absent | absent | absent | unknown | absent |
-| `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | unknown | absent |
-| `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | unknown | absent |
-| `image` | view an image file | no switch | `view_image` | no switch | no switch | unknown | absent |
-| `ls` | list one folder | absent | absent | `list` | `ls` | absent | `list_dir` |
-| `work` | Meridian Flow's work tool | absent | absent | absent | absent | absent | absent |
+| Capability | Covers | Claude | Codex | OpenCode | Pi | Agy |
+|---|---|---|---|---|---|---|
+| `bash` | shell commands | `Bash` | `exec_command` | `bash` | `bash` | `run_command` |
+| `read` | read a file | `Read` | no switch | `read` | `read` | `read_file` |
+| `write` | create or overwrite a file | `Write` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `write` | `write_to_file` |
+| `edit` | change a file (on Claude and Pi this also covers writing) | `Edit`, `Write`, `NotebookEdit` (scoped: `Edit(path)`) | `apply_patch` | `edit` | `edit`, `write` | `replace_file_content`, `multi_replace_file_content`, `write_to_file` |
+| `agent` | start or message sub-agents | `Agent`, `SendMessage`, `ListAgents` | `spawn_agent`, `send_input`, `resume_agent`, `wait_agent`, `close_agent`, `send_message`, `followup_task`, `interrupt_agent`, `list_agents` | `task` | absent | no switch |
+| `task` | the task list (todo tools) | `TaskCreate`, `TaskGet`, `TaskList`, `TaskOutput`¹, `TaskUpdate`, `TaskStop`, `TodoWrite` | `update_plan` | `todowrite` | absent | absent |
+| `skill` | load a skill on demand | `Skill` | no switch | `skill` | no switch | no switch |
+| `workflow` | Claude's multi-agent workflow tool | `Workflow` | absent | absent | absent | absent |
+| `glob` | find files by name | `Glob` (scoped: `Read(path)`) | no switch | `glob` | `find` | `find_by_name` |
+| `grep` | search file contents | `Grep` (scoped: `Read(path)`) | no switch | `grep` | `grep` | `grep_search` |
+| `notebook` | edit a Jupyter notebook | `NotebookEdit` (scoped: `Edit(path)`) | absent | absent | absent | absent |
+| `web` | `web_search` and `web_fetch` together | `WebSearch`, `WebFetch` | `web_search` | `websearch`, `webfetch` | absent | `search_web` |
+| `web_search` | search the web | `WebSearch` | `web_search` | `websearch` | absent | `search_web` |
+| `web_fetch` | fetch a URL | `WebFetch` | no switch | `webfetch` | absent | absent |
+| `ask_user` | ask the human a question | `AskUserQuestion` | `request_user_input` | `question` | absent | absent |
+| `cron` | scheduled jobs | `CronCreate`, `CronDelete`, `CronList` | absent | absent | absent | absent |
+| `notifications` | push notifications | `PushNotification` | absent | absent | absent | absent |
+| `plan_mode` | enter or leave plan mode | `EnterPlanMode`, `ExitPlanMode` | absent | `plan_enter`, `plan_exit` | absent | absent |
+| `worktree` | enter or leave a git worktree | `EnterWorktree`, `ExitWorktree` | absent | absent | absent | absent |
+| `lsp` | language-server queries | `LSP` | absent | `lsp` | absent | absent |
+| `monitor` | watch a background process | `Monitor` | absent | absent | absent | absent |
+| `send_user_file` | send the user a file | `SendUserFile` | absent | absent | absent | absent |
+| `schedule_wakeup` | schedule its own wake-up | `ScheduleWakeup` | absent | absent | absent | absent |
+| `remote_trigger` | remote triggers | `RemoteTrigger` | absent | absent | absent | absent |
+| `tool_search` | load deferred tool definitions | `ToolSearch` | `tool_search` | absent | absent | absent |
+| `image` | view an image file | no switch | `view_image` | no switch | no switch | absent |
+| `ls` | list one folder | absent | absent | `list` | `ls` | `list_dir` |
+| `work` | Meridian Flow's work tool | absent | absent | absent | absent | absent |
 
 ¹ `TaskOutput` was removed from Claude in 2.1.277, which ignores the name. It stays because
 older builds offer it and Meridian denies it with the task list.
@@ -240,7 +239,7 @@ vocabulary; the consumer that knows the running OpenCode version translates to v
 `write` and patch, so `write` and `edit` share a name there. Codex `bash` names `exec_command`
 alone: `write_stdin` only feeds a session `exec_command` opened. Each row is pinned by a test
 against the harness's real tool list, with the source (docs, binary, probe) written beside the
-table. Cursor rows are carried over from earlier releases and not re-verified. Antigravity (`agy` 1.5.12) lists only names a probe loaded as agent tools: `absent` there means Mars knows no name to write, not that `agy` has no such tool. `agy` has a subagent tool (`invoke_subagent` in permission requests) that no probe listed in an agent's `tools`, so `agent` is no switch until one does. `view_file` is the same tool as `read_file`, and Mars never writes both.
+table. Antigravity (`agy` 1.5.12) lists only names a probe loaded as agent tools: `absent` there means Mars knows no name to write, not that `agy` has no such tool. `agy` has a subagent tool (`invoke_subagent` in permission requests) that no probe listed in an agent's `tools`, so `agent` is no switch until one does. `view_file` is the same tool as `read_file`, and Mars never writes both.
 
 The table shows bare Claude tool rules. Claude uses permission categories for scoped file
 rules instead: `write(path)`, `edit(path)` and `notebook(path)` project to `Edit(path)`;
@@ -271,7 +270,7 @@ A map-form `allow` is a grant, not an allowlist, so it writes no `tools:` field:
 would read `tools: [Bash]` as "only Bash". Omitting `tools:` inherits every tool, so the
 grant loses nothing and Mars records no lossiness for it.
 Mars records an `ask` rule and an empty allowlist as dropped lossiness on a file that cannot
-hold them and never drops them silently; Meridian enforces them from the launch bundle. Codex, Cursor and Pi agent files carry no tool list at
+hold them and never drops them silently; Meridian enforces them from the launch bundle. Codex and Pi agent files carry no tool list at
 all, so any allow, ask or deny rule is recorded as dropped there too; OpenCode's file carries
 them all in its `permission` map (below).
 
@@ -485,55 +484,6 @@ written, so a `deny` or `ask` stays out of the file and sync reports it as a los
 nothing enforces it in `agy` (Meridian runs `agy` only interactively, never as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
 
-### `.cursor/agents/<name>.md`
-
-YAML frontmatter + markdown body.
-
-| Source field | Cursor native | Classification |
-|---|---|---|
-| `name` | `name:` | exact |
-| `description` | one physical line (`description:` with collapsed whitespace) | exact |
-| `model` | `model:` (internally adapted when deterministic mapping exists) | exact |
-| `skills.load` | `skills:` | exact |
-| `skills.available` | end-of-body `/name` guidance; never put in `skills:` | approximate |
-| `mode` | `mode:` | exact |
-| body | body | exact |
-| `approval` | runtime-only (meridian projects `--force`/`--yolo`) | meridian-only |
-| `sandbox` | runtime-only (meridian projects `--sandbox enabled`/`disabled`) | meridian-only |
-| `network` | dropped | meridian-only |
-| `network-allow`, `network-deny` | dropped | meridian-only |
-| `tools` (every rule) | dropped | dropped |
-| `effort` | dropped from frontmatter; selects the model slug instead (below) | approximate |
-| `mcp(...)` in `tools` | dropped (lossiness); launch bundle projects `Mcp(server:tool)` tokens | approximate |
-| `model-invocable`, `user-invocable` | dropped when `false` | dropped |
-| `model-policies` | dropped | meridian-only |
-
-**Approval value mapping** (Meridian's launch projection, not written by Mars):
-
-| `approval:` | Cursor CLI |
-|---|---|
-| `default` | (omitted) |
-| `auto` | `--force` |
-| `confirm` | (omitted — no Cursor equivalent) |
-| `never` | `--yolo` |
-
-**Sandbox value mapping:**
-
-| `sandbox:` | Cursor CLI |
-|---|---|
-| `default` | (omitted) |
-| `read-only` | `--sandbox enabled` |
-| `workspace-write` | `--sandbox disabled` |
-| `danger-full-access` | `--sandbox disabled` |
-
-`approval`, `sandbox` and `network` are not stored in the Cursor native agent
-artifact — Cursor IDE doesn't read them from frontmatter. Meridian applies these
-at runtime through its harness projection layer.
-
-Cursor requires a one-line frontmatter description for stable native parsing. Mars normalizes multiline/block descriptions by trimming and collapsing all whitespace to single spaces before emitting `.cursor/agents/*.md`.
-
-Cursor model adaptation is internal to Mars. For common aliases/model IDs, Mars emits deterministic Cursor-native slugs (for example `claude-opus-4-6` → `claude-4.6-opus-high-thinking`, `gpt-5.5` + high effort → `gpt-5.5-high`). If no deterministic mapping exists, Mars preserves the original `model` token.
-
 ### `.pi/agents/<name>.md`
 
 YAML frontmatter + markdown body.
@@ -579,12 +529,12 @@ contract; `ToolsSpec.mcp` duplicates allowed names for older consumers). Neither
 contains MCP server definitions. Unsupported refs are **omitted** from native output (never
 broaden permissions) and recorded as approximate lossiness.
 
-| Canonical example | Claude | Cursor | OpenCode | Codex | Pi |
-|---|---|---|---|---|---|
-| `mcp(server/tool)` | `mcp__server__tool` | `Mcp(server:tool)` | `server_tool` | — | — |
-| `mcp(server)` / `mcp(server/*)` | `mcp__server__*` | `Mcp(server:*)` | `server_*` | — | — |
-| `mcp(*/tool)` | — (lossy) | `Mcp(*:tool)` | `*_tool` | — | — |
-| `mcp(*/*)` | `mcp__*` | `Mcp(*:*)` | `*_*` | — | — |
+| Canonical example | Claude | OpenCode | Codex | Pi |
+|---|---|---|---|---|
+| `mcp(server/tool)` | `mcp__server__tool` | `server_tool` | — | — |
+| `mcp(server)` / `mcp(server/*)` | `mcp__server__*` | `server_*` | — | — |
+| `mcp(*/tool)` | — (lossy) | `*_tool` | — | — |
+| `mcp(*/*)` | `mcp__*` | `*_*` | — | — |
 
 **Antigravity** — `agy` gives every agent every MCP server and no `tools` entry names one. An `mcp(...)` allow writes nothing and loses nothing. A deny or `ask` cannot be applied: it is reported as a lost restriction.
 
@@ -603,7 +553,7 @@ governed by the `mcp/<name>/mcp.toml` server lane (see
 | Skill native files | None: a skill carries no tool policy |
 | OpenCode agent native | An MCP ref is a `permission` entry (`<server>_<tool>: <effect>`) |
 | Antigravity agent native | Nothing is written for MCP; a deny or `ask` is reported as lost |
-| Codex / Cursor / Pi agent native | Tool lists not emitted today → MCP lossiness |
+| Codex / Pi agent native | Tool lists not emitted today → MCP lossiness |
 | Launch bundle | `tools.rules[].native` carries permission tokens; legacy `ToolsSpec.mcp` duplicates allowed names. Neither carries server definitions |
 
 Implementation: grammar in [`crates/mars-schema/src/mcp.rs`](../../crates/mars-schema/src/mcp.rs),
@@ -648,7 +598,7 @@ What counts:
 
 | Kind | Lost when |
 |---|---|
-| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` (on Codex, Cursor and Pi; OpenCode's file carries them) |
+| shell | a `bash` rule the file cannot carry: a scoped `bash(git reset --hard *)` deny, a `bash: ask`, or an allow list that does not grant `bash` (on Codex and Pi; OpenCode's file carries them) |
 | tool | any other tool deny, `ask` or allow list the file cannot carry, such as `workflow: deny` or `edit: deny` |
 | MCP | an MCP `ask`, or a deny the target does not write |
 | project tool rule | a `[settings.tools]` deny the target's agent files cannot carry (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)), listed as a `project setting` named `tools.<key>` and counted once per target however many agents lose it; its kind is shell, tool or MCP by the rule |
@@ -695,27 +645,27 @@ These are non-fatal warnings. The sync continues and the native artifact is stil
 
 Compact per-field, per-target classification:
 
-| Field | `.mars/` | Claude | Codex | OpenCode | Cursor | Pi | Agy |
-|---|---|---|---|---|---|---| --- |
-| `name` | preserved | exact | exact | exact | exact | exact | exact |
-| `description` | preserved | exact | exact | exact | exact (one-line normalized) | exact | exact |
-| `model` | preserved | exact | exact | exact | exact (internal deterministic adaptation when available) | exact | meridian-only (not written) |
-| `harness` | preserved | dropped | dropped | dropped | dropped | dropped | dropped |
-| `mode` | preserved | dropped | dropped | approximate | approximate | approximate | meridian-only |
-| `approval` | preserved | dropped | exact | dropped | approximate | dropped | meridian-only |
-| `sandbox` | preserved | dropped | exact | dropped | approximate | dropped | meridian-only |
-| `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only | meridian-only |
-| `network-allow`, `network-deny` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only | meridian-only |
-| `model-invocable`, `user-invocable` | preserved | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` |
-| `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | dropped | exact allowlist; denials dropped |
-| `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped | dropped |
-| `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | approximate | allow exact (nothing to write); deny and `ask` dropped |
-| `effort` | preserved | exact (moved to a level the model takes, with a warning) | exact (same) | approximate | approximate | approximate | meridian-only (not written) |
-| `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | exact | approximate | approximate (body line) |
-| `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate | approximate |
-| `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
-| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys | extra keys |
-| body | preserved | exact | approximate | exact | exact | exact | exact |
+| Field | `.mars/` | Claude | Codex | OpenCode | Pi | Agy |
+|---|---|---|---|---|---| --- |
+| `name` | preserved | exact | exact | exact | exact | exact |
+| `description` | preserved | exact | exact | exact | exact | exact |
+| `model` | preserved | exact | exact | exact | exact | meridian-only (not written) |
+| `harness` | preserved | dropped | dropped | dropped | dropped | dropped |
+| `mode` | preserved | dropped | dropped | approximate | approximate | meridian-only |
+| `approval` | preserved | dropped | exact | dropped | dropped | meridian-only |
+| `sandbox` | preserved | dropped | exact | dropped | dropped | meridian-only |
+| `network` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
+| `network-allow`, `network-deny` | preserved | meridian-only | dropped | meridian-only | meridian-only | meridian-only |
+| `model-invocable`, `user-invocable` | preserved | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` | dropped when `false` |
+| `tools` allowlist and denials | preserved | exact (incl. projected MCP) | dropped | dropped | dropped | exact allowlist; denials dropped |
+| `tools` `ask` rules | preserved | dropped | dropped | dropped | dropped | dropped |
+| `mcp(...)` in `tools` | preserved | exact (projected into tool lists) | approximate | approximate | approximate | allow exact (nothing to write); deny and `ask` dropped |
+| `effort` | preserved | exact (moved to a level the model takes, with a warning) | exact (same) | approximate | approximate | meridian-only (not written) |
+| `skills.load` | preserved | exact for subagents; approximate for `--agent` | approximate | approximate | approximate | approximate (body line) |
+| `skills.available` | preserved | approximate | approximate | approximate | approximate | approximate |
+| `model-policies` | preserved | meridian-only | meridian-only | meridian-only | meridian-only | meridian-only |
+| `harness-overrides.<target>` | preserved | extra keys | extra keys | extra keys | extra keys | extra keys |
+| body | preserved | exact | approximate | exact | exact | exact |
 
 ## Stale Artifact Cleanup
 

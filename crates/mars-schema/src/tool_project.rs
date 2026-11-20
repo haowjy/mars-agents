@@ -856,10 +856,8 @@ mod tests {
 
     #[test]
     fn a_name_without_a_table_row_is_unknown_with_no_native_name() {
-        // Known capability, no Cursor row: no convention fallback fills it in.
-        assert_eq!(natives("lsp", "cursor"), (vec![], "unknown"));
         // Not a capability at all, including one that merely looks like the `mcp` capability.
-        for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
+        for harness in ["claude", "codex", "opencode", "pi"] {
             assert_eq!(
                 natives("my_custom_tool", harness),
                 (vec![], "unknown"),
@@ -878,7 +876,7 @@ mod tests {
             "MCP__Server__Tool",
             "mcp__github__create_issue",
         ] {
-            for harness in ["claude", "codex", "opencode", "pi", "cursor"] {
+            for harness in ["claude", "codex", "opencode", "pi"] {
                 assert_eq!(natives(raw, harness), known(&[raw]), "{raw} on {harness}");
                 let kind = Host::parse(harness).expect("test host exists");
                 let projected = project_rule(

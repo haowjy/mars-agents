@@ -1,5 +1,5 @@
 //! The `mcpServers` entry: the one codec for the shape Claude's `.mcp.json` declares and
-//! Cursor, Pi and a generated Claude/Codex plugin tree copy.
+//! Pi and a generated Claude/Codex plugin tree copy.
 //!
 //! [`parse`] reads one entry into an [`McpServerDef`] transport, or says why it cannot (the
 //! Claude plugin import); [`render`] writes one back in each [`Flavor`]. `parse(render(..))`
@@ -32,8 +32,6 @@ pub const NAME_RULE: &str = crate::claude::manifest::PLUGIN_NAME_RULE;
 pub enum Flavor {
     /// Claude's project `.mcp.json` and Pi: `${VAR}` references, a remote entry typed `http`.
     Claude,
-    /// Cursor: `${env:VAR}` references, and no `type` (not known to accept one).
-    Cursor,
     /// A generated plugin tree, shared by Claude and Codex: a same-name stdio reference is a
     /// forwarded name in `env_vars`, a renamed one an `env` `${VAR}` that Codex would pass
     /// through literally (reported in [`McpRender::lossy`]), a remote entry typed `http`.
@@ -145,10 +143,7 @@ fn braced(var: &str) -> String {
 
 /// Render one server's transport as an `mcpServers` entry.
 pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
-    let interpolate = |var: &str| match flavor {
-        Flavor::Cursor => format!("${{env:{var}}}"),
-        Flavor::Claude | Flavor::Plugin => braced(var),
-    };
+    let interpolate = braced;
     let mut lossy = Vec::new();
     let value = match transport {
         McpTransport::Stdio { command, args, env } => {
@@ -178,9 +173,7 @@ pub fn render(transport: &McpTransport, flavor: Flavor) -> McpRender {
         }
         McpTransport::Http { url, headers } => {
             let mut entry = serde_json::json!({ "url": url });
-            if flavor != Flavor::Cursor {
-                entry["type"] = "http".into();
-            }
+            entry["type"] = "http".into();
             if !headers.is_empty() {
                 entry["headers"] = header_map(headers, interpolate);
             }

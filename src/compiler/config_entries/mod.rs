@@ -195,10 +195,8 @@ pub(crate) fn compile_config_entries(
                 .into_iter()
                 .flatten()
             {
-                let Some((event, name)) = key
-                    .strip_prefix(HOOK_KEY_PREFIX)
-                    .and_then(|rest| rest.split_once(':'))
-                    .filter(|(_, name)| *name == kept.name)
+                let Some((event, name)) =
+                    HookEntry::parse_key(key).filter(|(_, name)| *name == kept.name)
                 else {
                     continue;
                 };
@@ -518,12 +516,12 @@ pub(crate) fn remove_hooks(
 ) -> RemovalReport {
     let target_root = operation.target_root().to_owned();
     let (target_dir, removal) = operation.into_parts(project_root);
-    let report = match merge_file(&target_root) {
-        Some(merge) => crate::target::hook_file::remove_recorded(
-            &target_dir.join(merge.file),
+    let report = match hook_file(&target_root) {
+        Some((file, ignored)) => crate::target::hook_file::remove_recorded(
+            &target_dir.join(file),
             &removal.prior_records,
             &target_root,
-            merge.top_level,
+            ignored,
             diag,
         )
         .map_or_else(
@@ -594,11 +592,8 @@ pub(crate) fn reconcile_all_keyed(
         .chain(desired.keys())
         .collect::<BTreeSet<_>>()
     {
-        let Some(spec) = crate::target::spec(target_root) else {
-            continue;
-        };
         let previous = previous_records.get(target_root).unwrap_or(&no_records);
-        for (kind, section) in spec.keyed_sections() {
+        for (kind, section) in crate::target::keyed_sections(target_root) {
             let wanted: Vec<_> = desired
                 .get(target_root)
                 .into_iter()
@@ -679,7 +674,6 @@ fn apply_replacement_writes(
             prior.unwrap_or(&BTreeMap::new()),
             &target_root,
             &hooks,
-            merge.top_level,
             diag,
         ) {
             diag.warn(
@@ -790,6 +784,17 @@ fn emits_installed_copy(
         );
     }
     installed
+}
+
+/// The file `target_root`'s hook entries merge into, for a target Mars writes or one it
+/// retired, and the keys Mars wrote there beside `hooks`.
+fn hook_file(target_root: &str) -> Option<(&'static str, &'static [&'static str])> {
+    merge_file(target_root)
+        .map(|merge| (merge.file, &[][..]))
+        .or_else(|| {
+            mars_schema::retired::retired_target(target_root)
+                .map(|retired| (retired.hook_file, retired.hook_file_keys))
+        })
 }
 
 fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets::MergeFile> {

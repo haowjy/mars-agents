@@ -154,10 +154,6 @@ impl JsonDoc {
         }
     }
 
-    pub(super) fn set_top_level(&mut self, key: &str, value: Value) {
-        self.root.insert(key.to_owned(), to_ordered(value));
-    }
-
     fn get(&self, name: &str) -> Option<Value> {
         Some(self.section()?.get(name)?.to_json())
     }

@@ -12,7 +12,7 @@ agents and skills. Mars compiles these into target-specific config files during
   Per-harness projection: [agent-compilation.md](agent-compilation.md#mcp-tool-policy-references).
 - **Hooks** are written once in Claude's hook format (`[hooks]` in `hook.toml`)
   and installed natively in Claude, Codex, OpenCode and Pi (translated for Antigravity), or contributed as
-  target-native hooks (JSON for Claude, Codex, Cursor and Antigravity; TypeScript for
+  target-native hooks (JSON for Claude, Codex and Antigravity; TypeScript for
   OpenCode and Pi). Their complete hook directories install beside the target.
 - **Server files** shipped beside `mcp.toml` are installed with their server
   directory when `command` or `args` names it with `${MARS_MCP_DIR}`.
@@ -31,7 +31,6 @@ project root:
 | `.codex` | `.codex/config.toml` | `[mcp_servers.<name>]` | `env_vars = ["VAR"]` |
 | `.opencode` | `.opencode/opencode.json` | `mcp` | `{env:VAR}` |
 | `.pi` | `.pi/mcp.json` | `mcpServers` | `${VAR}` |
-| `.cursor` | `.cursor/mcp.json` | `mcpServers` | `${env:VAR}` |
 | `.agy` | `.agy/mcp_config.json` | `mcpServers` | inherited (see [Antigravity](#antigravity-agy)) |
 
 Mars edits these files in place. Other keys, other servers, and (in
@@ -110,9 +109,6 @@ content, so the first sync warns about each and `mars sync --force` adopts them,
 overwriting any local edits at those paths. Syncing once with any Mars from 0.12 to 0.24
 first migrates the lock cleanly.
 
-- A Cursor entry an earlier release wrote is now treated as yours. If it differs
-  from what Mars writes, Mars keeps it and warns (`mcp-unmanaged-collision`) until
-  `mars sync --force` replaces it.
 - `.mcp.json` at the project root is new: a project that does not ignore it sees a
   new untracked file.
 - When Mars removes its last entry and the MCP file holds nothing else, Mars deletes
@@ -211,7 +207,7 @@ url = "https://mcp.cloudflare.com/mcp"
 
 # Optional headers: a literal, or a value read from the environment.
 # `prefix` (optional, literal) is written before the variable's value.
-# A literal containing `${…}` or `{env:…}` is written as-is; Claude, Cursor, Pi and OpenCode
+# A literal containing `${…}` or `{env:…}` is written as-is; Claude, Pi and OpenCode
 # expand it at runtime, Codex does not.
 headers = { "X-Region" = "us", Authorization = { from = "env", var = "DOCS_TOKEN", prefix = "Bearer " } }
 ```
@@ -225,7 +221,6 @@ the same `mcp-env-missing` check as `env`.
 | Target | Remote entry | Env header |
 |---|---|---|
 | `.claude` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
-| `.cursor` | `{"url", "headers"}` | `prefix${env:VAR}` |
 | `.opencode` | `{"type": "remote", "url", "headers"}` | `prefix{env:VAR}` |
 | `.pi` | `{"type": "http", "url", "headers"}` | `prefix${VAR}` |
 | `.agy` | `{"url", "headers"}`, literal headers only; not described by `agy`'s docs and not run | none |
@@ -330,7 +325,7 @@ with a `target-divergent` warning and also withholds the entry until
 `mars build plugin` copies a token-using server's `mcp/<name>/` into each
 generated tree and maps the token to the tree's own root:
 `${CLAUDE_PLUGIN_ROOT}/mcp/<name>` for the shared Claude/Codex/Grok tree,
-`${CURSOR_PLUGIN_ROOT}/mcp/<name>` for Cursor, and a runtime-resolved path under
+and a runtime-resolved path under
 the OpenCode package for OpenCode. An entry without the token is unchanged and
 ships no directory.
 
@@ -447,9 +442,7 @@ session id. An OpenCode `PreCompact` event carries no `trigger`, so a group with
 real matcher cannot be tested and is left out.
 
 A target that cannot render an event reports `hook-event-skipped` at sync.
-Cursor receives no generated entries (Mars renders none for it before 0.26) and
-reports that once per hook; a Cursor native hook still works (see
-[Native hooks](#native-hooks)). Codex leaves out a matcher group whose
+Codex leaves out a matcher group whose
 matcher its regex engine cannot compile, such as one with look-around
 (`(?!…)`), and reports it; Claude's JavaScript regex accepts those.
 
@@ -561,7 +554,6 @@ my-package/hooks/audit/
   hook.toml
   claude.json
   codex.json
-  cursor.json
   opencode.ts
   pi.ts
   run.sh
@@ -642,34 +634,11 @@ unwraps `hooks` when the only sibling keys are `version` and/or `description`:
 }
 ```
 
-Cursor uses a flat native entry shape. This is a complete, copy-pasteable
-Cursor native hook—do not put a Claude-style nested `hooks` array inside an entry:
-
-```json
-{
-  "version": 1,
-  "hooks": {
-    "beforeShellExecution": [
-      {
-        "command": "bash \"${MARS_HOOK_DIR}/run.sh\"",
-        "matcher": "^git ",
-        "timeout": 5
-      }
-    ]
-  }
-}
-```
-
-Mars owns the emitted `{"version": 1, "hooks": {...}}` wrapper in
-`.cursor/hooks.json`. The schema and 21 camelCase event names were confirmed
-against the `cursor-agent` 2026.07.16 validator. Runtime firing remains
-unverified because the probe could not authenticate.
-
 A hook with no `[hooks]` goes only to the targets with a declared table. Mars
 copies the whole authored
 directory to `<target>/hooks/<name>/`; `hook.toml` and native hook files remain
 there as inert package metadata. Merge-mode destinations are Claude
-`settings.local.json`, Codex `hooks.json`, and Cursor `hooks.json`.
+`settings.local.json` and Codex `hooks.json`.
 
 If something Mars does not own already occupies `<target>/hooks/<name>/`, sync
 warns, leaves that content untouched, and withholds the target's hook entry so
@@ -685,8 +654,7 @@ Mars validates only the merge contract:
 3. every event value is an array.
 
 Nested matcher, handler, timeout, and harness-specific fields pass through
-unchanged in a native hook. Claude currently has 29 known events and Cursor has
-21. Codex's allowlist holds the 11 events it shares with Claude (`SessionStart`,
+unchanged in a native hook. Claude currently has 29 known events. Codex's allowlist holds the 11 events it shares with Claude (`SessionStart`,
 `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`,
 `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop`,
 `SessionEnd`) plus its own `PreModelRequest`, `PostModelRequest` and
@@ -998,8 +966,7 @@ installed gets no entries (`hook-not-installed`).
 which Claude, Codex and Grok read, gets a `hooks/hooks.json` reduced to what
 Codex can parse, with drops reported. The OpenCode tree gets the same generated
 adapter `mars sync` writes, in the hook's directory, loaded by `index.mjs` beside any
-OpenCode native hook; `${MARS_HOOK_TARGET}` is `.opencode` there. The Cursor tree drops
-`[hooks]`. For each hook that gets nothing in a tree (no native hook for it, and `[hooks]`
+OpenCode native hook; `${MARS_HOOK_TARGET}` is `.opencode` there. For each hook that gets nothing in a tree (no native hook for it, and `[hooks]`
 render nothing there), sync reports `plugin-native-hook-dropped`, naming the harnesses that
 won't get it. A native hook for another target also reports it.
 
@@ -1030,6 +997,8 @@ is written, as a bad `.mcp.json` does. A file Mars's change leaves empty is dele
 stays. Mars writes no `.gitignore`: ignoring `.agy/` and committing `.agents/plugins.json` is the
 usual choice (a pointer to a missing `.agy` is silent to `agy`). `plugin.json` carries a
 `version` because `agy plugin validate --strict` warns on a plugin without one.
+
+**Provided by a host.** A host that runs [`mars provide`](../cli/commands.md#mars-provide) (Meridian) gets its skills, hooks and MCP servers installed here, as it does for no other target Meridian launches. They go through the same readers and keyed entries as a package's. Their records are in `.mars/machine.lock`, not `mars.lock`. A package's hook or MCP server of the same name wins, with a `provided-shadowed` warning.
 
 **Skills.** Linking `.agents` too puts the neutral copy and the `agy` copy of each skill in front
 of `agy` under one name; Mars warns (`deprecated-agents-target`) and says to run

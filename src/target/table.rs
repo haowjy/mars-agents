@@ -5,7 +5,7 @@ use mars_schema::HarnessId;
 use mars_schema::item::ItemKind;
 
 use super::keyed_entries::Rendered;
-use super::mcp_file::{agy_render, claude_render, cursor_render};
+use super::mcp_file::{agy_render, claude_render};
 use super::plugin::PluginTarget;
 use super::{
     AGENTS_TARGET, HOOK_ENTRY_KIND, KeyedKind, KeyedSection, McpDirs, McpFile, SectionFormat,
@@ -55,7 +55,6 @@ pub fn for_harness(id: HarnessId) -> &'static TargetSpec {
         HarnessId::Codex => &CODEX,
         HarnessId::Pi => &PI,
         HarnessId::OpenCode => &OPENCODE,
-        HarnessId::Cursor => &CURSOR,
         HarnessId::Agy => &AGY,
     }
 }
@@ -196,14 +195,6 @@ const OPENCODE: TargetSpec = TargetSpec {
 const PI: TargetSpec = TargetSpec {
     harness: Some(HarnessId::Pi),
     mcp: Some(json_mcp(".pi/mcp.json", claude_render)),
-    mcp_args: McpArgsDir::Installed,
-    plugin: None,
-    reads_agents_skills: false,
-};
-
-const CURSOR: TargetSpec = TargetSpec {
-    harness: Some(HarnessId::Cursor),
-    mcp: Some(json_mcp(".cursor/mcp.json", cursor_render)),
     mcp_args: McpArgsDir::Installed,
     plugin: None,
     reads_agents_skills: false,

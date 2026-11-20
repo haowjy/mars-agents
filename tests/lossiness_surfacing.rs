@@ -6,28 +6,29 @@ use predicates::prelude::*;
 
 use common::*;
 
-const LOSSY_CURSOR_AGENT: &str = r#"---
-name: cursor-worker
-description: Cursor worker
-harness: cursor
+const LOSSY_AGENT: &str = r#"---
+name: opencode-worker
+description: OpenCode worker
+harness: opencode
 model-policies:
   - match: {model: gpt-6}
     override: {effort: low}
 ---
-# Cursor body
+# OpenCode body
 "#;
 
-const LOSSINESS_VERBOSE_SNIPPET: &str = "not lowered (meridian-only) for .cursor (model-policies)";
+const LOSSINESS_VERBOSE_SNIPPET: &str =
+    "not lowered (meridian-only) for .opencode (model-policies)";
 
 fn setup_lossy_synced_project(dir: &TempDir) -> std::path::PathBuf {
-    let source = create_source(dir, "base", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    let source = create_source(dir, "base", &[("opencode-worker", LOSSY_AGENT)], &[]);
     let project = dir.child("project");
     project.create_dir_all().unwrap();
     project
         .child("mars.toml")
         .write_str(&format!(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies.base]
@@ -132,14 +133,14 @@ fn export_suppresses_lossiness_warnings() {
 #[test]
 fn add_suppresses_lossiness_warnings() {
     let dir = TempDir::new().unwrap();
-    let lossy_source = create_source(&dir, "lossy", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    let lossy_source = create_source(&dir, "lossy", &[("opencode-worker", LOSSY_AGENT)], &[]);
     let project = dir.child("project");
     project.create_dir_all().unwrap();
     project
         .child("mars.toml")
         .write_str(
             r#"[settings]
-targets = [".cursor"]
+targets = [".opencode"]
 agent_emission = "always"
 
 [dependencies]
@@ -147,7 +148,7 @@ agent_emission = "always"
         )
         .unwrap();
     std::fs::create_dir_all(project.path().join(".mars")).unwrap();
-    std::fs::create_dir_all(project.path().join(".cursor")).unwrap();
+    std::fs::create_dir_all(project.path().join(".opencode")).unwrap();
 
     offline_mars(dir.path())
         .args([
@@ -164,10 +165,10 @@ agent_emission = "always"
 #[test]
 fn check_is_silent_about_launch_time_fields_without_verbose() {
     let dir = TempDir::new().unwrap();
-    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    let pkg = create_source(&dir, "pkg", &[("opencode-worker", LOSSY_AGENT)], &[]);
     std::fs::write(
         pkg.join("mars.toml"),
-        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+        "[settings]\ntargets = [\".opencode\"]\nagent_emission = \"always\"\n",
     )
     .unwrap();
 
@@ -181,10 +182,10 @@ fn check_is_silent_about_launch_time_fields_without_verbose() {
 #[test]
 fn check_skips_agent_lossiness_when_emission_suppressed() {
     let dir = TempDir::new().unwrap();
-    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    let pkg = create_source(&dir, "pkg", &[("opencode-worker", LOSSY_AGENT)], &[]);
     std::fs::write(
         pkg.join("mars.toml"),
-        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"never\"\n",
+        "[settings]\ntargets = [\".opencode\"]\nagent_emission = \"never\"\n",
     )
     .unwrap();
 
@@ -210,10 +211,10 @@ fn sync_verbose_surfaces_meridian_only_detail() {
 #[test]
 fn check_verbose_surfaces_meridian_only_detail() {
     let dir = TempDir::new().unwrap();
-    let pkg = create_source(&dir, "pkg", &[("cursor-worker", LOSSY_CURSOR_AGENT)], &[]);
+    let pkg = create_source(&dir, "pkg", &[("opencode-worker", LOSSY_AGENT)], &[]);
     std::fs::write(
         pkg.join("mars.toml"),
-        "[settings]\ntargets = [\".cursor\"]\nagent_emission = \"always\"\n",
+        "[settings]\ntargets = [\".opencode\"]\nagent_emission = \"always\"\n",
     )
     .unwrap();
 

@@ -153,19 +153,20 @@ struct RawModelAlias {
 impl<'de> Deserialize<'de> for ModelAlias {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawModelAlias::deserialize(deserializer)?;
-        let normalized_harness = if let Some(ref harness_name) = raw.harness {
-            Some(crate::harness::normalize_name(harness_name).ok_or_else(|| {
+        // A harness Mars retired pins nothing: published packages still name one.
+        let normalized_harness = match raw.harness.as_deref() {
+            Some(name) if crate::retired::retired_target(name).is_some() => None,
+            Some(name) => Some(crate::harness::normalize_name(name).ok_or_else(|| {
                 serde::de::Error::custom(format!(
-                    "invalid harness '{harness_name}'; valid harnesses: {}",
+                    "invalid harness '{name}'; valid harnesses: {}",
                     crate::harness::names()
                 ))
-            })?)
-        } else {
-            None
+            })?),
+            None => None,
         };
         if raw.native.is_some() {
             return Err(serde::de::Error::custom(
-                "[models.<alias>.native] is no longer supported; Cursor model adaptation is internal",
+                "[models.<alias>.native] is no longer supported",
             ));
         }
         let default_effort = raw

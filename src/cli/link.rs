@@ -28,6 +28,15 @@ pub struct LinkArgs {
 /// Run `mars link`.
 pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let parsed_target = super::target::normalize_target_name(&args.target)?;
+    if let Some(retired) = mars_schema::retired::retired_target(&parsed_target) {
+        return Err(MarsError::Link {
+            target: retired.dir.to_string(),
+            message: retired.message(&crate::types::managed_cmd(&format!(
+                "mars unlink {}",
+                retired.dir
+            ))),
+        });
+    }
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
     link_target(ctx, &target_name, args.force, json)
 }
@@ -77,6 +86,7 @@ fn link_target(
     let lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
     let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
+    let provided = crate::provided::ProvidedNames::load(&ctx.project_root, &mut diag)?;
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
         effective.settings.meridian_agent_copy(),
         &runtime_targets,
@@ -99,10 +109,11 @@ fn link_target(
         &mut diag,
     )?;
 
-    let target_outcomes = crate::compiler::sync_targets_under_policy(
+    let (target_outcomes, provided_skills) = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
         &[target_name.to_string()],
         &outcomes,
+        &provided,
         &agent_surface_policy,
         &lock,
         force,
@@ -110,7 +121,10 @@ fn link_target(
         &mut diag,
     );
     let mut diagnostics = diag.drain();
-    diagnostics.extend(crate::config::targets::target_advisories(&runtime_targets));
+    diagnostics.extend(crate::config::targets::target_advisories(
+        &runtime_targets,
+        &crate::config::targets::effective_links(&effective.settings).retired_targets(),
+    ));
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
@@ -145,7 +159,8 @@ fn link_target(
 
     reject_unmanaged_collision(&diagnostics, target_name, force)?;
 
-    let mut new_lock = lock;
+    let mut new_lock = lock.clone();
+    crate::lock::record_provided_skills(&mut new_lock, &lock, &provided_skills, &target_outcomes);
     crate::lock::apply_target_sync_outputs(&mut new_lock, &target_outcomes);
     crate::lock::apply_removed_native_outputs(&mut new_lock, &removed_native_outputs);
     crate::lock::apply_compiled_native_outputs(&mut new_lock, &compiled_native_outputs)?;
@@ -156,6 +171,7 @@ fn link_target(
 
     if settings_changed {
         let mut config = config;
+        // The key is retired; leaving it beside the `targets` just written would only warn.
         config.settings.managed_root = None;
         config.settings.targets = Some(persisted_targets);
         crate::config::save(&ctx.project_root, &config)?;

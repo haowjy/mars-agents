@@ -13,8 +13,6 @@ use mars_schema::{HarnessId, Host};
 
 use super::catalog::Catalog;
 use super::infer_provider_from_model_id;
-use super::probes::Listing;
-use super::slug_tiers::{ModelTiers, TierFailure, tiers_from_listing, without_tier};
 use crate::harness::registry::{self, SlugShape};
 use crate::routing::slug;
 
@@ -23,8 +21,8 @@ use crate::routing::slug;
 pub struct CatalogIdentity {
     /// models.dev's provider key, as [`catalog_provider_canonical`] spells it.
     pub provider: String,
-    /// The base model, in [`slug::normalize_model_id`] form: a provider qualification and an
-    /// effort tier are not part of it.
+    /// The model, in [`slug::normalize_model_id`] form: a provider qualification is not part of
+    /// it.
     pub model: String,
 }
 
@@ -33,11 +31,8 @@ pub struct CatalogIdentity {
 ///
 /// - Claude and Codex run one provider; a pinned alias may spell it (`openai/o3`).
 /// - OpenCode and Pi launch `provider/model` slugs.
-/// - A harness with bare slugs (Cursor) names no provider: it is inferred from the model.
-/// - A harness whose slugs carry an effort tier (Cursor's `gpt-5.5-high`) has it dropped when
-///   the catalog knows the model without it.
+/// - A harness with bare slugs (Antigravity) names no provider: it is inferred from the model.
 pub fn catalog_identity(
-    catalog: &Catalog,
     harness: HarnessId,
     model: &str,
     harness_model: &str,
@@ -57,21 +52,8 @@ pub fn catalog_identity(
         }
     };
     let provider = catalog_provider_canonical(&slug::normalize_provider(provider));
-    let mut model = slug::normalize_model_id(id);
-    if registry::slug_tiers(harness).is_some()
-        && !has_row(catalog, &provider, &model)
-        && let Some(base) = without_tier(&model).map(str::to_string)
-        && has_row(catalog, &provider, &base)
-    {
-        model = base;
-    }
+    let model = slug::normalize_model_id(id);
     Some(CatalogIdentity { provider, model })
-}
-
-fn has_row(catalog: &Catalog, provider: &str, model: &str) -> bool {
-    catalog
-        .provider_rows(provider)
-        .any(|row| slug::normalize_model_id(&row.id) == model)
 }
 
 /// The catalog row of `identity`, from the unfiltered snapshot.
@@ -100,55 +82,22 @@ pub struct RouteEffort<'a> {
     /// The model was treated as unknown because the catalog has no reasoning data for it: there
     /// is no snapshot, or its row is from before 0.35.
     pub reasoning_data_missing: bool,
-    /// The harness's tiers for the model, when the effort needed them.
-    pub tiers: Option<ModelTiers>,
-    /// The harness could not say which slug carries the requested effort.
-    pub tier_failure: Option<TierFailure>,
 }
 
-impl RouteEffort<'_> {
-    /// The slug that carries the resolved level.
-    pub fn tier_slug(&self) -> Option<&str> {
-        let level = self.resolution.level?;
-        self.tiers
-            .as_ref()?
-            .slug_by_level
-            .get(&level)
-            .map(String::as_str)
-    }
-}
-
-/// Resolves `request` for `model` on `harness`. A harness that folds tiers into its slugs takes
-/// the levels `listing` lists for the model, read only when the model could take an effort.
+/// Resolves `request` for `model` on `harness`.
 pub fn resolve_for_route<'a>(
     request: EffortRequest,
     catalog: &'a Catalog,
     harness: HarnessId,
     model: &str,
     harness_model: &str,
-    listing: Option<&Listing>,
 ) -> RouteEffort<'a> {
-    let identity = catalog_identity(catalog, harness, model, harness_model);
+    let identity = catalog_identity(harness, model, harness_model);
     let row = identity
         .as_ref()
         .and_then(|identity| catalog_row(catalog, identity));
     let reasoning = ModelReasoning::from_row(row.and_then(|row| row.reasoning.as_ref()));
-    let mut model_tiers = None;
-    let mut tier_failure = None;
-    let mut harness_set = self::harness_set(harness);
-    if let Some(spec) = registry::slug_tiers(harness)
-        && matches!(request, EffortRequest::Level(_))
-        && reasoning != ModelReasoning::DoesNotReason
-    {
-        let base = identity.as_ref().map_or(model, |identity| &identity.model);
-        match tiers_from_listing(spec, base, listing) {
-            Ok(tiers) => {
-                harness_set = tiers.levels();
-                model_tiers = Some(tiers);
-            }
-            Err(failure) => tier_failure = Some(failure),
-        }
-    }
+    let harness_set = self::harness_set(harness);
     let resolution = resolve_effort(request, &reasoning, &harness_set);
     let warning = resolution.moved.map(|moved| EffortWarning {
         message: move_warning(&moved, model, harness, &reasoning, &harness_set),
@@ -160,12 +109,10 @@ pub fn resolve_for_route<'a>(
         warning,
         reasoning_data_missing: reasoning == ModelReasoning::Unknown
             && (row.is_some() || catalog.is_empty()),
-        tiers: model_tiers,
-        tier_failure,
     }
 }
 
-/// The levels `harness` itself takes, before any model: a tiered harness's depend on the model.
+/// The levels `harness` itself takes, before any model.
 pub fn harness_set(harness: HarnessId) -> Levels {
     harness_levels(Host::Harness(harness))
 }

@@ -84,16 +84,9 @@ fn link_target(
     let settings_changed = config.settings.targets.as_ref() != Some(&persisted_targets);
 
     let lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
-    let mut outcomes = lock_items_as_sync_outcomes(&lock);
+    let outcomes = lock_items_as_sync_outcomes(&lock);
     let mut diag = DiagnosticCollector::new();
-    let taken = outcomes
-        .iter()
-        .filter(|outcome| outcome.item_id.kind == ItemKind::Skill)
-        .map(|outcome| outcome.item_id.name.to_string())
-        .collect();
     let provided = crate::provided::ProvidedNames::load(&ctx.project_root, &mut diag)?;
-    let provided_skills = crate::provided::skill_outcomes(&provided, &mars_dir, &taken, &mut diag);
-    outcomes.extend(provided_skills.iter().cloned());
     let agent_copy_spec = crate::compiler::agent_copy::build_agent_copy_spec(
         effective.settings.meridian_agent_copy(),
         &runtime_targets,
@@ -116,10 +109,11 @@ fn link_target(
         &mut diag,
     )?;
 
-    let target_outcomes = crate::compiler::sync_targets_under_policy(
+    let (target_outcomes, provided_skills) = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
         &[target_name.to_string()],
         &outcomes,
+        &provided,
         &agent_surface_policy,
         &lock,
         force,

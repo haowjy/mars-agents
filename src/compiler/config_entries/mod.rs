@@ -195,10 +195,8 @@ pub(crate) fn compile_config_entries(
                 .into_iter()
                 .flatten()
             {
-                let Some((event, name)) = key
-                    .strip_prefix(HOOK_KEY_PREFIX)
-                    .and_then(|rest| rest.split_once(':'))
-                    .filter(|(_, name)| *name == kept.name)
+                let Some((event, name)) =
+                    HookEntry::parse_key(key).filter(|(_, name)| *name == kept.name)
                 else {
                     continue;
                 };

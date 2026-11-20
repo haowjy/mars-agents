@@ -2,7 +2,8 @@
 //!
 //! Hooks and MCP servers are validated by the readers sync uses, on a copy of only the entries
 //! that qualify (`_x` and `.x` never reach sync), and that copy is what `provide` stages under
-//! `.mars/provided/<provider>/`.
+//! `.mars/provided/<provider>/`. Discovery only digests them; [`ProvidedEntries::stage`] makes the
+//! copy, so a launch that changes nothing copies and parses nothing.
 //!
 //! `<dir>/skills/` is read one level deep. Entries are copied as authored — never normalized —
 //! so the digest describes exactly what lands in `.mars/skills/` (each file's bytes and
@@ -31,10 +32,10 @@ pub(crate) struct ProvidedSkill {
 
 pub(crate) struct ProvidedEntries {
     pub skills: Vec<ProvidedSkill>,
-    /// The validated hooks and MCP servers as `hooks/<name>/` and `mcp/<name>/` under one root,
-    /// `None` when the bundle has none. Installing this tree is staging.
-    pub staged: Option<tempfile::TempDir>,
-    /// [`tree_digest`] of `staged`.
+    /// The hook and MCP directories that qualify, as `(hooks|mcp, name, source dir)`.
+    staged_sources: Vec<(&'static str, String, PathBuf)>,
+    /// The [`tree_digest`] the staged tree has once [`Self::stage`] copies the sources, `None`
+    /// when the bundle has none.
     pub staged_digest: Option<String>,
     /// SHA-256 over `(name, skill digest)` pairs and the staged tree's digest: it moves when any
     /// skill's bytes, executable bits or the entry list do, and leaves the per-skill digests as
@@ -87,7 +88,8 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
         let digest = tree_digest(&dir)?;
         skills.push(ProvidedSkill { name, dir, digest });
     }
-    let (staged, staged_digest) = stage_hooks_and_mcp(spec, &mut warnings)?;
+    let staged_sources = qualifying_sources(spec)?;
+    let staged_digest = sources_digest(&staged_sources)?;
 
     let mut entries: Vec<(String, String)> = skills
         .iter()
@@ -101,38 +103,72 @@ pub(crate) fn discover(spec: &ProvideSpec) -> Result<(ProvidedEntries, Vec<Strin
         ProvidedEntries {
             digest: crate::hash::hash_file_manifest(entries),
             skills,
-            staged,
+            staged_sources,
             staged_digest,
         },
         warnings,
     ))
 }
 
-/// Copies each qualifying hook and MCP server into a scratch tree and reads it as sync will.
-fn stage_hooks_and_mcp(
+impl ProvidedEntries {
+    /// Copies the qualifying hooks and MCP servers into a scratch tree (`hooks/<name>/`,
+    /// `mcp/<name>/`) and reads it as sync will; installing the tree is staging. `None` when the
+    /// bundle has none. Fails before the caller writes anything if sync would reject an entry.
+    pub(crate) fn stage(
+        &self,
+        spec: &ProvideSpec,
+        warnings: &mut Vec<String>,
+    ) -> Result<Option<tempfile::TempDir>, MarsError> {
+        if self.staged_sources.is_empty() {
+            return Ok(None);
+        }
+        let scratch = tempfile::tempdir()?;
+        for (kind, name, source) in &self.staged_sources {
+            crate::fs::copy_dir_filtered(source, &scratch.path().join(kind).join(name), &[])?;
+        }
+        validate_staged(scratch.path(), spec, warnings)?;
+        Ok(Some(scratch))
+    }
+}
+
+/// The hook and MCP directories that carry a manifest.
+fn qualifying_sources(
     spec: &ProvideSpec,
-    warnings: &mut Vec<String>,
-) -> Result<(Option<tempfile::TempDir>, Option<String>), MarsError> {
-    let mut copied = 0;
-    let scratch = tempfile::tempdir()?;
+) -> Result<Vec<(&'static str, String, PathBuf)>, MarsError> {
+    let mut sources = Vec::new();
     for (kind, manifest) in [("hooks", "hook.toml"), ("mcp", "mcp.toml")] {
         let kind_dir = spec.package_dir.join(kind);
         for name in entry_names(&kind_dir)? {
             let source = kind_dir.join(&name);
             if source.join(manifest).is_file() {
-                crate::fs::copy_dir_filtered(&source, &scratch.path().join(kind).join(&name), &[])?;
-                copied += 1;
+                sources.push((kind, name, source));
             }
         }
     }
-    if copied == 0 {
-        return Ok((None, None));
-    }
+    Ok(sources)
+}
 
+/// What [`tree_digest`] gives the scratch tree [`ProvidedEntries::stage`] copies the sources to.
+fn sources_digest(sources: &[(&str, String, PathBuf)]) -> Result<Option<String>, MarsError> {
+    if sources.is_empty() {
+        return Ok(None);
+    }
+    let mut entries = Vec::new();
+    for (kind, name, source) in sources {
+        file_digests(source, &format!("{kind}/{name}/"), &mut entries)?;
+    }
+    Ok(Some(crate::hash::hash_file_manifest(entries)))
+}
+
+fn validate_staged(
+    scratch: &Path,
+    spec: &ProvideSpec,
+    warnings: &mut Vec<String>,
+) -> Result<(), MarsError> {
     let source_name = super::source::source_name(&spec.provider);
     let mut diag = crate::diagnostic::DiagnosticCollector::new();
     let hooks = crate::compiler::hooks::discover_hook_items(
-        scratch.path(),
+        scratch,
         &source_name,
         crate::compiler::hooks::HookSource::Dependency {
             version: &spec.version,
@@ -144,11 +180,7 @@ fn stage_hooks_and_mcp(
     .map_err(|error| {
         invalid(
             "provided-hook-invalid",
-            in_bundle(
-                &crate::compiler::hooks::error_message(error),
-                scratch.path(),
-                spec,
-            ),
+            in_bundle(&crate::compiler::hooks::error_message(error), scratch, spec),
         )
     })?;
     // The dependency reader skips a hook that is not exported, so one that lacks it would install
@@ -165,21 +197,22 @@ fn stage_hooks_and_mcp(
             ),
         ));
     }
-    crate::compiler::mcp::discover_mcp_items(scratch.path(), &source_name, 1, 0, &mut diag)
-        .map_err(|error| {
+    // The host reads its own bundle's paths, so the server is read as the host's, not the
+    // staged source sync will know it by.
+    crate::compiler::mcp::discover_mcp_items(scratch, &spec.provider, 1, 0, &mut diag).map_err(
+        |error| {
             invalid(
                 "provided-mcp-invalid",
-                in_bundle(&error.to_string(), scratch.path(), spec),
+                in_bundle(&error.to_string(), scratch, spec),
             )
-        })?;
+        },
+    )?;
     warnings.extend(
         diag.drain()
             .into_iter()
             .map(|diagnostic| diagnostic.message),
     );
-
-    let digest = tree_digest(scratch.path())?;
-    Ok((Some(scratch), Some(digest)))
+    Ok(())
 }
 
 /// An install is bytes plus the mode the copy path gives them (`0o644` and the source's execute
@@ -191,6 +224,16 @@ fn stage_hooks_and_mcp(
 /// caller comparing a destination reads the error as "not byte-equal" rather than failing.
 pub(crate) fn tree_digest(dir: &Path) -> Result<String, MarsError> {
     let mut entries = Vec::new();
+    file_digests(dir, "", &mut entries)?;
+    Ok(crate::hash::hash_file_manifest(entries))
+}
+
+/// The files of `dir` as `(prefix + relative path, hash)`, an execute bit folded into the hash.
+fn file_digests(
+    dir: &Path,
+    prefix: &str,
+    entries: &mut Vec<(String, String)>,
+) -> Result<(), MarsError> {
     for (relative, hash) in crate::hash::strict_file_hashes(dir, &[])? {
         let metadata = fs::symlink_metadata(dir.join(&relative))?;
         let hash = if crate::platform::fs::is_executable(&metadata) {
@@ -198,9 +241,9 @@ pub(crate) fn tree_digest(dir: &Path) -> Result<String, MarsError> {
         } else {
             hash
         };
-        entries.push((relative, hash));
+        entries.push((format!("{prefix}{relative}"), hash));
     }
-    Ok(crate::hash::hash_file_manifest(entries))
+    Ok(())
 }
 
 fn read_skill(

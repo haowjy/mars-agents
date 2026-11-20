@@ -82,6 +82,11 @@ impl HookEntry {
     pub fn key(&self) -> String {
         format!("{HOOK_KEY_PREFIX}{}:{}", self.native_event, self.name)
     }
+
+    /// `(native event, name)` of a record key [`Self::key`] made.
+    pub(crate) fn parse_key(key: &str) -> Option<(&str, &str)> {
+        key.strip_prefix(HOOK_KEY_PREFIX)?.split_once(':')
+    }
 }
 
 /// Return an error message when an agent name would create a Windows-invalid

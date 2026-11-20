@@ -303,6 +303,12 @@ fn diagnostic_code(code: &str) -> String {
 fn located(toml_path: &Path, hook_name: &str, source_name: &str, source: HookSource<'_>) -> String {
     match source {
         HookSource::Project => toml_path.display().to_string(),
+        HookSource::Dependency { .. } if crate::provided::is_provided_source(source_name) => {
+            format!(
+                "hook `{hook_name}` from {}",
+                crate::provided::provider_label(source_name)
+            )
+        }
         HookSource::Dependency { version } => {
             format!("source package `{source_name}` version `{version}`, hook `{hook_name}`")
         }
@@ -331,8 +337,8 @@ fn invalid_manifest(
                 && crate::provided::is_provided_source(source_name) =>
         {
             format!(
-                "hook `{hook_name}` from {} uses a retired hook schema",
-                crate::provided::provider_label(source_name)
+                "{} uses a retired hook schema",
+                located(toml_path, hook_name, source_name, source)
             )
         }
         HookSource::Dependency { version } if code == hooks::REMOVED_SCHEMA_CODE => format!(
@@ -341,8 +347,9 @@ fn invalid_manifest(
             cmd_upgrade = managed_cmd(&format!("mars upgrade {source_name} --bump")),
             cmd_remove = managed_cmd(&format!("mars remove {source_name}")),
         ),
-        HookSource::Dependency { version } => format!(
-            "source package `{source_name}` version `{version}`, hook `{hook_name}`: {message}"
+        HookSource::Dependency { .. } => format!(
+            "{}: {message}",
+            located(toml_path, hook_name, source_name, source)
         ),
     };
     ConfigError::Invalid { message }.into()

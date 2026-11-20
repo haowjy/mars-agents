@@ -557,6 +557,8 @@ fn restart_fresh_context_drops_removed_transitive_dependency_and_lock_entry() {
         },
         &LockFile::empty(),
         std::collections::BTreeMap::new(),
+        Default::default(),
+        &Default::default(),
     )
     .unwrap();
     assert!(

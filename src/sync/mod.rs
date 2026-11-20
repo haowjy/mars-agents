@@ -274,10 +274,9 @@ pub(crate) fn load_config(
     diag.extend(config_diagnostics);
     // Injected here, not in `merge_with_root`, which publish and the plugin build also call: a
     // host's content belongs to this machine's sync and to nothing it builds or publishes.
-    if crate::config::targets::managed_targets(&effective.settings)
-        .iter()
-        .any(|target| crate::harness::registry::takes_provided(target))
-    {
+    if crate::provided::takes_provided_any(&crate::config::targets::managed_targets(
+        &effective.settings,
+    )) {
         effective
             .dependencies
             .extend(crate::provided::staged_dependencies(project_root)?);
@@ -791,10 +790,11 @@ pub(crate) fn sync_targets(
     let targets = crate::config::targets::managed_targets(
         &applied.planned.targeted.resolved.loaded.effective.settings,
     );
-    let target_outcomes = crate::compiler::sync_targets_under_policy(
+    let (target_outcomes, provided_skills) = crate::compiler::sync_targets_under_policy(
         &ctx.project_root,
         &targets,
         &applied.applied.outcomes,
+        &applied.planned.targeted.resolved.loaded.provided,
         &agent_surface_policy,
         &applied.planned.targeted.resolved.loaded.old_lock,
         request.options.force,
@@ -812,7 +812,7 @@ pub(crate) fn sync_targets(
         removed_config_entry_outputs: Vec::new(),
         compiled_native_outputs: Vec::new(),
         removed_native_outputs: Vec::new(),
-        provided_skills: Vec::new(),
+        provided_skills,
     }
 }
 

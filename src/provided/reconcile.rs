@@ -81,6 +81,9 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
         return Ok(current_report(&spec, &assessed.previous, &plan, warnings));
     }
 
+    // Validate before anything is written: a bundle sync would reject fails here.
+    let staged = entries.stage(&spec, &mut warnings)?;
+
     // Record planned writes first so a crash retains authority to remove them.
     let mut pre_record: BTreeSet<String> = assessed.previous.skills.iter().cloned().collect();
     pre_record.extend(plan.recorded(&entries));
@@ -101,7 +104,7 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
     for name in &plan.removals {
         crate::platform::fs::safe_remove(&skills_dir.join(name))?;
     }
-    match &entries.staged {
+    match &staged {
         Some(tree) => crate::fs::atomic_install_dir(tree.path(), &staged_dir)?,
         None => crate::platform::fs::safe_remove(&staged_dir)?,
     }
@@ -154,7 +157,7 @@ fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
 }
 
 /// `.mars/provided/<provider>/`: the hooks and MCP servers sync reads as the provider's node.
-fn staged_dir(root: &Path, provider: &str) -> std::path::PathBuf {
+pub(super) fn staged_dir(root: &Path, provider: &str) -> std::path::PathBuf {
     root.join(".mars").join("provided").join(provider)
 }
 

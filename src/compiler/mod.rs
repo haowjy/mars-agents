@@ -38,7 +38,8 @@ pub(crate) fn warn_unknown_visibility(
         "unknown-visibility",
         format!(
             "{item_kind} `{item_name}` from source `{source_name}` has unknown \
-             visibility `{unknown}`; treating it as `local`"
+             visibility `{unknown}`; treating it as `local`",
+            source_name = crate::provided::provider_label(source_name),
         ),
     );
 }
@@ -350,17 +351,33 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 /// Target-sync `targets` from `outcomes` under `policy`: the one place that decides which
 /// outcomes target sync sees and which lock-recorded files its orphan pass must leave alone
 /// (hook-generated files, native agents that reconcile owns). Sync and `link` both call it.
+///
+/// A host's provided skills join `outcomes` here, after the policy filter, so sync and `link`
+/// project them the same way; they come back for the caller to record in the lock.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_targets_under_policy(
     project_root: &std::path::Path,
     targets: &[String],
     outcomes: &[ActionOutcome],
+    provided: &crate::provided::ProvidedNames,
     policy: &AgentSurfacePolicy,
     old_lock: &crate::lock::LockFile,
     force: bool,
     collision_hint: crate::surface_ownership::CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
-) -> Vec<crate::target_sync::TargetSyncOutcome> {
+) -> (
+    Vec<crate::target_sync::TargetSyncOutcome>,
+    Vec<ActionOutcome>,
+) {
+    let mars_dir = project_root.join(".mars");
+    // A package or the project holding a provided skill's name wins it: one key, one outcome.
+    let taken = outcomes
+        .iter()
+        .filter(|outcome| outcome.item_id.kind == mars_schema::item::ItemKind::Skill)
+        .map(|outcome| outcome.item_id.name.to_string())
+        .collect();
+    let provided_skills =
+        crate::provided::skill_outcomes(provided, &mars_dir, &taken, targets, diag);
     let mut preserve = config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
     for (target, paths) in native_agent_orphan_preserve_paths(old_lock, targets) {
         preserve.entry(target).or_default().extend(paths);
@@ -371,20 +388,22 @@ pub(crate) fn sync_targets_under_policy(
         collision_hint,
         orphan_preserve_paths: (!preserve.is_empty()).then_some(&preserve),
     };
-    targets
+    let target_outcomes = targets
         .iter()
         .flat_map(|target| {
-            let outcomes = agent_outcomes_for_target(policy, target, outcomes);
+            let mut outcomes = agent_outcomes_for_target(policy, target, outcomes);
+            outcomes.extend(provided_skills.iter().cloned());
             crate::target_sync::sync_managed_targets(
                 project_root,
-                &project_root.join(".mars"),
+                &mars_dir,
                 std::slice::from_ref(target),
                 &outcomes,
                 &ctx,
                 diag,
             )
         })
-        .collect()
+        .collect();
+    (target_outcomes, provided_skills)
 }
 
 /// The outcomes target sync sees for `target`. Native agent files of a harness that policy

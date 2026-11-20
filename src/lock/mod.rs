@@ -697,11 +697,13 @@ fn write_lock_file(path: &Path, lock: &LockFile) -> Result<(), MarsError> {
     crate::fs::atomic_write_if_changed(path, content.as_bytes()).map(|_| ())
 }
 
-pub fn build(
+pub(crate) fn build(
     graph: &crate::resolve::ResolvedGraph,
     applied: &crate::sync::apply::ApplyResult,
     old_lock: &LockFile,
     config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    provided_entries: std::collections::BTreeSet<(String, String)>,
+    provided: &crate::provided::ProvidedNames,
 ) -> Result<LockFile, MarsError> {
     use crate::sync::apply::ActionTaken;
 
@@ -751,7 +753,15 @@ pub fn build(
     }
 
     for (name, node) in &graph.nodes {
-        dependencies.insert(name.clone(), to_locked_source(node));
+        let mut locked = to_locked_source(node);
+        if crate::provided::is_provided_source(name.as_ref()) {
+            // A staged path dependency has no version of its own; its hooks and MCP servers are
+            // what moves.
+            locked.version = provided
+                .staged_digest(crate::provided::provider_label(name.as_ref()))
+                .map(str::to_owned);
+        }
+        dependencies.insert(name.clone(), locked);
     }
 
     for outcome in &applied.outcomes {
@@ -881,7 +891,7 @@ pub fn build(
         dependencies,
         items,
         config_entries,
-        provided_entries: Default::default(),
+        provided_entries,
         dependency_model_aliases: IndexMap::new(),
     })
 }
@@ -1169,12 +1179,6 @@ pub fn apply_compiled_native_outputs(
     Ok(())
 }
 
-/// Preserve unresolved noncanonical removal authority as a retry tombstone.
-///
-/// A rebuilt lock omits canonical items removed from the source graph. Their
-/// linked-target artifacts can outlive that removal when filesystem deletion
-/// fails, so the unresolved linked outputs must remain owned until removal
-/// succeeds.
 /// Records the provided skills a target sync projected. They have no `.mars` output in the lock
 /// (`mars provide` owns that copy), so [`upsert_target_output`] has no owner to attach a target
 /// output to: the item is built here from what the last sync recorded plus the outputs this one
@@ -1237,6 +1241,12 @@ pub(crate) fn record_provided_skills(
     }
 }
 
+/// Preserve unresolved noncanonical removal authority as a retry tombstone.
+///
+/// A rebuilt lock omits canonical items removed from the source graph. Their
+/// linked-target artifacts can outlive that removal when filesystem deletion
+/// fails, so the unresolved linked outputs must remain owned until removal
+/// succeeds.
 pub fn retain_unremoved_noncanonical_outputs(
     lock: &mut LockFile,
     old_lock: &LockFile,
@@ -1448,6 +1458,10 @@ pub(crate) enum RecordRef {
     },
     /// One native config entry of a target, by lock record key.
     Entry { target_root: String, key: String },
+    /// A dependency's own record, by name.
+    Dependency(String),
+    /// News when any of them is.
+    Any(Vec<RecordRef>),
 }
 
 impl RecordRef {
@@ -1492,6 +1506,11 @@ impl RecordRef {
                 let now = record(new, target_root, key);
                 now.is_some() && now != record(old, target_root, key)
             }
+            Self::Dependency(name) => new
+                .dependencies
+                .get(name.as_str())
+                .is_some_and(|now| old.dependencies.get(name.as_str()) != Some(now)),
+            Self::Any(records) => records.iter().any(|record| record.is_news(old, new)),
         }
     }
 }
@@ -1570,6 +1589,41 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn a_crash_between_the_two_lock_writes_leaves_provided_records_loadable() {
+        let dir = TempDir::new().unwrap();
+        let mut lock = sample_lock();
+        lock.items.insert(
+            "skill/probe__meridian".to_string(),
+            LockedItemV2 {
+                source: "_provided-meridian".into(),
+                kind: ItemKind::Skill,
+                version: None,
+                source_checksum: "sha256:eee".into(),
+                source_path: None,
+                outputs: vec![OutputRecord::installed(
+                    ".agy".to_string(),
+                    "skills/probe__meridian".into(),
+                    "sha256:eee".into(),
+                )],
+            },
+        );
+        // `mars.lock` cannot be written: the machine-local file, saved first, already is.
+        std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
+        write(dir.path(), &lock).unwrap_err();
+        std::fs::remove_dir(dir.path().join(LOCK_FILE)).unwrap();
+
+        let recovered = load(dir.path()).unwrap();
+        assert!(recovered.items.contains_key("skill/probe__meridian"));
+        assert!(!recovered.items.contains_key("agent/coder"));
+
+        // The next write puts each record in its own file.
+        write(dir.path(), &lock).unwrap();
+        let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
+        assert!(committed.contains("agent/coder") && !committed.contains("probe__meridian"));
+        assert_eq!(load(dir.path()).unwrap().items, lock.items);
+    }
+
     #[test]
     fn directory_output_with_nested_dangling_symlink_has_no_checksum() {
         use std::os::unix::fs::symlink;
@@ -1812,6 +1866,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -1937,6 +1993,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2006,6 +2064,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2354,6 +2414,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2424,6 +2486,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &LockFile::empty(),
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2494,6 +2558,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap();
 
@@ -2543,6 +2609,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap_err();
         let msg = err.to_string();
@@ -2600,6 +2668,8 @@ installed_checksum = "sha256:bbb"
             &applied,
             &old_lock,
             std::collections::BTreeMap::new(),
+            Default::default(),
+            &Default::default(),
         )
         .unwrap_err();
         let msg = err.to_string();

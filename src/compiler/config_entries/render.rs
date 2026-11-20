@@ -183,7 +183,7 @@ pub(crate) fn preflight_config_entries(
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
                             item.def.name,
-                            item.source_name,
+                            crate::provided::provider_label(&item.source_name),
                             limit.event.as_deref().unwrap_or(""),
                             limit.reason,
                         ),
@@ -193,11 +193,11 @@ pub(crate) fn preflight_config_entries(
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.hold_warning(RecordRef::Item(dir.lock_key()), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(RecordRef::Item(dir.lock_key()), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, crate::provided::provider_label(&item.source_name)));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
-                        diag.info("hook-native-overrides", format!("hook `{}` from `{}`: `{target_name}` native hook `{}` replaces the generated `{event}` entries", item.def.name, item.source_name, native_hook.file));
+                        diag.info("hook-native-overrides", format!("hook `{}` from `{}`: `{target_name}` native hook `{}` replaces the generated `{event}` entries", item.def.name, crate::provided::provider_label(&item.source_name), native_hook.file));
                     }
                 }
             }
@@ -221,7 +221,7 @@ pub(crate) fn preflight_config_entries(
                         format!(
                             "hook `{}` from `{}`: `{target_name}` native hook `{}` is installed next to the file generated from `[hooks]`; to replace the generated hook, put `{target_name}` in `skip-targets`",
                             item.def.name,
-                            item.source_name,
+                            crate::provided::provider_label(&item.source_name),
                             item.native_hook(target_name).map_or("", |f| f.file.as_str()),
                         ),
                     );
@@ -233,7 +233,7 @@ pub(crate) fn preflight_config_entries(
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
                             item.def.name,
-                            item.source_name,
+                            crate::provided::provider_label(&item.source_name),
                             limit.event.as_deref().unwrap_or(""),
                             limit.reason,
                         ),
@@ -245,7 +245,7 @@ pub(crate) fn preflight_config_entries(
                         format!(
                             "hook `{}` from `{}`: `{target_name}` native hook `{}` {problem}; the native hook will still be installed",
                             item.def.name,
-                            item.source_name,
+                            crate::provided::provider_label(&item.source_name),
                             item.native_hook(target_name).map_or("", |f| f.file.as_str()),
                         ),
                     );
@@ -287,10 +287,10 @@ fn report_skips(
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
         }
-        for target in managed
-            .iter()
-            .filter(|target| crate::provided::offered_to(&item.source_name, target))
-        {
+        for target in managed.iter().filter(|target| {
+            crate::provided::offered_to(&item.source_name, target)
+                && !targeted.target.hook_yielded(item, target)
+        }) {
             let skips = reported
                 .remove(&(hook_key(item), target.clone()))
                 .unwrap_or_else(|| item.def.skips_for(target));
@@ -300,7 +300,10 @@ fn report_skips(
             let lines: Vec<String> = skips.iter().map(skip_text).collect();
             let from = match item.origin {
                 Origin::Local => String::new(),
-                Origin::Dependency => format!(" from `{}`", item.source_name),
+                Origin::Dependency => format!(
+                    " from `{}`",
+                    crate::provided::provider_label(&item.source_name)
+                ),
             };
             let record = RecordRef::Item(targeted.target.placed_hook(item, target).map_or_else(
                 || crate::lock::unplaced_hook_key(&item.def.name, target),
@@ -360,7 +363,7 @@ pub(crate) fn lower_hook_entries(
                         format!(
                             "hook `{}` from `{}`: the `{}` plugin tree {}",
                             item.def.name,
-                            item.source_name,
+                            crate::provided::provider_label(&item.source_name),
                             name.trim_start_matches('.'),
                             skip_text(skip)
                         ),

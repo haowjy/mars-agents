@@ -1,5 +1,6 @@
 //! Write the lock and build the `SyncReport`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -40,16 +41,21 @@ pub(crate) fn finalize(
         let mut dep_model_aliases = crate::models::dependency_alias_snapshot(&dep_models);
         dep_model_aliases.sort_keys();
 
+        let provided_entries = provided_entries(
+            &state.applied.planned.targeted.target,
+            old_lock,
+            &state.config_entries,
+        );
         let mut new_lock = crate::lock::build(
             graph,
             &state.applied.applied,
             old_lock,
             state.config_entries,
+            provided_entries,
+            &state.applied.planned.targeted.resolved.loaded.provided,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
-        new_lock.provided_entries =
-            provided_entries(&state.applied.planned.targeted.target, old_lock, &new_lock);
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
             .iter()
@@ -184,30 +190,27 @@ fn record_hook_source_paths(
     }
 }
 
-/// The config entries of `new_lock` that a host's provided content wrote, which the lock saves in
+/// The config entries a host's provided content wrote, which the lock saves in
 /// `provided-outputs.lock`. A record carries no source, so this reads the selection: an entry is
 /// the host's when a selected hook or MCP server of a provided source has its key. One no
 /// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
 fn provided_entries(
     target: &crate::sync::target::TargetState,
     old_lock: &LockFile,
-    new_lock: &LockFile,
+    records: &BTreeMap<String, BTreeMap<String, crate::lock::ConfigEntryRecord>>,
 ) -> std::collections::BTreeSet<(String, String)> {
+    use crate::target::HookEntry;
     use crate::target::mcp_file::MCP_KIND;
     use crate::target::plugin::HOOK_ENTRY_KIND;
 
     let hooks = target.selected_hooks().map(|(dir, hook)| {
-        let keys: Vec<String> = new_lock
-            .config_entries
+        let keys: Vec<String> = records
             .get(dir.target())
             .into_iter()
             .flat_map(|records| records.keys())
             .filter(|key| {
                 **key == HOOK_ENTRY_KIND.key(&hook.def.name)
-                    || key
-                        .strip_prefix(crate::target::HOOK_KEY_PREFIX)
-                        .and_then(|rest| rest.split_once(':'))
-                        .is_some_and(|(_, name)| name == hook.def.name)
+                    || HookEntry::parse_key(key).is_some_and(|(_, name)| name == hook.def.name)
             })
             .cloned()
             .collect();
@@ -240,8 +243,7 @@ fn provided_entries(
             .cloned(),
     );
     provided.retain(|(target_root, key)| {
-        new_lock
-            .config_entries
+        records
             .get(target_root)
             .is_some_and(|records| records.contains_key(key))
     });
@@ -290,17 +292,14 @@ fn retry_tombstone_removals(
             .any(|output| output.target_root == crate::lock::CANONICAL_TARGET_ROOT)
     }) {
         for output in &item.outputs {
-            // A provided skill has no `.mars` output by design: its target outputs are live.
-            if crate::provided::is_provided_source(item.source.as_ref())
-                && output.installed_checksum().is_some()
-            {
+            // A tombstone is an output marked pending deletion; one with a checksum is installed.
+            if output.installed_checksum().is_some() {
                 continue;
             }
             let current_pass_owns_output = current_lock.items.values().any(|current_item| {
                 current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == crate::lock::CANONICAL_TARGET_ROOT
-                }) && current_item.outputs.iter().any(|current_output| {
-                    current_output.target_root == output.target_root
+                    current_output.installed_checksum().is_some()
+                        && current_output.target_root == output.target_root
                         && crate::target::dest_paths_equivalent(
                             current_output.dest_path.as_str(),
                             output.dest_path.as_str(),

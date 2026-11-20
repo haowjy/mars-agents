@@ -32,8 +32,10 @@ what only this machine has: provided content (`mars provide`), and every record 
 target `mars.toml` does not name, which only this machine's `mars.local.toml` asked for. A teammate
 never sees those records, so their sync neither warns about nor removes them.
 
-- **Which file.** A record goes to `mars.lock` when it is shared (`.mars` outputs, dependencies,
-  records of a target `mars.toml` names) and to `machine.lock` otherwise. Every writer (`sync`,
+- **Which file.** A record goes to `mars.lock` when it is shared (a shared item's `.mars` output,
+  dependencies, records of a target `mars.toml` names) and to `machine.lock` otherwise: an item
+  installed once per target, such as `hook/x@agy`, goes whole to its target's file, `.mars` copy
+  included. Every writer (`sync`,
   `link`, `unlink`, `resolve`) writes through `lock::write`, given the targets `mars.toml` names.
 - **Joining.** Loading joins the files per output and per config entry, not per item: a skill's
   `.mars` output stays in `mars.lock` and its output on a local-only target is in `machine.lock`.

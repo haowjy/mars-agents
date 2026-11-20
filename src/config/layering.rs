@@ -186,15 +186,19 @@ impl LocalSettings {
         };
 
         // A layer's `targets` adds to the layers below it: `mars link --local .agy` must not stop
-        // the machine syncing the project's `.claude`.
+        // the machine syncing the project's `.claude`. An empty list adds nothing; with no list
+        // below it, it says there are none on purpose. The layer is the source when it adds or
+        // says that.
         if let Some(value) = &self.targets {
+            let stated_none = value.is_empty() && merged.targets.is_none();
             let all = merged.targets.get_or_insert_with(Vec::new);
+            let before = all.len();
             for target in value {
                 if !all.contains(target) {
                     all.push(target.clone());
                 }
             }
-            if !value.is_empty() || field == LinkSource::None {
+            if all.len() > before || stated_none {
                 target_source.field = LinkSource::Targets;
                 target_source.origin = TargetOrigin::Local;
             }

@@ -105,6 +105,11 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         output::print_success(&format!(
             "removed `{target_name}` from mars.local.toml; mars.toml still links it"
         ));
+    } else if project_keeps {
+        output::print_info(&format!(
+            "mars.toml links `{target_name}`, not mars.local.toml: `--local` changes nothing; \
+             run `mars unlink {target_name}` to remove it for everyone"
+        ));
     } else {
         output::print_info(&format!(
             "`{target_name}` is not a managed target; no changes made"

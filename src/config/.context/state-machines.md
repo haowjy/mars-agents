@@ -35,6 +35,7 @@ stateDiagram-v2
 - `TargetSource.path` is `None` until `effective_project_config` fills it, so a `TargetSource` read
   anywhere else has a dead `path` field.
 - **A layer's `targets` adds to the layers below it** (`overlay_settings`), so `mars link --local .agy`
-  does not stop the machine syncing the project's `.claude`. Origin is `Local` when the local file
-  contributed a target, the last writer of the list; the wire contract has no value for "both".
-  An empty local list adds nothing and leaves the origin alone.
+  does not stop the machine syncing the project's `.claude`. Origin is `Local` only when the local file
+  adds a target the layers below don't name; the wire contract has no value for "both". An empty
+  local list adds nothing and leaves the origin alone, except with no list below it: then it states
+  there are none, as `targets = []` in `mars.toml` does.

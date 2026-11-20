@@ -94,12 +94,21 @@ fn link_target(
     let mut local = local;
     let (settings_changed, local_changed) = if local_only {
         let add = !in_project && !named_by(&local.settings.targets, target_name);
+        let floor = adding_targets_floor();
+        let add_floor = add
+            && !mars_schema::package::requirement_has_floor(
+                effective.settings.min_mars_version.as_deref(),
+                &floor,
+            );
         if add {
             local
                 .settings
                 .targets
                 .get_or_insert_with(Vec::new)
                 .push(target_name.to_string());
+        }
+        if add_floor {
+            local.settings.min_mars_version = Some(floor.to_string());
         }
         (false, add)
     } else {
@@ -227,6 +236,11 @@ fn link_target(
             "managed target `{target_name}` (synced {}, removed {})",
             outcome.items_synced, outcome.items_removed
         ));
+        if local_only && in_project {
+            output::print_info(&format!(
+                "mars.toml already links `{target_name}`: it stays a project target, shared with everyone"
+            ));
+        }
         output::print_diagnostics(&diagnostics, false);
     }
 
@@ -255,6 +269,15 @@ fn reject_unmanaged_collision(
         });
     }
     Ok(())
+}
+
+/// The first Mars where a local `targets` list adds to the project's. Mars 0.38.0 reads it as
+/// the whole list and, under its advised `--force`, rewrites the shared lock to match. A build
+/// before it is a development build of it, which must not stop itself.
+fn adding_targets_floor() -> semver::Version {
+    let running =
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver");
+    running.min(semver::Version::new(0, 39, 0))
 }
 
 fn named_by(targets: &Option<Vec<String>>, target_name: &str) -> bool {

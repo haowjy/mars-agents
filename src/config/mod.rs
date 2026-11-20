@@ -116,7 +116,7 @@ pub struct Manifest {
 /// production config points at git.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub overrides: IndexMap<SourceName, OverrideEntry>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub models: IndexMap<String, crate::models::ModelAlias>,

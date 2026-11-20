@@ -8,19 +8,22 @@
 
 use std::collections::BTreeSet;
 
-use super::{LockFile, LockedItemV2, record_local_dependency};
+use super::targets::Away;
+use super::{LockFile, record_local_dependency};
 use crate::provided::is_provided_source;
 use crate::types::SourceOrigin;
 
 /// `(committed, machine-local)`. `project_targets` are the targets `mars.toml` names.
 pub(super) fn split(lock: LockFile, project_targets: &BTreeSet<String>) -> (LockFile, LockFile) {
-    let (committed, mut local) = lock.split_targets(|target| project_targets.contains(target));
-    let (mut committed, provided) = split_provided(committed);
-    local.join(provided);
-    // `provided_entries` marks entries in the file that holds them, so it lives only there.
-    local
-        .provided_entries
-        .extend(std::mem::take(&mut committed.provided_entries));
+    let provided = lock.provided_entries.clone();
+    let off_project = |target: &str| !project_targets.contains(target);
+    let (mut committed, mut local) = lock.split_by(&Away {
+        target: &off_project,
+        source: &is_provided_source,
+        entry: &|target, key| {
+            off_project(target) || provided.contains(&(target.to_string(), key.to_string()))
+        },
+    });
     // `_self` names the project's own package in the file whose items use it.
     for lock in [&mut committed, &mut local] {
         let local_source: crate::types::SourceName = SourceOrigin::LocalPackage.to_string().into();
@@ -30,88 +33,16 @@ pub(super) fn split(lock: LockFile, project_targets: &BTreeSet<String>) -> (Lock
     (committed, local)
 }
 
-fn split_provided(mut committed: LockFile) -> (LockFile, LockFile) {
-    let mut provided = LockFile::empty();
-    provided.version = committed.version;
-    committed.items.retain(|key, item| {
-        let is_provided = is_provided_source(item.source.as_ref());
-        if is_provided {
-            provided.items.insert(key.clone(), item.clone());
-        }
-        !is_provided
-    });
-    committed.dependencies.retain(|name, dependency| {
-        let is_provided = is_provided_source(name.as_ref());
-        if is_provided {
-            provided
-                .dependencies
-                .insert(name.clone(), dependency.clone());
-        }
-        !is_provided
-    });
-    for (target, key) in &committed.provided_entries {
-        if let Some(record) = committed
-            .config_entries
-            .get_mut(target)
-            .and_then(|records| records.remove(key))
-        {
-            provided
-                .config_entries
-                .entry(target.clone())
-                .or_default()
-                .insert(key.clone(), record);
-        }
-    }
-    committed
-        .config_entries
-        .retain(|_, records| !records.is_empty());
-    (committed, provided)
-}
-
 impl LockFile {
-    /// Joins `local` into `self` output by output and entry by entry, so a shared skill keeps its
-    /// `.mars` output here and its local-only outputs there. A record both hold takes the
-    /// `local` value, which describes this machine's disk; an item's own fields stay `self`'s
-    /// when `self` has the item.
-    pub(super) fn join(&mut self, local: LockFile) {
-        for (key, item) in local.items {
-            match self.items.get_mut(&key) {
-                Some(mine) => merge_outputs(mine, item),
-                None => {
-                    self.items.insert(key, item);
-                }
-            }
-        }
-        self.items.sort_keys();
-        self.dependencies.extend(local.dependencies);
-        self.dependencies.sort_keys();
-        for (target, records) in local.config_entries {
-            self.config_entries
-                .entry(target)
-                .or_default()
-                .extend(records);
-        }
-        self.provided_entries.extend(local.provided_entries);
-    }
-
     pub(super) fn is_empty(&self) -> bool {
         self.items.is_empty() && self.dependencies.is_empty() && self.config_entries.is_empty()
     }
 }
 
-fn merge_outputs(mine: &mut LockedItemV2, theirs: LockedItemV2) {
-    mine.outputs.retain(|output| {
-        theirs.outputs.iter().all(|other| {
-            other.target_root != output.target_root || other.dest_path != output.dest_path
-        })
-    });
-    mine.outputs.extend(theirs.outputs);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lock::{CANONICAL_TARGET_ROOT, ConfigEntryRecord, OutputRecord};
+    use crate::lock::{CANONICAL_TARGET_ROOT, ConfigEntryRecord, LockedItemV2, OutputRecord};
     use mars_schema::item::ItemKind;
 
     fn item(source: &str, kind: ItemKind, outputs: &[(&str, &str, &str)]) -> LockedItemV2 {
@@ -230,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn the_canonical_store_never_leaves_the_committed_lock() {
+    fn the_canonical_store_stays_committed_while_no_target_takes_it_away() {
         let (committed, _) = split(shared(), &project(&[]));
         assert!(
             committed.items["skill/plan"]

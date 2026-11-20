@@ -17,18 +17,39 @@ fn item_target(key: &str, item: &LockedItemV2) -> Option<String> {
     PackageDir::from_lock_key(item.kind, key).map(|dir| dir.target().to_string())
 }
 
+/// What goes to the other half of a split.
+pub(super) struct Away<'a> {
+    /// A record that serves this target. The canonical store never goes by target.
+    pub target: &'a dyn Fn(&str) -> bool,
+    /// Every record of this source, the canonical copy included.
+    pub source: &'a dyn Fn(&str) -> bool,
+    /// A config entry `(target, key)`, and the `provided_entries` mark on it.
+    pub entry: &'a dyn Fn(&str, &str) -> bool,
+}
+
 impl LockFile {
     /// `(kept, rest)`: `rest` holds every record that serves a target `keep` refuses, and `kept`
-    /// everything else. The canonical store always stays in `kept`. [`LockFile::merge_targets`]
-    /// is the inverse.
-    pub fn split_targets(mut self, keep: impl Fn(&str) -> bool) -> (LockFile, LockFile) {
-        let away = |target: &str| target != CANONICAL_TARGET_ROOT && !keep(target);
+    /// everything else. The canonical store always stays in `kept`. [`LockFile::join`] is the
+    /// inverse.
+    pub fn split_targets(self, keep: impl Fn(&str) -> bool) -> (LockFile, LockFile) {
+        let target = |target: &str| !keep(target);
+        self.split_by(&Away {
+            target: &target,
+            source: &|_| false,
+            entry: &|target, _| !keep(target),
+        })
+    }
+
+    /// The one split: a per-output and per-entry choice of the half a record goes to.
+    pub(super) fn split_by(mut self, away: &Away) -> (LockFile, LockFile) {
+        let target_away = |target: &str| target != CANONICAL_TARGET_ROOT && (away.target)(target);
         let mut rest = LockFile::empty();
         rest.version = self.version;
         let mut kept_items = IndexMap::new();
         for (key, mut item) in std::mem::take(&mut self.items) {
+            let source_away = (away.source)(item.source.as_ref());
             if let Some(target) = item_target(&key, &item) {
-                if away(&target) {
+                if source_away || target_away(&target) {
                     rest.items.insert(key, item);
                 } else {
                     kept_items.insert(key, item);
@@ -38,8 +59,8 @@ impl LockFile {
             let had_outputs = !item.outputs.is_empty();
             let (gone, stay): (Vec<_>, Vec<_>) = std::mem::take(&mut item.outputs)
                 .into_iter()
-                .partition(|output| away(&output.target_root));
-            if !gone.is_empty() {
+                .partition(|output| source_away || target_away(&output.target_root));
+            if !gone.is_empty() || (source_away && !had_outputs) {
                 rest.items.insert(
                     key.clone(),
                     LockedItemV2 {
@@ -48,37 +69,67 @@ impl LockFile {
                     },
                 );
             }
-            if !stay.is_empty() || !had_outputs {
+            if !source_away && (!stay.is_empty() || !had_outputs) {
                 item.outputs = stay;
                 kept_items.insert(key, item);
             }
         }
         self.items = kept_items;
-        let (gone, stay): (BTreeMap<_, _>, BTreeMap<_, _>) =
-            std::mem::take(&mut self.config_entries)
+        let (gone, stay) = std::mem::take(&mut self.dependencies)
+            .into_iter()
+            .partition(|(name, _)| (away.source)(name.as_ref()));
+        self.dependencies = stay;
+        rest.dependencies = gone;
+        let entry_away =
+            |target: &str, key: &str| target != CANONICAL_TARGET_ROOT && (away.entry)(target, key);
+        for (target, records) in std::mem::take(&mut self.config_entries) {
+            let (gone, stay): (BTreeMap<_, _>, BTreeMap<_, _>) = records
                 .into_iter()
-                .partition(|(target, _)| away(target));
-        self.config_entries = stay;
-        rest.config_entries = gone;
+                .partition(|(key, _)| entry_away(&target, key));
+            for (side, records) in [(&mut self, stay), (&mut rest, gone)] {
+                if !records.is_empty() {
+                    side.config_entries.insert(target.clone(), records);
+                }
+            }
+        }
         let (gone, stay) = std::mem::take(&mut self.provided_entries)
             .into_iter()
-            .partition(|(target, _)| away(target));
+            .partition(|(target, key)| entry_away(target, key));
         self.provided_entries = stay;
         rest.provided_entries = gone;
         (self, rest)
     }
 
-    pub fn merge_targets(&mut self, rest: LockFile) {
+    /// Joins `rest` into `self` output by output and entry by entry, so a shared skill keeps its
+    /// `.mars` output in one half and its other outputs in the other. A record both hold takes
+    /// the `rest` value, which describes the file written last; an item's own fields stay
+    /// `self`'s when `self` has the item. A record in both halves is what a crash mid-move
+    /// leaves, and joining collapses it.
+    pub fn join(&mut self, rest: LockFile) {
         for (key, item) in rest.items {
             match self.items.get_mut(&key) {
-                Some(mine) => mine.outputs.extend(item.outputs),
+                Some(mine) => {
+                    mine.outputs.retain(|output| {
+                        item.outputs.iter().all(|other| {
+                            other.target_root != output.target_root
+                                || other.dest_path != output.dest_path
+                        })
+                    });
+                    mine.outputs.extend(item.outputs);
+                }
                 None => {
                     self.items.insert(key, item);
                 }
             }
         }
         self.items.sort_keys();
-        self.config_entries.extend(rest.config_entries);
+        self.dependencies.extend(rest.dependencies);
+        for (target, records) in rest.config_entries {
+            self.config_entries
+                .entry(target)
+                .or_default()
+                .extend(records);
+        }
         self.provided_entries.extend(rest.provided_entries);
         record_local_dependency(&self.items, &mut self.dependencies);
         self.dependencies.sort_keys();
@@ -160,7 +211,7 @@ mod tests {
         assert_eq!(kept.items["skill/plan"].outputs.len(), 1);
         assert_eq!(rest.items.len(), 3);
         let mut joined = kept;
-        joined.merge_targets(rest);
+        joined.join(rest);
         assert!(joined.items.keys().eq(whole.items.keys()));
         assert_eq!(joined.items["skill/plan"].outputs.len(), 2);
     }

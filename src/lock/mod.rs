@@ -14,22 +14,18 @@ use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 mod machine;
 mod targets;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LockFile {
     pub version: u32,
-    #[serde(default)]
     pub dependencies: IndexMap<SourceName, LockedDependency>,
-    #[serde(default)]
     pub items: IndexMap<String, LockedItemV2>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     /// Dependency model alias winners (declaration-order merged, dependency-only).
-    #[serde(default)]
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
     /// `(target, record key)` of the config entries a host's provided content wrote. Only
     /// `machine.lock` holds the field: a provided entry stays there when its target joins
-    /// `mars.toml`, and a local-only target's own entries are not in it.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    /// `mars.toml`, and a local-only target's own entries are not in it. Only a hook or MCP key
+    /// can be provided ([`can_be_provided`]).
     pub provided_entries: std::collections::BTreeSet<(String, String)>,
 }
 
@@ -57,7 +53,10 @@ impl LockFile {
                 })
                 .collect(),
             None => Default::default(),
-        };
+        }
+        .into_iter()
+        .filter(|(_, key)| can_be_provided(key))
+        .collect();
         let lock = LockFile {
             version: wire.version,
             dependencies: wire.dependencies,
@@ -405,6 +404,14 @@ mod lock_kind {
     }
 }
 
+/// Provided content writes hooks and MCP servers into a target's config. The target's own
+/// entries (`manifest:`, `pointer:`) are never provided, whatever an older file marked.
+pub(crate) fn can_be_provided(key: &str) -> bool {
+    key.starts_with(crate::target::mcp_file::MCP_KIND.key_prefix)
+        || key.starts_with(crate::target::plugin::HOOK_ENTRY_KIND.key_prefix)
+        || crate::target::HookEntry::parse_key(key).is_some()
+}
+
 const LOCK_FILE: &str = "mars.lock";
 /// The records only this machine has: provided content (`mars provide`) and the targets
 /// `mars.toml` does not name. See `machine.rs`.
@@ -714,8 +721,20 @@ pub fn write(
     Ok(())
 }
 
-/// The machine file always names `provided_entries`, even empty: a file without it is one Mars
-/// 0.38.0 wrote, where every config entry is provided.
+/// The file as written. Only `machine.lock` names `provided_entries`, even empty: a machine
+/// file without it is one Mars 0.38.0 wrote, where every config entry is provided.
+#[derive(Serialize)]
+struct LockFileOut<'a> {
+    version: u32,
+    dependencies: &'a IndexMap<SourceName, LockedDependency>,
+    items: &'a IndexMap<String, LockedItemV2>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    config_entries: &'a BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
+    dependency_model_aliases: &'a IndexMap<String, ModelAlias>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provided_entries: Option<&'a std::collections::BTreeSet<(String, String)>>,
+}
+
 fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), MarsError> {
     let mut normalized = lock.clone();
     normalized.version = LOCK_VERSION;
@@ -730,19 +749,17 @@ fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), Ma
         });
     }
 
-    let corrupt = |e: toml::ser::Error| LockError::Corrupt {
+    let content = toml::to_string_pretty(&LockFileOut {
+        version: normalized.version,
+        dependencies: &normalized.dependencies,
+        items: &normalized.items,
+        config_entries: &normalized.config_entries,
+        dependency_model_aliases: &normalized.dependency_model_aliases,
+        provided_entries: machine.then_some(&normalized.provided_entries),
+    })
+    .map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
-    };
-    let content = if machine {
-        let mut table = toml::Table::try_from(&normalized).map_err(corrupt)?;
-        table
-            .entry("provided_entries")
-            .or_insert_with(|| toml::Value::Array(Vec::new()));
-        toml::to_string_pretty(&table)
-    } else {
-        toml::to_string_pretty(&normalized)
-    }
-    .map_err(corrupt)?;
+    })?;
     crate::fs::atomic_write_if_changed(path, content.as_bytes()).map(|_| ())
 }
 

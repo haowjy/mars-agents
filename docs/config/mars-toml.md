@@ -26,7 +26,8 @@ Default merge semantics:
 
 - **Scalars / Option values:** higher layer replaces lower layer when present.
 - **Maps / tables:** higher layer adds/replaces entries by key.
-- **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except the
+- **Arrays/lists:** higher layer replaces the full list (including explicit `[]`), except
+  `targets` (each layer adds to the layers below, and an empty list adds nothing unless no layer below names `targets`) and the
   permission sets below.
 - **Tool rule tables:** `[settings.tools]` and the rule entries of `[agents.<name>.tools]` merge
   by key, `user config < mars.toml < mars.local.toml`: the same key in a higher layer replaces the
@@ -392,7 +393,7 @@ only those harnesses, regardless of what is installed or logged in. Explicit emp
 or generic/path-only targets permit no harnesses. When targets are absent,
 routing may discover installed harnesses. Physical target directories are not an eligibility check.
 
-Local targets add to the project's: a machine syncs and may route through every target either file names, and an empty local list adds nothing. An explicit `--harness` cannot
+Local targets add to the project's: a machine syncs and may route through every target either file names, and an empty local list adds nothing. With no project `targets`, a local `targets = []` says there are none, as it does in `mars.toml`: nothing is synced and routing is limited to no harness. An explicit `--harness` cannot
 expand target permission; a disabled profile/alias preference is skipped.
 
 Network hosts are canonicalized to lowercase without a trailing dot, deduplicated, and

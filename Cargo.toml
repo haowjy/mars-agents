@@ -48,7 +48,6 @@ tempfile = "3"
 termcolor = "1"
 libc = "0.2.183"
 serde_json = { version = "1.0.149", features = ["raw_value"] }
-pathdiff = "0.2.3"
 walkdir = "2"
 which = "7"
 dunce = "1.0.5"

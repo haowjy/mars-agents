@@ -33,8 +33,8 @@ Machines with a crash window and no marker, so recovery is a later run that noti
 
 - Native target outputs and config entries are not in the canonical write journal; an interrupted
   copy leaves files the next run reads as unowned.
-- `mars link` and `mars unlink` write files, config and lock in separate steps; a kill between
-  leaves settings and lock disagreeing.
+- `mars link` is a sync with the target added (one pipeline); `mars unlink` writes files, config and
+  lock in separate steps, and a kill between leaves settings and lock disagreeing.
 - `mars adopt` renames the user's file into `.mars-src` with no record before the sync.
 - A hook config file killed after its save and before `mars.lock`: the lock still records the
   old entry, so the next sync warns `config-divergence`, finds nothing to remove, and appends

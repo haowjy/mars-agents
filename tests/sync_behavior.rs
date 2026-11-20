@@ -1631,7 +1631,7 @@ path = "{}"
 }
 
 #[test]
-fn link_fails_on_unmanaged_collision_without_force() {
+fn link_leaves_an_unmanaged_collision_without_force() {
     let dir = TempDir::new().unwrap();
     let source = create_source(&dir, "base", &[], &[("planning", "# Planning from Mars")]);
 
@@ -1665,7 +1665,7 @@ fn link_fails_on_unmanaged_collision_without_force() {
             project.path().to_str().unwrap(),
         ])
         .assert()
-        .failure();
+        .success();
 
     assert_eq!(
         fs::read_to_string(project.child(".agents/skills/planning/SKILL.md").path()).unwrap(),
@@ -1959,19 +1959,69 @@ fn sync_keeps_a_hook_entry_the_user_edited_in_a_dropped_target() {
     sync_project(&dir, &project).stdout(predicate::str::contains("already up to date"));
 }
 
+/// What 0.37 left in `.cursor`: a copy of each `.claude` skill, recorded in the lock.
+fn give_cursor_the_claude_skills(project: &assert_fs::fixture::ChildPath) {
+    let mut lock = mars_agents::lock::load(project.path()).unwrap();
+    for item in lock.items.values_mut() {
+        let claude: Vec<_> = item
+            .outputs
+            .iter()
+            .filter(|output| output.target_root == ".claude")
+            .cloned()
+            .collect();
+        for output in claude {
+            let dest = output.dest_path.as_str().to_string();
+            let from = project.path().join(".claude").join(&dest);
+            let to = project.path().join(".cursor").join(&dest);
+            fs::create_dir_all(&to).unwrap();
+            fs::copy(from.join("SKILL.md"), to.join("SKILL.md")).unwrap();
+            item.outputs
+                .push(mars_agents::lock::OutputRecord::installed(
+                    ".cursor".to_string(),
+                    output.dest_path.clone(),
+                    output.installed_checksum().unwrap().clone(),
+                ));
+        }
+    }
+    mars_agents::lock::write(project.path(), &lock).unwrap();
+}
+
 #[test]
 fn a_retired_target_the_config_still_names_keeps_its_records() {
     let dir = TempDir::new().unwrap();
-    let project = project_with_config_entries(&dir, "['.claude']");
+    let project = project_with_skills(&dir, "['.claude']");
     sync_project(&dir, &project);
+    give_cursor_the_claude_skills(&project);
     let lock = fs::read(project.child("mars.lock").path()).unwrap();
     project
         .child("mars.toml")
         .write_str("[settings]\ntargets = ['.claude', '.cursor']\n")
         .unwrap();
     sync_project(&dir, &project).stderr(predicate::str::contains("a target Mars no longer writes"));
-    assert!(project.child(".claude/hooks/audit/hook.toml").exists());
+    assert!(project.child(".claude/skills/review/SKILL.md").exists());
+    assert!(project.child(".cursor/skills/review/SKILL.md").exists());
     assert_eq!(fs::read(project.child("mars.lock").path()).unwrap(), lock);
+}
+
+#[test]
+fn taking_a_retired_target_out_of_the_config_removes_what_it_had() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude', '.cursor']");
+    sync_project(&dir, &project);
+    give_cursor_the_claude_skills(&project);
+    project
+        .child("mars.toml")
+        .write_str("[settings]\ntargets = ['.claude']\n")
+        .unwrap();
+    sync_project(&dir, &project);
+    assert!(!project.child(".cursor").exists());
+    assert!(project.child(".claude/skills/review/SKILL.md").exists());
+    assert!(
+        lock_outputs(&project)
+            .iter()
+            .flat_map(|(_, outputs)| outputs)
+            .all(|(target, _)| target != ".cursor")
+    );
 }
 
 #[test]

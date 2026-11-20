@@ -1,7 +1,7 @@
 //! `mars unlink <target>` — remove Mars-owned content from a managed target.
 
 use crate::error::MarsError;
-use crate::target_sync::removal::{remove_empty_ancestors, remove_served, served_outputs};
+use crate::target_sync::removal::{remove_empty_ancestors, remove_served};
 
 use super::output;
 
@@ -33,11 +33,11 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if !args.local && unset_target(&mut config.settings.targets, &target_name) {
+    if !args.local && crate::config::targets::unset_target(&mut config.settings.targets, &target_name) {
         settings_updated = true;
         target_was_managed = true;
     }
-    if unset_target(&mut local.settings.targets, &target_name) {
+    if crate::config::targets::unset_target(&mut local.settings.targets, &target_name) {
         local_updated = true;
         target_was_managed = true;
     }
@@ -57,11 +57,8 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let (removed_outputs, diagnostics) = if target_was_managed {
         let (kept, served) = lock.split_targets(|target| target != target_name);
         lock = kept;
-        let outputs = served_outputs(&served).len();
-        (
-            outputs,
-            remove_served(&ctx.project_root, &mut lock, served)?,
-        )
+        let removed = remove_served(&ctx.project_root, &mut lock, served)?;
+        (removed.outputs.len(), removed.diagnostics)
     } else {
         (0, Vec::new())
     };
@@ -117,17 +114,4 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     Ok(0)
-}
-
-pub(super) fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
-    let Some(list) = targets.as_mut() else {
-        return false;
-    };
-    let old_len = list.len();
-    list.retain(|t| crate::config::migrations::link::normalize_link(t).target != target_name);
-    let removed = list.len() != old_len;
-    if list.is_empty() {
-        *targets = None;
-    }
-    removed
 }

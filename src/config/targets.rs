@@ -219,7 +219,8 @@ pub(crate) fn target_advisories(
         .collect()
 }
 
-/// Nothing is synced to a retired target; its files stay until `mars unlink` removes them.
+/// Nothing is synced to a retired target; its files stay while `targets` names it, and `mars
+/// unlink` or taking it out of `targets` removes them.
 fn retired_target_diagnostic(retired: &RetiredTarget) -> crate::diagnostic::Diagnostic {
     use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticLevel};
 
@@ -249,6 +250,25 @@ pub(crate) fn named_targets(
     let mut named = project_targets(config);
     named.extend(named_in(local.settings.targets.as_deref()));
     named
+}
+
+/// Whether `targets` names `target_name`, in any spelling.
+pub(crate) fn names_target(targets: Option<&[String]>, target_name: &str) -> bool {
+    named_in(targets).contains(target_name)
+}
+
+/// Remove `target_name` from `targets`, in any spelling; an emptied list becomes unset.
+pub(crate) fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
+    let Some(list) = targets.as_mut() else {
+        return false;
+    };
+    let old_len = list.len();
+    list.retain(|t| normalize_link(t).target != target_name);
+    let removed = list.len() != old_len;
+    if list.is_empty() {
+        *targets = None;
+    }
+    removed
 }
 
 fn named_in(targets: Option<&[String]>) -> BTreeSet<String> {

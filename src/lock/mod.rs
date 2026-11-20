@@ -124,6 +124,39 @@ impl LockFile {
             .collect()
     }
 
+    /// The record for `dest_path` under `target_root`, with the kind of the item it belongs to.
+    pub(crate) fn output_record(
+        &self,
+        target_root: &str,
+        dest_path: &str,
+    ) -> Option<(ItemKind, &OutputRecord)> {
+        self.items.values().find_map(|item| {
+            item.outputs
+                .iter()
+                .find(|output| {
+                    output.target_root == target_root
+                        && crate::target::dest_paths_equivalent(
+                            output.dest_path.as_str(),
+                            dest_path,
+                        )
+                })
+                .map(|output| (item.kind, output))
+        })
+    }
+
+    /// Every record under `target_root`, with the kind of the item it belongs to.
+    pub(crate) fn output_records_for_target<'a>(
+        &'a self,
+        target_root: &'a str,
+    ) -> impl Iterator<Item = (ItemKind, &'a OutputRecord)> {
+        self.items.values().flat_map(move |item| {
+            item.outputs
+                .iter()
+                .filter(move |output| output.target_root == target_root)
+                .map(move |output| (item.kind, output))
+        })
+    }
+
     pub fn contains_output(&self, target_root: &str, dest_path: &str) -> bool {
         self.items.values().any(|item| {
             item.outputs.iter().any(|output| {

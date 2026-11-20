@@ -120,6 +120,8 @@ pub enum ResolutionMode {
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
+    /// The mutation changed `mars.local.toml`, so persisting it writes that file too.
+    pub local_changed: bool,
     pub effective: EffectiveConfig,
     pub old_lock: LockFile,
     /// The records that serve a target the config names but this sync does not manage (a retired
@@ -273,12 +275,14 @@ pub(crate) fn load_config(
         Vec::new()
     };
 
-    let mut local = crate::config::load_local(project_root)?;
-    if let Some(m) = &request.mutation {
-        mutation::apply_local_mutation(&mut local, m);
-    }
-
     let user = crate::config::load_user_config()?;
+    let mut local = crate::config::load_local(project_root)?;
+    let local_before = local.clone();
+    if let Some(m) = &request.mutation {
+        mutation::apply_local_mutation(&mut local, &config, &user, project_root, m)?;
+    }
+    let local_changed = local != local_before;
+
     let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
     diag.extend(config_diagnostics);
@@ -354,6 +358,7 @@ pub(crate) fn load_config(
     Ok(LoadedConfig {
         config,
         local,
+        local_changed,
         effective,
         old_lock,
         carried,

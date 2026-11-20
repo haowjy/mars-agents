@@ -47,7 +47,6 @@ use crate::types::managed_cmd;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollisionAdoptHint {
     SyncForce,
-    LinkForce,
 }
 
 pub fn target_dest_exists(dest: &Path) -> bool {
@@ -119,7 +118,6 @@ pub fn warn_no_installed_claim_collision(
             subject: target_name,
             describe: match hint {
                 CollisionAdoptHint::SyncForce => describe_unclaimed_by_sync,
-                CollisionAdoptHint::LinkForce => describe_unclaimed_by_link,
             },
         },
         format!("`{dest_rel}`"),
@@ -137,11 +135,6 @@ fn describe_unclaimed(target: &str, count: usize, names: &str, adopt_cmd: &str) 
 
 fn describe_unclaimed_by_sync(target: &str, count: usize, names: &str) -> String {
     describe_unclaimed(target, count, names, &managed_cmd("mars sync --force"))
-}
-
-fn describe_unclaimed_by_link(target: &str, count: usize, names: &str) -> String {
-    let adopt = format!("mars link {target} --force");
-    describe_unclaimed(target, count, names, &managed_cmd(&adopt))
 }
 
 /// Whether `warn_no_installed_claim_collision` or `warn_diverged` already told the user that

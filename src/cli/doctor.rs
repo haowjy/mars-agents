@@ -31,8 +31,10 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     };
 
-    // Judge the half of the lock that sync maintains. A target the sync does not manage keeps
-    // its records and its `.mars/<surface>/<target>/` copies, which nothing reinstalls.
+    // Judge the half of the lock that sync maintains. A target a config file names but the sync
+    // does not manage (retired `.cursor`, or left out by `mars.local.toml`) keeps its records and
+    // its `.mars/<surface>/<target>/` copies, which nothing reinstalls; one no config file names
+    // is removed by the next sync.
     let lock = match &project_config {
         Some(loaded) => {
             let managed = crate::config::targets::managed_targets(&loaded.effective.settings);
@@ -339,13 +341,7 @@ fn check_target_divergence(
             let target_path = project_root.join(target_name).join(dest_path.as_str());
             let shown = format!("{target_name}/{}", dest_path.as_str());
 
-            // A generated hook file is one file; the lock records its plain content hash.
-            let hashed = if crate::lock::is_generated_hook_file(item.kind, dest_path.as_str()) {
-                hash::hash_file(&target_path)
-            } else {
-                hash::compute_hash(&target_path, item.kind)
-            };
-            match hashed {
+            match hash::compute_output_hash(&target_path, item.kind, dest_path.as_str()) {
                 Ok(target_hash) if target_hash == item.installed_checksum => {}
                 Ok(_) => {
                     // What plain sync does with the edit, by kind (see `target_sync` for

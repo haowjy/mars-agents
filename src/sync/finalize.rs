@@ -34,11 +34,8 @@ pub(crate) fn finalize(
 
     let dropped = &state.applied.planned.targeted.resolved.loaded.dropped;
     let dropped_targets: Vec<String> = dropped.recorded_targets().into_iter().collect();
-    let dropped_outputs: Vec<(String, String)> =
-        crate::target_sync::removal::served_outputs(dropped)
-            .into_iter()
-            .filter(|(root, _)| root != crate::lock::CANONICAL_TARGET_ROOT)
-            .collect();
+    // A dry run names what a real run would delete; a real run, what it did.
+    let mut dropped_outputs = crate::target_sync::removal::removable_outputs(project_root, dropped);
 
     // Write lock file (regardless of target sync outcome).
     if !request.options.dry_run {
@@ -117,16 +114,20 @@ pub(crate) fn finalize(
         diag.settle(old_lock, &new_lock);
         let loaded = &state.applied.planned.targeted.resolved.loaded;
         new_lock.join(loaded.carried.clone());
-        diag.extend(crate::target_sync::removal::remove_served(
+        let removed = crate::target_sync::removal::remove_served(
             project_root,
             &mut new_lock,
             loaded.dropped.clone(),
-        )?);
+        )?;
+        diag.extend(removed.diagnostics);
+        dropped_outputs = removed.outputs;
         let project_targets = crate::config::targets::project_targets(&loaded.config);
         if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
             diag.warn("native-agent-manifest-write", warning);
         }
     }
+
+    dropped_outputs.retain(|(root, _)| root != crate::lock::CANONICAL_TARGET_ROOT);
 
     let dependency_changes = state
         .applied

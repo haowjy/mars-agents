@@ -206,6 +206,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            local_changed: false,
             effective,
             old_lock: LockFile::empty(),
             carried: crate::lock::LockFile::empty(),
@@ -268,6 +269,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            local_changed: false,
             effective,
             old_lock: LockFile::empty(),
             carried: crate::lock::LockFile::empty(),

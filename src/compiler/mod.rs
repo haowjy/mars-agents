@@ -47,8 +47,7 @@ pub(crate) fn warn_unknown_visibility(
 pub use native_agent_manifest::persist_lock_then_native_agent_manifest;
 pub use native_agents::native_agent_orphan_preserve_paths;
 pub(crate) use native_agents::{
-    NativeAgentLinkMaterializeCtx, RemovedNativeOutput, ToolConfig, effective_native_profile,
-    installed_agent_tools, materialize_native_agents_after_link,
+    RemovedNativeOutput, ToolConfig, effective_native_profile, installed_agent_tools,
 };
 
 use crate::config::AgentEmission;
@@ -232,7 +231,6 @@ fn compile_inner(
         project_root: &ctx.project_root,
         old_lock,
         dry_run: request.options.dry_run,
-        selective_harness_scope: None,
     };
     let native_compile_ctx = if agent_surface_policy.emits_nothing() {
         None
@@ -240,7 +238,6 @@ fn compile_inner(
         Some(native_agents::NativeAgentCompileCtx {
             project_root: &ctx.project_root,
             old_lock: native_ownership_lock,
-            harness_scope: None,
             configured_emit_harnesses: &configured_emit_harnesses,
             options: native_agents::NativeAgentSurfaceCompileOptions {
                 force: request.options.force,

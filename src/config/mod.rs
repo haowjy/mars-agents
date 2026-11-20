@@ -31,6 +31,7 @@ pub mod migrations;
 pub mod routing_settings;
 mod save;
 pub mod targets;
+mod unknown;
 mod user;
 
 pub use user::UserConfig;
@@ -495,17 +496,21 @@ fn project_config_diagnostics(
     user: &UserConfig,
 ) -> Vec<Diagnostic> {
     let user_file = user.path.display().to_string();
-    let unknown_keys = [
-        (user_file.as_str(), &user.local.unknown_keys),
-        (CONFIG_FILE, &config.unknown_keys),
-        (LOCAL_CONFIG_FILE, &local.unknown_keys),
-    ]
-    .into_iter()
-    .flat_map(|(file, notes)| {
-        notes
+    // The user's own file stays a note; the project's files warn (`unknown::warning`).
+    let unknown_keys =
+        user.local
+            .unknown_keys
             .iter()
-            .map(move |note| Diagnostic::from_schema(note, format!("{file}: {}", note.message)))
-    });
+            .map(|note| Diagnostic::from_schema(note, format!("{user_file}: {}", note.message)))
+            .chain(
+                config
+                    .unknown_keys
+                    .iter()
+                    .map(|note| unknown::warning::<Config, Settings>(note, CONFIG_FILE)),
+            )
+            .chain(local.unknown_keys.iter().map(|note| {
+                unknown::warning::<LocalConfig, LocalSettings>(note, LOCAL_CONFIG_FILE)
+            }));
     let floors = [
         (
             user_file.as_str(),
@@ -1376,12 +1381,13 @@ override = { effort = "high" }
         let notes: Vec<_> = effective
             .diagnostics
             .iter()
-            .filter(|note| note.code == "field.unknown")
+            .filter(|note| note.code == "field.unknown" && note.message.starts_with("mars."))
             .collect();
+        // The project's own files warn: a misspelt `targets` would otherwise go unseen.
         assert!(
             notes
                 .iter()
-                .all(|note| note.level == DiagnosticLevel::Info && !note.shown(false))
+                .all(|note| note.level == DiagnosticLevel::Warning && note.shown(false))
         );
         let warnings = notes
             .iter()

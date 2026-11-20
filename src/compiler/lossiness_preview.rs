@@ -152,7 +152,6 @@ fn collect_agent_content_lossiness(
         agent_name,
         policy,
         fanout_agents,
-        None,
         configured_harnesses,
         model_router,
     ) {

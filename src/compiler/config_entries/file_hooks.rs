@@ -99,37 +99,18 @@ pub(super) fn write_file_hook_outputs(
     for (owner_canonical_dest_path, relative, content) in files {
         let path = target_dir.join(&relative);
         let dest_exists = crate::surface_ownership::target_dest_exists(&path);
-        match crate::surface_ownership::copy_decision(
+        let unchanged =
+            dest_exists && std::fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes());
+        if !crate::surface_ownership::resolve_copy(
             old_lock,
             &target_root,
             &relative,
-            dest_exists,
+            crate::surface_ownership::DestState::new(dest_exists, unchanged),
             force,
+            crate::surface_ownership::CollisionAdoptHint::SyncForce,
+            diag,
         ) {
-            crate::surface_ownership::SurfaceCopyDecision::SkipWithoutInstalledClaim => {
-                crate::surface_ownership::warn_no_installed_claim_collision(
-                    &target_root,
-                    &relative,
-                    crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                    diag,
-                );
-                continue;
-            }
-            crate::surface_ownership::SurfaceCopyDecision::Proceed => {
-                if dest_exists
-                    && force
-                    && old_lock
-                        .installed_checksum_for_output(&target_root, &relative)
-                        .is_none()
-                {
-                    crate::surface_ownership::warn_no_installed_claim_adopted(
-                        &target_root,
-                        &relative,
-                        crate::surface_ownership::CollisionAdoptHint::SyncForce,
-                        diag,
-                    );
-                }
-            }
+            continue;
         }
         if dest_exists && !force {
             let previous = old_lock.items.values().find_map(|item| {
@@ -176,8 +157,6 @@ pub(super) fn write_file_hook_outputs(
             );
             continue;
         }
-        let unchanged =
-            dest_exists && std::fs::read(&path).is_ok_and(|bytes| bytes == content.as_bytes());
         let result = (|| -> Result<(), crate::error::MarsError> {
             if unchanged {
                 return Ok(());

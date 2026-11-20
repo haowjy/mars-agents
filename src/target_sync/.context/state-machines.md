@@ -9,7 +9,7 @@ What is at one destination inside a managed target (`.claude/skills/x`, `.codex/
 whether Mars may write it. `sync_one_target` walks every outcome and decides per destination. The
 five states are read off three inputs and not stored: whether the destination exists
 (`surface_ownership::target_dest_exists`), whether the lock holds an installed checksum for
-`(target, dest)` (`copy_decision`, where `PendingDeletion` does not count), and whether the
+`(target, dest)` (`resolve_copy`, where `PendingDeletion` does not count), and whether the
 destination's hash equals the recorded or the desired checksum
 (`dest_matches_recorded_or_desired`).
 
@@ -48,8 +48,9 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
   is the one place an edit is not even warned about.
 - **Crash window.** `sync_one_target` writes files (`atomic_copy_file`, `atomic_copy_dir`, skill
   projection) and only reports `synced_outputs`; the caller writes the lock afterwards. Killed
-  between, the target holds files with no record, which the next run sees as `UnownedPresent`:
-  a collision warning and a skipped copy, not corruption. `cleanup_orphans` treats an
+  between, the target holds files with no record. A file whose content is what the run would write
+  is adopted without a word (`resolve_copy`'s `identical`, computed by `unclaimed_dest_is_desired`);
+  one that differs is `UnownedPresent`: a collision warning and a skipped copy. `cleanup_orphans` treats an
   already-absent recorded path as a confirmed deletion, so the reverse half-write (record present,
   file gone) heals on the next run.
 - Per-target errors are collected, not propagated (`sync_managed_targets`), so one target's

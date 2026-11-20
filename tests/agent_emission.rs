@@ -327,3 +327,29 @@ fn create_emission_project(dir: &TempDir) -> assert_fs::fixture::ChildPath {
         .unwrap();
     project
 }
+
+#[test]
+fn managed_auto_leaves_unlaunched_harness_agent_untouched() {
+    let dir = TempDir::new().unwrap();
+    let source = create_source(&dir, "src", &[("coder", CLAUDE_AGENT)], &[]);
+    let project = dir.child("project");
+    project.create_dir_all().unwrap();
+    project
+        .child("mars.toml")
+        .write_str(&format!(
+            "[settings]\ntargets = [\".agy\"]\n\n[dependencies.src]\npath = \"{}\"\n",
+            source.display().to_string().replace('\\', "/")
+        ))
+        .unwrap();
+
+    sync_capture(&project, Some("1"));
+    project
+        .child(".agy/agents/coder.md")
+        .assert(predicates::path::is_file());
+
+    let steady = sync_capture(&project, Some("1"));
+    assert!(
+        steady.contains("already up to date"),
+        "Agy is not launched by Meridian, so its agent is native compile's and stays put:\n{steady}"
+    );
+}

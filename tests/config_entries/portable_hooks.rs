@@ -174,8 +174,9 @@ fn removing_the_hook_removes_its_generated_entries_and_records() {
     let codex = json(&project, ".codex/hooks.json");
     assert!(codex["hooks"].get("PreToolUse").is_none());
     assert_eq!(commands(&codex, "Stop"), ["mine"]);
-    let claude = json(&project, ".claude/settings.local.json");
-    assert!(claude["hooks"].get("PreToolUse").is_none());
+    project
+        .child(".claude/settings.local.json")
+        .assert(predicate::path::missing());
     assert!(lock_keys(&project, ".claude").is_empty());
     assert!(lock_keys(&project, ".codex").is_empty());
     project

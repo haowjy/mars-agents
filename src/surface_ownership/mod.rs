@@ -50,12 +50,6 @@ pub enum CollisionAdoptHint {
     LinkForce,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SurfaceCopyDecision {
-    Proceed,
-    SkipWithoutInstalledClaim,
-}
-
 pub fn target_dest_exists(dest: &Path) -> bool {
     dest.exists() || dest.symlink_metadata().is_ok()
 }
@@ -64,26 +58,53 @@ pub fn may_delete(old_lock: &LockFile, target_root: &str, dest_path: &str) -> bo
     old_lock.contains_output(target_root, dest_path)
 }
 
-pub fn copy_decision(
+/// What sits at a path Mars is about to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestState {
+    Absent,
+    /// Something Mars did not just write there: an installed claim says whether it is Mars's.
+    Present,
+    /// Exactly the content Mars would write.
+    Identical,
+}
+
+impl DestState {
+    pub fn new(exists: bool, identical: bool) -> Self {
+        match (exists, identical) {
+            (false, _) => Self::Absent,
+            (true, false) => Self::Present,
+            (true, true) => Self::Identical,
+        }
+    }
+}
+
+/// Whether Mars may write `dest_path`, saying why not when it may not.
+///
+/// A path with an installed claim is Mars's to write. One without a claim is the user's, unless
+/// `--force` adopts it or its content is already what Mars would write (`Identical`): a sync
+/// interrupted before its lock write leaves exactly that, and adopting it needs no user say.
+pub fn resolve_copy(
     old_lock: &LockFile,
     target_root: &str,
     dest_path: &str,
-    dest_exists: bool,
+    dest: DestState,
     force: bool,
-) -> SurfaceCopyDecision {
-    if !dest_exists {
-        return SurfaceCopyDecision::Proceed;
-    }
-    if old_lock
-        .installed_checksum_for_output(target_root, dest_path)
-        .is_some()
+    hint: CollisionAdoptHint,
+    diag: &mut DiagnosticCollector,
+) -> bool {
+    if dest != DestState::Present
+        || old_lock
+            .installed_checksum_for_output(target_root, dest_path)
+            .is_some()
     {
-        return SurfaceCopyDecision::Proceed;
+        return true;
     }
     if force {
-        return SurfaceCopyDecision::Proceed;
+        warn_no_installed_claim_adopted(target_root, dest_path, hint, diag);
+        return true;
     }
-    SurfaceCopyDecision::SkipWithoutInstalledClaim
+    warn_no_installed_claim_collision(target_root, dest_path, hint, diag);
+    false
 }
 
 pub fn warn_no_installed_claim_collision(
@@ -203,28 +224,41 @@ mod tests {
         }
     }
 
-    #[test]
-    fn copy_decision_skips_untracked_collision_without_force() {
-        let lock = lock_with_output(".mars", "agents/coder.md");
-        assert_eq!(
-            copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
-            SurfaceCopyDecision::SkipWithoutInstalledClaim
+    fn resolve(lock: &LockFile, identical: bool, force: bool) -> (bool, DiagnosticCollector) {
+        let mut diag = DiagnosticCollector::new();
+        let copy = resolve_copy(
+            lock,
+            ".cursor",
+            "agents/coder.md",
+            DestState::new(true, identical),
+            force,
+            CollisionAdoptHint::SyncForce,
+            &mut diag,
         );
+        (copy, diag)
     }
 
     #[test]
-    fn copy_decision_treats_pending_deletion_as_collision() {
+    fn resolve_copy_skips_untracked_collision_without_force() {
+        let lock = lock_with_output(".mars", "agents/coder.md");
+        assert!(!resolve(&lock, false, false).0);
+    }
+
+    #[test]
+    fn resolve_copy_adopts_identical_content_without_a_word() {
+        let lock = lock_with_output(".mars", "agents/coder.md");
+        let (copy, mut diag) = resolve(&lock, true, false);
+        assert!(copy);
+        assert!(diag.drain().is_empty());
+    }
+
+    #[test]
+    fn resolve_copy_treats_pending_deletion_as_collision() {
         let mut lock = lock_with_output(".cursor", "agents/coder.md");
         lock.items.get_mut("agent/coder").unwrap().outputs[0].mark_pending_deletion();
 
-        assert_eq!(
-            copy_decision(&lock, ".cursor", "agents/coder.md", true, false),
-            SurfaceCopyDecision::SkipWithoutInstalledClaim
-        );
-        assert_eq!(
-            copy_decision(&lock, ".cursor", "agents/coder.md", true, true),
-            SurfaceCopyDecision::Proceed
-        );
+        assert!(!resolve(&lock, false, false).0);
+        assert!(resolve(&lock, false, true).0);
         assert!(
             may_delete(&lock, ".cursor", "agents/coder.md"),
             "a tombstone still carries deletion authority"

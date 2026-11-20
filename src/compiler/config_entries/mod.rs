@@ -519,10 +519,11 @@ pub(crate) fn remove_hooks(
     let target_root = operation.target_root().to_owned();
     let (target_dir, removal) = operation.into_parts(project_root);
     let report = match hook_file(&target_root) {
-        Some(file) => crate::target::hook_file::remove_recorded(
+        Some((file, ignored)) => crate::target::hook_file::remove_recorded(
             &target_dir.join(file),
             &removal.prior_records,
             &target_root,
+            ignored,
             diag,
         )
         .map_or_else(
@@ -787,11 +788,15 @@ fn emits_installed_copy(
     installed
 }
 
-/// The file `target_root`'s hook entries merge into, for a target Mars writes or one it retired.
-fn hook_file(target_root: &str) -> Option<&'static str> {
-    merge_file(target_root).map(|merge| merge.file).or_else(|| {
-        mars_schema::retired::retired_target(target_root).map(|retired| retired.hook_file)
-    })
+/// The file `target_root`'s hook entries merge into, for a target Mars writes or one it
+/// retired, and the keys Mars wrote there beside `hooks`.
+fn hook_file(target_root: &str) -> Option<(&'static str, &'static [&'static str])> {
+    merge_file(target_root)
+        .map(|merge| (merge.file, &[][..]))
+        .or_else(|| {
+            mars_schema::retired::retired_target(target_root)
+                .map(|retired| (retired.hook_file, retired.hook_file_keys))
+        })
 }
 
 fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets::MergeFile> {

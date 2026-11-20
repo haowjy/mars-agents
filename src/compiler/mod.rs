@@ -361,18 +361,6 @@ pub(crate) fn sync_targets_under_policy(
     collision_hint: crate::surface_ownership::CollisionAdoptHint,
     diag: &mut DiagnosticCollector,
 ) -> Vec<crate::target_sync::TargetSyncOutcome> {
-    let filtered;
-    let outcomes = match &policy.launched {
-        AgentSurfaceMode::SuppressAll => {
-            filtered = suppress_agent_outcomes(outcomes);
-            &filtered
-        }
-        AgentSurfaceMode::EmitSelective(_) => {
-            filtered = omit_agent_outcomes(outcomes);
-            &filtered
-        }
-        AgentSurfaceMode::EmitAll => outcomes,
-    };
     let mut preserve = config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
     for (target, paths) in native_agent_orphan_preserve_paths(old_lock, targets) {
         preserve.entry(target).or_default().extend(paths);
@@ -383,14 +371,40 @@ pub(crate) fn sync_targets_under_policy(
         collision_hint,
         orphan_preserve_paths: (!preserve.is_empty()).then_some(&preserve),
     };
-    crate::target_sync::sync_managed_targets(
-        project_root,
-        &project_root.join(".mars"),
-        targets,
-        outcomes,
-        &ctx,
-        diag,
-    )
+    targets
+        .iter()
+        .flat_map(|target| {
+            let outcomes = agent_outcomes_for_target(policy, target, outcomes);
+            crate::target_sync::sync_managed_targets(
+                project_root,
+                &project_root.join(".mars"),
+                std::slice::from_ref(target),
+                &outcomes,
+                &ctx,
+                diag,
+            )
+        })
+        .collect()
+}
+
+/// The outcomes target sync sees for `target`. Native agent files of a harness that policy
+/// emits for belong to native compile, so a removal planned here would be rewritten by it on
+/// every sync.
+fn agent_outcomes_for_target(
+    policy: &AgentSurfacePolicy,
+    target: &str,
+    outcomes: &[ActionOutcome],
+) -> Vec<ActionOutcome> {
+    let native_emits = crate::harness::registry::harness_for_target(target)
+        .is_some_and(|harness| !crate::harness::registry::launched_by_meridian(harness))
+        && policy.emit_unlaunched;
+    match &policy.launched {
+        AgentSurfaceMode::SuppressAll if !native_emits => suppress_agent_outcomes(outcomes),
+        AgentSurfaceMode::SuppressAll | AgentSurfaceMode::EmitSelective(_) => {
+            omit_agent_outcomes(outcomes)
+        }
+        AgentSurfaceMode::EmitAll => outcomes.to_vec(),
+    }
 }
 
 /// The models catalog, refreshed per `mode`, with the refresh's warning on `diag`.

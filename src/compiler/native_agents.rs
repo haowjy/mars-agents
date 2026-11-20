@@ -894,7 +894,7 @@ fn emit_lowered_native_agent(
     undescribed: &mut BTreeSet<String>,
 ) -> Option<Vec<RecordRef>> {
     use crate::compiler::agents::lower::lower_for_harness_with_model;
-    use crate::surface_ownership::{self, SurfaceCopyDecision};
+    use crate::surface_ownership;
 
     let lowered =
         lower_for_harness_with_model(*agent.harness, agent.profile, agent.body, agent.model);
@@ -909,47 +909,25 @@ fn emit_lowered_native_agent(
     let dest_rel = format!("agents/{file_name}");
     let target_dir = &agent.harness.target_dir();
     let dest_exists = surface_ownership::target_dest_exists(&native_path);
-    match surface_ownership::copy_decision(
-        ctx.old_lock,
-        target_dir,
-        &dest_rel,
-        dest_exists,
-        ctx.options.force,
-    ) {
-        SurfaceCopyDecision::SkipWithoutInstalledClaim => {
-            surface_ownership::warn_no_installed_claim_collision(
-                target_dir,
-                &dest_rel,
-                ctx.options.collision_hint,
-                diag,
-            );
-            return None;
-        }
-        SurfaceCopyDecision::Proceed => {
-            if dest_exists
-                && ctx.options.force
-                && ctx
-                    .old_lock
-                    .installed_checksum_for_output(target_dir, &dest_rel)
-                    .is_none()
-            {
-                surface_ownership::warn_no_installed_claim_adopted(
-                    target_dir,
-                    &dest_rel,
-                    ctx.options.collision_hint,
-                    diag,
-                );
-            }
-        }
-    }
-
-    let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
     let existing_bytes = native_path
         .symlink_metadata()
         .ok()
         .filter(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
         .and_then(|_| std::fs::read(&native_path).ok());
     let unchanged = existing_bytes.as_deref() == Some(lowered.bytes.as_slice());
+    if !surface_ownership::resolve_copy(
+        ctx.old_lock,
+        target_dir,
+        &dest_rel,
+        surface_ownership::DestState::new(dest_exists, unchanged),
+        ctx.options.force,
+        ctx.options.collision_hint,
+        diag,
+    ) {
+        return None;
+    }
+
+    let checksum = crate::types::ContentHash::from(crate::hash::hash_bytes(&lowered.bytes));
 
     // Reported only for a file Mars writes: a preserved user file has no loss to report. A
     // file this run leaves as it was reports it only under `--verbose`. A dry run has no lock

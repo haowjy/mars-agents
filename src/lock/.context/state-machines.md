@@ -32,7 +32,7 @@ stateDiagram-v2
 An instance of [an ownership record](../../../.context/state-machines/ownership-record.md).
 
 - **A tombstone grants deletion only.** `surface_ownership::may_delete` accepts both states;
-  `copy_decision` accepts only `Installed`. Admitting a tombstone to
+  `resolve_copy` accepts only `Installed`. Admitting a tombstone to
   `installed_checksum_for_output` lets a retry overwrite bytes that appeared after the failed
   removal.
 - **`--force` restores the state to `Installed`.** It is the only way a tombstoned path becomes

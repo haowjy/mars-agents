@@ -14,7 +14,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
 use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
-use crate::surface_ownership::{self, CollisionAdoptHint, SurfaceCopyDecision};
+use crate::surface_ownership::{self, CollisionAdoptHint};
 use crate::sync::apply::{ActionOutcome, ActionTaken};
 use crate::types::ContentHash;
 
@@ -296,12 +296,23 @@ fn sync_one_target(
                                         outcome.installed_checksum.as_ref(),
                                     )
                                 }));
+                    let identical = unclaimed_dest_is_desired(
+                        &source,
+                        &dest,
+                        outcome,
+                        target_name,
+                        dest_rel,
+                        native_skill_variant_key.as_deref(),
+                        old_lock,
+                    );
                     let wants_copy = force
+                        || identical
                         || !dest_exists
                         || should_refresh_native_skill
                         || managed_dest_is_current_or_stale;
                     if wants_copy {
-                        if should_copy_to_target(&dest, target_name, dest_rel, ctx, diag) {
+                        if should_copy_to_target(&dest, target_name, dest_rel, identical, ctx, diag)
+                        {
                             if let Some(variant_key) = native_skill_variant_key.as_deref()
                                 && should_refresh_native_skill
                             {
@@ -450,8 +461,19 @@ fn sync_one_target(
                 expected_paths.insert(dest_rel.to_string());
                 let source = mars_dir.join(canonical_dest_rel);
                 let dest = target_root.join(dest_rel);
-                if (source.exists() || source.symlink_metadata().is_ok())
-                    && should_copy_to_target(&dest, target_name, dest_rel, ctx, diag)
+                let source_exists = source.exists() || source.symlink_metadata().is_ok();
+                let identical = source_exists
+                    && unclaimed_dest_is_desired(
+                        &source,
+                        &dest,
+                        outcome,
+                        target_name,
+                        dest_rel,
+                        native_skill_variant_key.as_deref(),
+                        old_lock,
+                    );
+                if source_exists
+                    && should_copy_to_target(&dest, target_name, dest_rel, identical, ctx, diag)
                 {
                     match copy_item_to_target(
                         &source,
@@ -514,44 +536,58 @@ fn should_copy_to_target(
     dest: &Path,
     target_name: &str,
     dest_rel: &str,
+    identical: bool,
     ctx: &TargetSyncContext<'_>,
     diag: &mut DiagnosticCollector,
 ) -> bool {
-    let dest_exists = surface_ownership::target_dest_exists(dest);
-    match surface_ownership::copy_decision(
+    surface_ownership::resolve_copy(
         ctx.old_lock,
         target_name,
         dest_rel,
-        dest_exists,
+        surface_ownership::DestState::new(surface_ownership::target_dest_exists(dest), identical),
         ctx.force,
-    ) {
-        SurfaceCopyDecision::Proceed => {
-            if dest_exists
-                && ctx.force
-                && ctx
-                    .old_lock
-                    .installed_checksum_for_output(target_name, dest_rel)
-                    .is_none()
-            {
-                surface_ownership::warn_no_installed_claim_adopted(
-                    target_name,
-                    dest_rel,
-                    ctx.collision_hint,
-                    diag,
-                );
-            }
-            true
-        }
-        SurfaceCopyDecision::SkipWithoutInstalledClaim => {
-            surface_ownership::warn_no_installed_claim_collision(
-                target_name,
-                dest_rel,
-                ctx.collision_hint,
-                diag,
-            );
-            false
-        }
+        ctx.collision_hint,
+        diag,
+    )
+}
+
+/// Whether `dest` has no installed claim and already holds what Mars would write there, as a
+/// sync interrupted before its lock write leaves it. A claimed or absent `dest` is not asked.
+fn unclaimed_dest_is_desired(
+    source: &Path,
+    dest: &Path,
+    outcome: &ActionOutcome,
+    target_name: &str,
+    dest_rel: &str,
+    native_skill_variant_key: Option<&str>,
+    old_lock: &LockFile,
+) -> bool {
+    if !surface_ownership::target_dest_exists(dest)
+        || old_lock
+            .installed_checksum_for_output(target_name, dest_rel)
+            .is_some()
+    {
+        return false;
     }
+    let equal = match native_skill_variant_key {
+        Some(key) if outcome.item_id.kind == mars_schema::item::ItemKind::Skill => {
+            crate::compiler::variants::prepare_native_skill_projection(
+                source,
+                key,
+                &mut DiagnosticCollector::new(),
+                outcome.item_id.name.as_str(),
+            )
+            .and_then(|projection| {
+                crate::compiler::variants::prepared_native_skill_projection_matches(
+                    dest,
+                    &projection,
+                )
+            })
+        }
+        _ if source.is_dir() => fs_ops::directory_trees_content_equal(source, dest),
+        _ => fs_ops::file_content_equal(source, dest),
+    };
+    equal.unwrap_or(false)
 }
 
 fn dest_matches_recorded_or_desired(

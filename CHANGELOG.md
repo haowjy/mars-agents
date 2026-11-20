@@ -7,6 +7,21 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.37.4] - 2026-11-20
+
+### Fixed
+- `mars unlink .claude` (or a sync that removes your last hook) left `.claude/settings.local.json` holding `{}`, and `.codex/hooks.json` holding `{}`. Mars now deletes a hook file when removing its hooks leaves nothing in it. A file with any key of yours stays.
+
+## [0.37.3] - 2026-11-20
+
+### Fixed
+- With `MERIDIAN_MANAGED=1` (any sync run through `meridian`), every `mars sync` removed `.agy/agents/<name>.md`, wrote it again and printed `removed 1 target file`. A second sync now says `already up to date`.
+
+## [0.37.2] - 2026-11-20
+
+### Fixed
+- A sync that was killed, or whose `mars.lock` write failed (a read-only project root, say), no longer leaves skills, hooks and agents "unmanaged" for good. The next `mars sync` adopts any target file that holds exactly what Mars would write, with no warning, instead of warning `no installed-content claim` on every sync until you ran `mars sync --force`. A file you edited or wrote yourself is still kept and reported.
+
 ## [0.37.1] - 2026-11-20
 
 ### Fixed

@@ -67,6 +67,9 @@ pub struct RetiredTarget {
     pub mcp_section: &'static str,
     /// The file under `dir` that held hook entries, under a `hooks` object.
     pub hook_file: &'static str,
+    /// Keys Mars wrote beside `hooks`; a file holding only these is empty and `mars unlink`
+    /// deletes it.
+    pub hook_file_keys: &'static [&'static str],
 }
 
 pub const RETIRED_TARGETS: &[RetiredTarget] = &[RetiredTarget {
@@ -75,6 +78,7 @@ pub const RETIRED_TARGETS: &[RetiredTarget] = &[RetiredTarget {
     mcp_path: ".cursor/mcp.json",
     mcp_section: "mcpServers",
     hook_file: "hooks.json",
+    hook_file_keys: &["version"],
 }];
 
 /// The retired target `name` (`cursor`, `.Cursor`) names, if any.

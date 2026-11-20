@@ -743,6 +743,7 @@ pub(crate) fn sync_targets(
         crate::target_sync::preview_native_skill_repairs(
             &ctx.project_root,
             &ctx.project_root.join(".mars"),
+            &applied.planned.targeted.resolved.loaded.old_lock,
             &crate::config::targets::managed_targets(
                 &applied.planned.targeted.resolved.loaded.effective.settings,
             ),

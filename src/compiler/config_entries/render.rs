@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::installed_token;
 use crate::compiler::hooks::{HookRank, ParsedHookItem, error_message};
-use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, Owner};
+use crate::diagnostic::DiagnosticCollector;
 use crate::sync::package_dir::PackageDir;
 use crate::target::mcp_file::MCP_KIND;
 use crate::target::plugin::HOOK_ENTRY_KIND;
@@ -180,7 +180,8 @@ pub(crate) fn preflight_config_entries(
                     }
                 }
                 for limit in &merged.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -195,7 +196,7 @@ pub(crate) fn preflight_config_entries(
                     diag.warn_advisory("hook-event-unchecked", format!("hook `{}` passes unknown event `{event}` through verbatim to `{target_name}` because `unchecked = true`", item.def.name));
                 }
                 for event in &merged.skipped_events {
-                    diag.warn_advisory("hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
+                    diag.hold_warning(hook_entry_key(target_name, &item.def.name), "hook-event-skipped", format!("hook `{}` from `{}`: skipping unknown event `{event}` for `{target_name}`; its other events are installed", item.def.name, item.source_name));
                 }
                 if let Some(native_hook) = item.native_hook(target_name) {
                     for event in &merged.overrides {
@@ -229,7 +230,8 @@ pub(crate) fn preflight_config_entries(
                     );
                 }
                 for limit in &files.answer_limits {
-                    diag.info(
+                    diag.hold_warning(
+                        hook_entry_key(target_name, &item.def.name),
                         "hook-answer-unsupported",
                         format!(
                             "hook `{}` from `{}`: `{target_name}` `{}`: {}",
@@ -274,9 +276,16 @@ pub(crate) fn preflight_config_entries(
     }
 }
 
-/// What a hook's `[hooks]` leaves out, said for every managed target whether or not the hook
-/// was selected there, and for a hook no target took. The project's own hooks warn, each skip
-/// once. A dependency's hooks are one line per source, from the sync that installs them.
+/// What names a hook's entry on a target for `DiagnosticCollector::hold`: a loss concerning
+/// the hook's output there is news when the sync writes or changes that output, whoever owns
+/// the hook. `compile_config_entries` releases it.
+pub(super) fn hook_entry_key(target: &str, hook: &str) -> String {
+    format!("{target} hook {hook}")
+}
+
+/// What a hook's `[hooks]` leaves out on each managed target, one line per hook and target.
+/// A pair no target took has no entry to write, so nothing releases its line: only a command
+/// that lists every loss shows it.
 fn report_skips(
     targeted: &crate::sync::TargetedState,
     managed: &[String],
@@ -284,7 +293,6 @@ fn report_skips(
     diag: &mut DiagnosticCollector,
 ) {
     let mut seen = BTreeSet::new();
-    let mut from_dependencies: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for item in targeted.target.accepted_hooks() {
         if item.def.portable().is_none() || !seen.insert(hook_key(item)) {
             continue;
@@ -297,38 +305,20 @@ fn report_skips(
                 continue;
             }
             let lines: Vec<String> = skips.iter().map(skip_text).collect();
-            match item.origin {
-                Origin::Local => {
-                    for line in lines {
-                        diag.warn_advisory(
-                            "hook-event-skipped",
-                            format!("hook `{}`: `{target}` {line}", item.def.name),
-                        );
-                    }
-                }
-                Origin::Dependency => from_dependencies
-                    .entry(item.source_name.as_str())
-                    .or_default()
-                    .push(format!(
-                        "{} on `{target}` ({} left out)",
-                        item.def.name,
-                        lines.len()
-                    )),
-            }
-        }
-    }
-    for (source, hooks) in from_dependencies {
-        diag.hold_until_written(
-            Owner::Dependency(source),
-            Diagnostic::new(
-                DiagnosticLevel::Warning,
+            let from = match item.origin {
+                Origin::Local => String::new(),
+                Origin::Dependency => format!(" from `{}`", item.source_name),
+            };
+            diag.hold_warning(
+                hook_entry_key(target, &item.def.name),
                 "hook-event-skipped",
                 format!(
-                    "some events or handlers of hooks from `{source}` have no counterpart on a managed target, so they are not installed: {}",
-                    hooks.join(", ")
+                    "hook `{}`{from}: `{target}` {}",
+                    item.def.name,
+                    lines.join("; ")
                 ),
-            ),
-        );
+            );
+        }
     }
 }
 

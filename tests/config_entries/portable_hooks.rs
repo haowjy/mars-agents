@@ -257,15 +257,15 @@ fn a_dependency_hook_left_out_of_a_target_is_reported_by_the_sync_that_installs_
         &format!("visibility = \"exported\"\n{GUARD}"),
     );
     sync(&project).success().stderr(predicate::str::contains(
-        "hooks from `tool` have no counterpart",
+        "hook `guard` from `tool`: `.opencode` does not run `Notification`",
     ));
     sync(&project)
         .success()
-        .stderr(predicate::str::contains("no counterpart on a managed target").not());
+        .stderr(predicate::str::contains("does not run").not());
     sync_verbose(&project)
         .success()
         .stderr(predicate::str::contains(
-            "guard on `.opencode` (1 left out)",
+            "hook `guard` from `tool`: `.opencode` does not run `Notification`",
         ));
 }
 
@@ -411,7 +411,7 @@ fn a_deleted_entry_shared_by_two_hooks_is_restored() {
 }
 
 #[test]
-fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
+fn a_portable_hook_that_renders_on_no_managed_target_is_listed_by_verbose() {
     let dir = TempDir::new().unwrap();
     let project = project(&dir, "\".codex\", \".pi\"");
     write_hook(
@@ -419,7 +419,11 @@ fn a_portable_hook_that_renders_on_no_managed_target_is_reported() {
         "notify",
         "[[hooks.Notification]]\n[[hooks.Notification.hooks]]\ntype = \"command\"\ncommand = \"echo n\"\n",
     );
+    // It writes no entry anywhere, so no sync has a write to report it with.
     sync(&project)
+        .success()
+        .stderr(predicate::str::contains("does not run").not());
+    sync_verbose(&project)
         .success()
         .stderr(predicate::str::contains(
             "hook `notify`: `.codex` does not run `Notification`",

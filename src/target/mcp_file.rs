@@ -9,7 +9,7 @@ use mars_schema::mcp_servers::{Flavor, McpRender, render};
 
 use super::McpServerEntry;
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
-use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, DiagnosticLevel};
+use crate::diagnostic::DiagnosticCollector;
 
 pub(crate) const MCP_KIND: KeyedKind = KeyedKind {
     key_prefix: "mcp:",
@@ -52,13 +52,7 @@ pub(crate) fn render_all(
                         lost.text(false)
                     )
                 };
-                diag.hold(
-                    file.at.entry_key(&server.name),
-                    Diagnostic {
-                        category: Some(DiagnosticCategory::Advisory),
-                        ..Diagnostic::new(DiagnosticLevel::Warning, "mcp-lossy", message)
-                    },
-                );
+                diag.hold_warning(file.at.entry_key(&server.name), "mcp-lossy", message);
             }
             Rendered {
                 name: server.name.clone(),

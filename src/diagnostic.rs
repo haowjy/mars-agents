@@ -198,7 +198,7 @@ pub struct DiagnosticCollector {
     diagnostics: Vec<Diagnostic>,
     grouped: Vec<GroupedItems>,
     /// What a native file lacks, by the entry that lacks it, until a write of that entry
-    /// releases it (`hold`); `--verbose` releases all.
+    /// releases it (`hold`).
     held: Vec<(String, Diagnostic)>,
     /// The `Owner::written_key`s whose files this run wrote, for a loss found after the write.
     written: std::collections::HashSet<String>,
@@ -422,9 +422,30 @@ impl DiagnosticCollector {
     }
 
     /// Keep a loss found while rendering the native entry `entry` until the entry is written:
-    /// a loss on an entry that stays as it was is not news. See [`Self::release`].
+    /// a loss on an entry that stays as it was is not news. See [`Self::release`]. A command
+    /// that lists every loss (`--verbose`, `mars check`) shows it at once; one that hides them
+    /// drops it.
     pub(crate) fn hold(&mut self, entry: String, diagnostic: Diagnostic) {
-        self.held.push((entry, diagnostic));
+        match self.lossiness_mode {
+            LossinessMode::Written | LossinessMode::Hidden => self.held.push((entry, diagnostic)),
+            LossinessMode::Surface | LossinessMode::Verbose => self.diagnostics.push(diagnostic),
+        }
+    }
+
+    /// [`Self::hold`] for a loss as a warning: the user gets less than the item declares.
+    pub(crate) fn hold_warning(
+        &mut self,
+        entry: String,
+        code: impl Into<Cow<'static, str>>,
+        message: impl Into<String>,
+    ) {
+        self.hold(
+            entry,
+            Diagnostic {
+                category: Some(DiagnosticCategory::Advisory),
+                ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
+            },
+        );
     }
 
     /// Report what `hold` kept for `entry`: this run wrote it.
@@ -565,10 +586,6 @@ impl DiagnosticCollector {
             self.lossiness_mode,
             self.rerun_verbose,
         ));
-        if self.lossiness_mode.verbose() {
-            self.diagnostics
-                .extend(std::mem::take(&mut self.held).into_iter().map(|(_, d)| d));
-        }
         self.held.clear();
         for group in std::mem::take(&mut self.grouped) {
             let shown = if self.lossiness_mode.verbose() {

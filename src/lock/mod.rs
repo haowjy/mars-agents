@@ -11,6 +11,7 @@ use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
+mod provided_split;
 mod targets;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -386,6 +387,8 @@ mod lock_kind {
 }
 
 const LOCK_FILE: &str = "mars.lock";
+/// The records of provided content (`mars provide`): machine-local, beside `provided.lock`.
+const PROVIDED_OUTPUTS_FILE: &str = ".mars/provided-outputs.lock";
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
@@ -466,9 +469,22 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
     Ok(lock)
 }
 
+/// The lock of a project: `mars.lock` with the machine-local `provided-outputs.lock` merged in,
+/// so every reader sees one lock. A key held by both files takes the machine-local value, which
+/// [`write`] saves first and is therefore the newer after a crash between the two writes.
 pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let path = root.join(LOCK_FILE);
-    let content = match std::fs::read_to_string(&path) {
+    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE))?;
+    let local_path = root.join(PROVIDED_OUTPUTS_FILE);
+    if !local_path.exists() {
+        return Ok((committed, diagnostics));
+    }
+    let (local, local_diagnostics) = read_lock_file(&local_path)?;
+    diagnostics.extend(local_diagnostics);
+    Ok((provided_split::merge(committed, local), diagnostics))
+}
+
+fn read_lock_file(path: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+    let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok((LockFile::empty(), Vec::new()));
@@ -641,8 +657,20 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
     true
 }
 
+/// Saves the machine-local records first, then `mars.lock`: a crash between the two leaves target
+/// outputs owned, where the reverse order would leave them unowned.
 pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
-    let path = root.join(LOCK_FILE);
+    let (committed, local) = provided_split::split(lock);
+    let local_path = root.join(PROVIDED_OUTPUTS_FILE);
+    if local.is_empty() {
+        crate::platform::fs::safe_remove(&local_path)?;
+    } else {
+        write_lock_file(&local_path, &local)?;
+    }
+    write_lock_file(&root.join(LOCK_FILE), &committed)
+}
+
+fn write_lock_file(path: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let mut normalized = lock.clone();
     normalized.version = LOCK_VERSION;
     normalized.dependencies.sort_keys();
@@ -659,7 +687,7 @@ pub fn write(root: &Path, lock: &LockFile) -> Result<(), MarsError> {
     let content = toml::to_string_pretty(&normalized).map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
     })?;
-    crate::fs::atomic_write_if_changed(&path, content.as_bytes()).map(|_| ())
+    crate::fs::atomic_write_if_changed(path, content.as_bytes()).map(|_| ())
 }
 
 pub fn build(

@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.36.1] - 2026-11-20
+
+### Fixed
+- `mars add VoltAgent/awesome-claude-code-subagents` no longer fails with `resolve authored package entry failed ... Not a directory`. A plugin whose `plugin.json` lists agent `.md` files (`"agents": ["./api-designer.md", ...]`) now imports them, and the repository asks for `--plugin <name>` like any other marketplace.
+
 ## [0.36.0] - 2026-11-16
 
 ### Upgrade notes

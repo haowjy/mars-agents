@@ -46,18 +46,20 @@ pub struct ResolvedPolicy {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The layers a model or a layered field comes from, highest precedence first: `Ord` is that
+/// order, and `resolve_policy_field` lists its layers in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PolicySource {
     Cli,
     Overlay,
     OverlayModelPolicy,
-    Profile,
     ProfileModelPolicy,
+    Profile,
     SettingsModelPolicy,
-    Alias,
-    Project,
-    ConfigOrder,
     Config,
+    Project,
+    Alias,
+    ConfigOrder,
     Provider,
     Unset,
 }
@@ -78,21 +80,6 @@ impl PolicySource {
             Self::Provider => "provider",
             Self::Unset => "unset",
         }
-    }
-}
-
-/// Position in the layered fields' order, 0 highest: the model and effort layers share it.
-fn layer_rank(source: PolicySource) -> u8 {
-    match source {
-        PolicySource::Cli => 0,
-        PolicySource::Overlay => 1,
-        PolicySource::OverlayModelPolicy => 2,
-        PolicySource::ProfileModelPolicy => 3,
-        PolicySource::Profile => 4,
-        PolicySource::SettingsModelPolicy => 5,
-        PolicySource::Project | PolicySource::Config => 6,
-        PolicySource::Alias => 7,
-        PolicySource::ConfigOrder | PolicySource::Provider | PolicySource::Unset => 8,
     }
 }
 
@@ -517,17 +504,25 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
-    let listing = mars_schema::harness::parse(&selected_harness)
-        .filter(|harness| {
-            crate::harness::registry::probe_spec(*harness).map(|spec| spec.slugs)
-                == Some(crate::harness::registry::SlugShape::Bare)
-        })
-        .and_then(|harness| capability_session.listing(harness));
-    let effort_outranks_model = matches!(
-        execution_resolution.effort.value,
+    let effort_standing = match execution_resolution.effort.value {
+        // A default (the alias's, the caller's settings) never overrides a tier that was asked
+        // for, and is not worth a warning when it loses.
         Some(EffortRequest::Level(_))
-    ) && layer_rank(execution_resolution.effort.source)
-        <= layer_rank(resolved_model.model_source);
+            if matches!(
+                execution_resolution.effort.source,
+                PolicySource::Alias | PolicySource::Config
+            ) =>
+        {
+            runnable::EffortStanding::Implied
+        }
+        Some(EffortRequest::Level(_))
+            if execution_resolution.effort.source <= resolved_model.model_source =>
+        {
+            runnable::EffortStanding::Outranks
+        }
+        Some(EffortRequest::Level(_)) => runnable::EffortStanding::Yields,
+        _ => runnable::EffortStanding::Implied,
+    };
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
         model_token: resolved_model.model_token.clone(),
@@ -546,8 +541,7 @@ pub fn resolve_policy(
         provider_for_order: resolved_model.provider_for_order.as_deref(),
         effort: execution_resolution.effort.value,
         catalog: &cache.catalog,
-        listing: listing.as_ref(),
-        effort_outranks_model,
+        effort_standing,
         route_report: report,
     });
 

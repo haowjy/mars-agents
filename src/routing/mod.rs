@@ -2,6 +2,7 @@ use crate::config::targets::HarnessScope;
 use crate::harness::host::{AuthState, CapabilitySession, ListingEvidence};
 use crate::harness::registry;
 use crate::harness::registry::{HarnessClass, ListingAuth, ProbeSpec, SlugShape};
+use crate::models::slug_tiers;
 use mars_schema::HarnessId;
 use std::collections::HashSet;
 
@@ -685,8 +686,8 @@ where
     }
 }
 
-/// A harness with bare slugs lists no provider, so a model matches by normalized name, or by
-/// prefix of the slugs that fold effort tiers into it.
+/// A harness with bare slugs lists no provider, so a model matches by `slug_tiers::find`: a
+/// listed slug, or a family whose effort tiers are listed. The slugs it found are the candidates.
 fn bare_listing_assessment(
     input: &RoutingInput<'_>,
     harness: &str,
@@ -696,28 +697,8 @@ fn bare_listing_assessment(
         return passthrough_assessment(harness);
     };
 
-    let normalized_model = slug::normalize_slug(input.model_id);
-    if listing
-        .slugs
-        .iter()
-        .any(|slug| slug::normalize_slug(slug) == normalized_model)
-    {
-        return CandidateAssessment {
-            auth: None,
-            harness: harness.to_string(),
-            installed: true,
-            candidate_slugs: vec![input.model_id.to_string()],
-            filtered_slugs: vec![input.model_id.to_string()],
-            chosen_slug: Some(input.model_id.to_string()),
-            chosen_model: Some(input.model_id.to_string()),
-            match_evidence: Some(MatchEvidence::Confirmed),
-            skip_reason: None,
-        };
-    }
-
-    let matches = slug::prefix_matches(input.model_id, &listing.slugs);
-    if !matches.is_empty() {
-        let candidate_slugs: Vec<String> = matches.iter().map(|slug| (*slug).to_string()).collect();
+    if let Some(found) = slug_tiers::find(input.model_id, &listing.slugs) {
+        let candidate_slugs = found.slugs();
         return CandidateAssessment {
             auth: None,
             harness: harness.to_string(),

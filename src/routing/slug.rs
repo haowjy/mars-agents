@@ -115,17 +115,3 @@ pub fn find_exact_match<'a>(
 pub fn normalize_slug(s: &str) -> String {
     s.to_ascii_lowercase().replace('.', "-")
 }
-
-/// The slugs that are `model_id` or its tiers.
-pub fn prefix_matches<'a>(model_id: &str, slugs: &'a [String]) -> Vec<&'a str> {
-    let normalized_model = normalize_slug(model_id);
-    slugs
-        .iter()
-        .filter(|slug| {
-            let normalized_slug = normalize_slug(slug);
-            normalized_slug == normalized_model
-                || normalized_slug.starts_with(&format!("{normalized_model}-"))
-        })
-        .map(String::as_str)
-        .collect()
-}

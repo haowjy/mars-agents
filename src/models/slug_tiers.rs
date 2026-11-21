@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 
 use mars_schema::agent::EffortLevel;
 
+use crate::routing::slug::normalize_slug as normalize;
+
 /// What the listing says a requested model is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Listed {
@@ -29,8 +31,14 @@ pub struct Found {
     pub carried: Option<EffortLevel>,
 }
 
-fn normalize(slug: &str) -> String {
-    slug.to_ascii_lowercase().replace('.', "-")
+impl Found {
+    /// The listed slugs the requested model stands for: each tier of its family, or the one slug.
+    pub fn slugs(&self) -> Vec<String> {
+        match &self.listed {
+            Listed::Family { tiers, .. } => tiers.values().cloned().collect(),
+            Listed::Untiered { slug } => vec![slug.clone()],
+        }
+    }
 }
 
 /// `slug` as a family and the effort level it ends in.
@@ -57,6 +65,8 @@ fn family_tiers(
 }
 
 /// `model` in `slugs`, by normalized name: a listed slug, or a family whose tiers are listed.
+/// This is the one rule for whether such a harness lists a model, for routing and for the slug
+/// a launch sends.
 pub fn find(model: &str, slugs: &[String]) -> Option<Found> {
     let normalized = normalize(model);
     let exact = slugs.iter().find(|slug| normalize(slug) == normalized);

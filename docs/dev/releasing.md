@@ -25,9 +25,11 @@ PR to `main` carries the label. Patch-level changes merge to `main` on their own
 meridian-cli's [release-branch procedure](https://github.com/haowjy/meridian-cli/blob/main/docs/releasing.md#minor-and-major-releases-collect-on-a-release-branch)
 for the steps: part PRs, the combined changelog, and who merges what.
 
-One step differs here: the agent leading the release merges the release PR to `main`
-itself, without asking, once its whole-change review is resolved and CI is green. Jimmy
-already approved each change that crosses a boundary before it started, so the release
+Leave the release PR as a draft until Jimmy says the release is complete: other minor or
+major changes may still be in flight toward the branch, so never decide on your own that
+the part you landed is the last. Once he has, the agent leading the release marks it ready
+and merges it to `main` itself, once its whole-change review is resolved and CI is green.
+Jimmy already approved each change that crosses a boundary before it started, so the merge
 needs no second approval.
 
 ## Releasing

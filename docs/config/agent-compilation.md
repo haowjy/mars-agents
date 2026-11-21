@@ -471,7 +471,7 @@ frontmatter keys it does not know.
 | `name`, `description` | `name:`, `description:` | exact |
 | `mode` | not written: `agy` takes `mainAgent: false` to mean "not selectable by `--agent`" and runs the default agent instead, so Mars writes neither role key | meridian-only |
 | `tools` | `tools:` (see below) | exact for an allowlist and for no rules; denies and `ask` are dropped |
-| `model`, `effort` | not written: Meridian sets them for each session | meridian-only |
+| `model`, `effort` | not written: Meridian never launches `agy`, so pick the model with `agy --model` | meridian-only |
 | `skills` | a body line that names them (`agy` loads a skill by reading it) | approximate |
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 

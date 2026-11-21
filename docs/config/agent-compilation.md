@@ -46,7 +46,7 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs by hand with `agy --agent <profile>`, so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
 
 Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 
@@ -471,7 +471,7 @@ frontmatter keys it does not know.
 | `name`, `description` | `name:`, `description:` | exact |
 | `mode` | not written: `agy` takes `mainAgent: false` to mean "not selectable by `--agent`" and runs the default agent instead, so Mars writes neither role key | meridian-only |
 | `tools` | `tools:` (see below) | exact for an allowlist and for no rules; denies and `ask` are dropped |
-| `model`, `effort` | not written: the launch passes them as one `--model` slug ([below](#agy-model-and-effort)) | meridian-only |
+| `model`, `effort` | not written: the model and effort come per session from `meridian agy -m`/`--effort` (or `agy --model` by hand), as one `--model` slug ([below](#agy-model-and-effort)) | meridian-only |
 | `skills` | a body line that names them (`agy` loads a skill by reading it) | approximate |
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 

@@ -2736,10 +2736,45 @@ fn agy_bundle(agent_content: &str, args: &[&str]) -> (std::process::Output, Valu
 
 #[test]
 fn build_launch_bundle_never_routes_to_agy_without_a_pin() {
-    let agent = "---\nname: reviewer\nmodel: gpt-oss-120b\nharness: agy\n---\nReview.";
-    let (output, bundle) = agy_bundle(agent, &["--model", "claude-opus-4-6"]);
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(bundle["routing"]["harness"].as_str(), Some("claude"));
+    let agent = "---\nname: reviewer\nmodel: gemini-3.8-flash\nharness: agy\n---\nReview.";
+    let (output, _) = agy_bundle(agent, &[]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Meridian does not launch agy"), "{stderr}");
+}
+
+#[test]
+fn build_launch_bundle_effort_outranks_a_tiered_model_only_from_its_own_layer_up() {
+    let slug_and_warnings = |agent: &str, args: &[&str]| {
+        let mut all = vec!["--harness", "agy"];
+        all.extend_from_slice(args);
+        let (output, bundle) = agy_bundle(agent, &all);
+        assert!(output.status.success(), "{output:?}");
+        (
+            bundle["routing"]["harness_model"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            bundle["warnings"].to_string(),
+        )
+    };
+
+    // `-m` names the tier above the profile's effort: the tier wins, and says so.
+    let profile_effort = "---\nname: reviewer\neffort: high\n---\nReview.";
+    let (slug, warnings) = slug_and_warnings(profile_effort, &["--model", "gemini-3.8-flash-low"]);
+    assert_eq!(slug, "gemini-3.8-flash-low");
+    assert!(warnings.contains("ignored"), "{warnings}");
+
+    // The same layer names both: the effort overrides the tier.
+    let both = "---\nname: reviewer\nmodel: gemini-3.8-flash-low\neffort: high\n---\nReview.";
+    let (slug, warnings) = slug_and_warnings(both, &[]);
+    assert_eq!(slug, "gemini-3.8-flash-high");
+    assert!(warnings.contains("overrides"), "{warnings}");
+
+    // A higher layer (`--effort`) overrides the profile's tiered model.
+    let model_only = "---\nname: reviewer\nmodel: gemini-3.8-flash-low\n---\nReview.";
+    let (slug, _) = slug_and_warnings(model_only, &["--effort", "high"]);
+    assert_eq!(slug, "gemini-3.8-flash-high");
 }
 
 #[test]

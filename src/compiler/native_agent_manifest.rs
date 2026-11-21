@@ -154,8 +154,9 @@ pub fn write_native_agent_manifest_from_lock(
 pub fn persist_lock_then_native_agent_manifest(
     project_root: &Path,
     lock: &crate::lock::LockFile,
+    project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<Option<String>, MarsError> {
-    crate::lock::write(project_root, lock)?;
+    crate::lock::write(project_root, lock, project_targets)?;
     match write_native_agent_manifest_from_lock(project_root, lock) {
         Ok(()) => Ok(None),
         Err(err) => Ok(Some(format!(

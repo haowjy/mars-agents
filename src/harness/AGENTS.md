@@ -1,6 +1,6 @@
 # Harness capabilities
 
-Harness identity belongs to `mars-schema`. Keep installation facts separate from routing permission: an excluded harness is not an absent executable, and excluded harnesses must not be probed.
+Harness identity belongs to `mars-schema`. Keep installation facts separate from routing permission: an excluded harness is not an absent executable, and excluded harnesses must not be probed. A `--harness` pin to a harness Meridian does not launch (`agy`) routes, and reads the same cached listing `mars models list` does.
 
 Share one lazy `CapabilitySession` and `NativeAuthCache` across a command's candidate evaluations. Authentication has an unknown state and doesn't prove credit or quota. Pi and Antigravity listings imply configured authentication only while the latest credential-gated listing succeeded; OpenCode's ungated listing never does.
 

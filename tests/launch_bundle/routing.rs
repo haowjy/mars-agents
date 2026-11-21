@@ -2684,3 +2684,121 @@ fn now_unix_secs() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+const AGY_SLUGS: [&str; 7] = [
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low",
+    "gemini-4-neon-high",
+    "gemini-4-argon-high",
+    "gemini-pro-orchestrator-neon",
+    "gpt-oss-120b-medium",
+];
+
+/// Runs `launch-bundle` against a cached `agy` listing, with `agy` and `claude` installed.
+fn agy_bundle(agent_content: &str, args: &[&str]) -> (std::process::Output, Value) {
+    let temp = TempDir::new().unwrap();
+    let bin_dir = install_fake_harnesses(&temp, &["agy", "claude"]);
+    let cache_root = temp.path().join("mars-cache");
+    let availability = cache_root.join("availability");
+    fs::create_dir_all(&availability).unwrap();
+    let now = now_unix_secs();
+    fs::write(
+        availability.join("agy-probe.json"),
+        json!({
+            "schema_version": 1,
+            "harness": "agy",
+            "fetched_at": now,
+            "last_attempt_at": now,
+            "last_error": null,
+            "result": { "slugs": AGY_SLUGS, "model_probe_success": true, "error": null }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (server, project_root) = setup_bundle_project(
+        &temp,
+        "bundle-source",
+        agent_content,
+        &[],
+        "[settings]\ntargets = [\".claude\", \".agy\"]",
+    );
+    let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
+    cmd.args(["build", "launch-bundle", "--agent", "reviewer"]);
+    cmd.args(args);
+    cmd.env("MARS_CACHE_DIR", &cache_root);
+    cmd.env("MARS_PROBE_CACHE_TTL_SECS", "60");
+    cmd.env("PATH", replace_path_with(&bin_dir));
+    let output = cmd.output().unwrap();
+    let bundle = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    (output, bundle)
+}
+
+#[test]
+fn build_launch_bundle_never_routes_to_agy_without_a_pin() {
+    let agent = "---\nname: reviewer\nmodel: gemini-3.8-flash\nharness: agy\n---\nReview.";
+    let (output, _) = agy_bundle(agent, &[]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Meridian does not launch agy"), "{stderr}");
+}
+
+#[test]
+fn build_launch_bundle_effort_outranks_a_tiered_model_only_from_its_own_layer_up() {
+    let slug_and_warnings = |agent: &str, args: &[&str]| {
+        let mut all = vec!["--harness", "agy"];
+        all.extend_from_slice(args);
+        let (output, bundle) = agy_bundle(agent, &all);
+        assert!(output.status.success(), "{output:?}");
+        (
+            bundle["routing"]["harness_model"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            bundle["warnings"].to_string(),
+        )
+    };
+
+    // `-m` names the tier above the profile's effort: the tier wins, and says so.
+    let profile_effort = "---\nname: reviewer\neffort: high\n---\nReview.";
+    let (slug, warnings) = slug_and_warnings(profile_effort, &["--model", "gemini-3.8-flash-low"]);
+    assert_eq!(slug, "gemini-3.8-flash-low");
+    assert!(warnings.contains("ignored"), "{warnings}");
+
+    // The same layer names both: the effort overrides the tier.
+    let both = "---\nname: reviewer\nmodel: gemini-3.8-flash-low\neffort: high\n---\nReview.";
+    let (slug, warnings) = slug_and_warnings(both, &[]);
+    assert_eq!(slug, "gemini-3.8-flash-high");
+    assert!(warnings.contains("overrides"), "{warnings}");
+
+    // A higher layer (`--effort`) overrides the profile's tiered model.
+    let model_only = "---\nname: reviewer\nmodel: gemini-3.8-flash-low\n---\nReview.";
+    let (slug, _) = slug_and_warnings(model_only, &["--effort", "high"]);
+    assert_eq!(slug, "gemini-3.8-flash-high");
+}
+
+#[test]
+fn build_launch_bundle_pinned_agy_resolves_effort_into_one_listed_slug() {
+    let agent = "---\nname: reviewer\n---\nReview.";
+    let routed = |args: &[&str]| {
+        let mut all = vec!["--harness", "agy"];
+        all.extend_from_slice(args);
+        let (output, bundle) = agy_bundle(agent, &all);
+        (output.status.success(), bundle)
+    };
+
+    let (ok, bundle) = routed(&["--model", "gemini-3.8-flash", "--effort", "high"]);
+    assert!(ok);
+    assert_eq!(bundle["routing"]["harness"].as_str(), Some("agy"));
+    assert_eq!(
+        bundle["routing"]["harness_model"].as_str(),
+        Some("gemini-3.8-flash-high")
+    );
+    assert_eq!(bundle["execution_policy"]["effort"].as_str(), Some("high"));
+
+    // A prefix of several families is no listed slug or family.
+    let (ok, _) = routed(&["--model", "gemini-4"]);
+    assert!(!ok);
+    let (ok, _) = routed(&["--model", "gemini-pro-orchestrator"]);
+    assert!(!ok);
+}

@@ -44,11 +44,7 @@ fn launch(settings: &str, local: Option<&str>, args: &[&str]) -> (Value, i32, St
 
 #[test]
 fn report_records_failed_primary_and_selected_backup_with_local_scope() {
-    let (bundle, code, calls) = launch(
-        "targets=[\".claude\"]",
-        Some("[settings]\ntargets=[\".codex\"]"),
-        &[],
-    );
+    let (bundle, code, calls) = launch("", Some("[settings]\ntargets=[\".codex\"]"), &[]);
     assert_eq!(code, 0, "{bundle}");
     assert_eq!(bundle["version"], 4);
     let report = &bundle["routing"]["route_trace"];

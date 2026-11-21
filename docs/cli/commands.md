@@ -14,7 +14,7 @@ The project root is the directory holding `mars.toml` and `mars.lock`.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | `check`: validation errors found; `resolve`: unresolved conflict markers remain |
+| `1` | `check`: validation errors found; `resolve` (deprecated): unresolved conflict markers remain |
 | `2` | Config, resolution, validation, lock, request, collision, or frozen-violation errors, including a definition that breaks [schema v1](../config/schema-v1.md) |
 | `3` | I/O, source fetch, HTTP, or git CLI errors |
 
@@ -131,9 +131,11 @@ mars sync [--force] [--diff] [--frozen]
 | `--force` | Overwrite local modifications for managed files |
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode). Installing what `mars.lock` already records, as on a fresh clone with no `.mars/` or target directories, is allowed |
-| `--verbose` | Also print `info` notes, such as a key in `mars.toml` that Mars does not read, and every lossy field per item and target |
+| `--verbose` | Also print `info` notes, such as a key in a dependency that Mars does not read, and every lossy field per item and target |
 
-This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key Mars does not read (`field.unknown`) is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key or table Mars does not read in the project's own `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key it does read (`target` → `targets`, `[setting]` → `[settings]`), because a misspelt `targets` leaves no targets and the sync removes what Mars installed in them. In a dependency or the user config it is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
+
+A target that no `mars.toml` or `mars.local.toml` names any longer has what Mars installed in it removed by the next sync, as `mars unlink` does. An output that no longer matches what Mars wrote (an edited skill, a file you added inside a skill's directory) stays, loses its record, and the sync warns once per target (`output-kept`), so a second sync is quiet. A path that cannot be deleted (`output-remove-failed`) keeps its record and does not stop the sync; the next one retries it, and until it succeeds the summary says `pending` for that target instead of `removed` (`pending_targets` in `--json`). An empty directory Mars cannot remove is left without a warning. `--diff` lists what it would delete and, with the same warning, what it would keep.
 
 The summary lists each generated hook file Mars wrote (`mars-<name>.hooks.ts`, a native hook written to a file target) as `~ <target>/<path> (generated hook file)` and counts them as `wrote N generated hook files`; a run that writes only those is not "already up to date". `--diff` previews them as `would write N generated hook files`. `--json` carries the count as `hook_files_rewritten`.
 
@@ -304,6 +306,8 @@ After adoption, the item lives in `.mars-src/` (your editable source) and is tra
 
 ## `mars resolve`
 
+> **Deprecated** in 0.39.0 and removed in the next minor release. It warns (`command.deprecated`) each run. See [what changed](../config/retired-keys.md#mars-resolve).
+
 Mark conflicts as resolved after manually editing conflicted files.
 
 ```bash
@@ -316,7 +320,7 @@ mars resolve [file]
 
 Checks for remaining conflict markers (`<<<<<<<`, `>>>>>>>`). If the file is clean, updates the lock file's `installed_checksum` to match the current disk content.
 
-> **Note:** Current sync behavior is source-wins — `mars sync` overwrites local modifications with upstream content (with a warning) rather than producing conflict markers. Conflict markers would only appear from manual edits to managed files or legacy state from an older mars version. `mars resolve` remains available to clear them when they do exist.
+> **Note:** Current sync behavior is source-wins — `mars sync` overwrites local modifications with upstream content (with a warning) rather than producing conflict markers. Conflict markers would only appear from manual edits to managed files or legacy state from an older mars version. `mars resolve` still clears them until it is removed; to keep a change to an installed item, use an overlay or edit the source instead.
 
 ---
 
@@ -337,26 +341,29 @@ Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL fo
 Add a managed target directory.
 
 ```bash
-mars link <target> [--force]
+mars link <target> [--force] [--local]
 ```
 
 | Flag | Description |
 |---|---|
-| `--force` | Adopt collisions without an installed-content claim (overwrite + record in lock) |
+| `--force` | Same as `mars sync --force`: adopt colliding paths in every target, not only this one, and reset local edits to managed items under `.mars/` |
+| `--local` | Add the target to `mars.local.toml` instead of `mars.toml`: only this machine syncs it, and its lock records go to `.mars/machine.lock`, so `mars.toml` and the committed `mars.lock` do not change |
 
 **Behavior:**
-- Adds `<target>` as a managed target directory and copies content from `.mars/` into it
-- Persists the target in `mars.toml [settings] targets` and updates `mars.lock` with per-target output records
-- If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and emits `target-unmanaged-collision` (exit 2). Run `mars link <target> --force` to adopt and record installed ownership (`target-unmanaged-adopted`)
+- Adds `<target>` to `mars.toml [settings] targets` and runs a sync, so the target gets everything a sync installs there: skills, agents, hooks, MCP servers and their config entries. Linking a target `mars.local.toml` names moves it: it leaves `mars.local.toml`, and its records move from `.mars/machine.lock` to `mars.lock`
+- With `--local`, a target `mars.toml` already names stays a project target, nothing is written, and the command says so; otherwise the target is added to `mars.local.toml` and `min_mars_version = "0.39.0"` is written there unless the project's effective floor is already that high, so Mars 0.38.0 stops with `compat-version` instead of misreading the list; its records go to `.mars/machine.lock` ([lock files](../internals/lock-file.md#two-files))
+- If a path in the target exists on disk without an installed-content claim for that `target_root` (no output record, or a pending-deletion record), Mars preserves it and warns `target-unmanaged-collision`, as a sync does. `mars link <target> --force` is `mars sync --force`: it adopts colliding paths in every target, not only this one, and resets local edits to managed items under `.mars/`, which a plain sync keeps with a `disk-lock-divergent` warning
 - A harness target is named by its directory (`.agy`) or its harness (`agy`); either form is saved as the directory and reads back as the harness. `.agy` is not a copy of `.mars/` but an `agy` plugin: skills, agents, hooks and MCP servers under `.agy/`, plus `.agents/plugins.json` (a `{"path": ".agy"}` entry, appended after the user's) and `.agy/plugin.json`. See [Antigravity](../config/mcp-and-hooks.md#antigravity-agy). Linking `.agents` beside `.agy` warns, because `agy` reads `.agents/skills/` too and sees each skill twice.
 - `mars link cursor` fails: Mars no longer writes `.cursor` ([Cursor](../config/retired-keys.md#cursor)). A project whose `targets` still names it gets a `retired-target` warning on every sync
+- `mars link --json` prints the sync's report with `target`, `local`, `settings_updated`, `synced` and `removed` added. There `synced` and `removed` count the linked target's files only, not the sync's totals (`mars sync --json`'s `removed` counts items); `targets[]` carries each target's own counts.
 - Materialization depends on target, `agent_emission`, and optional `[settings.meridian.agent_copy]` (e.g. `.opencode` receives skills/MCP unless native agent emission or selective copy applies)
 
 ```bash
 mars link .claude            # Copy managed content into .claude/
 mars link .opencode          # Copy skills/MCP into .opencode
 mars link agy                # Write an `agy` plugin into .agy and list it in .agents/plugins.json
-mars link .claude --force    # Adopt collisions without an installed-content claim in .claude/
+mars link .claude --force    # Same as `mars sync --force`: adopts collisions in every target
+mars link .agy --local       # Sync .agy on this machine only
 ```
 
 ---
@@ -366,22 +373,28 @@ mars link .claude --force    # Adopt collisions without an installed-content cla
 Stop managing a target and remove Mars-owned content from it.
 
 ```bash
-mars unlink <target>
+mars unlink <target> [--local]
 ```
 
+| Flag | Description |
+|---|---|
+| `--local` | Remove `<target>` from `mars.local.toml` only. A target `mars.toml` also names stays linked and keeps its files; one it does not name is removed as below |
+
 **Behavior:**
-- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml`
-- Is how Mars content leaves a target the config no longer names: a sync leaves what it installed in such a target (files, MCP servers, hook entries) as it is, and warns (`unnamed-target`) on every sync until you run this or add the target back to `targets`
+- Removes `<target>` from `targets` in `mars.toml` and `mars.local.toml` (`--local`: `mars.local.toml` only)
+- Runs the removal a sync runs for a target you took out of `targets` by hand: the next `mars sync` removes what Mars installed there the same way, so `unlink` is for removing it now and for a retired target the config still names
 - Treats a target the lock still claims as managed, so an interrupted `link` or `unlink` can be finished
 - Rejects `.mars`, the canonical store, which is not a target
-- Removes only outputs and config entries owned by the target's lock records, which includes a hook's or MCP server's copy under `.mars/<surface>/<target>/` and its record on a target that takes none of it. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and `.agents/` itself stays
+- Removes only outputs and config entries owned by the target's lock records, which includes a hook's or MCP server's copy under `.mars/<surface>/<target>/` and its record on a target that takes none of it. For `.agy` that includes its entry in `.agents/plugins.json` and its keys in `.agy/plugin.json`; a file those entries leave empty is deleted when Mars's change emptied it, and so is `.agents/` when that leaves it empty
 - Removes empty ancestor directories, including the target directory when it becomes empty; preserves handwritten or otherwise unowned content
+- Removes an output only while it is what Mars wrote. One that differs from its recorded checksum (an edited skill, a file you added inside a skill directory, a tree with a dangling symlink) stays, loses its record, and is reported once per target (`output-kept`); `removed_outputs` counts what was deleted. An output that cannot be deleted (`output-remove-failed`) keeps its record and the rest go on; the next sync or `unlink` retries it
 - Reports if the target was not managed (no-op)
 - Works for a retired target (`.cursor`): it removes what the lock records, including the MCP servers and hook entries Mars added to `.cursor/mcp.json` and `.cursor/hooks.json` ([Cursor](../config/retired-keys.md#cursor))
 
 ```bash
 mars unlink .agents          # Remove deprecated .agents target
 mars unlink .claude          # Stop managing .claude
+mars unlink .agy --local     # Stop syncing .agy on this machine; the project's own link stays
 ```
 
 ---
@@ -658,7 +671,7 @@ Checks:
 - Each locked item of a managed target and of `.mars`: file exists on disk, no conflict markers, checksum computability
 - Config-lock consistency: dependencies in config match lock entries
 - Agent skill references: every declared skill dependency exists on disk
-- Targets the config does not name: one `unnamed-target` warning each, as in `mars sync`; their records and `.mars/<surface>/<target>/` copies are not checked
+- Targets the sync does not manage (a retired one the config still names): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
@@ -872,7 +885,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`; `agy` is refused: Meridian does not launch it). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`, `agy`). Only a pin reaches `agy`, which Meridian builds a command for and does not run; the bundle's `harness_model` is one `agy` slug that carries the effort too ([Antigravity slugs](../config/agent-compilation.md#agy-model-and-effort)). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |

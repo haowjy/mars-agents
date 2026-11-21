@@ -20,6 +20,20 @@ pub fn compute_hash(path: &Path, kind: ItemKind) -> Result<String, MarsError> {
     }
 }
 
+/// The hash the lock records for the output at `path`, whose lock item has `kind`: a generated
+/// hook file is one file, so it holds its plain content hash and not a directory hash.
+pub fn compute_output_hash(
+    path: &Path,
+    kind: ItemKind,
+    dest_path: &str,
+) -> Result<String, MarsError> {
+    if crate::lock::is_generated_hook_file(kind, dest_path) {
+        hash_file(path)
+    } else {
+        compute_hash(path, kind)
+    }
+}
+
 /// SHA-256 of one file's content; what the lock records for an agent or a generated hook file.
 pub(crate) fn hash_file(path: &Path) -> Result<String, MarsError> {
     let content = fs::read(path).map_err(|error| MarsError::io("read", path, error))?;

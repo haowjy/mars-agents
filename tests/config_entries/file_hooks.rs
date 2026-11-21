@@ -237,7 +237,10 @@ fn hand_edited_managed_file_native_hook_is_not_silently_replaced() {
 }
 
 #[test]
+#[cfg(unix)]
 fn failed_file_native_hook_removal_retains_ownership_for_retry() {
+    use std::os::unix::fs::PermissionsExt;
+
     for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
@@ -245,14 +248,14 @@ fn failed_file_native_hook_removal_retains_ownership_for_retry() {
         sync(&project).success();
 
         let placed = project.child(target).child(destination);
-        fs::remove_file(placed.path()).unwrap();
-        placed.create_dir_all().unwrap();
+        let placed_dir = placed.path().parent().unwrap().to_path_buf();
         fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
 
-        sync(&project)
-            .success()
-            .stderr(predicate::str::contains("failed to remove"));
-        placed.assert(predicate::path::is_dir());
+        fs::set_permissions(&placed_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let attempt = sync(&project);
+        fs::set_permissions(&placed_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        attempt.stderr(predicate::str::contains("failed to remove"));
+        placed.assert(predicate::path::is_file());
         let lock: mars_agents::lock::LockFile =
             toml::from_str(&fs::read_to_string(project.child("mars.lock").path()).unwrap())
                 .unwrap();
@@ -291,7 +294,7 @@ fn failed_file_native_hook_removal_retains_ownership_for_retry() {
 }
 
 #[test]
-fn removing_file_native_hook_deletes_only_lock_owned_destination() {
+fn removing_file_native_hook_keeps_an_edited_destination() {
     for (target, destination) in file_native_hook_targets() {
         let dir = TempDir::new().unwrap();
         let project = dir.child("project");
@@ -299,11 +302,13 @@ fn removing_file_native_hook_deletes_only_lock_owned_destination() {
         sync(&project).success();
         let placed = project.child(target).child(destination);
         placed.assert(predicate::path::is_file());
-        placed.write_str("edited but still lock owned").unwrap();
+        placed.write_str("edited after Mars wrote it").unwrap();
 
         fs::remove_dir_all(project.child("hooks/audit").path()).unwrap();
-        sync(&project).success();
-        placed.assert(predicate::path::missing());
+        sync(&project)
+            .success()
+            .stderr(predicate::str::contains("changed after Mars installed"));
+        placed.assert("edited after Mars wrote it");
         let lock = fs::read_to_string(project.child("mars.lock").path()).unwrap();
         assert!(!lock.contains(destination));
     }

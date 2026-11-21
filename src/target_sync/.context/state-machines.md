@@ -43,9 +43,10 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
   source did not change. So "sync keeps your edit" means "until upstream changes". `doctor`
   describes this by item kind (agents and skills overwritten, hooks kept); the code's rule is by
   whether the source changed, and hooks go through the merge path, not this one.
-- **Removal ignores content.** `remove_target_path_if_managed` checks only `may_delete`, so a
-  `Removed` outcome deletes an edited destination. That is deliberate for canonical items, and it
-  is the one place an edit is not even warned about.
+- **Removal checks content.** `remove_recorded` deletes an output only while its hash equals the
+  record's checksum; an edited one stays, loses its record and is reported (`output-kept`). Empty
+  directories the removal leaves are pruned best-effort (`remove_empty_ancestors`): no record
+  depends on one, so a directory Mars cannot remove never fails the command.
 - **Crash window.** `sync_one_target` writes files (`atomic_copy_file`, `atomic_copy_dir`, skill
   projection) and only reports `synced_outputs`; the caller writes the lock afterwards. Killed
   between, the target holds files with no record. A file whose content is what the run would write

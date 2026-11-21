@@ -31,6 +31,7 @@ pub mod migrations;
 pub mod routing_settings;
 mod save;
 pub mod targets;
+mod unknown;
 mod user;
 
 pub use user::UserConfig;
@@ -116,7 +117,7 @@ pub struct Manifest {
 /// production config points at git.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LocalConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub overrides: IndexMap<SourceName, OverrideEntry>,
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub models: IndexMap<String, crate::models::ModelAlias>,
@@ -316,8 +317,9 @@ fn parse_failed(path: &Path, error: &toml::de::Error) -> MarsError {
 fn read_file<T: DeserializeOwned>(
     content: &str,
     path: &Path,
+    document: keys::Document,
 ) -> Result<mars_schema::config::Read<T>, MarsError> {
-    mars_schema::config::read(content).map_err(|error| parse_failed(path, &error))
+    mars_schema::config::read(content, document).map_err(|error| parse_failed(path, &error))
 }
 
 /// Interpret consumer-owned manifest sections from bytes already normalized by
@@ -345,12 +347,16 @@ pub(crate) fn parse_prepared_manifest(
 
 /// Read a `mars.local.toml`-shaped file: the project's local file and the user `config.toml`.
 /// `file` names it in what the reader reports.
-fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
+fn parse_local(
+    content: &str,
+    path: &Path,
+    document: keys::Document,
+) -> Result<LocalConfig, MarsError> {
     let mars_schema::config::Read {
         mut value,
         unknown_keys,
         floor,
-    } = read_file::<LocalConfig>(content, path)?;
+    } = read_file::<LocalConfig>(content, path, document)?;
     refuse(
         path,
         &mars_schema::config::settings_refusals(
@@ -367,7 +373,7 @@ fn parse_local(content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
 pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
     match std::fs::read_to_string(&path) {
-        Ok(content) => parse_local(&content, &path),
+        Ok(content) => parse_local(&content, &path, keys::Document::Local),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(read_error(&path, e)),
     }
@@ -495,17 +501,21 @@ fn project_config_diagnostics(
     user: &UserConfig,
 ) -> Vec<Diagnostic> {
     let user_file = user.path.display().to_string();
-    let unknown_keys = [
-        (user_file.as_str(), &user.local.unknown_keys),
-        (CONFIG_FILE, &config.unknown_keys),
-        (LOCAL_CONFIG_FILE, &local.unknown_keys),
-    ]
-    .into_iter()
-    .flat_map(|(file, notes)| {
-        notes
+    // The user's own file stays a note; the project's files warn (`unknown::warning`).
+    let unknown_keys =
+        user.local
+            .unknown_keys
             .iter()
-            .map(move |note| Diagnostic::from_schema(note, format!("{file}: {}", note.message)))
-    });
+            .map(|note| Diagnostic::from_schema(note, format!("{user_file}: {}", note.message)))
+            .chain(
+                config
+                    .unknown_keys
+                    .iter()
+                    .map(|note| unknown::warning::<Config, Settings>(note, CONFIG_FILE)),
+            )
+            .chain(local.unknown_keys.iter().map(|note| {
+                unknown::warning::<LocalConfig, LocalSettings>(note, LOCAL_CONFIG_FILE)
+            }));
     let floors = [
         (
             user_file.as_str(),
@@ -750,7 +760,9 @@ pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
 /// Write mars.local.toml, changing only what differs from the file as it stands.
 pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
     let path = root.join(LOCAL_CONFIG_FILE);
-    save::save_document(&path, local, |text| parse_local(text, &path))
+    save::save_document(&path, local, |text| {
+        parse_local(text, &path, keys::Document::Local)
+    })
 }
 
 #[cfg(test)]
@@ -1376,12 +1388,13 @@ override = { effort = "high" }
         let notes: Vec<_> = effective
             .diagnostics
             .iter()
-            .filter(|note| note.code == "field.unknown")
+            .filter(|note| note.code == "field.unknown" && note.message.starts_with("mars."))
             .collect();
+        // The project's own files warn: a misspelt `targets` would otherwise go unseen.
         assert!(
             notes
                 .iter()
-                .all(|note| note.level == DiagnosticLevel::Info && !note.shown(false))
+                .all(|note| note.level == DiagnosticLevel::Warning && note.shown(false))
         );
         let warnings = notes
             .iter()
@@ -1445,6 +1458,7 @@ override = { effort = "high" }
         let local = parse_local(
             "[settings]\nnetwork_deny = ['x.test']\n",
             Path::new("mars.local.toml"),
+            keys::Document::Local,
         )
         .unwrap();
         assert!(local.unknown_keys.is_empty());
@@ -1779,6 +1793,53 @@ only_skills = true
             ),
         ] {
             assert_eq!(crate::config::targets::managed_targets(&settings), expected);
+        }
+    }
+
+    #[test]
+    fn local_targets_add_to_the_projects_and_empty_adds_nothing() {
+        let project = |targets: Option<Vec<&str>>| Config {
+            settings: Settings {
+                targets: targets.map(|t| t.into_iter().map(String::from).collect()),
+                ..Settings::default()
+            },
+            ..Config::default()
+        };
+        let local = |targets: Option<Vec<&str>>| LocalConfig {
+            settings: LocalSettings {
+                targets: targets.map(|t| t.into_iter().map(String::from).collect()),
+                ..LocalSettings::default()
+            },
+            ..LocalConfig::default()
+        };
+        let user = LocalConfig::default();
+        for (config, local_config, expected, origin) in [
+            (
+                vec![".claude"],
+                vec![".agy", ".claude"],
+                vec![".claude", ".agy"],
+                targets::TargetOrigin::Local,
+            ),
+            (
+                vec![".claude"],
+                vec![],
+                vec![".claude"],
+                targets::TargetOrigin::Project,
+            ),
+            (
+                vec![],
+                vec![".agy"],
+                vec![".agy"],
+                targets::TargetOrigin::Local,
+            ),
+        ] {
+            let layers = layering::compose_layers(
+                &project((!config.is_empty()).then_some(config)),
+                &local(Some(local_config)),
+                &user,
+            );
+            assert_eq!(targets::managed_targets(&layers.settings), expected);
+            assert_eq!(layers.target_source.origin, origin);
         }
     }
 

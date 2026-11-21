@@ -46,7 +46,7 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs by hand with `agy --agent <profile>`, so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
 
 Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 
@@ -471,7 +471,7 @@ frontmatter keys it does not know.
 | `name`, `description` | `name:`, `description:` | exact |
 | `mode` | not written: `agy` takes `mainAgent: false` to mean "not selectable by `--agent`" and runs the default agent instead, so Mars writes neither role key | meridian-only |
 | `tools` | `tools:` (see below) | exact for an allowlist and for no rules; denies and `ask` are dropped |
-| `model`, `effort` | not written: Meridian never launches `agy`, so pick the model with `agy --model` | meridian-only |
+| `model`, `effort` | not written: the model and effort come per session from `meridian agy -m`/`--effort` (or `agy --model` by hand), as one `--model` slug ([below](#agy-model-and-effort)) | meridian-only |
 | `skills` | a body line that names them (`agy` loads a skill by reading it) | approximate |
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
 
@@ -481,8 +481,29 @@ it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: 
 `tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
 `tools` says. `agy`'s agent file has no deny list and `*` minus a name cannot be
 written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction:
-nothing enforces it in `agy` (Meridian runs `agy` only interactively, never as a spawn). An allowlist that names no tool Mars
+nothing enforces it in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
+
+#### `agy` model and effort
+
+`agy --model <slug>` takes the model and its effort as one value, and `agy --model <tiered slug>
+--effort <other>` fails. `mars build launch-bundle --harness agy` therefore resolves both to one
+slug from `agy models`, and `routing.harness_model` is the value to pass as `--model`; the
+`execution_policy.effort` is the tier that slug carries. Only a `--harness agy` pin routes to
+`agy`: a profile, overlay or alias harness, `harness_order`, `default_harness` and the provider
+fallback skip it.
+
+| Model asked for | `harness_model` |
+|---|---|
+| a family with an effort (`gemini-3.8-flash`, `high`) | the listed slug for it (`gemini-3.8-flash-high`); a level the family lacks moves to the nearest one it lists, with a warning |
+| a family, no effort | the bare family, which `agy` starts at its Medium tier |
+| a family with one tier (`gpt-oss-120b`) | that tier's slug, whatever effort was asked (warning if it differs) |
+| a slug with no tier (`gemini-pro-orchestrator-neon`) | the slug; an effort is not sent, with a warning |
+| a tiered slug (`gemini-3.8-flash-low`) | the slug; its tier is the effort at the precedence of the layer that named the model. An effort at that layer or above overrides it, with a warning |
+
+A tier is a trailing effort-level name (`low`, `medium`, `high`, `xhigh`, ...): `-neon` is not
+one. Without a usable `agy models` listing the model passes through unchanged and an effort is
+not sent, with a warning.
 
 ### `.pi/agents/<name>.md`
 

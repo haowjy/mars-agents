@@ -84,7 +84,7 @@ fn save_or_delete(
         return doc.save(path);
     }
     if changed {
-        std::fs::remove_file(path)?;
+        crate::target::remove_emptied_file(path)?;
     }
     Ok(())
 }
@@ -298,6 +298,8 @@ mod tests {
     #[test]
     fn removal_deletes_a_file_it_empties_and_keeps_one_with_a_user_key() {
         let tmp = TempDir::new().unwrap();
+        // The directory stays: a deleted file takes only an empty directory with it.
+        std::fs::write(tmp.path().join("other"), "").unwrap();
         let hook = r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"original"}]}]}"#;
         for (name, user_key, left) in [
             ("owned.json", "", false),

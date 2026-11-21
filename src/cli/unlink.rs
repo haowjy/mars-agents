@@ -1,6 +1,7 @@
 //! `mars unlink <target>` — remove Mars-owned content from a managed target.
 
 use crate::error::MarsError;
+use crate::target_sync::removal::{remove_empty_ancestors, remove_served};
 
 use super::output;
 
@@ -9,6 +10,10 @@ use super::output;
 pub struct UnlinkArgs {
     /// Target directory to remove (e.g. `.agents`).
     pub target: String,
+    /// Remove the target from `mars.local.toml` only. A target `mars.toml` names stays linked
+    /// and keeps its files.
+    #[arg(long)]
+    pub local: bool,
 }
 
 /// Run `mars unlink`.
@@ -28,11 +33,13 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let mut local_updated = false;
     let mut target_was_managed = false;
 
-    if unset_target(&mut config.settings.targets, &target_name) {
+    if !args.local
+        && crate::config::targets::unset_target(&mut config.settings.targets, &target_name)
+    {
         settings_updated = true;
         target_was_managed = true;
     }
-    if unset_target(&mut local.settings.targets, &target_name) {
+    if crate::config::targets::unset_target(&mut local.settings.targets, &target_name) {
         local_updated = true;
         target_was_managed = true;
     }
@@ -43,13 +50,24 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         target_was_managed = true;
     }
 
+    // `--local` leaves the project's own link, and what it installed, alone.
+    let project_keeps = crate::config::targets::project_targets(&config).contains(&target_name);
+    let target_was_managed = target_was_managed && !project_keeps;
+
     let target_dir = ctx.project_root.join(&target_name);
+    let had_dir = target_dir.exists();
     let (removed_outputs, diagnostics) = if target_was_managed {
-        remove_owned_target_content(ctx, &target_name, &mut lock)?
+        let (kept, served) = lock.split_targets(|target| target != target_name);
+        lock = kept;
+        let removed = remove_served(&ctx.project_root, &mut lock, served)?;
+        (removed.outputs.len(), removed.diagnostics)
     } else {
         (0, Vec::new())
     };
-    let removed_dir = target_was_managed && remove_empty_ancestors(&target_dir, &target_dir)?;
+    if target_was_managed {
+        remove_empty_ancestors(&target_dir, &target_dir);
+    }
+    let removed_dir = target_was_managed && had_dir && !target_dir.exists();
 
     if settings_updated {
         crate::config::save(&ctx.project_root, &config)?;
@@ -58,7 +76,11 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         crate::config::save_local(&ctx.project_root, &local)?;
     }
     if target_was_managed
-        && let Some(warning) = crate::sync::recovery::publish(&ctx.project_root, &lock)?
+        && let Some(warning) = crate::sync::recovery::publish(
+            &ctx.project_root,
+            &lock,
+            &crate::config::targets::project_targets(&config),
+        )?
     {
         output::warn("recovery-publish", warning);
     }
@@ -78,6 +100,15 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             if removed_outputs == 1 { "" } else { "s" }
         ));
         output::print_diagnostics(&diagnostics, false);
+    } else if project_keeps && local_updated {
+        output::print_success(&format!(
+            "removed `{target_name}` from mars.local.toml; mars.toml still links it"
+        ));
+    } else if project_keeps {
+        output::print_info(&format!(
+            "mars.toml links `{target_name}`, not mars.local.toml: `--local` changes nothing; \
+             run `mars unlink {target_name}` to remove it for everyone"
+        ));
     } else {
         output::print_info(&format!(
             "`{target_name}` is not a managed target; no changes made"
@@ -85,144 +116,4 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     }
 
     Ok(0)
-}
-
-fn unset_target(targets: &mut Option<Vec<String>>, target_name: &str) -> bool {
-    let Some(list) = targets.as_mut() else {
-        return false;
-    };
-    let old_len = list.len();
-    list.retain(|t| crate::config::migrations::link::normalize_link(t).target != target_name);
-    let removed = list.len() != old_len;
-    if list.is_empty() {
-        *targets = None;
-    }
-    removed
-}
-
-fn remove_owned_target_content(
-    ctx: &super::MarsContext,
-    target_name: &str,
-    lock: &mut crate::lock::LockFile,
-) -> Result<(usize, Vec<crate::diagnostic::Diagnostic>), MarsError> {
-    let (kept, served) = std::mem::replace(lock, crate::lock::LockFile::empty())
-        .split_targets(|target| target != target_name);
-    *lock = kept;
-    let mut owned_paths: Vec<(String, String)> = served
-        .items
-        .values()
-        .flat_map(|item| item.outputs.iter())
-        .map(|output| (output.target_root.clone(), output.dest_path.to_string()))
-        .collect();
-    owned_paths.sort_by_key(|(_, path)| std::cmp::Reverse(path.matches('/').count()));
-
-    let mut removed = 0;
-    for (root, dest_path) in owned_paths {
-        let root_dir = ctx.project_root.join(&root);
-        let path = root_dir.join(&dest_path);
-        match remove_owned_path(&path) {
-            Ok(()) => {
-                removed += 1;
-                if let Some(parent) = path.parent() {
-                    remove_empty_ancestors(parent, &root_dir)?;
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                removed += 1;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    let previous = served
-        .config_entries
-        .get(target_name)
-        .cloned()
-        .unwrap_or_default();
-    let mut diagnostics = crate::diagnostic::DiagnosticCollector::new();
-    let retention = crate::surface_ownership::retention::RemovalPlan::build(
-        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
-        &std::collections::BTreeMap::new(),
-    )
-    .execute(
-        |operation, diagnostics| {
-            crate::compiler::config_entries::remove_hooks(operation, &ctx.project_root, diagnostics)
-        },
-        &mut diagnostics,
-    );
-    let reconciled = crate::compiler::config_entries::reconcile_all_keyed(
-        &ctx.project_root,
-        &std::collections::BTreeMap::from([(target_name.to_string(), previous.clone())]),
-        &std::collections::BTreeMap::new(),
-        false,
-        false,
-        &mut diagnostics,
-    );
-    crate::compiler::config_entries::report_removed(
-        retention.removed_keys(),
-        &reconciled.removed,
-        &mut diagnostics,
-    );
-    lock.config_entries
-        .extend(retention.into_retained_records());
-    for (target, records) in reconciled.records {
-        lock.config_entries
-            .entry(target)
-            .or_default()
-            .extend(records);
-    }
-    // A record put back stays in the file it came from.
-    let restored: Vec<_> = served
-        .provided_entries
-        .into_iter()
-        .filter(|(target, key)| {
-            lock.config_entries
-                .get(target)
-                .is_some_and(|records| records.contains_key(key))
-        })
-        .collect();
-    lock.provided_entries.extend(restored);
-
-    Ok((removed, diagnostics.drain()))
-}
-
-fn remove_owned_path(path: &std::path::Path) -> std::io::Result<()> {
-    let metadata = path.symlink_metadata()?;
-    if metadata.file_type().is_symlink() || metadata.is_file() {
-        std::fs::remove_file(path)
-    } else {
-        std::fs::remove_dir_all(path)
-    }
-}
-
-fn remove_empty_ancestors(
-    start: &std::path::Path,
-    target_dir: &std::path::Path,
-) -> std::io::Result<bool> {
-    let mut current = Some(start);
-    let mut removed_target = false;
-    while let Some(path) = current {
-        if !path.starts_with(target_dir) {
-            break;
-        }
-        match std::fs::remove_dir(path) {
-            Ok(()) => {
-                removed_target |= path == target_dir;
-                current = path.parent();
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                current = path.parent();
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                break;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(removed_target)
 }

@@ -52,3 +52,16 @@ the catalog row of the provider the harness calls (`models::reasoning::catalog_i
 `catalog_row`; one join per harness), then `mars_schema::effort::resolve_effort` over the model's levels and the harness's. A
 move is a `launch.warning`. The same row goes into the bundle as `routing.catalog_row`, so
 consumers price from it and never re-join. Sync does the same in `profile_for_model`, per harness.
+
+A harness with `SlugShape::Bare` (`agy`) takes model and effort as one slug, so `resolve_routing`
+takes what `models::slug_tiers::find` found in the listing, which is also the rule routing uses to
+confirm the model (a listed slug or a family with listed tiers; a bare prefix such as `gemini-4`
+is no match, so the two never disagree). `pick_tier` resolves the
+effort over the family's listed tiers (not the harness's static levels) and returns the slug that
+carries it. `harness_model` is that slug and `effort` is the tier it carries; no effort sends the
+bare family, one tier always runs, and an untiered slug sends no effort. The effort a tiered `-m`
+slug carries sits at the precedence of the layer that named the model (`Ord` on `PolicySource`, the order
+`resolve_policy_field` lists): an effort at that layer or above overrides it, with a warning when
+the tier changes; below it, the tier wins with a warning (a default from an alias or the settings loses quietly). A move never fails the launch. With no
+usable listing, or no listed slug for the model, the model passes through and an effort is dropped
+with a warning that says which.

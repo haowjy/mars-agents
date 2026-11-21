@@ -25,6 +25,7 @@ pub mod harness_model;
 pub mod possible;
 pub mod probes;
 pub mod reasoning;
+pub mod slug_tiers;
 
 pub use availability::ModelAvailability;
 pub use catalog_api::default_catalog_providers;

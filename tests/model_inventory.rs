@@ -477,10 +477,8 @@ fn retained_failed_listings_warn_once_per_harness_even_when_hidden() {
     for row in all["models"].as_array().unwrap() {
         assert_eq!(row["provenance"]["latest_attempt_ok"], false, "{all}");
         assert!(row["provenance"]["last_error"].is_string(), "{all}");
-        match row["harness"].as_str() {
-            Some("pi") => assert_eq!(row["reason"], "auth_listing_failed", "{all}"),
-            Some("agy") => assert_eq!(row["reason"], "not_launched_by_meridian", "{all}"),
-            _ => {}
+        if let Some("pi" | "agy") = row["harness"].as_str() {
+            assert_eq!(row["reason"], "auth_listing_failed", "{all}");
         }
     }
     let output = mars_cmd(&root, temp.path(), &server.url(API_PATH))

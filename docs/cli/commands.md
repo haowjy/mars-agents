@@ -885,7 +885,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
-| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`; `agy` is refused: Meridian does not launch it). |
+| `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`, `agy`). Only a pin reaches `agy`, which Meridian builds a command for and does not run; the bundle's `harness_model` is one `agy` slug that carries the effort too ([Antigravity slugs](../config/agent-compilation.md#agy-model-and-effort)). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
 | `--config-effort <level>` | The caller's own configured effort (Meridian's `primary.effort`), same values as `--effort`. Below the Agent's and the model policies' effort, above the alias's `default_effort`; its source is `config`. |
 | `--approval <mode>` | Override approval: `default`, `auto`, `confirm`, `never`. |

@@ -7,6 +7,40 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-21
+
+### Upgrade notes
+- A hand edit of `targets` now acts on the next sync: take a target out of `targets` in `mars.toml` or `mars.local.toml` (and no file names it) and `mars sync` removes everything Mars installed there, as `mars unlink <target>` does, and keeps an output you edited. This replaces v0.38.0's rule that a sync kept it until `mars unlink`. A project whose `managed_root` key Mars 0.37.0 read loses what Mars installed in that directory on its first sync; `mars link <dir>` installs it again. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#managed_root).
+- A `targets` list in `mars.local.toml` now adds to the project's list instead of replacing it. `mars.local.toml` cannot drop a project target: a machine whose local list left out some of `mars.toml`'s targets now syncs all of them, and an empty local list adds nothing. To stop syncing a project target on one machine, take it out of `mars.toml`. Meridian's set of allowed harnesses widens the same way: a local list that narrowed routing on one machine now also allows every project target. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/mars-toml.md#settings).
+- `.mars/machine.lock` holds the lock records of a target only `mars.local.toml` names. The first sync after upgrading moves them out of `mars.lock`, so `mars.lock` shows a diff that removes them; commit it. Nothing installed is removed. Mars v0.38.0 run over the new layout stops a sync with `blocked by unmanaged destination` for a skill that has a local-only copy. Do not run v0.38.0's `--force` over this layout: `mars link --local` writes `min_mars_version = "0.39.0"` to `mars.local.toml`, so v0.38.0 then stops with `compat-version` and changes nothing. A `machine.lock` v0.38.0 wrote (without `provided_entries`) heals on the first sync. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/internals/lock-file.md#two-files).
+- `mars link <target>` keeps a file of yours that is in the way, with a `target-unmanaged-collision` warning and exit 0, where v0.38.0 refused with exit 2. `mars link --force` is `mars sync --force`: it adopts collisions in every target and resets local edits to managed items under `.mars/`. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-link).
+- `mars resolve` is deprecated and removed in the next minor release; see Deprecated below.
+
+### Added
+- `mars link --local <target>` writes the target to `mars.local.toml` instead of `mars.toml`, so only this machine syncs it and the committed files do not change. `mars unlink --local <target>` removes it from `mars.local.toml` only, and leaves a target `mars.toml` also names linked. Plain `mars link <target>` takes the target out of `mars.local.toml`, and `mars unlink` still removes it from both. See [mars link](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-link).
+- `mars build launch-bundle --harness agy` now builds a bundle for Antigravity. `routing.harness_model` is one `agy models` slug that carries the model and its effort (`gemini-3.8-flash` with `high` gives `gemini-3.8-flash-high`), and an effort the model lacks moves to the nearest listed tier with a warning. See [Antigravity model and effort](https://github.com/haowjy/mars-agents/blob/main/docs/config/agent-compilation.md#agy-model-and-effort).
+
+### Changed
+- `mars link <target>` runs a sync with the target added to `targets`, so it installs hooks and MCP servers too and prints the sync's report (human and `--json`, which keeps `target`, `local`, `settings_updated`, `synced` and `removed`; the last two are the linked target's counts, not the sync's totals).
+- An unknown key or table in the project's `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key Mars reads (`target` → `targets`, `[setting]` → `[settings]`). In a dependency or the user config it stays `info`. Like every warning of a sync, it prints before the list of what the sync changed; the sync still acts in the same run, and `sync --diff` shows it before anything is removed.
+- `mars sync` lists what it removed from a target `targets` no longer names, and `--json` carries `dropped_targets` and `dropped_outputs`. `--frozen` refuses such a sync. A retired target such as `.cursor` that `targets` still names keeps its files, and the `retired-target` warning stays. The "removed" list shows only what was deleted, in path order; `sync --diff` also says what a real run would keep.
+- `targets` in `mars.local.toml` adds to the project's list. The routing report's `target_source.origin` is `local` only when the local file adds a target `mars.toml` does not name.
+- The lock records of a target only `mars.local.toml` names live in `.mars/machine.lock`, never in the committed `mars.lock`, so a teammate's sync no longer warns about them or removes them. A skill's `.mars` output stays in `mars.lock` and its output on a local-only target goes to `machine.lock`.
+- Only a `--harness agy` pin routes to `agy`. A profile's `harness: agy`, an alias harness, `harness_order`, `default_harness` and the provider fallback still skip it, with a route diagnostic.
+
+### Deprecated
+- `mars resolve` is deprecated and removed in the next minor release. It still works and now warns on each run (`command.deprecated`). It recorded a hand edit to an installed item as resolved, but the next `mars sync` replaces that edit with the source. To keep a change, use an overlay (`[agents.<name>]` or `[skills.<name>]` in `mars.toml`), or edit the source. See [what changed](https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#mars-resolve).
+
+### Removed
+- The `unnamed-target` warning, in `mars sync` and `mars doctor`: a sync removes what it described instead.
+
+### Fixed
+- A sync or `mars unlink` no longer deletes an output you changed after Mars wrote it: an edited skill, a file you added inside a skill's directory, or an edited generated hook file (`.opencode/plugins/mars-<hook>.ts`, `.pi/extensions/mars-<hook>.ts`). It stays, Mars stops tracking it, and one warning per target (`output-kept`) lists it. The same holds for an output whose item the source dropped and for a native agent file. A path that fails to delete keeps its record on every removal path.
+- One path Mars cannot delete no longer stops the sync. The warning names the error and path, the record stays, and the next sync retries. A retry whose outputs are still there says `pending` for that target (`pending_targets` in `--json`) instead of "removed what Mars installed", until the removal goes through.
+- A directory Mars cannot remove no longer fails `mars sync` or `mars unlink` with `I/O operation failed for <unknown>`. Mars prunes empty directories on a best-effort basis and leaves one it cannot remove; an error it still reports names its path.
+- Dropping `.agy` no longer leaves an empty `.agents/` behind.
+- A hand-edited `mars.local.toml` `targets` list now draws the `min-mars-version-low` warning like a `mars link --local` one, because Mars before 0.39.0 reads that list as the whole list.
+
 ## [0.38.1] - 2026-11-20
 
 ### Fixed

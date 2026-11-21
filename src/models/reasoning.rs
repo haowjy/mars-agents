@@ -84,20 +84,21 @@ pub struct RouteEffort<'a> {
     pub reasoning_data_missing: bool,
 }
 
-/// Resolves `request` for `model` on `harness`.
+/// Resolves `request` for `model` on `harness`, which takes `harness_set`: its own levels, or
+/// the tiers a listing gives the model when the harness folds them into its slugs.
 pub fn resolve_for_route<'a>(
     request: EffortRequest,
     catalog: &'a Catalog,
     harness: HarnessId,
     model: &str,
     harness_model: &str,
+    harness_set: Levels,
 ) -> RouteEffort<'a> {
     let identity = catalog_identity(harness, model, harness_model);
     let row = identity
         .as_ref()
         .and_then(|identity| catalog_row(catalog, identity));
     let reasoning = ModelReasoning::from_row(row.and_then(|row| row.reasoning.as_ref()));
-    let harness_set = self::harness_set(harness);
     let resolution = resolve_effort(request, &reasoning, &harness_set);
     let warning = resolution.moved.map(|moved| EffortWarning {
         message: move_warning(&moved, model, harness, &reasoning, &harness_set),

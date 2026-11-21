@@ -30,7 +30,7 @@ pub enum SlugShape {
     /// `provider/model`: the listing names the providers it serves.
     Qualified,
     /// The harness's own flat names, with no provider. Antigravity lists one slug per effort level
-    /// of a model, spelled `<model>-<level>` (`gemini-3.8-flash-low`); Mars launches none of them.
+    /// of a model, spelled `<model>-<level>` (`gemini-3.8-flash-low`); a launch resolves model and effort to one of them.
     Bare,
 }
 
@@ -59,8 +59,8 @@ pub struct HarnessDescriptor {
 }
 
 /// Default launch-bundle harness try order when `settings.harness_order` is unset. A harness
-/// joins it only when Meridian can launch it. Routing never picks a harness whose row has
-/// `launched_by_meridian: false`, whoever names it (`routing::permission_denial`).
+/// joins it only when Meridian can launch it. Only a CLI pin picks a harness whose row has
+/// `launched_by_meridian: false` (`routing::evaluate_candidates` skips it for every other source).
 pub const DEFAULT_HARNESS_ORDER: &[HarnessId] = &[
     HarnessId::Claude,
     HarnessId::Codex,

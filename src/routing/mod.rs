@@ -227,9 +227,9 @@ pub struct RoutingInput<'a> {
     pub catalog_model_slugs: Option<&'a [String]>,
 }
 
-/// Why a candidate cannot be routed to, whoever named it: configured scope, caller exclusion,
-/// or a harness Meridian does not launch. Checked before installation, authentication, or
-/// support evidence; this is the one place candidates are filtered.
+/// Why a harness cannot be routed to, whoever named it: configured scope or caller exclusion.
+/// Checked before installation, authentication, or support evidence. A CLI pin is held to
+/// this and nothing else.
 pub fn permission_denial(
     scope: &HarnessScope,
     excluded: &[HarnessId],
@@ -239,16 +239,28 @@ pub fn permission_denial(
         Some("disabled_target")
     } else if mars_schema::harness::parse(harness).is_some_and(|id| excluded.contains(&id)) {
         Some("excluded_by_caller")
-    } else if mars_schema::harness::parse(harness)
-        .is_some_and(|id| !registry::launched_by_meridian(id))
-    {
-        Some(NOT_LAUNCHED)
     } else {
         None
     }
 }
 
-/// `permission_denial` reason for a harness whose registry row says Meridian does not launch it.
+/// Why a harness cannot be picked without being pinned: `permission_denial`, or a registry row
+/// that says Meridian does not launch it. A pin to such a harness routes (Meridian prints the
+/// command); a profile, overlay, alias, `harness_order`, `default_harness` or provider
+/// fallback never reaches it.
+fn unpinned_denial(
+    scope: &HarnessScope,
+    excluded: &[HarnessId],
+    harness: &str,
+) -> Option<&'static str> {
+    permission_denial(scope, excluded, harness).or_else(|| {
+        mars_schema::harness::parse(harness)
+            .is_some_and(|id| !registry::launched_by_meridian(id))
+            .then_some(NOT_LAUNCHED)
+    })
+}
+
+/// `unpinned_denial` reason for a harness whose registry row says Meridian does not launch it.
 pub const NOT_LAUNCHED: &str = "not_launched_by_meridian";
 
 /// The probe-backed harnesses' listings, read lazily.
@@ -384,7 +396,7 @@ where
     );
     let mut seen = HashSet::new();
     candidates.retain(|(harness, _, _)| {
-        let denial = permission_denial(&input.harness_scope, input.excluded_harnesses, harness);
+        let denial = unpinned_denial(&input.harness_scope, input.excluded_harnesses, harness);
         if denial == Some(NOT_LAUNCHED) && seen.insert(format!("{harness}:{NOT_LAUNCHED}")) {
             diagnostics.push(format!("Meridian does not launch {harness}; skipping it"));
         }
@@ -1075,9 +1087,10 @@ mod launch_filter_tests {
     use super::*;
 
     #[test]
-    fn denies_a_harness_meridian_does_not_launch() {
+    fn only_a_pin_reaches_a_harness_meridian_does_not_launch() {
         let scope = HarnessScope::Unrestricted;
-        assert_eq!(permission_denial(&scope, &[], "agy"), Some(NOT_LAUNCHED));
-        assert_eq!(permission_denial(&scope, &[], "claude"), None);
+        assert_eq!(unpinned_denial(&scope, &[], "agy"), Some(NOT_LAUNCHED));
+        assert_eq!(unpinned_denial(&scope, &[], "claude"), None);
+        assert_eq!(permission_denial(&scope, &[], "agy"), None);
     }
 }

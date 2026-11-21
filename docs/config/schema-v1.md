@@ -47,7 +47,7 @@ An installed `.mars/` tree is read by the same readers, with one exception: an A
 |---|---|---|
 | `name` | non-empty string | Optional. The file name is the Agent's identity when omitted. |
 | `description` | string | Shown in listings and written to native files. |
-| `harness` | `claude`, `codex`, `opencode`, `pi`, `agy` | Optional routing hint. An unknown name is an error. `agy` is accepted but never routed to: Meridian does not launch it. |
+| `harness` | `claude`, `codex`, `opencode`, `pi`, `agy` | Optional routing hint. An unknown name is an error. `agy` is accepted, but a profile's `harness: agy` is skipped with a route diagnostic unless `--harness agy` pins it: only a pin routes to `agy`. |
 | `model` | string | An alias from `[models]` or a concrete model ID. |
 | `mode` | `primary`, `subagent` | |
 | `model-invocable` | boolean, default `true` | Whether another model can invoke this Agent. |
@@ -118,7 +118,7 @@ Removed: `package.visibility`, with nothing to replace it.
 | Codex | every level |
 | Pi | every level (`none` is `--thinking off`) |
 | OpenCode | any: it reads models.dev's `reasoning_options` itself |
-| Agy | any: Meridian does not launch it, so Mars sets no effort for it |
+| Agy | the tiers `agy models` lists for the model, which are the slugs that carry them (`gemini-3.8-flash-low`); a model with one tier runs it, and a slug with none takes no effort |
 | Meridian Flow (WASM only) | `none`, `low`, `medium`, `high`, `max` |
 
 A requested level in both sets is kept. Otherwise it moves to the nearest level on the ladder that both take, below or above, and a tie goes up, and Mars warns: "`max` → `high`: `o3` takes low, medium, high". When both sets limit the request, the warning names both. A move never lands on `none` unless `none` was asked, because off is not less thinking. What the model takes comes from its row: the effort values it lists, plus `none` when it has a toggle. A model that reasons but lists no values (toggle only, budget only, or no control) takes every level, less `none` when it cannot be switched off, so `none` moves up to `minimal` or `low` there. A model with no row is unknown and takes any level. A model that does not reason gets none, with a warning when a level other than `none` was asked. The row is the one for the provider the harness calls: `openai/o3` takes `low`, `medium` and `high`, while `openrouter/openai/o3` is toggle only. A provider-qualified model (`openai/o3` pinned by an alias) and an Antigravity slug that carries its tier (`gemini-3.8-flash-low`) find the row of the model behind them. On a machine whose catalog still comes from a build before 0.35, no row has reasoning data: `mars sync` and `mars build launch-bundle` say so, and send the effort as written until the first refresh succeeds.

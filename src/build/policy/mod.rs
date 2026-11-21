@@ -81,6 +81,21 @@ impl PolicySource {
     }
 }
 
+/// Position in the layered fields' order, 0 highest: the model and effort layers share it.
+fn layer_rank(source: PolicySource) -> u8 {
+    match source {
+        PolicySource::Cli => 0,
+        PolicySource::Overlay => 1,
+        PolicySource::OverlayModelPolicy => 2,
+        PolicySource::ProfileModelPolicy => 3,
+        PolicySource::Profile => 4,
+        PolicySource::SettingsModelPolicy => 5,
+        PolicySource::Project | PolicySource::Config => 6,
+        PolicySource::Alias => 7,
+        PolicySource::ConfigOrder | PolicySource::Provider | PolicySource::Unset => 8,
+    }
+}
+
 impl From<crate::routing::RouteSource> for PolicySource {
     fn from(source: crate::routing::RouteSource) -> Self {
         match source {
@@ -321,38 +336,27 @@ pub fn resolve_policy(
                 first_unverified.get_or_insert(attempt);
             }
             Ok(harness::HarnessAttempt::Exhausted(trace)) => {
-                let pin_denial = input.harness_override.and_then(|_| {
-                    trace.assessments.iter().find_map(|assessment| {
-                        assessment.skip_reason.filter(|reason| {
-                            matches!(
-                                *reason,
-                                "disabled_target" | "excluded_by_caller" | routing::NOT_LAUNCHED
-                            )
-                        })
-                    })
-                });
+                let pin_denied = input.harness_override.is_some()
+                    && trace.assessments.iter().any(|assessment| {
+                        matches!(
+                            assessment.skip_reason,
+                            Some("disabled_target" | "excluded_by_caller")
+                        )
+                    });
                 report.push(
                     &candidate.model_token,
                     &candidate.model,
                     candidate.model_source.label(),
                     &trace,
                 );
-                if let Some(reason) = pin_denial {
+                if pin_denied {
                     report.outcome = routing::report::SelectionOutcome::ExplicitConstraintError;
                     return Err(MarsError::Selection {
                         code: "explicit_harness_excluded",
-                        message: {
-                            let harness = input.harness_override.unwrap();
-                            if reason == routing::NOT_LAUNCHED {
-                                format!(
-                                    "explicit_harness_excluded: Meridian does not launch `{harness}`"
-                                )
-                            } else {
-                                format!(
-                                    "explicit_harness_excluded: harness `{harness}` is not permitted by configured targets and caller exclusions"
-                                )
-                            }
-                        },
+                        message: format!(
+                            "explicit_harness_excluded: harness `{}` is not permitted by configured targets and caller exclusions",
+                            input.harness_override.unwrap()
+                        ),
                         report: Box::new(report),
                     });
                 }
@@ -513,6 +517,17 @@ pub fn resolve_policy(
     }
 
     let selected_harness = harness_resolution.harness.value.clone();
+    let listing = mars_schema::harness::parse(&selected_harness)
+        .filter(|harness| {
+            crate::harness::registry::probe_spec(*harness).map(|spec| spec.slugs)
+                == Some(crate::harness::registry::SlugShape::Bare)
+        })
+        .and_then(|harness| capability_session.listing(harness));
+    let effort_outranks_model = matches!(
+        execution_resolution.effort.value,
+        Some(EffortRequest::Level(_))
+    ) && layer_rank(execution_resolution.effort.source)
+        <= layer_rank(resolved_model.model_source);
     let routing_resolution = runnable::resolve_routing(runnable::RoutingInput {
         model: resolved_model.model.clone(),
         model_token: resolved_model.model_token.clone(),
@@ -531,6 +546,8 @@ pub fn resolve_policy(
         provider_for_order: resolved_model.provider_for_order.as_deref(),
         effort: execution_resolution.effort.value,
         catalog: &cache.catalog,
+        listing: listing.as_ref(),
+        effort_outranks_model,
         route_report: report,
     });
 
@@ -619,6 +636,7 @@ pub(crate) fn profile_for_model(
                     route.harness,
                     model.as_ref().map_or("", |model| model.canonical_id),
                     "",
+                    reasoning::harness_set(route.harness),
                 );
                 effort_moved = effort.warning;
                 effort.resolution.level.map(EffortRequest::Level)

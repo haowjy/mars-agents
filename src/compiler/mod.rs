@@ -169,14 +169,12 @@ fn compile_inner(
         native_agents::merged_model_aliases_for_native_agents(&applied.planned.targeted.resolved);
     let routing_settings =
         crate::config::routing_settings::ResolvedRoutingSettings::from_settings(effective_settings);
-    let mut native_model_router = (!agent_surface_policy.emits_nothing()).then(|| {
-        native_agents::NativeModelRoutingRuntime::collect(
-            &model_aliases,
-            &models_cache,
-            routing_settings,
-        )
-        .with_settings(effective_settings.clone())
-    });
+    let mut native_model_router = native_agents::NativeModelRoutingRuntime::collect(
+        &model_aliases,
+        &models_cache,
+        routing_settings,
+    )
+    .with_settings(effective_settings.clone());
     let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
     // Nothing is lost: the stale-cache line already says the catalog is refreshing, so this
     // is not repeated beside it.
@@ -232,20 +230,16 @@ fn compile_inner(
         old_lock,
         dry_run: request.options.dry_run,
     };
-    let native_compile_ctx = if agent_surface_policy.emits_nothing() {
-        None
-    } else {
-        Some(native_agents::NativeAgentCompileCtx {
-            project_root: &ctx.project_root,
-            old_lock: native_ownership_lock,
-            configured_emit_harnesses: &configured_emit_harnesses,
-            options: native_agents::NativeAgentSurfaceCompileOptions {
-                force: request.options.force,
-                dry_run: request.options.dry_run,
-                preview_warnings: request.options.preview_warnings,
-            },
-            fanout_agents,
-        })
+    let native_compile_ctx = native_agents::NativeAgentCompileCtx {
+        project_root: &ctx.project_root,
+        old_lock: native_ownership_lock,
+        configured_emit_harnesses: &configured_emit_harnesses,
+        options: native_agents::NativeAgentSurfaceCompileOptions {
+            force: request.options.force,
+            dry_run: request.options.dry_run,
+            preview_warnings: request.options.preview_warnings,
+        },
+        fanout_agents,
     };
     (synced.compiled_native_outputs, synced.native_removals) =
         native_agents::run_native_agent_post_sync_lifecycle(
@@ -256,8 +250,8 @@ fn compile_inner(
                 agent_overlays: &loaded.effective.agents,
                 project_tools: &loaded.effective.settings.tools,
             },
-            native_compile_ctx.as_ref(),
-            native_model_router.as_mut(),
+            &native_compile_ctx,
+            &mut native_model_router,
             diag,
         );
 
@@ -270,10 +264,10 @@ pub struct AgentSurfacePolicy {
     /// What applies to canonical agent copies and to the native agents of harnesses Meridian
     /// launches (`launched_by_meridian`).
     pub launched: AgentSurfaceMode,
-    /// Whether the native agents of a harness Meridian does not launch are written: a harness
-    /// run by hand has no other source for its agents, so only `agent_emission = "never"`
-    /// withholds them.
-    pub emit_unlaunched: bool,
+    /// `agent_emission = "never"` is set. It withholds the native agents of launched harnesses
+    /// only: a harness Meridian does not launch is run by hand and has no other source for its
+    /// agents, so it always gets them.
+    pub emission_never: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,13 +280,6 @@ pub enum AgentSurfaceMode {
     SuppressAll,
 }
 
-impl AgentSurfacePolicy {
-    /// No harness gets a native agent.
-    pub fn emits_nothing(&self) -> bool {
-        self.launched == AgentSurfaceMode::SuppressAll && !self.emit_unlaunched
-    }
-}
-
 pub fn agent_surface_policy(
     agent_emission: Option<&AgentEmission>,
     agent_copy: Option<&agent_copy::AgentCopySpec>,
@@ -302,15 +289,15 @@ pub fn agent_surface_policy(
         Some(spec) if !spec.harnesses.is_empty() => AgentSurfaceMode::EmitSelective(spec.clone()),
         _ => AgentSurfaceMode::SuppressAll,
     };
-    let (launched, emit_unlaunched) = match agent_emission.unwrap_or(&AgentEmission::Auto) {
-        AgentEmission::Always => (AgentSurfaceMode::EmitAll, true),
-        AgentEmission::Auto if !meridian_managed => (AgentSurfaceMode::EmitAll, true),
-        AgentEmission::Auto => (under_meridian(), true),
-        AgentEmission::Never => (under_meridian(), false),
+    let emission = agent_emission.unwrap_or(&AgentEmission::Auto);
+    let launched = match emission {
+        AgentEmission::Always => AgentSurfaceMode::EmitAll,
+        AgentEmission::Auto if !meridian_managed => AgentSurfaceMode::EmitAll,
+        AgentEmission::Auto | AgentEmission::Never => under_meridian(),
     };
     AgentSurfacePolicy {
         launched,
-        emit_unlaunched,
+        emission_never: *emission == AgentEmission::Never,
     }
 }
 
@@ -407,8 +394,7 @@ fn agent_outcomes_for_target(
     outcomes: &[ActionOutcome],
 ) -> Vec<ActionOutcome> {
     let native_emits = crate::harness::registry::harness_for_target(target)
-        .is_some_and(|harness| !crate::harness::registry::launched_by_meridian(harness))
-        && policy.emit_unlaunched;
+        .is_some_and(|harness| !crate::harness::registry::launched_by_meridian(harness));
     match &policy.launched {
         AgentSurfaceMode::SuppressAll if !native_emits => suppress_agent_outcomes(outcomes),
         AgentSurfaceMode::SuppressAll | AgentSurfaceMode::EmitSelective(_) => {

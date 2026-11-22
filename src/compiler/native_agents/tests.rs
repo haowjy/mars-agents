@@ -112,7 +112,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
         },
         &AgentSurfacePolicy {
             launched: AgentSurfaceMode::EmitAll,
-            emit_unlaunched: true,
+            emission_never: false,
         },
         &[agent],
         &mut router,
@@ -172,7 +172,7 @@ fn compile_emit_all_with_overlays(
         overlays,
         &AgentSurfacePolicy {
             launched: AgentSurfaceMode::EmitAll,
-            emit_unlaunched: true,
+            emission_never: false,
         },
     )
 }
@@ -211,7 +211,7 @@ fn compile_with_policy(
 }
 
 /// Under Meridian a launched harness reads its agents from Meridian, so only a harness it does
-/// not launch (`agy`) keeps native agents, unless `agent_emission = "never"`.
+/// not launch (`agy`) keeps native agents, whatever `agent_emission` says.
 #[test]
 fn native_agents_under_meridian_go_only_to_unlaunched_harnesses() {
     let agent = parse_mars_agent("---\nname: worker\n---\n# Worker\n", "worker");
@@ -229,7 +229,7 @@ fn native_agents_under_meridian_go_only_to_unlaunched_harnesses() {
         .len()
     };
     assert_eq!(emitted(crate::config::AgentEmission::Auto), 1);
-    assert_eq!(emitted(crate::config::AgentEmission::Never), 0);
+    assert_eq!(emitted(crate::config::AgentEmission::Never), 1);
     assert_eq!(emitted(crate::config::AgentEmission::Always), 2);
 }
 

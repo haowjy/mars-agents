@@ -244,7 +244,7 @@ Each dependency must have exactly one of `url` or `path` (not both, not neither)
 | `dialect` | string | Inbound lift dialect: `claude`, `agent-skills`, `codex`, `opencode`, `cursor` (a Cursor repository layout, read for its rules and skills), or `mars-native` (see [Dialect](#dialect)) |
 | `plugin` | string | The plugin to install from the Claude marketplace at this source (see [Marketplace plugins](#marketplace-plugins)) |
 
-`subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
+`subpath` is the explicit escape hatch for monorepo packages and foreign hidden layouts. A package with no agents, skills, hooks or MCP servers at its root (a `subpath` that names an `agents/` folder itself, for example) installs nothing and warns once (`source.empty`); a package that only names other dependencies does not. When omitted, Mars discovers from the source root itself and skips dot-prefixed directories. To import a Claude-authored package stored under `.claude/`, set `subpath = ".claude"` and `dialect = "claude"`; the inner `agents/` and `skills/` folders are then discovered normally.
 
 #### Marketplace plugins
 

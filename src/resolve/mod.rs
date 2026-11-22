@@ -39,7 +39,7 @@ use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
 use crate::error::{MarsError, ResolutionError};
-use crate::lock::LockFile;
+use crate::lock::{LockFile, RecordRef};
 use crate::types::{CommitHash, SourceId, SourceName, SourceUrl};
 use mars_schema::item::ItemKind;
 use mars_schema::names::ItemName;
@@ -235,7 +235,21 @@ fn finish(
         )?
         .into_iter()
         .map(|item| ((item.id.kind, item.id.name.clone()), item))
-        .collect();
+        .collect::<IndexMap<_, _>>();
+        // A package that only names other packages or ships `[models]` has no items by design.
+        if items.is_empty()
+            && !node.contributes_beyond_items()
+            && !crate::provided::is_provided_source(node.source_name.as_ref())
+        {
+            diag.hold_warning(
+                RecordRef::Dependency(node.source_name.to_string()),
+                "source.empty",
+                format!(
+                    "`{}` has no agents, skills, hooks or MCP servers at its root, so nothing is installed from it; Mars reads `agents/` and `skills/` inside a package root, so a `subpath` must name the folder that contains them",
+                    node.source_name
+                ),
+            );
+        }
         registry.insert(node.source_name.clone(), RegisteredPackage { node, items });
     }
 

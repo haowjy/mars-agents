@@ -86,6 +86,9 @@ impl Diagnostic {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Owner<'a> {
     Own,
+    /// A path dependency: the user can edit it, so a finding is a `Warning` as in their own
+    /// files, but its items are recorded in the lock under this source.
+    Path(&'a str),
     /// Installed from this source.
     Dependency(&'a str),
 }
@@ -104,7 +107,7 @@ impl<'a> Owner<'a> {
     fn record(self) -> RecordRef {
         RecordRef::Source(match self {
             Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
-            Self::Dependency(source) => source.to_owned(),
+            Self::Path(source) | Self::Dependency(source) => source.to_owned(),
         })
     }
 }
@@ -130,7 +133,7 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LossinessMode {
-    /// Suppress lossiness warnings (validate, export, repair, …).
+    /// Suppress lossiness warnings (export, repair, …).
     #[default]
     Hidden,
     /// A sync's default: one line for the project covering the restrictions lost by the items
@@ -199,6 +202,8 @@ pub struct DiagnosticCollector {
     /// A loss and the lock record it concerns, until `settle` finds the sync changed that
     /// record (`hold`).
     held: Vec<(RecordRef, Diagnostic)>,
+    /// No sync will `settle` the held losses, so each prints at once, every run.
+    lists_held: bool,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
     lossiness_mode: LossinessMode,
     /// The command that re-runs this one with `--verbose`, named in the default lossiness line.
@@ -223,11 +228,22 @@ impl DiagnosticCollector {
         self
     }
 
+    /// For a command that writes no lock (`mars validate`), whatever its lossiness mode:
+    /// there is no sync to make a held loss news, so every one prints each time.
+    pub fn listing_held(mut self) -> Self {
+        self.lists_held = true;
+        self
+    }
+
     pub fn with_lossiness_mode(lossiness_mode: LossinessMode) -> Self {
         Self {
             diagnostics: Vec::new(),
             grouped: Vec::new(),
             held: Vec::new(),
+            lists_held: matches!(
+                lossiness_mode,
+                LossinessMode::Surface | LossinessMode::Verbose
+            ),
             engine_fallbacks: Vec::new(),
             lossiness_mode,
             rerun_verbose: "mars sync --verbose",
@@ -266,7 +282,7 @@ impl DiagnosticCollector {
                     ..Diagnostic::new(DiagnosticLevel::Warning, code, message)
                 },
             );
-        } else if diagnostic.severity == Severity::Info || owner != Owner::Own {
+        } else if diagnostic.severity == Severity::Info || matches!(owner, Owner::Dependency(_)) {
             self.info(code, message);
         } else {
             self.warn_advisory(code, message);
@@ -422,11 +438,12 @@ impl DiagnosticCollector {
 
     /// Keep a loss until `settle`: it is news only when the sync changed the lock record it
     /// concerns, and one on a record that stays as it was is not. A command that lists every
-    /// loss (`--verbose`, `mars check`) shows it at once; one that hides them drops it.
+    /// loss (`--verbose`, `mars check`, `mars validate`) shows it at once.
     pub(crate) fn hold(&mut self, record: RecordRef, diagnostic: Diagnostic) {
-        match self.lossiness_mode {
-            LossinessMode::Written | LossinessMode::Hidden => self.held.push((record, diagnostic)),
-            LossinessMode::Surface | LossinessMode::Verbose => self.diagnostics.push(diagnostic),
+        if self.lists_held {
+            self.diagnostics.push(diagnostic)
+        } else {
+            self.held.push((record, diagnostic))
         }
     }
 

@@ -22,7 +22,8 @@
       "path": [
         "allowed-tools"
       ],
-      "message": "`allowed-tools` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-tool-policy"
+      "message": "`allowed-tools` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-tool-policy",
+      "lost": true
     },
     {
       "code": "field.required",

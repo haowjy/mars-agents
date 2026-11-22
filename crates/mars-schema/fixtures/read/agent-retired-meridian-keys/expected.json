@@ -42,7 +42,8 @@
       "path": [
         "resident-rearm-budget"
       ],
-      "message": "`resident-rearm-budget` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys"
+      "message": "`resident-rearm-budget` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys",
+      "lost": true
     },
     {
       "code": "field.retired",
@@ -50,7 +51,8 @@
       "path": [
         "meridian-capabilities"
       ],
-      "message": "`meridian-capabilities` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys"
+      "message": "`meridian-capabilities` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys",
+      "lost": true
     }
   ]
 }

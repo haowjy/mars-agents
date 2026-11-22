@@ -965,8 +965,8 @@ path = "{}"
         fs::read_to_string(project.child(".opencode/agents/opencode-worker.md").path()).unwrap();
     assert!(opencode_native.contains("name: opencode-worker"));
     assert!(
-        opencode_native.contains("model: gpt55"),
-        "a model Mars does not know is written as the author spelled it in EmitAll mode: {opencode_native}"
+        !opencode_native.contains("model:"),
+        "with no loaded catalog Mars writes no model, and OpenCode gets no bare token: {opencode_native}"
     );
     assert!(opencode_native.contains("# OpenCode body"));
     assert!(

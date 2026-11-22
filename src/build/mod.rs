@@ -6,7 +6,7 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::agents::opencode_permission;
+use crate::compiler::agents::{agy_permission, opencode_permission};
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use mars_schema::HarnessId;
@@ -273,16 +273,41 @@ pub(crate) fn resolve_bundle_tools(
         .iter()
         .map(|(rule, projected)| {
             let native = projected.native();
+            // A carried rule's permission strings go to its own `native_permission`, never to
+            // `native` (tool names) or `project()` (the agent file's `tools:`, the flat lists).
+            let (carried, not_carried) = match (harness == HarnessId::Agy)
+                .then(|| agy_permission::for_rule(rule, projected))
+                .flatten()
+            {
+                Some(agy_permission::Translation::Carried(carried)) => (Some(carried), None),
+                Some(agy_permission::Translation::NotCarried(reason))
+                    if rule.action != ToolAction::Allow =>
+                {
+                    (
+                        None,
+                        Some(format!("not applied by `meridian agy`: {reason}")),
+                    )
+                }
+                _ => (None, None),
+            };
+            let note = match &carried {
+                Some(carried) => Some(carried.note.clone()),
+                None => projected
+                    .covered_by
+                    .as_ref()
+                    .map(|by| format!("never applies: `{by}` covers it"))
+                    .or_else(|| projected.note().map(str::to_string))
+                    .into_iter()
+                    .chain(not_carried)
+                    .reduce(|note, reason| format!("{note}; {reason}")),
+            };
             ToolRuleSpec {
                 rule: (*rule).clone(),
                 native,
                 native_tools: projected.native_tools(),
                 native_status: projected.status.map(bundle_native_status),
-                note: projected
-                    .covered_by
-                    .as_ref()
-                    .map(|by| format!("never applies: `{by}` covers it"))
-                    .or_else(|| projected.note().map(str::to_string)),
+                native_permission: carried.map(|carried| carried.permissions),
+                note,
                 covered_by: projected.covered_by.clone(),
             }
         })

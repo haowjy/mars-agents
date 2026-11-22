@@ -2802,3 +2802,24 @@ fn build_launch_bundle_pinned_agy_resolves_effort_into_one_listed_slug() {
     let (ok, _) = routed(&["--model", "gemini-pro-orchestrator"]);
     assert!(!ok);
 }
+
+/// The bundle's `native_status` has three values: a pattern agy's tools cannot carry is
+/// `unknown` with the reason in `note`, which is what the consumer reports.
+#[test]
+fn build_launch_bundle_agy_reports_a_patterned_rule_as_unknown_with_a_note() {
+    let agent = "---\nname: reviewer\ntools:\n  'bash(killall *)': deny\n---\nReview.";
+    let (output, bundle) = agy_bundle(agent, &["--harness", "agy", "--model", "gemini-3.8-flash"]);
+    assert!(output.status.success(), "{output:?}");
+    let rule = bundle["tools"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["capability"] == "bash")
+        .unwrap_or_else(|| panic!("no bash rule in {}", bundle["tools"]));
+    assert_eq!(rule["native_status"], "unknown", "{rule}");
+    assert!(
+        rule["note"].as_str().unwrap().contains("no pattern"),
+        "{rule}"
+    );
+    assert_eq!(rule["native"], json!([]), "{rule}");
+}

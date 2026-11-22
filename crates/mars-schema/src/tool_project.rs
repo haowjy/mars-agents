@@ -61,7 +61,7 @@ pub enum NativeStatus {
 }
 
 impl NativeStatus {
-    /// The bundle's `native_status`.
+    /// The projection's `status`. The launch bundle has its own, narrower vocabulary.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Known => "known",

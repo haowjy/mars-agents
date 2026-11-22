@@ -281,7 +281,7 @@ fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result
 }
 
 fn catalog_directory(path: &str) -> Option<&'static str> {
-    spec::tree_for_root_file(Path::new(path)).and_then(|tree| tree.root_file.catalog_directory())
+    mars_schema::plugin_metadata::catalog_directory_of(path)
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {

@@ -1235,7 +1235,7 @@ fn passthrough_rejection_message(
             format!("No permitted, runnable harness for model '{model_name}'")
         }
         crate::routing::acceptance::RejectionReason::HarnessNotInstalled { harness } => format!(
-            "model '{model_name}' selected harness '{harness}', but that harness is not installed"
+            "model '{model_name}' selected harness '{harness}', but that harness is not on PATH"
         ),
         crate::routing::acceptance::RejectionReason::NoSlugEvidence { .. } => format!(
             "model '{model_name}' could not be confirmed by an available harness model listing"

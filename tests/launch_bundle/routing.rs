@@ -942,7 +942,7 @@ Review code changes."#;
     let output = cmd.assert().failure().code(2).get_output().clone();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    assert!(stderr.contains("cli harness `claude` is not installed"));
+    assert!(stderr.contains("cli harness `claude` is not on PATH"));
     assert!(stderr.contains("Skip: claude (not_installed)"));
     assert!(
         !stderr.contains("pivoting via model-policies"),

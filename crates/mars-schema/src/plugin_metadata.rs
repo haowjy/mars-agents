@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::retired::RETIRED_TARGETS;
+
 pub const SENTINEL_FILE: &str = ".mars-plugin.json";
 pub const SENTINEL_SCHEMA_VERSION: u32 = 1;
 
@@ -50,14 +52,36 @@ pub fn generated_root_paths() -> impl Iterator<Item = &'static str> {
         .flat_map(|file| std::iter::once(file.path()).chain(file.catalog_directory()))
 }
 
+/// A root file this build generates, or one a retired target's plugin tree generated: a sentinel
+/// an older Mars wrote still records it, and the rebuild deletes it.
 pub fn is_generated_root_file(path: &str) -> bool {
     GENERATED_ROOT_FILES.iter().any(|file| file.path() == path)
+        || RETIRED_TARGETS
+            .iter()
+            .any(|target| target.plugin_root_file == path)
+}
+
+/// The directory holding the generated root file at `path`, if it sits in one.
+pub fn catalog_directory_of(path: &str) -> Option<&'static str> {
+    GENERATED_ROOT_FILES
+        .iter()
+        .find(|file| file.path() == path)
+        .and_then(|file| file.catalog_directory())
+        .or_else(|| {
+            RETIRED_TARGETS
+                .iter()
+                .find(|target| target.plugin_root_file == path)
+                .map(|target| target.plugin_catalog_directory)
+        })
 }
 
 pub fn is_generated_root_directory(path: &str) -> bool {
     GENERATED_ROOT_FILES
         .iter()
         .any(|file| file.catalog_directory() == Some(path))
+        || RETIRED_TARGETS
+            .iter()
+            .any(|target| target.plugin_catalog_directory == path)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

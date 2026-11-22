@@ -7,6 +7,11 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.1] - 2026-11-22
+
+### Fixed
+- `meridian agy` works again for an agent with a patterned tool rule such as `bash(killall *): deny`. The launch bundle reported the rule's `native_status` as `unscopable`, a value outside its three-value contract, and Meridian rejected the whole bundle. Mars now reports it as `unknown`, with a note saying agy's tool takes no pattern.
+
 ## [0.39.0] - 2026-11-21
 
 ### Upgrade notes

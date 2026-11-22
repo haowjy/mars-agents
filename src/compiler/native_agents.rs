@@ -9,8 +9,8 @@ use super::agents::opencode_permission;
 use super::effective_tools::effective_tools;
 use super::lossiness::{Lossiness, LossyField, ProjectLoss};
 use super::{AgentSurfaceMode, AgentSurfacePolicy};
-use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::compiler::agents::lower::NativeModel;
+use crate::config::routing_settings::ResolvedRoutingSettings;
 use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::lock::RecordRef;
@@ -329,11 +329,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         )
     }
 
-    fn route_candidate(
-        &mut self,
-        token: &str,
-        target_harness: &mars_schema::HarnessId,
-    ) -> Route {
+    fn route_candidate(&mut self, token: &str, target_harness: &mars_schema::HarnessId) -> Route {
         let key = (token.to_string(), target_harness.as_str().to_string());
         if let Some(cached) = self.memo.get(&key) {
             return cached.clone();
@@ -341,7 +337,9 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
         let route = match self.accepted_model_id(token, target_harness) {
             Some(model_id) => Route::Routed(model_id),
-            None if crate::models::names_no_model(token, self.aliases, self.cache) => Route::Unknown,
+            None if crate::models::names_no_model(token, self.aliases, self.cache) => {
+                Route::Unknown
+            }
             None => Route::Unsupported,
         };
         self.memo.insert(key, route.clone());

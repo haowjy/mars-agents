@@ -179,7 +179,9 @@ impl AgentSkillsPolicy {
 
 impl AgentLoweringPolicy {
     pub(crate) fn writes_model(&self) -> bool {
-        self.fields.iter().any(|field| matches!(field, LoweredField::Model))
+        self.fields
+            .iter()
+            .any(|field| matches!(field, LoweredField::Model))
     }
 }
 

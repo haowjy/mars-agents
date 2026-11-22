@@ -7,6 +7,16 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.4] - 2026-11-22
+
+### Fixed
+- Rebuilding a plugin whose sentinel an older Mars wrote now settles in one build. The first rebuild after the Cursor cleanup left `.cursor-plugin` recorded in `plugin/.mars-plugin.json` and the next build dropped it, so a pre-commit hook that rebuilds and compares refused the `mars version` commit. The same happened after deselecting a harness.
+- `mars sync` no longer drops an agent's `model:` that Mars doesn't know, such as `model: sonnet` in a package whose project defines no `sonnet` alias. When no model the agent names is one Mars knows, it writes the first one unchanged to each harness that isn't launched through Meridian and has a model field, and warns once per agent that it couldn't check it. A candidate Mars can route still wins, and a known model the harness can't run still means no model. `mars models alias <name> <model-id>` makes the name translate.
+- Mars only calls a model unknown when a model catalog is loaded. With none (an offline first sync, a failed refresh), it writes no model, as before.
+- No bare model name is written to an OpenCode agent, because OpenCode skips the whole agent file for one.
+- `mars build launch-bundle` still refuses a model it can't route; the message now says no alias or model by that name exists and how to define one.
+- A harness missing from `PATH` is reported as "not on PATH" instead of "not installed", since that is what Mars checks.
+
 ## [0.39.3] - 2026-11-22
 
 ### Fixed

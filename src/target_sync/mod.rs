@@ -698,6 +698,7 @@ fn remove_recorded_output(
     match removal::remove_recorded(&target_root.join(dest_rel), kind, record) {
         Removal::Absent => removed_dest_paths.push(dest_rel.to_string()),
         Removal::Removed => {
+            removal::remove_emptied_parents(&target_root.join(dest_rel), dest_rel);
             removed_dest_paths.push(dest_rel.to_string());
             return 1;
         }

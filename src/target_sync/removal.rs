@@ -244,6 +244,18 @@ pub(crate) fn remove_served(
     })
 }
 
+/// Remove the directories between a removed output and its kind directory (`skills/`) that
+/// the removal emptied, such as `skills/dup__a/` once `skills/dup__a/b` is gone. The kind
+/// directory itself stays. Best effort, like [`remove_empty_ancestors`].
+pub(crate) fn remove_emptied_parents(removed: &Path, dest_path: &str) {
+    let depth = dest_path.split('/').count().saturating_sub(2);
+    for parent in removed.ancestors().skip(1).take(depth) {
+        if std::fs::remove_dir(parent).is_err() {
+            return;
+        }
+    }
+}
+
 /// Remove `start` and each parent up to and including `target_dir` while they are empty.
 /// Best effort: no lock record depends on an empty directory, so the first error ends the walk
 /// and a directory Mars cannot remove stays. Whether `target_dir` itself went.

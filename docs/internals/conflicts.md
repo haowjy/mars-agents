@@ -22,7 +22,14 @@ installed name:
 - `agents/coder.md` from `base` → `agents/coder__base.md`
 - `skills/planning` from `team` → `skills/planning__team`
 
-Mars emits an `auto-rename-collision` warning for each automatic rename. Agent
+A `/` in the source name (a `--plugin` dependency is `<repo>/<plugin>`) becomes `-` in the
+suffix, so the installed name stays one path segment: `skills/brand-guidelines__skills-example-skills`.
+Two dependencies whose names differ only in where a `/` or `-` falls (`a/b-c`, `a-b/c`) get the
+same suffix; the sync stops with a collision error, and naming one dependency differently in
+`mars.toml` resolves it.
+
+Mars emits an `auto-rename-collision` warning for each automatic rename, on the sync that
+installs or changes the renamed item; an unchanged sync is silent. Agent
 frontmatter `name:` follows the installed filename. References are rewritten in
 scope: `skills:` references follow renamed skills, and `subagents:` references
 follow renamed agents from the same source or that source's dependency graph.
@@ -56,8 +63,9 @@ matches an installed agent after rename (now: web-researcher__base,
 web-researcher__team); update the config
 ```
 
-The warning lists the new installed names so the user can update the config
-reference. It fires only when the original name is no longer installed — if
+The warning lists the new installed names so the user can update the reference. It is not held
+against the lock (the config it names is not in the lock), so every sync and `mars validate`
+repeats it until the config is fixed. It fires only when the original name is no longer installed — if
 another source still provides the unrenamed name, the reference is left
 alone.
 

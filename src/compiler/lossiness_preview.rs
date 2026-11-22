@@ -75,10 +75,9 @@ pub fn collect_prepared_source_lossiness_diagnostics(
         .as_ref()
         .map(|manifest| &manifest.models)
         .unwrap_or(&empty_model_aliases);
-    let mut model_router = (!policy.emits_nothing()).then(|| {
+    let mut model_router =
         NativeModelRoutingRuntime::collect(model_aliases, &models_cache, routing_settings)
-            .with_settings(settings.clone())
-    });
+            .with_settings(settings.clone());
 
     for definition in &prepared.definitions {
         let content = String::from_utf8_lossy(&definition.normalized_bytes);
@@ -90,7 +89,7 @@ pub fn collect_prepared_source_lossiness_diagnostics(
                     &policy,
                     &configured_harnesses,
                     fanout_agents,
-                    model_router.as_mut(),
+                    &mut model_router,
                     &mut diag,
                 )
             }
@@ -124,12 +123,9 @@ fn collect_agent_content_lossiness(
     policy: &crate::compiler::AgentSurfacePolicy,
     configured_harnesses: &[HarnessId],
     fanout_agents: &[String],
-    model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
+    model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> bool {
-    let Some(model_router) = model_router else {
-        return false;
-    };
     let Ok(mars_schema::read::Valid {
         fields: profile,
         body,

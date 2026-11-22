@@ -39,14 +39,14 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 |---|---|
 | `auto` (default) | Emit native artifacts in standalone mode; when `MERIDIAN_MANAGED=1`, suppress them for the harnesses Meridian launches and emit them for the one it does not (Antigravity) |
 | `always` | Always emit native artifacts, even in Meridian-managed mode |
-| `never` | Never emit native artifacts |
+| `never` | Emit no native artifacts for the harnesses Meridian launches; still emit them for the one it does not (Antigravity) |
 
 ```toml
 [settings]
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts under Meridian, or `"never"` to emit none for the launched harnesses (`agent_copy` below still applies to them). `never` does not reach Antigravity: it can only run an agent from `.agy/agents/`, so Mars writes them there and warns `agent_emission = "never" does not apply to .agy` on the sync that writes or changes one (`--verbose` lists it every time).
 
 Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 

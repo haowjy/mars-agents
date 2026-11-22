@@ -273,15 +273,23 @@ pub(crate) fn resolve_bundle_tools(
         .iter()
         .map(|(rule, projected)| {
             let native = projected.native();
-            let not_carried = (harness == HarnessId::Agy)
-                .then(|| agy_permission::not_carried(rule, projected))
-                .flatten()
-                .map(|reason| format!("not applied by `meridian agy`: {reason}"));
             // A carried rule's permission strings go to its own `native_permission`, never to
             // `native` (tool names) or `project()` (the agent file's `tools:`, the flat lists).
-            let carried = (harness == HarnessId::Agy)
-                .then(|| agy_permission::carried(rule, projected))
-                .flatten();
+            let (carried, not_carried) = match (harness == HarnessId::Agy)
+                .then(|| agy_permission::for_rule(rule, projected))
+                .flatten()
+            {
+                Some(agy_permission::Translation::Carried(carried)) => (Some(carried), None),
+                Some(agy_permission::Translation::NotCarried(reason))
+                    if rule.action != ToolAction::Allow =>
+                {
+                    (
+                        None,
+                        Some(format!("not applied by `meridian agy`: {reason}")),
+                    )
+                }
+                _ => (None, None),
+            };
             let note = match &carried {
                 Some(carried) => Some(carried.note.clone()),
                 None => projected

@@ -10,6 +10,7 @@
 //! These strings are not tool names: `project()` and the agent file's `tools:` never see them,
 //! because one unknown name there fails the agent at its first prompt.
 
+use crate::target::mcp_file::AGY_PLUGIN_SERVER_PREFIX;
 use mars_schema::mcp::McpSegment;
 use mars_schema::tool_names::Capability;
 use mars_schema::tool_policy::{ToolAction, ToolRule};
@@ -34,10 +35,10 @@ pub(crate) enum Translation {
 }
 
 const BASH_GAPS: &str = "agy matches command words only: `bash -c`, `sh -c`, `$(...)`, `xargs`, absolute paths and options before a subcommand are not caught";
-const FILE_GAPS: &str = "agy blocks its file tools only: shell commands still reach the files";
+const FILE_GAPS: &str = "agy blocks its file tools (`write_file`, `edit_file`, `read_file`) only: shell commands still reach the files, and whether its search and list tools honour the rule was not tested";
 const SKILL_GAPS: &str = "agy stops the skill's SKILL.md from loading by file read: shell commands can still read it, and the skill is still listed";
-const MCP_GAPS: &str =
-    "not verified: whether a top-level `mcp_<server>_<tool>` call is stopped as well";
+const MCP_GAPS: &str = "the rule names the server both as `_agy_<server>` (installed from a plugin, as Mars does) and bare (`agy mcp add`, `.agents/mcp_config.json`), so it also stops a same-named server from the other source; not verified: whether a top-level `mcp_<server>_<tool>` call is stopped as well";
+const WRAPPER_GAP: &str = "a command behind `env`, `cd`, `timeout`, `nice` or `VAR=value` is a different command to agy, so a prefix that starts with one is not carried";
 const DIR_FORM: &str =
     "the path covers the whole directory tree, where the rule's `*` stops at `/`";
 const ROOTS: &str = "a relative path applies under every added directory root";
@@ -63,23 +64,8 @@ pub(crate) fn translate(rule: &ToolRule) -> Translation {
 
 /// The translation of a rule the projection left out of the agent file (a gap), unless a
 /// stricter rule covers it: that one already wins every call.
-fn for_gap(rule: &ToolRule, projected: &ProjectedRule) -> Option<Translation> {
+pub(crate) fn for_rule(rule: &ToolRule, projected: &ProjectedRule) -> Option<Translation> {
     (projected.covered_by.is_none() && projected.gap().is_some()).then(|| translate(rule))
-}
-
-pub(crate) fn carried(rule: &ToolRule, projected: &ProjectedRule) -> Option<Carried> {
-    match for_gap(rule, projected)? {
-        Translation::Carried(carried) => Some(carried),
-        Translation::NotCarried(_) => None,
-    }
-}
-
-/// Why a deny or ask that neither the file nor a launch applies is not carried.
-pub(crate) fn not_carried(rule: &ToolRule, projected: &ProjectedRule) -> Option<&'static str> {
-    match for_gap(rule, projected)? {
-        Translation::NotCarried(reason) if rule.action != ToolAction::Allow => Some(reason),
-        _ => None,
-    }
 }
 
 const UNSCOPED: &str = "a rule with no pattern is carried by the agent file's `tools:`";
@@ -113,6 +99,11 @@ fn bash(pattern: &str) -> Translation {
             "agy matches only plain command words: no quotes, `$`, pipes or inner `*`",
         );
     }
+    // agy looks through these in front of a command and matches what follows (evidence/p11548.md Q1).
+    let first = words.split(' ').next().unwrap_or_default();
+    if first.contains('=') || matches!(first, "env" | "cd" | "timeout" | "nice") {
+        return Translation::NotCarried(WRAPPER_GAP);
+    }
     let permission = vec![format!("command({words})")];
     if wildcard {
         carry(permission, &[BASH_GAPS])
@@ -134,9 +125,9 @@ fn files(pattern: Option<&str>, tool: &str) -> Translation {
         Some(dir) => (dir, true),
         None => (pattern, false),
     };
+    let path = path.trim_end_matches('/');
     let relative = !path.starts_with(['/', '~']);
     let clean = path
-        .trim_end_matches('/')
         .split('/')
         .all(|segment| !matches!(segment, "" | "." | "..") && !segment.contains(NOT_IN_PATH));
     if !relative || !clean {
@@ -184,5 +175,12 @@ fn mcp_rule(server: &McpSegment, tool: &McpSegment) -> Translation {
     if !plain(server, "_.-") {
         return Translation::NotCarried("agy takes only a plain MCP server name");
     }
-    carry(vec![format!("mcp({server}/{tool})")], &[MCP_GAPS])
+    let spellings = [
+        format!("{AGY_PLUGIN_SERVER_PREFIX}{server}"),
+        server.to_string(),
+    ];
+    carry(
+        spellings.map(|name| format!("mcp({name}/{tool})")).to_vec(),
+        &[MCP_GAPS],
+    )
 }

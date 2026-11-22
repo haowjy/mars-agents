@@ -30,6 +30,11 @@ pub(super) fn claude_render(server: &McpServerEntry) -> McpRender {
     render(&server.transport, Flavor::Claude)
 }
 
+/// agy names a server from the `.agy/` plugin's `mcp_config.json` `_agy_<key>`, and a permission
+/// rule must use that name. A server from `.agents/mcp_config.json` or `agy mcp add` keeps the
+/// bare key.
+pub(crate) const AGY_PLUGIN_SERVER_PREFIX: &str = "_agy_";
+
 pub(super) fn agy_render(server: &McpServerEntry) -> McpRender {
     mars_schema::mcp_servers::render_agy(&server.transport)
 }

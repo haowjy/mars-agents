@@ -492,14 +492,16 @@ appended to the `note`, and an allow is never carried, because `--settings` repl
 
 | Rule | `agy` permission |
 |---|---|
-| `bash(<words>)`, `bash(<words> *)`, `bash(<words>:*)`, plain words only (letters, digits, `_ . / = @ + , -`, single spaces) | `command(<words>)`, a whole-word prefix |
+| `bash(<words>)`, `bash(<words> *)`, `bash(<words>:*)`, plain words only (letters, digits, `_ . / = @ + , -`, single spaces), not starting with `VAR=value`, `env`, `cd`, `timeout` or `nice` (agy looks through those, so the prefix would never match) | `command(<words>)`, a whole-word prefix |
 | `write(<path>)`, `edit(<path>)` | `write_file(<path>)` |
 | `read(<path>)` | `read_file(<path>)` |
 | `skill(<name>)`, deny only | `read_file(.agy/skills/<name>)` and `read_file(.agents/skills/<name>)` |
-| `mcp(<server>/<tool>)` | itself |
-| `mcp(<server>)`, `mcp(<server>/*)` | `mcp(<server>/*)` |
+| `mcp(<server>/<tool>)` | `mcp(_agy_<server>/<tool>)` and `mcp(<server>/<tool>)` |
+| `mcp(<server>)`, `mcp(<server>/*)` | the same two with `/*` |
 
-A file path is relative, with no `..`, `~` or glob; `dir/*` and `dir/**` mean the directory and
+An MCP rule carries both spellings because `agy` names a server from the `.agy/` plugin's `mcp_config.json` `_agy_<server>` (which is where Mars installs servers), and a server from `.agents/mcp_config.json` or `agy mcp add` keeps its bare name; the cost is that it also stops a same-named server from the other source. Not verified: whether a top-level `mcp_<server>_<tool>` call is stopped as well.
+
+A file path is relative, with no `..`, `~` or glob, and a trailing `/` is dropped; `dir/*` and `dir/**` mean the directory and
 everything under it. A permission string never reaches the agent file's `tools:` or the bundle's
 `allowed` and `disallowed` lists: one unknown name in `tools:` fails the agent at its first prompt.
 The agent file still lacks these rules, so sync reports each one as lost, marked "enforced only when

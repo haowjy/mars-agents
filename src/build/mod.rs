@@ -247,6 +247,16 @@ pub(crate) fn load_effective_project_config_or_default(
     }
 }
 
+/// The bundle's `native_status`, which has three values. A rule Mars cannot apply as written
+/// on this harness, for any reason, is `unknown`, and its `note` gives the reason.
+fn bundle_native_status(status: NativeStatus) -> &'static str {
+    match status {
+        NativeStatus::Known => "known",
+        NativeStatus::Absent => "absent",
+        NativeStatus::Unknown(_) | NativeStatus::Unscopable => "unknown",
+    }
+}
+
 /// The agent's tool rules for `harness`. A permission gap is never a warning: Meridian prints
 /// `warnings[]` at every launch, so a rule Mars cannot name or enforce goes out with
 /// `native_status: unknown` and a `note`, and the consumer reports it. `mars sync` is where an
@@ -267,7 +277,7 @@ pub(crate) fn resolve_bundle_tools(
                 rule: (*rule).clone(),
                 native,
                 native_tools: projected.native_tools(),
-                native_status: projected.status.map(NativeStatus::as_str),
+                native_status: projected.status.map(bundle_native_status),
                 note: projected
                     .covered_by
                     .as_ref()
@@ -289,7 +299,7 @@ pub(crate) fn resolve_bundle_tools(
                 capability.to_string(),
                 CapabilityNativeSpec {
                     native: projected.native(),
-                    native_status: status.as_str(),
+                    native_status: bundle_native_status(status),
                     note: status.note(),
                 },
             )

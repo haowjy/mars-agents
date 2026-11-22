@@ -814,15 +814,15 @@ fn rename_destination_collisions(
                 suffixed_collision_dest_path(&item.dest_path, kind, &item.source_name)?;
             let new_name = ItemName::from(new_dest_path.item_name(kind.item_kind()));
 
-            diag.warn_advisory(
+            item.id.name = new_name.clone();
+            diag.hold_warning(
+                crate::lock::RecordRef::Item(crate::lock::item_key(&item.id)),
                 "auto-rename-collision",
                 format!(
                     "auto-renamed {} `{}` from source `{}` → `{}`",
                     item.id.kind, original_name, item.source_name, new_name
                 ),
             );
-
-            item.id.name = new_name.clone();
             item.dest_path = new_dest_path;
             renames.push(CollisionRename {
                 original_name,
@@ -989,7 +989,9 @@ fn suffixed_collision_dest_path(
     kind: RenamableKind,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
-    let suffix = format!("__{source_name}");
+    // A `--plugin` dependency is named `<repo>/<plugin>`; a `/` in the suffix would nest the
+    // skill one directory too deep for any harness to load it.
+    let suffix = format!("__{}", source_name.as_str().replace(['/', '\\'], "-"));
     let path = dest_path.as_str();
     let renamed = match kind {
         RenamableKind::Agent => {
@@ -998,26 +1000,14 @@ fn suffixed_collision_dest_path(
             mars_schema::discover::join(parent, &format!("{stem}{suffix}.md"))
         }
         RenamableKind::Skill => {
-            return suffixed_leaf_dest_path(path, &suffix, source_name);
+            let (parent, leaf) = split_parent_leaf(path);
+            mars_schema::discover::join(parent, &format!("{leaf}{suffix}"))
         }
         RenamableKind::BootstrapDoc => {
             unreachable!("only agent and skill collisions are auto-renamed")
         }
     };
 
-    DestPath::new(&renamed).map_err(|e| MarsError::Source {
-        source_name: source_name.to_string(),
-        message: format!("invalid auto-renamed destination `{renamed}`: {e}"),
-    })
-}
-
-fn suffixed_leaf_dest_path(
-    path: &str,
-    suffix: &str,
-    source_name: &SourceName,
-) -> Result<DestPath, MarsError> {
-    let (parent, leaf) = split_parent_leaf(path);
-    let renamed = mars_schema::discover::join(parent, &format!("{leaf}{suffix}"));
     DestPath::new(&renamed).map_err(|e| MarsError::Source {
         source_name: source_name.to_string(),
         message: format!("invalid auto-renamed destination `{renamed}`: {e}"),

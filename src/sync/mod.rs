@@ -122,6 +122,7 @@ pub enum ResolutionMode {
 pub(crate) struct LoadedConfig {
     pub config: Config,
     pub local: LocalConfig,
+    pub user: crate::config::UserConfig,
     /// The mutation changed `mars.local.toml`, so persisting it writes that file too.
     pub local_changed: bool,
     pub effective: EffectiveConfig,
@@ -361,6 +362,7 @@ pub(crate) fn load_config(
     Ok(LoadedConfig {
         config,
         local,
+        user,
         local_changed,
         effective,
         old_lock,

@@ -206,6 +206,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             local_changed: false,
             effective,
             old_lock: LockFile::empty(),
@@ -269,6 +270,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         loaded: LoadedConfig {
             config: Config::default(),
             local: LocalConfig::default(),
+            user: crate::config::UserConfig::default(),
             local_changed: false,
             effective,
             old_lock: LockFile::empty(),
@@ -293,7 +295,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
         recovery: Default::default(),
         lossiness_mode: LossinessMode::Hidden,
     };
-    let mut diag = DiagnosticCollector::new();
+    let mut diag = DiagnosticCollector::with_lossiness_mode(LossinessMode::Surface);
 
     build_target(&ctx, resolved, Vec::new(), &request, &mut diag).unwrap();
 

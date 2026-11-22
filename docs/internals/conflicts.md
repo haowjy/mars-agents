@@ -22,7 +22,11 @@ installed name:
 - `agents/coder.md` from `base` → `agents/coder__base.md`
 - `skills/planning` from `team` → `skills/planning__team`
 
-Mars emits an `auto-rename-collision` warning for each automatic rename. Agent
+A `/` in the source name (a `--plugin` dependency is `<repo>/<plugin>`) becomes `-` in the
+suffix, so the installed name stays one path segment: `skills/brand-guidelines__skills-example-skills`.
+
+Mars emits an `auto-rename-collision` warning for each automatic rename, on the sync that
+installs or changes the renamed item; an unchanged sync is silent. Agent
 frontmatter `name:` follows the installed filename. References are rewritten in
 scope: `skills:` references follow renamed skills, and `subagents:` references
 follow renamed agents from the same source or that source's dependency graph.
@@ -56,8 +60,9 @@ matches an installed agent after rename (now: web-researcher__base,
 web-researcher__team); update the config
 ```
 
-The warning lists the new installed names so the user can update the config
-reference. It fires only when the original name is no longer installed — if
+The warning names the config files that hold the overlay (`mars.toml`, `mars.local.toml`
+or the user config), lists the new installed names so the user can update the reference,
+and, like the rename warning, appears once, on the sync that installs the renamed item. It fires only when the original name is no longer installed — if
 another source still provides the unrenamed name, the reference is left
 alone.
 

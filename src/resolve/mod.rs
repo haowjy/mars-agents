@@ -254,24 +254,22 @@ fn finish(
     }
 
     let selection = select::select_registry(config, &registry, options.root.as_deref());
-    // With a root, the caller judges what the selection found: refs it could not resolve and
-    // slugs two packages install (`mars check`, through `mars_schema::check`).
-    if options.root.is_none() {
-        for diagnostic in &selection.diagnostics {
-            diag.schema(diagnostic, "selection", crate::diagnostic::Owner::Own);
+    // With a root, the caller judges the refs the selection could not resolve (`mars check`,
+    // through `mars_schema::check`). A slug two packages install is not reported here: sync
+    // renames both and says so once (`auto-rename-collision`).
+    if options.root.is_none()
+        && let Some(missing) = selection.missing_skills.first()
+    {
+        return Err(ResolutionError::SkillNotFound {
+            skill: missing.skill.clone(),
+            required_by: match &missing.package {
+                Some(package) => format!("{package}/{}", missing.agent),
+                None => missing.agent.clone(),
+            },
+            searched: missing.searched.clone(),
+            hint: missing.hint.clone(),
         }
-        if let Some(missing) = selection.missing_skills.first() {
-            return Err(ResolutionError::SkillNotFound {
-                skill: missing.skill.clone(),
-                required_by: match &missing.package {
-                    Some(package) => format!("{package}/{}", missing.agent),
-                    None => missing.agent.clone(),
-                },
-                searched: missing.searched.clone(),
-                hint: missing.hint.clone(),
-            }
-            .into());
-        }
+        .into());
     }
 
     let nodes: IndexMap<SourceName, ResolvedNode> = registry

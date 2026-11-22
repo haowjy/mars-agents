@@ -38,8 +38,9 @@ Each native file gets the model its `model:` routes to for that harness (`claude
 harness cannot run it. A `model:` that names no alias and no catalog model (`sonnet` where no alias
 `sonnet` exists, a typo, a model newer than the catalog) is written as is to every file that has a
 `model` field, and the sync warns once per agent that Mars could not check it; the harness decides.
-Under a fallback list (`model-policies`), a candidate that routes wins and the first unknown one is
-used only when none does. `mars models alias sonnet <model-id>` defines the alias and translates it.
+Under a fallback list (`model-policies`), a candidate that routes wins. When none routes and any
+candidate is a model Mars knows, the file gets no model; the unknown token is written only when
+every candidate is unknown (then the first one). `mars models alias sonnet <model-id>` defines the alias and translates it.
 `mars build launch-bundle` still refuses a model it cannot route.
 
 ## Emission Control

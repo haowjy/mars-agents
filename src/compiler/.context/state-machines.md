@@ -90,7 +90,7 @@ stateDiagram-v2
   candidate --> routing: profile.model, then each model-policy entry
   routing --> set: route accepted and the model id is usable
   routing --> candidate: harness or acceptance rejected
-  candidate --> unchecked: none routes, a candidate named no alias or catalog model, emit_all
+  candidate --> unchecked: none routes, every candidate named no alias or catalog model, emit_all
   candidate --> clear: no candidate left, emit_all
   candidate --> skip: no candidate left, selective
   set --> [*]
@@ -108,8 +108,10 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
 - **`Route` keeps two rejections apart.** `Unsupported` is a model Mars knows that the harness
   cannot run: nothing is written. `Unknown` names no alias and no catalog model (`sonnet` in a
   project with no such alias, a typo, a model newer than the catalog): Mars cannot say it is
-  wrong. It is the walk's deferred candidate: a later candidate that routes outranks it, and when
-  none does, the first unknown token is written verbatim (`NativeModel::Unchecked`) to every
+  wrong. It is the walk's deferred candidate: a later candidate that routes outranks it, and a
+  known candidate the harness cannot run (`Unsupported`) cancels it, since that shows the
+  author meant a model this harness cannot run. When every candidate is unknown, the first
+  unknown token is written verbatim (`NativeModel::Unchecked`) to every
   `EmitAll` harness whose file has a model field, with one held `agent.model-unchecked` warning
   per agent naming those files. `EmitSelective` (launched harnesses) never takes it: the launch
   bundle refuses an unroutable model, and must not pass one through.

@@ -219,6 +219,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         emit_all: bool,
     ) -> NativeModelDecision {
         let mut unknown = None;
+        let mut known_unsupported = false;
         for candidate in self.candidates(profile, include_fanout) {
             if candidate
                 .harness_constraint
@@ -236,14 +237,16 @@ impl<'a> NativeModelRoutingRuntime<'a> {
                 }
                 // Kept in reserve: a later candidate Mars can route outranks it.
                 Route::Unknown => unknown = unknown.or(Some(candidate.token)),
-                Route::Unsupported => {}
+                Route::Unsupported => known_unsupported = true,
             }
         }
 
         if emit_all {
+            // A known model the harness cannot run says the author meant something this
+            // harness cannot run, so the unknown token would only make the agent fail.
             match unknown {
-                Some(token) => NativeModelDecision::Unchecked { token },
-                None => NativeModelDecision::Clear,
+                Some(token) if !known_unsupported => NativeModelDecision::Unchecked { token },
+                _ => NativeModelDecision::Clear,
             }
         } else {
             NativeModelDecision::Skip

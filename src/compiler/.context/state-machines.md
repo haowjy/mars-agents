@@ -75,8 +75,8 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 
 ## Native model decision
 
-Which model string goes into one native agent file for one harness (`Set`), or that the file is
-emitted with no model (`Clear`), or not emitted at all (`Skip`). `NativeModelDecision` is in
+Which model string goes into one native agent file for one harness (`Set`), the author's own
+token kept as written (`Unchecked`), no model (`Clear`), or no file at all (`Skip`). `NativeModelDecision` is in
 `native_agents.rs`, over `NativeModel` (`agents/lower.rs`). `decision_for_profile` walks
 the candidates; `route_candidate` (memoised per run) calls `route_candidate_uncached`,
 `route_model_ids`, acceptance and `native_model_id`. The routing evaluator is `crate::routing`
@@ -90,9 +90,11 @@ stateDiagram-v2
   candidate --> routing: profile.model, then each model-policy entry
   routing --> set: route accepted and the model id is usable
   routing --> candidate: harness or acceptance rejected
+  candidate --> unchecked: none routes, a candidate named no alias or catalog model, emit_all
   candidate --> clear: no candidate left, emit_all
   candidate --> skip: no candidate left, selective
   set --> [*]
+  unchecked --> [*]
   clear --> [*]
   skip --> [*]
 ```
@@ -103,6 +105,14 @@ An instance of [an ordered fallback walk](../../../.context/state-machines/fallb
   accepts a token but OpenCode has no provider/model slug, `native_model_id` returns `None`: the
   token is rejected and the next candidate is tried. A bare model id is never written for
   OpenCode.
+- **`Route` keeps two rejections apart.** `Unsupported` is a model Mars knows that the harness
+  cannot run: nothing is written. `Unknown` names no alias and no catalog model (`sonnet` in a
+  project with no such alias, a typo, a model newer than the catalog): Mars cannot say it is
+  wrong. It is the walk's deferred candidate: a later candidate that routes outranks it, and when
+  none does, the first unknown token is written verbatim (`NativeModel::Unchecked`) to every
+  `EmitAll` harness whose file has a model field, with one held `agent.model-unchecked` warning
+  per agent naming those files. `EmitSelective` (launched harnesses) never takes it: the launch
+  bundle refuses an unroutable model, and must not pass one through.
 - **`Clear` and `Skip` differ.** `Clear` writes the agent without a model; `Skip` withholds the
   file. `qualifying_agent_emissions` is where `Skip` becomes "no artifact". With nothing left,
   `EmitAll` clears and `EmitSelective` skips.

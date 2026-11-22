@@ -224,6 +224,9 @@ pub fn resolve_policy(
     )?;
     warnings.extend(primary_model.warnings.iter().cloned());
     let primary_model_token = primary_model.model_token.clone();
+    let primary_names_no_model = !input.literal_model
+        && primary_model.alias.is_none()
+        && models::names_no_model(&primary_model_token, aliases, &cache);
     let primary_kind = if primary_model.alias.is_some() {
         ModelPolicyMatchType::Alias
     } else {
@@ -376,7 +379,13 @@ pub fn resolve_policy(
                 } else {
                     ""
                 }
-            ),
+            ) + &if primary_names_no_model {
+                format!(
+                    "; no alias or model named `{primary_model_token}` exists. Define one with `mars models alias {primary_model_token} <model-id>`"
+                )
+            } else {
+                String::new()
+            },
             report: Box::new(report),
         });
     };

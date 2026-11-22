@@ -31,6 +31,17 @@ Meridian-managed suppression they remain canonical-only unless
 `[settings.meridian.agent_copy]` creates a qualifying native copy through the
 agent's `model:` alias or, with `include_fanout = true`, its `model-policies`.
 
+### Models Mars does not know
+
+Each native file gets the model its `model:` routes to for that harness (`claude-sonnet-5-5` is
+`console-anthropic/claude-sonnet-5-5` for OpenCode), and none when Mars knows the model but the
+harness cannot run it. A `model:` that names no alias and no catalog model (`sonnet` where no alias
+`sonnet` exists, a typo, a model newer than the catalog) is written as is to every file that has a
+`model` field, and the sync warns once per agent that Mars could not check it; the harness decides.
+Under a fallback list (`model-policies`), a candidate that routes wins and the first unknown one is
+used only when none does. `mars models alias sonnet <model-id>` defines the alias and translates it.
+`mars build launch-bundle` still refuses a model it cannot route.
+
 ## Emission Control
 
 Native artifact emission is controlled by `settings.agent_emission` in `mars.toml`:

@@ -10,7 +10,8 @@ use super::effective_tools::effective_tools;
 use super::lossiness::{Lossiness, LossyField, ProjectLoss};
 use super::{AgentSurfaceMode, AgentSurfacePolicy};
 use crate::config::routing_settings::ResolvedRoutingSettings;
-use crate::diagnostic::DiagnosticCollector;
+use crate::compiler::agents::lower::NativeModel;
+use crate::diagnostic::{Diagnostic, DiagnosticCollector};
 use crate::harness::host::{CapabilityCollectionOptions, CapabilitySession};
 use crate::lock::RecordRef;
 use crate::models::{ModelAlias, ModelSpec, ModelsCache};
@@ -113,8 +114,24 @@ pub(crate) enum NativeModelDecision {
         model_id: String,
         token: String,
     },
+    /// No candidate routes, and the first one Mars knows nothing about is `token`: written as
+    /// the author spelled it, for the harness to judge.
+    Unchecked {
+        token: String,
+    },
     Clear,
     Skip,
+}
+
+/// What routing one model token to one harness found. The last two both mean "no model id for
+/// this file", but only `Unknown` is the author's word that may still be valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Route {
+    Routed(String),
+    /// Mars knows the model but this harness cannot run it.
+    Unsupported,
+    /// No alias and no catalog model has this name, so Mars cannot say whether it is valid.
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -147,7 +164,7 @@ pub(crate) struct NativeModelRoutingRuntime<'a> {
     settings: crate::config::Settings,
     session: CapabilitySession,
     installed_for_native_targets: HashSet<String>,
-    memo: HashMap<(String, String), Option<String>>,
+    memo: HashMap<(String, String), Route>,
 }
 
 impl<'a> NativeModelRoutingRuntime<'a> {
@@ -201,6 +218,7 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         include_fanout: bool,
         emit_all: bool,
     ) -> NativeModelDecision {
+        let mut unknown = None;
         for candidate in self.candidates(profile, include_fanout) {
             if candidate
                 .harness_constraint
@@ -209,16 +227,24 @@ impl<'a> NativeModelRoutingRuntime<'a> {
             {
                 continue;
             }
-            if let Some(model_id) = self.route_candidate(&candidate.token, target_harness) {
-                return NativeModelDecision::Set {
-                    model_id,
-                    token: candidate.token,
-                };
+            match self.route_candidate(&candidate.token, target_harness) {
+                Route::Routed(model_id) => {
+                    return NativeModelDecision::Set {
+                        model_id,
+                        token: candidate.token,
+                    };
+                }
+                // Kept in reserve: a later candidate Mars can route outranks it.
+                Route::Unknown => unknown = unknown.or(Some(candidate.token)),
+                Route::Unsupported => {}
             }
         }
 
         if emit_all {
-            NativeModelDecision::Clear
+            match unknown {
+                Some(token) => NativeModelDecision::Unchecked { token },
+                None => NativeModelDecision::Clear,
+            }
         } else {
             NativeModelDecision::Skip
         }
@@ -307,18 +333,22 @@ impl<'a> NativeModelRoutingRuntime<'a> {
         &mut self,
         token: &str,
         target_harness: &mars_schema::HarnessId,
-    ) -> Option<String> {
+    ) -> Route {
         let key = (token.to_string(), target_harness.as_str().to_string());
         if let Some(cached) = self.memo.get(&key) {
             return cached.clone();
         }
 
-        let routed = self.route_candidate_uncached(token, target_harness);
-        self.memo.insert(key, routed.clone());
-        routed
+        let route = match self.accepted_model_id(token, target_harness) {
+            Some(model_id) => Route::Routed(model_id),
+            None if crate::models::names_no_model(token, self.aliases, self.cache) => Route::Unknown,
+            None => Route::Unsupported,
+        };
+        self.memo.insert(key, route.clone());
+        route
     }
 
-    fn route_candidate_uncached(
+    fn accepted_model_id(
         &mut self,
         token: &str,
         target_harness: &mars_schema::HarnessId,
@@ -651,6 +681,7 @@ pub(crate) fn compile_native_agents<'a>(
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
     for agent in mars_agents {
         let effective_profile = &agent.profile;
+        let mut unchecked = UncheckedModel::default();
         for emission in qualifying_agent_emissions(
             AgentRef {
                 profile: effective_profile,
@@ -679,12 +710,20 @@ pub(crate) fn compile_native_agents<'a>(
                 &mut undescribed,
             );
             if emission.harness == mars_schema::HarnessId::Codex
-                && let Some(concerns) = concerns
+                && let Some(concerns) = &concerns
             {
                 codex_emitted = true;
-                codex_concerns.extend(concerns);
+                codex_concerns.extend(concerns.iter().cloned());
+            }
+            if let (NativeModel::Unchecked(token), Some(concerns)) = (&emission.model, concerns)
+                && crate::compiler::lowering::lowering(emission.harness)
+                    .agent
+                    .has_model_field()
+            {
+                unchecked.add(token, emission.harness.target_dir(), concerns);
             }
         }
+        unchecked.record(&agent.agent_name, diag);
     }
     project_losses.record(ctx.project_root, diag);
     if !undescribed.is_empty() {
@@ -707,6 +746,49 @@ pub(crate) fn compile_native_agents<'a>(
     }
 
     records
+}
+
+/// The files of one agent that carry a model token Mars could not check.
+#[derive(Default)]
+struct UncheckedModel {
+    token: String,
+    targets: Vec<String>,
+    concerns: Vec<RecordRef>,
+    /// A dry run would change one of the files, so there is no lock to compare.
+    news_now: bool,
+}
+
+impl UncheckedModel {
+    fn add(&mut self, token: &str, target_dir: String, concerns: Vec<RecordRef>) {
+        // Every emission of an agent falls back to the same first unknown candidate.
+        self.token = token.to_string();
+        self.targets.push(target_dir);
+        self.news_now |= concerns.is_empty();
+        self.concerns.extend(concerns);
+    }
+
+    fn record(self, agent_name: &str, diag: &mut DiagnosticCollector) {
+        if self.targets.is_empty() {
+            return;
+        }
+        let Self {
+            token,
+            targets,
+            concerns,
+            news_now,
+        } = self;
+        let message = format!(
+            "{agent_name} asks for model \"{token}\", which Mars doesn't know; it is written as is \
+             to {}, where the harness decides. Define an alias with `mars models alias {token} \
+             <model-id>` to translate it.",
+            targets.join(", ")
+        );
+        let concerns = if news_now { Vec::new() } else { concerns };
+        diag.hold_any(
+            concerns,
+            Diagnostic::warning("agent.model-unchecked", message),
+        );
+    }
 }
 
 /// Merge a per-agent overlay over the canonical profile for native emission.
@@ -822,6 +904,10 @@ pub(crate) fn qualifying_agent_emissions(
             match model_router.decision_for_profile(profile, harness, true, true) {
                 NativeModelDecision::Set { model_id, token } => (
                     crate::compiler::agents::lower::NativeModel::Set(model_id),
+                    model_router.profile_for_token(profile, overlay, Some(&token), *harness),
+                ),
+                NativeModelDecision::Unchecked { token } => (
+                    crate::compiler::agents::lower::NativeModel::Unchecked(token.clone()),
                     model_router.profile_for_token(profile, overlay, Some(&token), *harness),
                 ),
                 NativeModelDecision::Clear | NativeModelDecision::Skip => (

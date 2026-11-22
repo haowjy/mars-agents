@@ -35,6 +35,14 @@ impl AgentFormat {
             Self::CodexToml => "toml",
         }
     }
+
+    /// Whether the file has a `model` field at all (Antigravity's has none).
+    pub(crate) fn has_model_field(self) -> bool {
+        match self {
+            Self::Markdown(policy) => policy.writes_model(),
+            Self::CodexToml => true,
+        }
+    }
 }
 
 /// How a harness's skill frontmatter expresses the two invocation switches.

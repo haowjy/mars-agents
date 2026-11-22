@@ -243,9 +243,18 @@ impl<'a> NativeModelRoutingRuntime<'a> {
 
         if emit_all {
             // A known model the harness cannot run says the author meant something this
-            // harness cannot run, so the unknown token would only make the agent fail.
+            // harness cannot run, so the unknown token would only make the agent fail. OpenCode
+            // skips a whole agent file whose model is not `provider/model`.
             match unknown {
-                Some(token) if !known_unsupported => NativeModelDecision::Unchecked { token },
+                Some(token)
+                    if !known_unsupported
+                        && (*target_harness != mars_schema::HarnessId::OpenCode
+                            || crate::models::split_provider_constrained_model_token(&token)
+                                .1
+                                .is_some()) =>
+                {
+                    NativeModelDecision::Unchecked { token }
+                }
                 _ => NativeModelDecision::Clear,
             }
         } else {

@@ -71,15 +71,18 @@ pub struct ResolvedAlias {
     pub availability: Option<ModelAvailability>,
 }
 
-/// Whether `token` is neither an alias nor a model the catalog lists, so Mars cannot say whether
-/// it is valid.
+/// Whether `token` is neither an alias nor a model the loaded catalog lists, so Mars cannot say
+/// whether it is valid. An empty catalog (offline first sync, failed refresh, a preview) lists
+/// nothing for any token, so it never says "unknown": it can't tell.
 pub fn names_no_model(
     token: &str,
     aliases: &indexmap::IndexMap<String, ModelAlias>,
     cache: &ModelsCache,
 ) -> bool {
     let (raw, _) = split_provider_constrained_model_token(token);
-    !aliases.contains_key(token) && !cache.models.iter().any(|model| model.id == raw)
+    !cache.models.is_empty()
+        && !aliases.contains_key(token)
+        && !cache.models.iter().any(|model| model.id == raw)
 }
 
 pub fn catalog_model_slugs(cache: &ModelsCache) -> Vec<String> {

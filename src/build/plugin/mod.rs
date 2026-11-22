@@ -154,7 +154,8 @@ impl StagedPluginBuild {
         // would make the next no-change build rewrite the sentinel.
         self.output.publish()?;
         root_files::apply(&self.root_files)?;
-        self.output.clear_root_files_previous()?;
+        self.output
+            .clear_recovery_records(self.root_files.retired_directories())?;
         Ok(self.report)
     }
 }

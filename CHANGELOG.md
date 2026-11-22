@@ -7,6 +7,13 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.3] - 2026-11-22
+
+### Fixed
+- A skill renamed because two dependencies provide the same name now installs one directory deep. For a `--plugin` dependency, named `<repo>/<plugin>`, 0.39.1 nested it at `skills/<name>__<repo>/<plugin>`, where no harness finds it. Upgrading removes the old nested copy and the empty directory it leaves in every target. The rename warning prints once, when the renamed skill is installed or changes.
+- `mars validate` and every sync keep listing a `[skills.<name>]` or `[agents.<name>]` overlay left pointing at a name a rename took away.
+- Two dependency names that differ only in where a `/` or `-` falls (`a/b-c`, `a-b/c`) still stop the sync on a collision; the error now says to name one of them differently in `mars.toml`.
+
 ## [0.39.2] - 2026-11-22
 
 ### Fixed

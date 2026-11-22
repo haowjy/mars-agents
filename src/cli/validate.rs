@@ -74,7 +74,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
             ..SyncOptions::default()
         },
         recovery: Default::default(),
-        lossiness_mode: crate::diagnostic::LossinessMode::Listed,
+        lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
     // Load config for the notes that only

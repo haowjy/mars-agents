@@ -142,6 +142,16 @@ impl ResolvedNode {
             .flat_map(|manifest| manifest.reading.dependencies.dependencies.keys())
             .map(|name| SourceName::from(name.as_str()))
     }
+
+    /// Whether the package gives a consumer something other than items: other packages to
+    /// install or `[models]` aliases.
+    pub fn contributes_beyond_items(&self) -> bool {
+        self.deps().next().is_some()
+            || self
+                .manifest
+                .as_ref()
+                .is_some_and(|manifest| !manifest.models.is_empty())
+    }
 }
 
 #[derive(Debug, Clone)]

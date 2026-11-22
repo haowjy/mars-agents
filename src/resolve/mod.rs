@@ -236,9 +236,9 @@ fn finish(
         .into_iter()
         .map(|item| ((item.id.kind, item.id.name.clone()), item))
         .collect::<IndexMap<_, _>>();
-        // A package that only names other packages has nothing of its own to install.
+        // A package that only names other packages or ships `[models]` has no items by design.
         if items.is_empty()
-            && node.deps().next().is_none()
+            && !node.contributes_beyond_items()
             && !crate::provided::is_provided_source(node.source_name.as_ref())
         {
             diag.hold_warning(

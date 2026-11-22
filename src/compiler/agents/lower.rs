@@ -256,7 +256,7 @@ pub(crate) const AGY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::Unscoped,
+            deny: DenyCarry::Omission,
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,

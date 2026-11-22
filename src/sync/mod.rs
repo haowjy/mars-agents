@@ -224,7 +224,7 @@ pub(crate) fn execute_validation(
 ) -> Result<SyncReport, MarsError> {
     validate_request(request)?;
     debug_assert!(request.options.dry_run);
-    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode);
+    let mut diag = DiagnosticCollector::with_lossiness_mode(request.lossiness_mode).listing_held();
     let ir = crate::reader::read(ctx, request, &mut diag, false)?;
     crate::compiler::compile_reporting(ctx, ir, request, &mut diag)
 }

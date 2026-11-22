@@ -223,6 +223,13 @@ impl ProjectedRule {
         self.covered_by = Some(by);
     }
 
+    /// The stricter rule that wins at least one native name this rule makes available.
+    pub fn overridden_by(&self) -> Option<&CoveredBy> {
+        self.bindings
+            .iter()
+            .find_map(|binding| binding.beaten_by.as_ref())
+    }
+
     /// Why Mars could not name this rule on the harness, when it could not.
     pub fn gap(&self) -> Option<&'static str> {
         self.status.and_then(NativeStatus::note)

@@ -480,7 +480,7 @@ frontmatter keys it does not know.
 it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: an agent whose
 `tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
 `tools` says. `tools` is an allowlist, so a deny of a whole tool (`edit: deny`) is carried by leaving
-that tool's names out of the list. `agy` has no deny list and its shell takes no pattern, so a scoped
+that tool's names out of the list. Two capabilities that share a native name (`write` and `edit` both name `write_to_file`) resolve as everywhere else, the deny wins: `write: allow` beside `edit: deny` leaves `write_to_file` out, and sync reports the allow as lost. `agy` has no deny list and its shell takes no pattern, so a scoped
 deny (`bash(rm *)`), an `ask` and an MCP deny stay out of the file and sync reports each as a lost restriction, and so
 is an allow the file cannot name or scope (`bash(npx test *)`, which would otherwise need the whole shell): the agent
 has less than the profile grants. Nothing enforces what is lost in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
@@ -664,7 +664,7 @@ These are non-fatal warnings. The sync continues and the native artifact is stil
 |---|---|
 | `tool-rule-covered` | each allow or ask a stricter rule covers, so it never applies, one line per rule and covering rule naming its agents (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)) |
 
-`mars validate` does not show lossiness warnings, and `mars validate --strict` turns the warnings it does show into errors; an unknown field (`field.unknown`) is an `Info` and stays one. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
+`mars validate` shows no lossy-field summary, but it lists every loss a package declares that never reaches a file (a retired key, a dependency's skipped hook) each time it runs, as it writes nothing for a sync to make news; and `mars validate --strict` turns the warnings it does show into errors; an unknown field (`field.unknown`) is an `Info` and stays one. Lossiness appears in `mars sync`, `mars upgrade`, `mars add`, `mars check`, `mars init` and `mars build plugin`.
 
 ## Lossiness Matrix
 

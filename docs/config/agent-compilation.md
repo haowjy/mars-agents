@@ -486,7 +486,7 @@ can spell writes no `tools` key and is reported.
 
 **Scoped denies and asks on `agy`.** `agy --settings` takes `permissions.deny` and `permissions.ask` for one
 launch, so the launch bundle (`mars build launch-bundle --harness agy`) carries a scoped rule there as
-`native_status: known`, `native` the permission string and `note` what `agy` does not catch. `agy`
+`native_permission`, a list of permission strings, with a `note` saying what `agy` does not catch. `native`, `native_tools` and `native_status` keep their meaning (tool names and whether Mars knows them), so a scoped rule on `agy` still reads `native_status: unknown`. Every other entry omits `native_permission`. `agy`
 blocks only these forms (`agy_permission::translate`); every other rule stays `unknown` with its reason
 appended to the `note`, and an allow is never carried, because `--settings` replaces the user's allow list.
 

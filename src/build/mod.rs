@@ -272,31 +272,19 @@ pub(crate) fn resolve_bundle_tools(
         .rules()
         .iter()
         .map(|(rule, projected)| {
-            // A permission string is not a tool name: it goes to this rule's entry only, never
-            // to `project()` (and so never to the agent file's `tools:` or the flat lists).
-            if harness == HarnessId::Agy
-                && let Some(carried) = agy_permission::carried(rule, projected)
-            {
-                return ToolRuleSpec {
-                    rule: (*rule).clone(),
-                    native: carried.permissions,
-                    native_tools: Vec::new(),
-                    native_status: Some("known"),
-                    note: Some(carried.note),
-                    covered_by: None,
-                };
-            }
             let native = projected.native();
             let not_carried = (harness == HarnessId::Agy)
                 .then(|| agy_permission::not_carried(rule, projected))
                 .flatten()
                 .map(|reason| format!("not applied by `meridian agy`: {reason}"));
-            ToolRuleSpec {
-                rule: (*rule).clone(),
-                native,
-                native_tools: projected.native_tools(),
-                native_status: projected.status.map(bundle_native_status),
-                note: projected
+            // A carried rule's permission strings go to its own `native_permission`, never to
+            // `native` (tool names) or `project()` (the agent file's `tools:`, the flat lists).
+            let carried = (harness == HarnessId::Agy)
+                .then(|| agy_permission::carried(rule, projected))
+                .flatten();
+            let note = match &carried {
+                Some(carried) => Some(carried.note.clone()),
+                None => projected
                     .covered_by
                     .as_ref()
                     .map(|by| format!("never applies: `{by}` covers it"))
@@ -304,6 +292,14 @@ pub(crate) fn resolve_bundle_tools(
                     .into_iter()
                     .chain(not_carried)
                     .reduce(|note, reason| format!("{note}; {reason}")),
+            };
+            ToolRuleSpec {
+                rule: (*rule).clone(),
+                native,
+                native_tools: projected.native_tools(),
+                native_status: projected.status.map(bundle_native_status),
+                native_permission: carried.map(|carried| carried.permissions),
+                note,
                 covered_by: projected.covered_by.clone(),
             }
         })

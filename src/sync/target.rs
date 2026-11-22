@@ -688,7 +688,7 @@ pub(crate) fn build_with_collisions_and_diag(
         if let Some(existing) = items.get(&target_item.dest_path) {
             return Err(MarsError::Collision {
                 item: format!(
-                    "{} `{}` at `{}` after auto-rename",
+                    "{} `{}` at `{}` after auto-rename, which writes a `/` in a dependency name as `-` (name one of the two dependencies differently in mars.toml)",
                     target_item.id.kind, target_item.id.name, target_item.dest_path
                 ),
                 source_a: existing.source_name.to_string(),

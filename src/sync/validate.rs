@@ -9,7 +9,6 @@ use std::path::Path;
 use crate::diagnostic::DiagnosticCollector;
 use crate::diagnostic::Owner;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
-use crate::lock::RecordRef;
 use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
@@ -114,22 +113,14 @@ pub(crate) fn warn_config_dangles_after_rename(
         .map(|item| (item.id.kind, item.id.name.to_string()))
         .collect();
 
-    // The warning is news when a sync installs one of the renamed items; the config it names
-    // does not change the lock.
-    let check = |name: &str, kind: ItemKind, location: String, diag: &mut DiagnosticCollector| {
+    let check = |name: &str, kind: ItemKind, location: &str, diag: &mut DiagnosticCollector| {
         let Some(new_names) = renamed.get(&(kind, name.to_string())) else {
             return;
         };
         if installed.contains(&(kind, name.to_string())) {
             return;
         }
-        diag.hold_warning(
-            RecordRef::Any(
-                new_names
-                    .iter()
-                    .map(|new| RecordRef::Item(format!("{kind}/{new}")))
-                    .collect(),
-            ),
+        diag.warn_advisory(
             "config-rename-dangle",
             format!(
                 "`{name}` in {location} no longer matches an installed {kind} after rename (now: {}); update the config",
@@ -142,50 +133,16 @@ pub(crate) fn warn_config_dangles_after_rename(
         check(
             name,
             ItemKind::Agent,
-            "[settings.meridian.fanout].agents".to_owned(),
+            "[settings.meridian.fanout].agents",
             diag,
         );
     }
     for name in loaded.effective.agents.keys() {
-        let files = overlay_files(loaded, |agents, _| agents.contains_key(name));
-        check(
-            name,
-            ItemKind::Agent,
-            format!("the [agents.<name>] overlay in {files}"),
-            diag,
-        );
+        check(name, ItemKind::Agent, "[agents.<name>] overlay", diag);
     }
     for name in loaded.effective.skills.keys() {
-        let files = overlay_files(loaded, |_, skills| skills.contains_key(name));
-        check(
-            name,
-            ItemKind::Skill,
-            format!("the [skills.<name>] overlay in {files}"),
-            diag,
-        );
+        check(name, ItemKind::Skill, "[skills.<name>] overlay", diag);
     }
-}
-
-/// The config files that hold an overlay, since the effective config merges the project's
-/// `mars.toml`, `mars.local.toml` and the user config.
-fn overlay_files(
-    loaded: &LoadedConfig,
-    holds: impl Fn(
-        &indexmap::IndexMap<String, crate::config::AgentOverlay>,
-        &indexmap::IndexMap<String, crate::config::SkillOverlay>,
-    ) -> bool,
-) -> String {
-    let mut files = Vec::new();
-    if holds(&loaded.config.agents, &loaded.config.skills) {
-        files.push("mars.toml".to_owned());
-    }
-    if holds(&loaded.local.agents, &loaded.local.skills) {
-        files.push("mars.local.toml".to_owned());
-    }
-    if holds(&loaded.user.local.agents, &loaded.user.local.skills) {
-        files.push(loaded.user.path.display().to_string());
-    }
-    files.join(", ")
 }
 
 /// Report the body links of every installed skill that stop resolving once the skills are

@@ -7,6 +7,16 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.2] - 2026-11-22
+
+### Fixed
+- `mars build plugin` and `mars version` rebuild a plugin that Mars 0.36.0 or 0.37 wrote. They refused it with `plugin sentinel records unsupported generated root file '.cursor-plugin/marketplace.json'`, because Mars 0.38.0 retired Cursor. The rebuild now removes the Cursor tree and `.cursor-plugin/marketplace.json` that the sentinel recorded, when Mars wrote them and nobody edited them since. A retired file edited by hand is kept.
+- `mars sync` now warns when a package declares something Mars installs less of: a skill's own `hooks` or `disallowed-tools` on a target that has no equivalent, skill text past agy's 24,000-byte body limit, a dependency that installs no items (including a `--subpath` that names an `agents/` folder), and Claude plugin `commands` written as `{name: {source}}`. Each warning appears once, with the sync that installs the item. A package that ships only `[models]` aliases is not warned about.
+- `disable-model-invocation: true` becomes `model-invocable: false` in every foreign skill, not only in Claude-shaped packages. A retired key in a dependency is a warning, not an info line, and a path dependency's shows on the first `mars add`.
+- agy agents carry a whole-tool deny such as `edit: deny` by leaving the tool out of `tools:`. An allow agy can't write (`bash(npx test *)`), or one a deny on the same agy tool overrides (`write: allow` beside `edit: deny`, both `write_to_file`), is reported as lost.
+- A loss in a dependency whose package name differs from its source name was never shown by `mars sync`.
+- `mars validate` lists every held loss each time it runs. The rule: a command that writes no lock (`validate`, `check`, `init`, `build plugin`, `--verbose`) prints every held warning; a sync prints one only when its lock change makes it news.
+
 ## [0.39.1] - 2026-11-22
 
 ### Fixed

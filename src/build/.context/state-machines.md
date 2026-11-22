@@ -109,20 +109,25 @@ An instance of [an ownership record](../../../.context/state-machines/ownership-
 - `plan` decides writes, deletes and directory deletes, and refuses before anything is written if
   `allows_write` or `allows_delete` say no. `apply` writes with `atomic_write_if_changed`, then
   deletes, then removes empty catalog directories, rechecking ownership each time because the tree
-  swap already happened.
+  swap already happened. A recorded directory that no root file of this build lands in is retired:
+  it stays in `root_directories` while it exists, so a kill before its removal is retried, and is
+  removed only when empty.
 - **A kill between the tree swap and the root-file write leaves `previous_build` bytes** at a path
   the new marker already lists in `root_files`. `root_files_previous` makes the next build treat
   those bytes as its own instead of a hand edit. Only paths whose bytes really change are recorded
   there, which lets a retired path stop being claimed once its bytes move on.
-- `root_files_previous` is cleared by rewriting the marker once the root files are written; if
-  that is skipped, the next no-change build rewrites the marker.
+- `root_files_previous` and the retired directories are cleared by rewriting the marker once the
+  root files are written (`StagedPlugin::clear_recovery_records`), so one build leaves the stable
+  marker; if that is skipped, the next build rewrites it.
 - Only hashes persist, never the intended content. `--out` builds record nothing and touch no root
   file.
 - **Wrong edits**: writing root files before the tree swap (a kill leaves new root files pointing
   at an old tree); recording every write in `root_files_previous` instead of only replaced ones
   (a byte-identical rebuild becomes "previous", and a later build can delete a file it should
   keep); letting `allows_write` accept a hash that is neither the desired one nor a recorded one
-  (a user edit is overwritten).
+  (a user edit is overwritten); leaving a retired directory recorded after the build that removes
+  it (the next build writes a different marker, and a hook that rebuilds and compares refuses the
+  commit).
 - The ownership decision is made in three places that each reread the file and compare:
   `allows_write`, `allows_delete` and `Plan`'s loop.
 
@@ -136,7 +141,7 @@ stateDiagram-v2
   [*] --> staged
   staged --> tree_published: rename swap, sentinel attached
   tree_published --> roots_written: root files written or deleted
-  roots_written --> settled: root_files_previous cleared
+  roots_written --> settled: recovery records cleared
   staged --> abandoned: publish or staging error, .mars-new removed
   tree_published --> resumable: killed before root files
   resumable --> roots_written: next build reads previous_build and writes

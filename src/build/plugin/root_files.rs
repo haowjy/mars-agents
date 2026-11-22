@@ -156,7 +156,7 @@ pub(super) fn plan(
     }
     // A recorded directory no root file lands in any more is retired. It stays
     // in this sentinel while it exists, so a publication that dies before the
-    // removal is retried; `retire_directories` drops the record once it ran.
+    // removal is retried; `StagedPlugin::clear_recovery_records` drops the record once it ran.
     let mut directory_deletes = BTreeSet::new();
     for directory in &state.root_directories {
         if !writes

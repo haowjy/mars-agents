@@ -9,7 +9,6 @@ metadata:
   type: reference
   version: '1.4'
 x-custom: kept
-model-invocable: false
 harness-overrides:
   claude:
     allowed-tools: Bash(git status *) Bash(git add *) Read
@@ -18,5 +17,6 @@ harness-overrides:
     model: sonnet
     hooks:
       PreToolUse: []
+model-invocable: false
 ---
 Use ${CLAUDE_SKILL_DIR}/scripts/go.sh.

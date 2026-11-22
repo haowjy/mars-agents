@@ -5,7 +5,8 @@
 //! `drain` calls [`render`] once. Nothing else turns a loss into a line.
 //!
 //! **A lost restriction that changes what an agent can do is shown by default. Every other lost
-//! field is available under `--verbose`. Nothing is dropped without a record.** `Dropped` is the
+//! field is available under `--verbose`. Nothing is dropped without a record.** A skill's text
+//! the target does not load is a loss of the same standing (`Lost::Body`). `Dropped` is the
 //! one class that prints by default, as one line for the project ([`Lost`] names the kind), and
 //! only for items whose native file the run wrote or changed: a sync that leaves the file as it
 //! was has no news (`LossinessMode::Written`; `--verbose` and `mars check` cover every item). A site
@@ -60,6 +61,11 @@ pub enum Lost {
     /// A skill's `model-invocable: false` that the target cannot express, so the model can
     /// still pick the skill.
     Invocation,
+    /// A Claude skill's own `hooks`, which run only while that skill is active. No other harness
+    /// has a hook scoped to a skill, and installing them as project hooks would run them always.
+    Hooks,
+    /// Skill text the target does not load: it reads only the first bytes of a body.
+    Body,
 }
 
 impl Lost {
@@ -71,6 +77,8 @@ impl Lost {
             Lost::Network => "network",
             Lost::Policy => "permission",
             Lost::Invocation => "invocation",
+            Lost::Hooks => "skill hooks",
+            Lost::Body => "text past the body limit",
         }
     }
 }
@@ -396,9 +404,9 @@ fn render_dropped_rollup(records: &[&LossRecord], rerun: &str, out: &mut Vec<Dia
         subjects.push(format!("project setting{plural} {}", name_list(&settings)));
     }
     let verb = if agents.len() + skills.len() + settings.len() == 1 {
-        "loses"
+        "loses what it declares"
     } else {
-        "lose"
+        "lose what they declare"
     };
     let kinds: Vec<String> = kinds.iter().map(|k| k.name().to_string()).collect();
     let targets: Vec<String> = targets
@@ -409,7 +417,7 @@ fn render_dropped_rollup(records: &[&LossRecord], rerun: &str, out: &mut Vec<Dia
         DiagnosticLevel::Warning,
         "agent-restriction-dropped",
         format!(
-            "{} {verb} restrictions across {} ({}) that the target does not apply; run `{rerun}` for the rules per item and target",
+            "{} {verb} across {} ({}) that the target does not apply; run `{rerun}` for the rules per item and target",
             join_and(&subjects),
             join_and(&targets),
             kinds.join(", "),
@@ -512,7 +520,7 @@ mod tests {
         assert_eq!(surface[0].code, "agent-restriction-dropped");
         assert_eq!(
             surface[0].message,
-            "5 agents (`a`, `b`, `c` and 2 more) lose restrictions across .codex and .pi (shell) \
+            "5 agents (`a`, `b`, `c` and 2 more) lose what they declare across .codex and .pi (shell) \
              that the target does not apply; run `mars sync --verbose` for the rules per item and target"
         );
         let verbose = run(LossinessMode::Verbose, record);
@@ -550,7 +558,7 @@ mod tests {
         });
         assert_eq!(out.len(), 1);
         assert!(out[0].message.starts_with(
-            "2 agents (`a`, `b`) lose restrictions across .codex and .pi (shell, network, permission)"
+            "2 agents (`a`, `b`) lose what they declare across .codex and .pi (shell, network, permission)"
         ));
     }
 

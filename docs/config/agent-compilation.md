@@ -470,7 +470,7 @@ frontmatter keys it does not know.
 |---|---|---|
 | `name`, `description` | `name:`, `description:` | exact |
 | `mode` | not written: `agy` takes `mainAgent: false` to mean "not selectable by `--agent`" and runs the default agent instead, so Mars writes neither role key | meridian-only |
-| `tools` | `tools:` (see below) | exact for an allowlist and for no rules; denies and `ask` are dropped |
+| `tools` | `tools:` (see below) | exact for an allowlist, for no rules and for whole-tool denies; scoped denies and `ask` are dropped |
 | `model`, `effort` | not written: the model and effort come per session from `meridian agy -m`/`--effort` (or `agy --model` by hand), as one `--model` slug ([below](#agy-model-and-effort)) | meridian-only |
 | `skills` | a body line that names them (`agy` loads a skill by reading it) | approximate |
 | `approval`, `sandbox`, `network`, `model-policies` | not written | meridian-only |
@@ -479,9 +479,11 @@ frontmatter keys it does not know.
 `agy` has no wildcard (`*` and `all` fail the agent at its first prompt), so with no rules, or rules that only allow, it is every tool name Mars knows for `agy` (`tool_natives::every_tool`). With an allowlist (`"*": deny` plus allows)
 it is the native names of the allowed tools. Mars never writes `call_mcp_tool`: an agent whose
 `tools` lists it fails at its first prompt, and `agy` gives every agent every MCP server whatever
-`tools` says. `agy`'s agent file has no deny list and `*` minus a name cannot be
-written, so a `deny` or `ask` stays out of the file and sync reports it as a lost restriction:
-nothing enforces it in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
+`tools` says. `tools` is an allowlist, so a deny of a whole tool (`edit: deny`) is carried by leaving
+that tool's names out of the list. `agy` has no deny list and its shell takes no pattern, so a scoped
+deny (`bash(rm *)`), an `ask` and an MCP deny stay out of the file and sync reports each as a lost restriction, and so
+is an allow the file cannot name or scope (`bash(npx test *)`, which would otherwise need the whole shell): the agent
+has less than the profile grants. Nothing enforces what is lost in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
 
 #### `agy` model and effort
@@ -609,7 +611,7 @@ pick the skill by itself) is in the same line, whether the skill is yours or a d
 installed file does less than the package says.
 
 ```
-warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose restrictions across .codex, .opencode and .pi (shell, tool) that the target does not apply; run `mars sync --verbose` for the rules per item and target
+warning: 17 agents (`architect`, `browser`, `coder` and 14 more) lose what they declare across .codex, .opencode and .pi (shell, tool) that the target does not apply; run `mars sync --verbose` for the rules per item and target
 ```
 
 The command in the line is the one you ran: `mars check --verbose` for `check` and `init`,
@@ -624,6 +626,8 @@ What counts:
 | MCP | an MCP `ask`, or a deny the target does not write |
 | project tool rule | a `[settings.tools]` deny the target's agent files cannot carry (see [Project-wide tool rules](mars-toml.md#project-wide-tool-rules)), listed as a `project setting` named `tools.<key>` and counted once per target however many agents lose it; its kind is shell, tool or MCP by the rule |
 | network | `network: deny`, `allowlist`, `network-allow`, `network-deny` on Codex, whose file carries no network setting; the project's `default_network` (anything but `allow`), `network-allow` and `network-deny` in `[settings]` once a Codex agent is written, listed as `project setting` |
+| skill hooks | a skill's own `hooks`, which Claude runs only while the skill is active; no other target has a hook scoped to a skill |
+| text past the body limit | a skill body longer than the target loads: Antigravity reads the first 24,000 bytes |
 | permission | a `harness-overrides.<harness>` key that carries permissions and Mars discards: `tools`, `disallowed-tools`, `permission`, `permissions`, `permission-mode`, `sandbox_mode`, `approval_policy`; a scalar OpenCode `permission` |
 
 The kind of a rule follows the rule, not the target: a `bash: ask` is a shell loss on Claude as on

@@ -113,7 +113,7 @@ pub(super) fn losses(
             ToolAction::Ask => lose(rule, label(), target, &mut lost, &mut project),
             // The allowlist's default denies this tool, which the profile allows.
             ToolAction::Allow
-                if carries.allowlist == Allowlist::Any
+                if carries.allowlist != Allowlist::Nothing
                     && tools.is_allowlist()
                     && projected.gap().is_some() =>
             {

@@ -236,5 +236,5 @@ pub(crate) fn diagnostic(
         format!(
             "`{name}` is a key Mars no longer reads, so what it set has no effect: {DOCS}/retired-keys.md#{anchor}"
         ),
-    ))
+    ).losing())
 }

@@ -130,9 +130,13 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LossinessMode {
-    /// Suppress lossiness warnings (validate, export, repair, …).
+    /// Suppress lossiness warnings (export, repair, …).
     #[default]
     Hidden,
+    /// `mars validate`: the lossy fields stay hidden, but every held loss (a restriction a
+    /// package declares that never reaches a file) prints each time, as a command that writes
+    /// nothing has no sync to make it news.
+    Listed,
     /// A sync's default: one line for the project covering the restrictions lost by the items
     /// whose native file this run wrote or changed (`Lossiness::Dropped`). A loss repeated on
     /// every no-change sync is not news.
@@ -146,7 +150,7 @@ pub enum LossinessMode {
 
 impl LossinessMode {
     pub fn surfaces_lossiness(self) -> bool {
-        self != LossinessMode::Hidden
+        !matches!(self, LossinessMode::Hidden | LossinessMode::Listed)
     }
 
     /// Whether every lossy field prints per item, not only the project line for dropped ones.
@@ -426,7 +430,9 @@ impl DiagnosticCollector {
     pub(crate) fn hold(&mut self, record: RecordRef, diagnostic: Diagnostic) {
         match self.lossiness_mode {
             LossinessMode::Written | LossinessMode::Hidden => self.held.push((record, diagnostic)),
-            LossinessMode::Surface | LossinessMode::Verbose => self.diagnostics.push(diagnostic),
+            LossinessMode::Surface | LossinessMode::Verbose | LossinessMode::Listed => {
+                self.diagnostics.push(diagnostic)
+            }
         }
     }
 

@@ -130,6 +130,30 @@ fn record_model_invocation_loss(
     }
 }
 
+/// A Claude skill's own keys that restrict or guard, which no other harness's skill file has a
+/// place for (`harness-overrides.claude` is written to `.claude/` only).
+fn record_claude_only_losses(
+    lossy_fields: &mut Vec<LossyField>,
+    profile: &SkillProfile,
+    target_name: &str,
+) {
+    let Some(block) = profile.harness_overrides.get(&HarnessId::Claude) else {
+        return;
+    };
+    for key in block.keys() {
+        let lost = match key.as_str() {
+            "hooks" => Lost::Hooks,
+            "disallowed-tools" | "disallowedTools" => Lost::Tool,
+            _ => continue,
+        };
+        lossy_fields.push(LossyField {
+            field: format!("harness-overrides.claude.{key}"),
+            target: target_name.to_string(),
+            classification: Lossiness::Dropped(lost),
+        });
+    }
+}
+
 fn codex_openai_yaml_sibling() -> LoweredSibling {
     #[derive(serde::Serialize)]
     struct Policy {
@@ -190,6 +214,19 @@ pub fn lower_skill_for_harness(
         skill::LOWERED_KEYS,
         &mut lossy_fields,
     );
+
+    if harness != HarnessId::Claude {
+        record_claude_only_losses(&mut lossy_fields, profile, target_name);
+    }
+    if let Some(limit) = lowering(harness).skill_body_limit
+        && body.len() > limit
+    {
+        lossy_fields.push(LossyField {
+            field: format!("body past {limit} bytes"),
+            target: target_name.to_string(),
+            classification: Lossiness::Dropped(Lost::Body),
+        });
+    }
 
     LoweredOutput {
         bytes: render(yaml, body),

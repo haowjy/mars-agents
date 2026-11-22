@@ -22,7 +22,8 @@
       "path": [
         "allow_implicit_invocation"
       ],
-      "message": "`allow_implicit_invocation` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-invocation"
+      "message": "`allow_implicit_invocation` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#skill-invocation",
+      "lost": true
     },
     {
       "code": "field.required",

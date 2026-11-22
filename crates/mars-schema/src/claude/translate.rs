@@ -115,7 +115,10 @@ fn remove_keys(
 /// Claude's `disable-model-invocation: true` is `model-invocable: false`. An existing
 /// `model-invocable: false` stays; beside `model-invocable: true` the restricting value wins, with
 /// a note.
-fn fold_disable_model_invocation(fm: &mut Frontmatter, notes: &mut Vec<SchemaDiagnostic>) -> bool {
+pub(crate) fn fold_disable_model_invocation(
+    fm: &mut Frontmatter,
+    notes: &mut Vec<SchemaDiagnostic>,
+) -> bool {
     let Some(disable) = fm.remove("disable-model-invocation") else {
         return false;
     };
@@ -164,8 +167,6 @@ fn lift_skill(
             "refers to `${CLAUDE_PLUGIN_ROOT}` or `${CLAUDE_SKILL_DIR}`, which are left as written and do not resolve outside Claude Code".into(),
         );
     }
-
-    changed |= fold_disable_model_invocation(fm, changes);
 
     // `type` and a top-level `version` live under `metadata`, which already holds string pairs.
     if matches!(fm.get("metadata"), None | Some(Value::Mapping(_))) {

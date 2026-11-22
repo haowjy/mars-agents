@@ -257,7 +257,7 @@ pub(crate) fn report_dependency(
     // does not name came in through another package, which is git.
     let subject = match dependency.map(|entry| &entry.spec) {
         Some(crate::config::SourceSpec::Path(_)) => Subject::Package(package_name),
-        _ => Subject::Dependency(package_name, version, upgrading),
+        _ => Subject::Dependency(package_name, source_name.as_str(), version, upgrading),
     };
     report_diagnostics(
         prepared,
@@ -363,9 +363,10 @@ pub(crate) fn prepare_project(
 
 pub(crate) enum Subject<'a> {
     Package(&'a str),
-    /// A git package a consumer depends on, at the version the sync resolved. The flag is set
-    /// when the command is `mars upgrade` for this package, which has already tried to move it.
-    Dependency(&'a str, Option<&'a semver::Version>, bool),
+    /// A git package a consumer depends on: its name, the source name the lock records its items
+    /// under, and the version the sync resolved. The flag is set when the command is `mars
+    /// upgrade` for this package, which has already tried to move it.
+    Dependency(&'a str, &'a str, Option<&'a semver::Version>, bool),
     AuthoredSource,
 }
 
@@ -398,7 +399,7 @@ fn report_files(
     diag: &mut DiagnosticCollector,
 ) {
     let owner = match subject {
-        Subject::Dependency(name, ..) => Owner::Dependency(name),
+        Subject::Dependency(_, source, ..) => Owner::Dependency(source),
         Subject::Package(_) | Subject::AuthoredSource => Owner::Own,
     };
     for (relative, diagnostics) in prepared.all_diagnostics() {
@@ -407,7 +408,7 @@ fn report_files(
             match subject {
                 // The consumer cannot edit the package, so the schema's wording for its author
                 // is no use to them.
-                Subject::Dependency(name, version, upgrading)
+                Subject::Dependency(name, _, version, upgrading)
                     if diagnostic.code == "manifest.schema-missing" =>
                 {
                     let mut for_consumer = diagnostic.clone();

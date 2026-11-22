@@ -189,10 +189,6 @@
                   "kept"
                 ],
                 [
-                  "model-invocable",
-                  false
-                ],
-                [
                   "harness-overrides",
                   {
                     "claude": {
@@ -205,6 +201,10 @@
                       }
                     }
                   }
+                ],
+                [
+                  "model-invocable",
+                  false
                 ]
               ],
               "fields": {

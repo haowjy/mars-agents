@@ -6,7 +6,7 @@ pub mod prompt;
 
 use std::path::PathBuf;
 
-use crate::compiler::agents::opencode_permission;
+use crate::compiler::agents::{agy_permission, opencode_permission};
 use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use mars_schema::HarnessId;
@@ -272,7 +272,25 @@ pub(crate) fn resolve_bundle_tools(
         .rules()
         .iter()
         .map(|(rule, projected)| {
+            // A permission string is not a tool name: it goes to this rule's entry only, never
+            // to `project()` (and so never to the agent file's `tools:` or the flat lists).
+            if harness == HarnessId::Agy
+                && let Some(carried) = agy_permission::carried(rule, projected)
+            {
+                return ToolRuleSpec {
+                    rule: (*rule).clone(),
+                    native: carried.permissions,
+                    native_tools: Vec::new(),
+                    native_status: Some("known"),
+                    note: Some(carried.note),
+                    covered_by: None,
+                };
+            }
             let native = projected.native();
+            let not_carried = (harness == HarnessId::Agy)
+                .then(|| agy_permission::not_carried(rule, projected))
+                .flatten()
+                .map(|reason| format!("not applied by `meridian agy`: {reason}"));
             ToolRuleSpec {
                 rule: (*rule).clone(),
                 native,
@@ -282,7 +300,10 @@ pub(crate) fn resolve_bundle_tools(
                     .covered_by
                     .as_ref()
                     .map(|by| format!("never applies: `{by}` covers it"))
-                    .or_else(|| projected.note().map(str::to_string)),
+                    .or_else(|| projected.note().map(str::to_string))
+                    .into_iter()
+                    .chain(not_carried)
+                    .reduce(|note, reason| format!("{note}; {reason}")),
                 covered_by: projected.covered_by.clone(),
             }
         })

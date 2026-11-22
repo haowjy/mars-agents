@@ -193,6 +193,7 @@ pub(crate) const CLAUDE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy 
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
+            launch_rules: false,
             mcp_remainder: None,
         }),
         AgentLossinessStep::MeridianOnlyFields,
@@ -214,6 +215,7 @@ pub(crate) const OPENCODE_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolic
             ask: true,
             allowlist: Allowlist::Any,
             writes_covered: false,
+            launch_rules: false,
             mcp_remainder: Some(Lossiness::Approximate {
                 note: "MCP grants on subprocess errors; streaming uses session payload",
             }),
@@ -239,6 +241,7 @@ pub(crate) const PI_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
             ask: false,
             allowlist: Allowlist::Nothing,
             writes_covered: false,
+            launch_rules: false,
             mcp_remainder: Some(Lossiness::Quiet {
                 why: "an MCP grant restricts nothing",
             }),
@@ -260,6 +263,7 @@ pub(crate) const AGY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
+            launch_rules: true,
             mcp_remainder: Some(Lossiness::Quiet {
                 why: "agy gives every agent every MCP server, so an MCP grant restricts nothing",
             }),
@@ -816,6 +820,7 @@ fn lower_to_codex(profile: &AgentProfile, body: &str, model_field: &NativeModel)
             ask: false,
             allowlist: Allowlist::Nothing,
             writes_covered: eff.sandbox() == Some(&mars_schema::agent::SandboxMode::ReadOnly),
+            launch_rules: false,
             mcp_remainder: Some(Lossiness::Approximate {
                 note: "Codex per-tool MCP gating lives in server config, not the tool list",
             }),

@@ -484,6 +484,27 @@ written, so a `deny` or `ask` stays out of the file and sync reports it as a los
 nothing enforces it in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
 
+**Scoped denies and asks on `agy`.** `agy --settings` takes `permissions.deny` and `permissions.ask` for one
+launch, so the launch bundle (`mars build launch-bundle --harness agy`) carries a scoped rule there as
+`native_status: known`, `native` the permission string and `note` what `agy` does not catch. `agy`
+blocks only these forms (`agy_permission::translate`); every other rule stays `unknown` with its reason
+appended to the `note`, and an allow is never carried, because `--settings` replaces the user's allow list.
+
+| Rule | `agy` permission |
+|---|---|
+| `bash(<words>)`, `bash(<words> *)`, `bash(<words>:*)`, plain words only (letters, digits, `_ . / = @ + , -`, single spaces) | `command(<words>)`, a whole-word prefix |
+| `write(<path>)`, `edit(<path>)` | `write_file(<path>)` |
+| `read(<path>)` | `read_file(<path>)` |
+| `skill(<name>)`, deny only | `read_file(.agy/skills/<name>)` and `read_file(.agents/skills/<name>)` |
+| `mcp(<server>/<tool>)` | itself |
+| `mcp(<server>)`, `mcp(<server>/*)` | `mcp(<server>/*)` |
+
+A file path is relative, with no `..`, `~` or glob; `dir/*` and `dir/**` mean the directory and
+everything under it. A permission string never reaches the agent file's `tools:` or the bundle's
+`allowed` and `disallowed` lists: one unknown name in `tools:` fails the agent at its first prompt.
+The agent file still lacks these rules, so sync reports each one as lost, marked "enforced only when
+launched by `meridian agy`": `agy --agent <name>` run by hand reads only the file.
+
 #### `agy` model and effort
 
 `agy --model <slug>` takes the model and its effort as one value, and `agy --model <tiered slug>

@@ -4,6 +4,7 @@
 //! [`Carries`] says what its file can write. [`losses`] joins them, so no target guesses a kind
 //! from a lowered field.
 
+use crate::compiler::agents::agy_permission;
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost, ProjectLoss};
 use mars_schema::HarnessId;
 use mars_schema::tool_names::Capability;
@@ -41,6 +42,9 @@ pub(super) struct Carries {
     pub allowlist: Allowlist,
     /// A deny of file writes is quiet: the file's read-only sandbox already blocks them.
     pub writes_covered: bool,
+    /// `meridian` applies a scoped deny or ask from the launch bundle where the file cannot
+    /// hold it (agy's `--settings`), so such a rule is lost from the file but not from a launch.
+    pub launch_rules: bool,
     /// How an MCP rule that loses nothing is classed; `None` records nothing for it.
     pub mcp_remainder: Option<Lossiness>,
 }
@@ -88,7 +92,15 @@ pub(super) fn losses(
         let gap = projected
             .gap()
             .filter(|_| carries.deny != DenyCarry::Nothing);
+        let launch_only =
+            carries.launch_rules && agy_permission::carried(rule, projected).is_some();
         let label = || match gap {
+            _ if launch_only => format!(
+                "{} {} ({})",
+                rule.action.as_str(),
+                rule.render(),
+                agy_permission::LAUNCH_ONLY
+            ),
             Some(note) => format!("{} {} ({note})", rule.action.as_str(), rule.render()),
             None => format!("{} {}", rule.action.as_str(), rule.render()),
         };

@@ -222,6 +222,12 @@ pub fn lift_frontmatter(
         Dialect::Cursor => lift_cursor(kind, &mut lifted),
         Dialect::OpenCode => lift_opencode(kind, &mut lifted, &mut changes),
     };
+    // Every foreign skill dialect that writes the key (Claude, Cursor) means the same thing by
+    // it, and no other dialect has a better use for it than the translation.
+    if dialect != Dialect::MarsNative && kind == DefinitionKind::Skill {
+        changed |=
+            crate::claude::translate::fold_disable_model_invocation(&mut lifted, &mut changes);
+    }
     // Whatever the dialect's rules left that the strict reader rejects is set aside, never left
     // to fail a package its consumer cannot edit.
     if dialect != Dialect::MarsNative {
@@ -255,7 +261,6 @@ fn lift_codex(kind: DefinitionKind, fm: &mut Frontmatter) -> bool {
             changed |= strip_foreign_keys(
                 fm,
                 &[
-                    "disable-model-invocation",
                     "allow_implicit_invocation",
                     "invocation",
                     "model-invocable",

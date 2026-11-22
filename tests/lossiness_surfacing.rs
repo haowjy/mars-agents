@@ -260,12 +260,12 @@ fn sync_tools_agent_in_project(tools_yaml: &str, extra_toml: &str) -> (String, S
 #[test]
 fn scoped_bash_allow_is_not_a_lost_restriction() {
     let (quiet, verbose) = sync_tools_agent("  \"bash(rg *)\": allow\n");
-    assert!(!quiet.contains("loses restrictions"), "{quiet}");
+    assert!(!quiet.contains("loses what it declares"), "{quiet}");
     assert!(!verbose.contains("only this"), "{verbose}");
 
     let (quiet, _) = sync_tools_agent("  \"bash(rg *)\": allow\n  bash: deny\n");
     assert!(
-        quiet.contains("loses restrictions") && quiet.contains(".codex"),
+        quiet.contains("loses what it declares") && quiet.contains(".codex"),
         "{quiet}"
     );
 }

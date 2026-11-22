@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,12 +86,20 @@ impl StagedPlugin {
         }
     }
 
-    /// Retaining the recovery record after rewriting root files would change the next sentinel.
-    pub(super) fn clear_root_files_previous(&mut self) -> Result<(), MarsError> {
-        if self.sentinel.root_files_previous.is_empty() {
+    /// Retaining the recovery records after the root files are rewritten would
+    /// make the next build's sentinel differ from this one.
+    pub(super) fn clear_recovery_records(
+        &mut self,
+        retired_directories: &BTreeSet<String>,
+    ) -> Result<(), MarsError> {
+        let before = self.sentinel.clone();
+        self.sentinel.root_files_previous.clear();
+        self.sentinel
+            .root_directories
+            .retain(|directory| !retired_directories.contains(directory));
+        if self.sentinel == before {
             return Ok(());
         }
-        self.sentinel.root_files_previous.clear();
         write_sentinel(&self.paths.out, &self.sentinel)
     }
 }

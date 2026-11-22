@@ -60,12 +60,16 @@
                 [
                   "description",
                   "A skill."
+                ],
+                [
+                  "model-invocable",
+                  false
                 ]
               ],
               "fields": {
                 "name": "found",
                 "description": "A skill.",
-                "model-invocable": true,
+                "model-invocable": false,
                 "user-invocable": true,
                 "license": null,
                 "compatibility": null,

@@ -16,6 +16,8 @@ pub(crate) struct Lowering {
     pub skill: SkillKeys,
     /// Whether the harness does not load an agent that has no `description`.
     pub needs_description: bool,
+    /// The most bytes of a skill body the harness loads, if it stops reading.
+    pub skill_body_limit: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -31,6 +33,14 @@ impl AgentFormat {
         match self {
             Self::Markdown(_) => "md",
             Self::CodexToml => "toml",
+        }
+    }
+
+    /// Whether the file has a `model` field at all (Antigravity's has none).
+    pub(crate) fn has_model_field(self) -> bool {
+        match self {
+            Self::Markdown(policy) => policy.writes_model(),
+            Self::CodexToml => true,
         }
     }
 }
@@ -79,6 +89,7 @@ const CLAUDE: Lowering = Lowering {
         user_off: UserOff::Key("user-invocable", false),
     },
     needs_description: true,
+    skill_body_limit: None,
 };
 
 const CODEX: Lowering = Lowering {
@@ -88,6 +99,7 @@ const CODEX: Lowering = Lowering {
         user_off: UserOff::Lost,
     },
     needs_description: false,
+    skill_body_limit: None,
 };
 
 const PI: Lowering = Lowering {
@@ -97,6 +109,7 @@ const PI: Lowering = Lowering {
         user_off: UserOff::Lost,
     },
     needs_description: false,
+    skill_body_limit: None,
 };
 
 const OPENCODE: Lowering = Lowering {
@@ -106,6 +119,7 @@ const OPENCODE: Lowering = Lowering {
         user_off: UserOff::Lost,
     },
     needs_description: false,
+    skill_body_limit: None,
 };
 
 // `agy` hides the skill from the slash-command list and the model still uses it, which is what
@@ -117,4 +131,5 @@ const AGY: Lowering = Lowering {
         user_off: UserOff::Key("disable-slash-command", true),
     },
     needs_description: false,
+    skill_body_limit: Some(24_000),
 };

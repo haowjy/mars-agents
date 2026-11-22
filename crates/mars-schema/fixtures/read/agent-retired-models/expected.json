@@ -38,7 +38,8 @@
       "path": [
         "models"
       ],
-      "message": "`models` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-models"
+      "message": "`models` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-models",
+      "lost": true
     }
   ]
 }

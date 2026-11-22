@@ -20,6 +20,10 @@ pub(super) enum DenyCarry {
     /// Only a deny of a whole tool (Claude `disallowedTools`). A scoped entry there removes the
     /// whole tool, so a rule with a pattern is lost rather than written.
     Unscoped,
+    /// A whole-tool deny only by leaving the tool's names out of an allowlist (agy `tools`).
+    /// A native name two capabilities share goes to the deny, so an allow that loses a name
+    /// to one is lost too.
+    Omission,
 }
 
 /// How much of an allowlist (`'*': deny` plus allows) a target's file can write.
@@ -110,7 +114,7 @@ pub(super) fn losses(
                 let carried = projected.gap().is_none()
                     && match carries.deny {
                         DenyCarry::All => true,
-                        DenyCarry::Unscoped => rule.pattern.is_none(),
+                        DenyCarry::Unscoped | DenyCarry::Omission => rule.pattern.is_none(),
                         DenyCarry::Nothing => false,
                     };
                 if carried {
@@ -122,11 +126,22 @@ pub(super) fn losses(
                     lose(rule, label(), target, &mut lost, &mut project);
                 }
             }
+            ToolAction::Allow if carries.deny == DenyCarry::Omission => {
+                if let Some(by) = projected.overridden_by() {
+                    let label = format!(
+                        "allow {} (a stricter rule, {by}, controls the same native tool and wins)",
+                        rule.render()
+                    );
+                    lose(rule, label, target, &mut lost, &mut project);
+                } else if tools.is_allowlist() && projected.gap().is_some() {
+                    lose(rule, label(), target, &mut lost, &mut project);
+                }
+            }
             ToolAction::Ask if carries.ask && projected.gap().is_none() => {}
             ToolAction::Ask => lose(rule, label(), target, &mut lost, &mut project),
             // The allowlist's default denies this tool, which the profile allows.
             ToolAction::Allow
-                if carries.allowlist == Allowlist::Any
+                if carries.allowlist != Allowlist::Nothing
                     && tools.is_allowlist()
                     && projected.gap().is_some() =>
             {

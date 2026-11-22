@@ -966,7 +966,7 @@ path = "{}"
     assert!(opencode_native.contains("name: opencode-worker"));
     assert!(
         !opencode_native.contains("model:"),
-        "unresolved opencode model should be cleared in EmitAll mode: {opencode_native}"
+        "with no loaded catalog Mars writes no model, and OpenCode gets no bare token: {opencode_native}"
     );
     assert!(opencode_native.contains("# OpenCode body"));
     assert!(

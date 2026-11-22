@@ -44,7 +44,7 @@ pub(crate) fn classify_skill_ref(
         return None;
     }
     let (own_level, dependency) = match owner {
-        Owner::Own => (DiagnosticLevel::Warning, None),
+        Owner::Own | Owner::Path(_) => (DiagnosticLevel::Warning, None),
         Owner::Dependency(source) => (DiagnosticLevel::Info, Some(source)),
     };
     let whose = dependency.map_or(String::new(), |source| format!(" (from `{source}`)"));

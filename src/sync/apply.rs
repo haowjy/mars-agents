@@ -92,6 +92,10 @@ fn execute_action(root: &Path, action: &PlannedAction) -> Result<ActionOutcome, 
             let dest = removal_path(root, &locked.dest_path, locked.kind);
             if dest.exists() {
                 fs_ops::safe_remove(&dest)?;
+                crate::target_sync::removal::remove_emptied_parents(
+                    &dest,
+                    locked.dest_path.as_str(),
+                );
             }
 
             let item_id = ItemId {

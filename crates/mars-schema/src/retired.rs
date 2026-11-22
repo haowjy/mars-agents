@@ -70,6 +70,10 @@ pub struct RetiredTarget {
     /// Keys Mars wrote beside `hooks`; a file holding only these is empty and `mars unlink`
     /// deletes it.
     pub hook_file_keys: &'static [&'static str],
+    /// The marketplace file and its directory, from the package root, that a plugin build
+    /// generated. A sentinel an older Mars wrote still records them; a rebuild deletes them.
+    pub plugin_root_file: &'static str,
+    pub plugin_catalog_directory: &'static str,
 }
 
 pub const RETIRED_TARGETS: &[RetiredTarget] = &[RetiredTarget {
@@ -79,6 +83,8 @@ pub const RETIRED_TARGETS: &[RetiredTarget] = &[RetiredTarget {
     mcp_section: "mcpServers",
     hook_file: "hooks.json",
     hook_file_keys: &["version"],
+    plugin_root_file: ".cursor-plugin/marketplace.json",
+    plugin_catalog_directory: ".cursor-plugin",
 }];
 
 /// The retired target `name` (`cursor`, `.Cursor`) names, if any.
@@ -236,5 +242,5 @@ pub(crate) fn diagnostic(
         format!(
             "`{name}` is a key Mars no longer reads, so what it set has no effect: {DOCS}/retired-keys.md#{anchor}"
         ),
-    ))
+    ).losing())
 }

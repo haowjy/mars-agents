@@ -45,6 +45,10 @@ impl RootFilePlan {
         self.deletes.iter().map(PathBuf::from).collect()
     }
 
+    pub(super) fn retired_directories(&self) -> &BTreeSet<String> {
+        &self.directory_deletes
+    }
+
     pub(super) fn created_directories(&self) -> Vec<PathBuf> {
         self.created_directories.iter().map(PathBuf::from).collect()
     }
@@ -118,7 +122,6 @@ pub(super) fn plan(
     let state =
         inspect::inspect_output(&package_root, out_dir, &metadata.version, expected.clone())?;
     let mut deletes = BTreeSet::new();
-    let mut directory_deletes = BTreeSet::new();
     let mut ownership = BTreeMap::new();
 
     for root_file in &state.root_files {
@@ -133,11 +136,6 @@ pub(super) fn plan(
                 return Err(root_file_refusal(root_file, "delete"));
             }
             deletes.insert(key.clone());
-            if let Some(directory) = catalog_directory(&key)
-                && state.root_directories.contains(directory)
-            {
-                directory_deletes.insert(directory.to_string());
-            }
             ownership.insert(key, root_file.clone());
         }
     }
@@ -156,13 +154,19 @@ pub(super) fn plan(
             created_directories.insert(directory.to_string());
         }
     }
-    // A retire whose delete has not run yet (interrupted publication) keeps its
-    // owned directory recorded, so the retry can remove it once it is empty.
-    for path in &deletes {
-        if let Some(directory) = catalog_directory(path)
-            && state.root_directories.contains(directory)
+    // A recorded directory no root file lands in any more is retired. It stays
+    // in this sentinel while it exists, so a publication that dies before the
+    // removal is retried; `StagedPlugin::clear_recovery_records` drops the record once it ran.
+    let mut directory_deletes = BTreeSet::new();
+    for directory in &state.root_directories {
+        if !writes
+            .keys()
+            .any(|path| catalog_directory(path) == Some(directory.as_str()))
         {
-            root_directories.insert(directory.to_string());
+            if path_exists(&package_root.join(directory))? {
+                root_directories.insert(directory.clone());
+            }
+            directory_deletes.insert(directory.clone());
         }
     }
 
@@ -281,7 +285,7 @@ fn remove_empty_catalog_directory(package_root: &Path, relative: &str) -> Result
 }
 
 fn catalog_directory(path: &str) -> Option<&'static str> {
-    spec::tree_for_root_file(Path::new(path)).and_then(|tree| tree.root_file.catalog_directory())
+    mars_schema::plugin_metadata::catalog_directory_of(path)
 }
 
 fn path_exists(path: &Path) -> Result<bool, MarsError> {

@@ -7,6 +7,33 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.39.4] - 2026-11-22
+
+### Fixed
+- Rebuilding a plugin whose sentinel an older Mars wrote now settles in one build. The first rebuild after the Cursor cleanup left `.cursor-plugin` recorded in `plugin/.mars-plugin.json` and the next build dropped it, so a pre-commit hook that rebuilds and compares refused the `mars version` commit. The same happened after deselecting a harness.
+- `mars sync` no longer drops an agent's `model:` that Mars doesn't know, such as `model: sonnet` in a package whose project defines no `sonnet` alias. When no model the agent names is one Mars knows, it writes the first one unchanged to each harness that isn't launched through Meridian and has a model field, and warns once per agent that it couldn't check it. A candidate Mars can route still wins, and a known model the harness can't run still means no model. `mars models alias <name> <model-id>` makes the name translate.
+- Mars only calls a model unknown when a model catalog is loaded. With none (an offline first sync, a failed refresh), it writes no model, as before.
+- No bare model name is written to an OpenCode agent, because OpenCode skips the whole agent file for one.
+- `mars build launch-bundle` still refuses a model it can't route; the message now says no alias or model by that name exists and how to define one.
+- A harness missing from `PATH` is reported as "not on PATH" instead of "not installed", since that is what Mars checks.
+
+## [0.39.3] - 2026-11-22
+
+### Fixed
+- A skill renamed because two dependencies provide the same name now installs one directory deep. For a `--plugin` dependency, named `<repo>/<plugin>`, 0.39.1 nested it at `skills/<name>__<repo>/<plugin>`, where no harness finds it. Upgrading removes the old nested copy and the empty directory it leaves in every target. The rename warning prints once, when the renamed skill is installed or changes.
+- `mars validate` and every sync keep listing a `[skills.<name>]` or `[agents.<name>]` overlay left pointing at a name a rename took away.
+- Two dependency names that differ only in where a `/` or `-` falls (`a/b-c`, `a-b/c`) still stop the sync on a collision; the error now says to name one of them differently in `mars.toml`.
+
+## [0.39.2] - 2026-11-22
+
+### Fixed
+- `mars build plugin` and `mars version` rebuild a plugin that Mars 0.36.0 or 0.37 wrote. They refused it with `plugin sentinel records unsupported generated root file '.cursor-plugin/marketplace.json'`, because Mars 0.38.0 retired Cursor. The rebuild now removes the Cursor tree and `.cursor-plugin/marketplace.json` that the sentinel recorded, when Mars wrote them and nobody edited them since. A retired file edited by hand is kept.
+- `mars sync` now warns when a package declares something Mars installs less of: a skill's own `hooks` or `disallowed-tools` on a target that has no equivalent, skill text past agy's 24,000-byte body limit, a dependency that installs no items (including a `--subpath` that names an `agents/` folder), and Claude plugin `commands` written as `{name: {source}}`. Each warning appears once, with the sync that installs the item. A package that ships only `[models]` aliases is not warned about.
+- `disable-model-invocation: true` becomes `model-invocable: false` in every foreign skill, not only in Claude-shaped packages. A retired key in a dependency is a warning, not an info line, and a path dependency's shows on the first `mars add`.
+- agy agents carry a whole-tool deny such as `edit: deny` by leaving the tool out of `tools:`. An allow agy can't write (`bash(npx test *)`), or one a deny on the same agy tool overrides (`write: allow` beside `edit: deny`, both `write_to_file`), is reported as lost.
+- A loss in a dependency whose package name differs from its source name was never shown by `mars sync`.
+- `mars validate` lists every held loss each time it runs. The rule: a command that writes no lock (`validate`, `check`, `init`, `build plugin`, `--verbose`) prints every held warning; a sync prints one only when its lock change makes it news.
+
 ## [0.39.1] - 2026-11-22
 
 ### Fixed

@@ -55,7 +55,8 @@ impl ComponentLists {
     }
 }
 
-/// A list value is a path, an array of paths, or (as Mars read it before) `{path}` objects.
+/// A list value is a path, an array of paths, `{path}` or `{source}` objects, or an object that
+/// maps names to those (the form Claude's `commands` takes).
 /// An entry that is not a `./` path is reported and left out; `.` names the plugin root.
 fn declared_paths(
     value: &Value,
@@ -65,13 +66,17 @@ fn declared_paths(
 ) -> Vec<String> {
     let entries: Vec<&Value> = match value {
         Value::Array(values) => values.iter().collect(),
+        Value::Object(named) if !named.contains_key("path") && !named.contains_key("source") => {
+            named.values().collect()
+        }
         other => vec![other],
     };
     let mut paths = Vec::new();
     for entry in entries {
         let raw = entry
             .as_str()
-            .or_else(|| entry.get("path").and_then(Value::as_str));
+            .or_else(|| entry.get("path").and_then(Value::as_str))
+            .or_else(|| entry.get("source").and_then(Value::as_str));
         match raw {
             Some(raw) if raw == "." || raw.starts_with("./") => paths.push(raw.to_owned()),
             _ => diagnostics.push((

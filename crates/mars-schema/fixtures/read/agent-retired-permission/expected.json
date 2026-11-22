@@ -36,7 +36,8 @@
       "path": [
         "permission"
       ],
-      "message": "`permission` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys"
+      "message": "`permission` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#agent-host-keys",
+      "lost": true
     }
   ]
 }

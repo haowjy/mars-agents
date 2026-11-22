@@ -256,8 +256,10 @@ pub(crate) fn report_dependency(
     // theirs, and `mars upgrade` would leave it unchanged. A source the consumer's own config
     // does not name came in through another package, which is git.
     let subject = match dependency.map(|entry| &entry.spec) {
-        Some(crate::config::SourceSpec::Path(_)) => Subject::Package(package_name),
-        _ => Subject::Dependency(package_name, version, upgrading),
+        Some(crate::config::SourceSpec::Path(_)) => {
+            Subject::Package(package_name, Some(source_name.as_str()))
+        }
+        _ => Subject::Dependency(package_name, source_name.as_str(), version, upgrading),
     };
     report_diagnostics(
         prepared,
@@ -311,7 +313,7 @@ fn reported(
         .is_some()
         .then(|| authored_package_name(&prepared, root));
     let subject = match &package_name {
-        Some(name) => Subject::Package(name),
+        Some(name) => Subject::Package(name, None),
         None => Subject::AuthoredSource,
     };
     match findings {
@@ -362,10 +364,13 @@ pub(crate) fn prepare_project(
 }
 
 pub(crate) enum Subject<'a> {
-    Package(&'a str),
-    /// A git package a consumer depends on, at the version the sync resolved. The flag is set
-    /// when the command is `mars upgrade` for this package, which has already tried to move it.
-    Dependency(&'a str, Option<&'a semver::Version>, bool),
+    /// A package whose files the user can edit: its name, and the source name the lock records
+    /// its items under when a path dependency holds it (none for the project's own).
+    Package(&'a str, Option<&'a str>),
+    /// A git package a consumer depends on: its name, the source name the lock records its items
+    /// under, and the version the sync resolved. The flag is set when the command is `mars
+    /// upgrade` for this package, which has already tried to move it.
+    Dependency(&'a str, &'a str, Option<&'a semver::Version>, bool),
     AuthoredSource,
 }
 
@@ -398,8 +403,9 @@ fn report_files(
     diag: &mut DiagnosticCollector,
 ) {
     let owner = match subject {
-        Subject::Dependency(name, ..) => Owner::Dependency(name),
-        Subject::Package(_) | Subject::AuthoredSource => Owner::Own,
+        Subject::Dependency(_, source, ..) => Owner::Dependency(source),
+        Subject::Package(_, Some(source)) => Owner::Path(source),
+        Subject::Package(_, None) | Subject::AuthoredSource => Owner::Own,
     };
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
@@ -407,7 +413,7 @@ fn report_files(
             match subject {
                 // The consumer cannot edit the package, so the schema's wording for its author
                 // is no use to them.
-                Subject::Dependency(name, version, upgrading)
+                Subject::Dependency(name, _, version, upgrading)
                     if diagnostic.code == "manifest.schema-missing" =>
                 {
                     let mut for_consumer = diagnostic.clone();
@@ -449,7 +455,9 @@ fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut Dia
     }
     if let Classification::Foreign(choice) = &prepared.classification {
         let name = match subject {
-            Subject::Package(name) | Subject::Dependency(name, ..) => format!("package `{name}`"),
+            Subject::Package(name, _) | Subject::Dependency(name, ..) => {
+                format!("package `{name}`")
+            }
             Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
         };
         let count = format!("{files} file{}", if files == 1 { "" } else { "s" });

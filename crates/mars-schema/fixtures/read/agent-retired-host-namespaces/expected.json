@@ -44,7 +44,8 @@
         "harness-overrides",
         "flow"
       ],
-      "message": "`harness-overrides.flow` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#host-namespaces"
+      "message": "`harness-overrides.flow` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#host-namespaces",
+      "lost": true
     },
     {
       "code": "field.retired",
@@ -53,7 +54,8 @@
         "harness-overrides",
         "meridian"
       ],
-      "message": "`harness-overrides.meridian` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#host-namespaces"
+      "message": "`harness-overrides.meridian` is a key Mars no longer reads, so what it set has no effect: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#host-namespaces",
+      "lost": true
     }
   ]
 }

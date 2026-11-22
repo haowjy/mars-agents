@@ -122,6 +122,8 @@ pub enum NativeModel {
     Inherit,
     /// Emit this resolved model id.
     Set(String),
+    /// Emit the author's token as written: Mars could not check it, so the harness judges it.
+    Unchecked(String),
     /// Emit no model field (agent emitted to a harness its model does not resolve to).
     Clear,
 }
@@ -134,7 +136,7 @@ impl NativeModel {
         match self {
             #[cfg(test)]
             NativeModel::Inherit => profile.model.as_deref(),
-            NativeModel::Set(model) => Some(model),
+            NativeModel::Set(model) | NativeModel::Unchecked(model) => Some(model),
             NativeModel::Clear => None,
         }
     }
@@ -172,6 +174,14 @@ enum AgentSkillsPolicy {
 impl AgentSkillsPolicy {
     fn native_preload(self) -> bool {
         !matches!(self, Self::BodyGuidance)
+    }
+}
+
+impl AgentLoweringPolicy {
+    pub(crate) fn writes_model(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field, LoweredField::Model))
     }
 }
 
@@ -256,7 +266,7 @@ pub(crate) const AGY_AGENT_POLICY: AgentLoweringPolicy = AgentLoweringPolicy {
     lossiness: &[
         AgentLossinessStep::ModeDropped,
         AgentLossinessStep::ToolRules(Carries {
-            deny: DenyCarry::Nothing,
+            deny: DenyCarry::Omission,
             ask: false,
             allowlist: Allowlist::NonEmpty,
             writes_covered: false,
@@ -407,7 +417,6 @@ impl<'a> AgentLoweringCtx<'a> {
     }
 
     fn insert_tools(&mut self) {
-        let target = self.target_name();
         let projection = project(self.eff.tools, self.harness);
         let allowed = projection.available();
         let disallowed: Vec<_> = projection
@@ -415,13 +424,6 @@ impl<'a> AgentLoweringCtx<'a> {
             .into_iter()
             .filter(|tool| !tool.contains('('))
             .collect();
-        for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
-            self.lossy.push(LossyField {
-                field: format!("tools (allow {rule})"),
-                target: target.into(),
-                classification: Lossiness::Approximate { note },
-            });
-        }
 
         // An agent file's `tools:` restricts the agent to the tools it lists, and leaving it out
         // inherits every tool. So only an allowlist can lower to it: a map-form grant
@@ -446,17 +448,11 @@ impl<'a> AgentLoweringCtx<'a> {
 
     /// `agy` gives an agent with no `tools` key no write or shell, has no deny list and no
     /// wildcard: the key is the allowlist, or every tool name Mars knows when the policy does
-    /// not restrict. An empty allowlist writes no key.
+    /// not restrict, less the tools the policy denies whole (a scoped deny has no native name).
+    /// An empty list writes no key.
     fn insert_allowlist_or_all(&mut self) {
         let projection = project(self.eff.tools, self.harness);
-        for (rule, note) in projection.gaps(ToolAction::Allow, RuleKind::All) {
-            self.lossy.push(LossyField {
-                field: format!("tools (allow {rule})"),
-                target: self.target_name().into(),
-                classification: Lossiness::Approximate { note },
-            });
-        }
-        let tools = if self.eff.tools.is_allowlist() {
+        let mut tools: Vec<String> = if self.eff.tools.is_allowlist() {
             projection.available()
         } else {
             // `agy` has no wildcard (`*` and `all` fail the agent at its first prompt) and gives
@@ -467,6 +463,8 @@ impl<'a> AgentLoweringCtx<'a> {
                 .map(str::to_owned)
                 .collect()
         };
+        let denied = projection.natives(ToolAction::Deny, RuleKind::All);
+        tools.retain(|tool| !denied.contains(tool));
         if !tools.is_empty() {
             self.yaml.insert(
                 yk("tools"),
@@ -982,14 +980,9 @@ mod tests {
             "mcp__ wire identifier should be preserved verbatim: {text}"
         );
         assert!(out.lossy_fields.iter().any(|field| {
-            field.field == "tools (allow my_custom_tool)"
+            field.field.starts_with("tools (allow my_custom_tool")
                 && field.target == "Claude"
-                && matches!(
-                    field.classification,
-                    Lossiness::Approximate {
-                        note: "no native name known for this tool on this harness; left out"
-                    }
-                )
+                && matches!(field.classification, Lossiness::Dropped(_))
         }));
     }
 
@@ -1280,15 +1273,38 @@ mod tests {
     }
 
     #[test]
-    fn agy_lists_every_tool_and_reports_a_deny_it_cannot_write() {
-        let (text, lossy) = agy("---\nname: r\nmode: primary\ntools:\n  bash: deny\n---\n# body");
+    fn agy_leaves_a_whole_tool_deny_out_of_the_list_and_reports_a_scoped_one() {
+        let (text, lossy) = agy(
+            "---\nname: r\nmode: primary\ntools:\n  edit: deny\n  bash(rm *): deny\n---\n# body",
+        );
         assert!(
             text.contains("- run_command\n") && !text.contains("'*'"),
             "{text}"
         );
         assert!(
-            lossy.iter().any(|f| f.field.contains("deny bash")
-                && matches!(f.classification, Lossiness::Dropped(_)))
+            !text.contains("write_to_file") && !text.contains("replace_file_content"),
+            "a denied tool is not listed: {text}"
+        );
+        assert!(
+            !lossy.iter().any(|f| f.field.contains("deny edit")),
+            "the list carries the deny: {lossy:?}"
+        );
+        assert!(lossy.iter().any(|f| f.field.contains("deny bash(rm *)")
+            && matches!(f.classification, Lossiness::Dropped(_))));
+    }
+
+    #[test]
+    fn agy_reports_a_scoped_allow_it_leaves_out_of_an_allowlist() {
+        let (text, lossy) = agy(
+            "---\nname: r\ntools:\n  '*': deny\n  read: allow\n  bash(npx test *): allow\n---\n# body",
+        );
+        assert!(!text.contains("run_command"), "{text}");
+        assert!(
+            lossy
+                .iter()
+                .any(|f| f.field.starts_with("shell (allow bash(npx test *)")
+                    && matches!(f.classification, Lossiness::Dropped(_))),
+            "{lossy:?}"
         );
     }
 

@@ -88,12 +88,6 @@ impl RootFile {
         }
     }
 
-    pub(super) fn catalog_directory(self) -> Option<&'static str> {
-        match self {
-            Self::Marketplace { file, .. } | Self::NpmPackage { file } => file.catalog_directory(),
-        }
-    }
-
     /// The rule `[plugin].marketplace` must satisfy, when this tree renders a catalog.
     pub(super) fn marketplace_name_rule(self) -> Option<NameRule> {
         match self {

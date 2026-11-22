@@ -201,7 +201,7 @@ pub struct DiagnosticCollector {
     grouped: Vec<GroupedItems>,
     /// A loss and the lock record it concerns, until `settle` finds the sync changed that
     /// record (`hold`).
-    held: Vec<(RecordRef, Diagnostic)>,
+    held: Vec<(Vec<RecordRef>, Diagnostic)>,
     /// No sync will `settle` the held losses, so each prints at once, every run.
     lists_held: bool,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
@@ -440,10 +440,16 @@ impl DiagnosticCollector {
     /// concerns, and one on a record that stays as it was is not. A command that lists every
     /// loss (`--verbose`, `mars check`, `mars validate`) shows it at once.
     pub(crate) fn hold(&mut self, record: RecordRef, diagnostic: Diagnostic) {
-        if self.lists_held {
-            self.diagnostics.push(diagnostic)
+        self.hold_any(vec![record], diagnostic);
+    }
+
+    /// [`Self::hold`] for a loss that concerns several records: news when the sync changes any
+    /// of them. With none, there is no lock to compare, and it is news at once.
+    pub(crate) fn hold_any(&mut self, records: Vec<RecordRef>, diagnostic: Diagnostic) {
+        if self.lists_held || records.is_empty() {
+            self.diagnostics.push(diagnostic);
         } else {
-            self.held.push((record, diagnostic))
+            self.held.push((records, diagnostic));
         }
     }
 
@@ -474,7 +480,7 @@ impl DiagnosticCollector {
     pub(crate) fn settle(&mut self, old: &LockFile, new: &LockFile) {
         let (news, held): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held)
             .into_iter()
-            .partition(|(record, _)| record.is_news(old, new));
+            .partition(|(records, _)| records.iter().any(|record| record.is_news(old, new)));
         self.held = held;
         self.diagnostics
             .extend(news.into_iter().map(|(_, diagnostic)| diagnostic));

@@ -84,7 +84,7 @@ where
         );
         if let Some(rejection) = rejection {
             trace.diagnostics.push(if rejection.is_not_installed() {
-                format!("cli harness `{}` is not installed", pin.value)
+                format!("cli harness `{}` is not on PATH", pin.value)
             } else {
                 format!(
                     "cli harness `{}` cannot run the requested model ({})",

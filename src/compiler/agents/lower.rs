@@ -122,6 +122,8 @@ pub enum NativeModel {
     Inherit,
     /// Emit this resolved model id.
     Set(String),
+    /// Emit the author's token as written: Mars could not check it, so the harness judges it.
+    Unchecked(String),
     /// Emit no model field (agent emitted to a harness its model does not resolve to).
     Clear,
 }
@@ -134,7 +136,7 @@ impl NativeModel {
         match self {
             #[cfg(test)]
             NativeModel::Inherit => profile.model.as_deref(),
-            NativeModel::Set(model) => Some(model),
+            NativeModel::Set(model) | NativeModel::Unchecked(model) => Some(model),
             NativeModel::Clear => None,
         }
     }
@@ -172,6 +174,14 @@ enum AgentSkillsPolicy {
 impl AgentSkillsPolicy {
     fn native_preload(self) -> bool {
         !matches!(self, Self::BodyGuidance)
+    }
+}
+
+impl AgentLoweringPolicy {
+    pub(crate) fn writes_model(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field, LoweredField::Model))
     }
 }
 

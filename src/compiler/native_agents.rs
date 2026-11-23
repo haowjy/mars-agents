@@ -598,13 +598,9 @@ fn desired_native_agent_outputs(
     mars_agents: &[MarsCanonicalAgent],
     failed_canonical_paths: &HashSet<String>,
     previous_lock: &crate::lock::LockFile,
-    compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
-    model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
+    ctx: &NativeAgentCompileCtx<'_>,
+    model_router: &mut NativeModelRoutingRuntime<'_>,
 ) -> HashSet<(String, String)> {
-    let Some(ctx) = compile_ctx else {
-        return HashSet::new();
-    };
-    let model_router = model_router.expect("native model router required for native emission");
     let mut desired = HashSet::new();
     for agent in mars_agents.iter().filter(|agent| {
         ctx.old_lock.contains_output(
@@ -672,10 +668,6 @@ pub(crate) fn compile_native_agents<'a>(
     model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Vec<CompiledNativeOutput> {
-    if policy.emits_nothing() {
-        return Vec::new();
-    }
-
     let emit_ctx = NativeAgentEmitCtx {
         project_root: ctx.project_root,
         old_lock: ctx.old_lock,
@@ -686,6 +678,7 @@ pub(crate) fn compile_native_agents<'a>(
     let mut undescribed = BTreeSet::new();
     let mut codex_emitted = false;
     let mut codex_concerns = Vec::new();
+    let mut overriding_never: BTreeMap<mars_schema::HarnessId, Vec<RecordRef>> = BTreeMap::new();
 
     // `mars_agents` carry already overlay-resolved profiles (resolved once in
     // run_native_agent_post_sync_lifecycle for both reconcile and compile).
@@ -719,6 +712,15 @@ pub(crate) fn compile_native_agents<'a>(
                 &mut project_losses,
                 &mut undescribed,
             );
+            if policy.emission_never
+                && !crate::harness::registry::launched_by_meridian(emission.harness)
+                && let Some(concerns) = &concerns
+            {
+                overriding_never
+                    .entry(emission.harness)
+                    .or_default()
+                    .extend(concerns.clone());
+            }
             if emission.harness == mars_schema::HarnessId::Codex
                 && let Some(concerns) = &concerns
             {
@@ -734,6 +736,24 @@ pub(crate) fn compile_native_agents<'a>(
             }
         }
         unchecked.record(&agent.agent_name, diag);
+    }
+    for (harness, concerns) in overriding_never {
+        let dir = harness.target_dir();
+        let message = format!(
+            "agent_emission = \"never\" does not apply to {dir}: Meridian does not launch {harness}, \
+             which can only run an agent from {dir}/agents/, so Mars writes them there",
+            harness = harness.as_str(),
+        );
+        // A dry run has no lock to compare, so a file it would change has no record to wait for.
+        if concerns.is_empty() {
+            diag.warn_advisory("agent-emission-never-overridden", message);
+        } else {
+            diag.hold_warning(
+                RecordRef::Any(concerns),
+                "agent-emission-never-overridden",
+                message,
+            );
+        }
     }
     project_losses.record(ctx.project_root, diag);
     if !undescribed.is_empty() {
@@ -902,9 +922,7 @@ pub(crate) fn qualifying_agent_emissions(
     // Every configured harness the policy emits for, in configured order.
     let emits_all = |harness: &HarnessId| match &policy.launched {
         AgentSurfaceMode::EmitAll => true,
-        AgentSurfaceMode::EmitSelective(_) | AgentSurfaceMode::SuppressAll => {
-            !launched(*harness) && policy.emit_unlaunched
-        }
+        AgentSurfaceMode::EmitSelective(_) | AgentSurfaceMode::SuppressAll => !launched(*harness),
     };
     for harness in configured_emit_harnesses {
         if !emits_all(harness) {
@@ -1179,8 +1197,8 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
     policy: &AgentSurfacePolicy,
     scan: &MarsAgentScan,
     tool_config: ToolConfig<'_>,
-    compile_ctx: Option<&NativeAgentCompileCtx<'_>>,
-    mut model_router: Option<&mut NativeModelRoutingRuntime<'_>>,
+    compile_ctx: &NativeAgentCompileCtx<'_>,
+    model_router: &mut NativeModelRoutingRuntime<'_>,
     diag: &mut DiagnosticCollector,
 ) -> (Vec<CompiledNativeOutput>, NativeRemovals) {
     // Resolve per-agent overlays into effective profiles ONCE here, so reconcile and
@@ -1193,24 +1211,21 @@ pub(crate) fn run_native_agent_post_sync_lifecycle(
         &scan.failed_canonical_paths,
         reconcile_ctx.old_lock,
         compile_ctx,
-        model_router.as_deref_mut(),
+        model_router,
     );
     let removed_native_outputs = reconcile_native_agent_surfaces(reconcile_ctx, &desired, diag);
-    let compiled_native_outputs = match compile_ctx {
-        None => Vec::new(),
-        Some(ctx) => compile_native_agents(
-            ctx,
-            policy,
-            resolved.iter().filter(|agent| {
-                ctx.old_lock.contains_output(
-                    crate::lock::CANONICAL_TARGET_ROOT,
-                    &agent.canonical_dest_path,
-                )
-            }),
-            model_router.expect("native model router required for native compile"),
-            diag,
-        ),
-    };
+    let compiled_native_outputs = compile_native_agents(
+        compile_ctx,
+        policy,
+        resolved.iter().filter(|agent| {
+            compile_ctx.old_lock.contains_output(
+                crate::lock::CANONICAL_TARGET_ROOT,
+                &agent.canonical_dest_path,
+            )
+        }),
+        model_router,
+        diag,
+    );
     (compiled_native_outputs, removed_native_outputs)
 }
 

@@ -51,14 +51,14 @@ Native artifact emission is controlled by `settings.agent_emission` in `mars.tom
 |---|---|
 | `auto` (default) | Emit native artifacts in standalone mode; when `MERIDIAN_MANAGED=1`, suppress them for the harnesses Meridian launches and emit them for the one it does not (Antigravity) |
 | `always` | Always emit native artifacts, even in Meridian-managed mode |
-| `never` | Never emit native artifacts |
+| `never` | Emit no native artifacts for the harnesses Meridian launches; still emit them for the one it does not (Antigravity) |
 
 ```toml
 [settings]
 agent_emission = "always"
 ```
 
-**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts, or `"never"` to emit none (`agent_copy` below still applies to the launched harnesses).
+**`MERIDIAN_MANAGED=1`** — when Meridian invokes mars, it sets this env var. Under `auto`, native artifacts are suppressed for each harness Meridian launches: Meridian manages delegation through `.mars/agents/` and `meridian spawn`, and does not want harness-native artifacts competing with that routing. Meridian does not launch Antigravity (`agy`), which a person runs with `agy --agent <profile>` (`meridian agy` prints that command), so Mars still writes its agents to `.agy/agents/`. Set `agent_emission = "always"` to emit all native artifacts under Meridian, or `"never"` to emit none for the launched harnesses (`agent_copy` below still applies to them). `never` does not reach Antigravity: it can only run an agent from `.agy/agents/`, so Mars writes them there and warns `agent_emission = "never" does not apply to .agy` on the sync that writes or changes one (`--verbose` lists it every time).
 
 Use `[settings.meridian.agent_copy]` for a selective override under managed mode or `agent_emission = "never"`:
 
@@ -497,6 +497,29 @@ deny (`bash(rm *)`), an `ask` and an MCP deny stay out of the file and sync repo
 is an allow the file cannot name or scope (`bash(npx test *)`, which would otherwise need the whole shell): the agent
 has less than the profile grants. Nothing enforces what is lost in `agy` (Meridian prints the `agy` command for the user to run interactively, and never starts it as a spawn). An allowlist that names no tool Mars
 can spell writes no `tools` key and is reported.
+
+**Scoped denies and asks on `agy`.** `agy --settings` takes `permissions.deny` and `permissions.ask` for one
+launch, so the launch bundle (`mars build launch-bundle --harness agy`) carries a scoped rule there as
+`native_permission`, a list of permission strings, with a `note` saying what `agy` does not catch. `native`, `native_tools` and `native_status` keep their meaning (tool names and whether Mars knows them), so a scoped rule on `agy` still reads `native_status: unknown`. Every other entry omits `native_permission`. `agy`
+blocks only these forms (`agy_permission::translate`); every other rule stays `unknown` with its reason
+appended to the `note`, and an allow is never carried, because `--settings` replaces the user's allow list.
+
+| Rule | `agy` permission |
+|---|---|
+| `bash(<words>)`, `bash(<words> *)`, `bash(<words>:*)`, plain words only (letters, digits, `_ . / = @ + , -`, single spaces), not starting with `VAR=value`, `env`, `cd`, `timeout` or `nice` (agy looks through those, so the prefix would never match) | `command(<words>)`, a whole-word prefix |
+| `write(<path>)`, `edit(<path>)` | `write_file(<path>)` |
+| `read(<path>)` | `read_file(<path>)` |
+| `skill(<name>)`, deny only | `read_file(.agy/skills/<name>)` and `read_file(.agents/skills/<name>)` |
+| `mcp(<server>/<tool>)` | `mcp(_agy_<server>/<tool>)` and `mcp(<server>/<tool>)` |
+| `mcp(<server>)`, `mcp(<server>/*)` | the same two with `/*` |
+
+An MCP rule carries both spellings because `agy` names a server from the `.agy/` plugin's `mcp_config.json` `_agy_<server>` (which is where Mars installs servers), and a server from `.agents/mcp_config.json` or `agy mcp add` keeps its bare name; the cost is that it also stops a same-named server from the other source. Not verified: whether a top-level `mcp_<server>_<tool>` call is stopped as well.
+
+A file path is relative, with no `..`, `~` or glob, and a trailing `/` is dropped; `dir/*` and `dir/**` mean the directory and
+everything under it. A permission string never reaches the agent file's `tools:` or the bundle's
+`allowed` and `disallowed` lists: one unknown name in `tools:` fails the agent at its first prompt.
+The agent file still lacks these rules, so sync reports each one as lost, marked "enforced only when
+launched by `meridian agy`": `agy --agent <name>` run by hand reads only the file.
 
 #### `agy` model and effort
 

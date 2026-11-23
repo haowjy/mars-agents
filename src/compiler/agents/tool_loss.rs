@@ -4,6 +4,7 @@
 //! [`Carries`] says what its file can write. [`losses`] joins them, so no target guesses a kind
 //! from a lowered field.
 
+use crate::compiler::agents::agy_permission;
 use crate::compiler::lossiness::{Lossiness, LossyField, Lost, ProjectLoss};
 use mars_schema::HarnessId;
 use mars_schema::tool_names::Capability;
@@ -92,7 +93,19 @@ pub(super) fn losses(
         let gap = projected
             .gap()
             .filter(|_| carries.deny != DenyCarry::Nothing);
+        // `meridian agy` applies a scoped deny or ask the file cannot hold through `--settings`.
+        let launch_only = harness == HarnessId::Agy
+            && matches!(
+                agy_permission::for_rule(rule, projected),
+                Some(agy_permission::Translation::Carried(_))
+            );
         let label = || match gap {
+            _ if launch_only => format!(
+                "{} {} ({})",
+                rule.action.as_str(),
+                rule.render(),
+                agy_permission::LAUNCH_ONLY
+            ),
             Some(note) => format!("{} {} ({note})", rule.action.as_str(), rule.render()),
             None => format!("{} {}", rule.action.as_str(), rule.render()),
         };

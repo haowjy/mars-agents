@@ -182,6 +182,11 @@ pub struct ToolRuleSpec {
     /// `write(path)` uses `Edit(path)` but concerns the `Write` tool). Empty whenever `native`
     /// is empty, with the same `native_status` applying to both fields.
     pub native_tools: Vec<String>,
+    /// The `--settings` permission strings (`command(git reset --hard)`) a launcher applies for
+    /// this rule's action, Mars's own translation for a harness that takes them per launch
+    /// (`agy`). Present only on a rule Mars carries; the other fields keep their meaning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_permission: Option<Vec<String>>,
     /// `known`: `native` names it. `absent`: the harness has no such tool, so there is nothing
     /// to enforce. `unknown`: Mars cannot name it for this harness, a gap to report. Omitted
     /// for `*`, which names no tool.

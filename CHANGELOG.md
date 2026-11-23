@@ -7,6 +7,17 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-11-23
+
+### Added
+- `mars build launch-bundle --harness agy` carries an agent's scoped `deny` and `ask` rules as agy permission strings in a new per-rule `native_permission` list, so `meridian agy` can enforce them through agy's `--settings`. `bash(git reset --hard *): deny` gets `native_permission: ["command(git reset --hard)"]` and a `note` on what agy doesn't catch (`bash -c`, `$(...)`, `xargs`, absolute paths, options before a subcommand, shell access to files). `native`, `native_tools` and `native_status` keep their meaning, and every other entry omits the key. (#475)
+  - Carried: plain-word `bash(...)` prefixes; `read`, `write` and `edit` of a relative path or directory; `skill(...)` deny (both `.agy/skills/` and `.agents/skills/`); `mcp(server/tool)` and `mcp(server)` under both names agy gives a server (`_agy_<server>` for one Mars installs, the bare name otherwise).
+  - Not carried, with the reason in the `note`: quotes, `$`, pipes or an inner `*` in a command; a command behind `env`, `cd`, `timeout`, `nice` or `VAR=value`; absolute, `..` or glob paths; a skill ask; an MCP tool glob; any allow.
+  - The agent file's `tools:` is unchanged, so `mars sync` still reports these rules as lost on agy, now marked "enforced only when launched by `meridian agy`".
+
+### Changed
+- `agent_emission = "never"` no longer stops Mars writing agents for Antigravity (`agy`). agy can only run an agent from `.agy/agents/`, and Meridian does not launch it, so Mars writes them there and warns `agent_emission = "never" does not apply to .agy` on the sync that writes or changes one. Agents for the harnesses Meridian launches are still withheld. (#468)
+
 ## [0.39.4] - 2026-11-22
 
 ### Fixed

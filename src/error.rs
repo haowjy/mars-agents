@@ -8,9 +8,10 @@ pub enum ConfigError {
     NotFound { path: PathBuf },
 
     #[error(
-        "no mars.toml found from {} to filesystem root. Run `{cmd}` first.",
+        "no mars.toml found from {} to filesystem root. Run `{init}` to start a project here, or `{user}` to use your user level.",
         start.display(),
-        cmd = managed_cmd("mars init"),
+        init = managed_cmd("mars init"),
+        user = managed_cmd("mars --user <command>"),
     )]
     ProjectRootNotFound { start: PathBuf },
 

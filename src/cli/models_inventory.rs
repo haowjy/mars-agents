@@ -71,17 +71,13 @@ pub(super) fn run_catalog(
                 })
             })
             .collect::<Vec<_>>();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "catalog": entries,
-                "fetched_at": cache.fetched_at,
-                "cache_available": cache.fetched_at.is_some(),
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "catalog": entries,
+            "fetched_at": cache.fetched_at,
+            "cache_available": cache.fetched_at.is_some(),
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         println!(
@@ -132,16 +128,12 @@ pub(super) fn run_aliases(
                 value
             })
             .collect::<Vec<_>>();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "aliases": rows,
-                "cache_available": cache.fetched_at.is_some(),
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "aliases": rows,
+            "cache_available": cache.fetched_at.is_some(),
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         println!(
@@ -208,14 +200,10 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     ) {
         Ok(value) => value,
         Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "error": {"code": "model_cache_unavailable", "message": err.to_string()},
-                    "routing_diagnostics": routing_diagnostics,
-                }))
-                .unwrap()
-            );
+            super::output::print_json_pretty(&serde_json::json!({
+                "error": {"code": "model_cache_unavailable", "message": err.to_string()},
+                "routing_diagnostics": routing_diagnostics,
+            }));
             return Ok(1);
         }
         Err(err) => return Err(err),
@@ -354,17 +342,13 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         rows.push(entry);
     }
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "models": rows,
-                "diagnostics": diagnostics,
-                "routing_diagnostics": routing_diagnostics,
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "models": rows,
+            "diagnostics": diagnostics,
+            "routing_diagnostics": routing_diagnostics,
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         print_warnings(&diagnostics);

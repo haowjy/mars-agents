@@ -247,7 +247,8 @@ fn check_legacy_agents_directory(
 }
 
 fn check_mars_gitignore(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
-    if layout.store().symlink_metadata().is_err() {
+    // The user level's store sits in the data folder, beside no repo.
+    if !layout.store().starts_with(layout.root()) || layout.store().symlink_metadata().is_err() {
         return;
     }
 

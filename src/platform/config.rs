@@ -1,6 +1,10 @@
 //! The user's Mars folders. On Linux and macOS both follow the XDG rule, as uv, mise and gh do:
 //! `dirs::config_dir()` is `~/Library/Application Support` on macOS, where nobody looks for a
 //! CLI's config. Windows keeps `dirs`.
+//!
+//! A relative `HOME` or `XDG_*` is ignored, as the XDG spec says: it would name a different
+//! folder from every working directory. A relative `MARS_*_DIR` is taken from the working
+//! directory, since the user typed it.
 
 use std::path::PathBuf;
 
@@ -48,14 +52,21 @@ fn user_dir(
     windows: fn() -> Option<PathBuf>,
 ) -> Option<PathBuf> {
     if let Some(dir) = env_dir(own) {
-        return Some(dir);
+        return Some(std::path::absolute(&dir).unwrap_or(dir));
     }
     let base = if cfg!(windows) {
         windows()
     } else {
-        env_dir(xdg).or_else(|| dirs::home_dir().map(|home| home.join(under_home)))
+        env_dir(xdg)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| home_dir().map(|home| home.join(under_home)))
     };
     base.map(|dir| dir.join("mars"))
+}
+
+/// The user's home directory, when it is known as an absolute path.
+pub fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir().filter(|home| home.is_absolute())
 }
 
 /// An empty value counts as unset.

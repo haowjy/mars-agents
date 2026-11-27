@@ -11,8 +11,27 @@ pub(crate) const CONFIG_FILE: &str = "mars.toml";
 pub(crate) const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
 pub(crate) const LOCK_FILE: &str = "mars.lock";
 
+/// What a root is. A project is a directory with `mars.toml`; the user level is the person's
+/// own root, whose manifest sits in the Mars config folder and whose store is the Mars data
+/// folder. The user level has no targets: a user sync writes only its store and lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootKind {
+    Project,
+    User,
+}
+
+impl RootKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::User => "user",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
+    kind: RootKind,
     root: PathBuf,
     store: PathBuf,
 }
@@ -22,7 +41,38 @@ impl Layout {
     pub fn project(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         let store = root.join(CANONICAL_TARGET_ROOT);
-        Self { root, store }
+        Self {
+            kind: RootKind::Project,
+            root,
+            store,
+        }
+    }
+
+    /// The user level: manifest, lock and own items in `config_dir`, the store in `data_dir`.
+    pub fn user(config_dir: impl Into<PathBuf>, data_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            kind: RootKind::User,
+            root: config_dir.into(),
+            store: data_dir.into(),
+        }
+    }
+
+    pub fn kind(&self) -> RootKind {
+        self.kind
+    }
+
+    /// The `root` object every `--json` output carries: which root the command used and, for
+    /// the user level, its config and store folders. Hosts parse it; keep one shape.
+    pub fn root_json(&self) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "kind": self.kind.as_str(),
+            "path": self.root.to_string_lossy(),
+        });
+        if self.kind == RootKind::User {
+            value["config_dir"] = self.root.to_string_lossy().into();
+            value["store_dir"] = self.store.to_string_lossy().into();
+        }
+        value
     }
 
     /// The directory the manifest sits in, against which its relative paths (path dependencies,

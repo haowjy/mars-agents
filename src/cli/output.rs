@@ -4,6 +4,7 @@
 //! Colors only a terminal, and never when `NO_COLOR` is set.
 
 use std::io::{IsTerminal, Write};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
@@ -184,7 +185,7 @@ fn is_dry_run(report: &SyncReport) -> bool {
 }
 
 fn print_sync_report_json(report: &SyncReport) {
-    println!("{}", sync_report_json(report));
+    print_json(&sync_report_json(report));
 }
 
 pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
@@ -616,7 +617,7 @@ pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
             warnings: messages(DiagnosticLevel::Warning),
             diagnostics,
         };
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+        print_json(&report);
     } else if diagnostics.is_empty() {
         let mut stdout = stdout_stream();
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
@@ -652,8 +653,34 @@ pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
     }
 }
 
+/// Print one JSON document. An object gets the `root` the command ran against
+/// (`Layout::root_json`), so every output names its root the same way; a top-level array
+/// (`mars list`, `mars outdated`) keeps the shape hosts already parse.
 pub fn print_json<T: Serialize>(value: &T) {
-    println!("{}", serde_json::to_string(value).unwrap_or_default());
+    println!("{}", with_root(value));
+}
+
+/// As [`print_json`], indented.
+pub fn print_json_pretty<T: Serialize>(value: &T) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&with_root(value)).unwrap_or_default()
+    );
+}
+
+fn with_root<T: Serialize>(value: &T) -> serde_json::Value {
+    let mut value = serde_json::to_value(value).unwrap_or_default();
+    if let (serde_json::Value::Object(map), Some(root)) = (&mut value, JSON_ROOT.get()) {
+        map.insert("root".into(), root.clone());
+    }
+    value
+}
+
+static JSON_ROOT: OnceLock<serde_json::Value> = OnceLock::new();
+
+/// Called once from dispatch, when the command's root is known.
+pub fn set_json_root(root: serde_json::Value) {
+    let _ = JSON_ROOT.set(root);
 }
 
 pub fn print_success(msg: &str) {

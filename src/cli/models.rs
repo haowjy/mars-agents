@@ -193,7 +193,7 @@ fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
         if let Some(warning) = cache_warning.as_ref().map(|d| d.message.as_str()) {
             out["cache_warning"] = serde_json::json!(warning);
         }
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else {
         if cache_warning.is_some() {
             println!(
@@ -595,16 +595,12 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
     crate::config::save(&ctx.layout, &config)?;
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "status": "ok",
-                "alias": args.name,
-                "model": args.model_id,
-                "harness": normalized_harness,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "status": "ok",
+            "alias": args.name,
+            "model": args.model_id,
+            "harness": normalized_harness,
+        }));
     } else {
         println!(
             "Added alias `{}` → {} (harness: {})",
@@ -752,7 +748,7 @@ fn run_resolve_exact_alias(
             if let Some(report) = report.as_ref() {
                 add_route_json_fields(&mut out, report);
             }
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            super::output::print_json_pretty(&out);
         } else {
             let mut out = serde_json::json!({
                 "error": {"code": "model_unresolved", "message": format!("alias `{}` did not resolve to a model ID", name)},
@@ -764,7 +760,7 @@ fn run_resolve_exact_alias(
                 out["diagnostics"] = serde_json::json!(diagnostics_to_json_entries(&diagnostics));
             }
             add_routing_diagnostics_json(&mut out, routing_diagnostics);
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            super::output::print_json_pretty(&out);
             return Ok(1);
         }
     } else {
@@ -878,7 +874,7 @@ fn run_auto_resolve_alias_cache_unavailable(
             out["cache_error"] = serde_json::json!(cache_error);
         }
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else {
         eprintln!("error: {error}");
     }
@@ -942,7 +938,7 @@ fn run_output_resolved(input: OutputResolvedInput<'_>) -> Result<i32, MarsError>
         }
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
         add_route_json_fields(&mut out, &report);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else {
         if probe_refresh == ProbeRefreshMode::Background
             && matches!(
@@ -997,7 +993,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
                 out["cache_error"] = serde_json::json!(cache_error);
             }
             add_routing_diagnostics_json(&mut out, routing_diagnostics);
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            super::output::print_json_pretty(&out);
         } else {
             eprintln!("error: model name cannot be empty");
         }
@@ -1073,7 +1069,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
                 out["cache_error"] = serde_json::json!(cache_error);
             }
             add_routing_diagnostics_json(&mut out, routing_diagnostics);
-            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+            super::output::print_json_pretty(&out);
         } else {
             eprintln!("error: {message}");
             print_route_text(&report);
@@ -1114,7 +1110,7 @@ fn run_output_passthrough(input: OutputPassthroughInput<'_>) -> Result<i32, Mars
             out["cache_error"] = serde_json::json!(cache_error);
         }
         add_routing_diagnostics_json(&mut out, routing_diagnostics);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else {
         if let Some(warning) = warning {
             output::print_diagnostics(&[Diagnostic::warning("model-passthrough", warning)], false);

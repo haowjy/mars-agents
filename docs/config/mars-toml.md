@@ -14,7 +14,11 @@ Mars uses three project files plus an optional user file:
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
-| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every project, in the `mars.local.toml` schema | User-owned |
+| `<config>/config.toml` | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every root, in the `mars.local.toml` schema | User-owned |
+
+`<config>` is `MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars`, else `~/.config/mars`. The same
+folder holds the [user level](../cli/user-level.md)'s own `mars.toml` and `mars.lock`: a
+`mars.toml` like a project's, with no `targets`.
 
 ## Layering and precedence
 
@@ -538,9 +542,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 
 ### User config
 
-`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory, takes
-the sections of `mars.local.toml` (`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read
-by every project. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
+`<config>/config.toml` (the folder above) takes the sections of `mars.local.toml`
+(`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read by every project and by the user
+level. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
 
 ```toml
 [settings]

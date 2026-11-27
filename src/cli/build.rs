@@ -102,7 +102,7 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub agent: Option<String>,
 
-    /// Secondary Mars project used only for missing agents and skills.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing agents and skills.
     #[arg(long)]
     pub fallback_root: Option<PathBuf>,
 
@@ -261,12 +261,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         },
     )?;
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&bundle).map_err(|err| MarsError::Internal(format!(
-            "failed to serialize launch bundle: {err}"
-        )))?
-    );
+    crate::cli::output::print_json_pretty(&bundle);
 
     Ok(0)
 }

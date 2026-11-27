@@ -46,7 +46,7 @@ pub fn run(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
 
     if json {
         let out = target.to_json(&args.reference);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else if target.found {
         print_prompt_target(&target);
     } else {

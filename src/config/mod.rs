@@ -258,7 +258,7 @@ pub struct EffectiveDependency {
     pub dialect: Option<Dialect>,
 }
 
-use crate::layout::{CONFIG_FILE, LOCAL_CONFIG_FILE, Layout};
+use crate::layout::{CONFIG_FILE, LOCAL_CONFIG_FILE, Layout, RootKind};
 
 pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     MarsError::Io {
@@ -285,17 +285,59 @@ impl LocalConfig {
     }
 }
 
-/// Load the root's `mars.toml`.
+/// Load the root's `mars.toml`. The user level's is optional: absent, the user level is empty.
 pub fn load(layout: &Layout) -> Result<Config, MarsError> {
     let path = layout.manifest();
-    let content = std::fs::read_to_string(&path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            ConfigError::NotFound { path: path.clone() }.into()
-        } else {
-            read_error(&path, e)
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return match layout.kind() {
+                RootKind::User => Ok(Config::default()),
+                RootKind::Project => Err(ConfigError::NotFound { path }.into()),
+            };
         }
-    })?;
-    parse_config(&content, &path)
+        Err(e) => return Err(read_error(&path, e)),
+    };
+    parse_root_config(layout, &content, &path)
+}
+
+/// `parse_config` plus the one rule of the user level's own: it has no targets.
+fn parse_root_config(layout: &Layout, content: &str, path: &Path) -> Result<Config, MarsError> {
+    let config = parse_config(content, path)?;
+    refuse_user_targets(
+        layout,
+        path,
+        &config.settings.targets,
+        &config.settings.managed_root,
+    )?;
+    Ok(config)
+}
+
+/// A target at the user level would write harness folders under the Mars config folder, which
+/// no harness reads: the user level's items reach harnesses through each project's sync.
+fn refuse_user_targets(
+    layout: &Layout,
+    path: &Path,
+    targets: &Option<Vec<String>>,
+    managed_root: &Option<String>,
+) -> Result<(), MarsError> {
+    if layout.kind() != RootKind::User {
+        return Ok(());
+    }
+    let key = if targets.is_some() {
+        "targets"
+    } else if managed_root.is_some() {
+        "managed_root"
+    } else {
+        return Ok(());
+    };
+    Err(ConfigError::Invalid {
+        message: format!(
+            "{}: `{key}` is not allowed here: the user level has no targets; its items are installed by each project's sync. Delete the line.",
+            path.display()
+        ),
+    }
+    .into())
 }
 
 pub(crate) fn parse_config(content: &str, path: &Path) -> Result<Config, MarsError> {
@@ -369,11 +411,22 @@ fn parse_local(
     Ok(value)
 }
 
+fn parse_root_local(layout: &Layout, content: &str, path: &Path) -> Result<LocalConfig, MarsError> {
+    let local = parse_local(content, path, keys::Document::Local)?;
+    refuse_user_targets(
+        layout,
+        path,
+        &local.settings.targets,
+        &local.settings.managed_root,
+    )?;
+    Ok(local)
+}
+
 /// Load mars.local.toml (returns Default if absent).
 pub fn load_local(layout: &Layout) -> Result<LocalConfig, MarsError> {
     let path = layout.local_config();
     match std::fs::read_to_string(&path) {
-        Ok(content) => parse_local(&content, &path, keys::Document::Local),
+        Ok(content) => parse_root_local(layout, &content, &path),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
         Err(e) => Err(read_error(&path, e)),
     }
@@ -760,15 +813,13 @@ pub(crate) fn source_id_for_spec(
 /// Write mars.toml, changing only what differs from the file as it stands.
 pub fn save(layout: &Layout, config: &Config) -> Result<(), MarsError> {
     let path = layout.manifest();
-    save::save_document(&path, config, |text| parse_config(text, &path))
+    save::save_document(&path, config, |text| parse_root_config(layout, text, &path))
 }
 
 /// Write mars.local.toml, changing only what differs from the file as it stands.
 pub fn save_local(layout: &Layout, local: &LocalConfig) -> Result<(), MarsError> {
     let path = layout.local_config();
-    save::save_document(&path, local, |text| {
-        parse_local(text, &path, keys::Document::Local)
-    })
+    save::save_document(&path, local, |text| parse_root_local(layout, text, &path))
 }
 
 #[cfg(test)]

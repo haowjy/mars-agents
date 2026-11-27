@@ -1,13 +1,17 @@
 # CLI Reference
 
-All commands support two global flags:
+All commands support three global flags:
 
 | Flag | Description |
 |---|---|
-| `--root <PATH>` | Explicit project root (default: auto-detect from cwd) |
-| `--json` | Machine-readable JSON output |
+| `--root <PATH>` | Where to start looking for the project root (default: the working directory) |
+| `--user` | Use your [user level](user-level.md) instead of a project; conflicts with `--root` |
+| `--json` | Machine-readable JSON output; an object output carries `root` (which root the command used) |
 
-The project root is the directory holding `mars.toml` and `mars.lock`.
+The project root is the nearest directory, walking up from the start, that holds `mars.toml`.
+Your home directory is never one. With no project, commands that only read (`build
+launch-bundle`, `agents`, `skills`, `models` other than `models alias`, `list`, `why`) use the user level, and commands
+that write fail and name `--user`. See [The user level](user-level.md).
 
 ## Exit Codes
 
@@ -39,6 +43,9 @@ mars init [TARGET] [--link DIR...]
 - Creates `TARGET`, when given, and adds it to `settings.targets`
 - Adds `mars.local.toml` and `.mars/` to `.gitignore`
 - Idempotent: re-running is a no-op for init, but still processes `--link`
+- Refuses the home directory, which is never a project (install for yourself with
+  `mars --user add`); `mars add` and `mars link` with no project around them init one the
+  same way, and refuse home the same way
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
   (lossiness diagnostics via `collect_prepared_source_lossiness_diagnostics`). A consumer
@@ -217,7 +224,7 @@ mars skills show NAME
 | `--type TYPE` | Skills only: match `metadata.type` exactly |
 | `--model-invocable` | Only items a model may pick for itself |
 | `--source NAME` | Filter by dependency name |
-| `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
+| `--fallback-root PATH` | Deprecated, removed in the next minor release: a secondary Mars project consulted only for items the project lacks |
 
 The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
 

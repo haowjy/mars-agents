@@ -86,6 +86,30 @@ impl MarsContext {
             meridian_managed: crate::types::meridian_managed_from_env(),
         })
     }
+
+    /// The user level, at the folders `platform::config` resolves. Nothing is created: an absent
+    /// folder is an empty user level until a command writes to it.
+    pub fn user() -> Result<Self, MarsError> {
+        let folder = |dir: Option<PathBuf>, variable: &str| {
+            dir.map(|dir| dunce::canonicalize(&dir).unwrap_or(dir))
+                .ok_or_else(|| {
+                    MarsError::Config(ConfigError::Invalid {
+                        message: format!(
+                            "cannot find the user level: no home directory is known; set {variable}"
+                        ),
+                    })
+                })
+        };
+        let config_dir = folder(
+            crate::platform::config::mars_config_dir(),
+            "MARS_CONFIG_DIR",
+        )?;
+        let data_dir = folder(crate::platform::config::mars_data_dir(), "MARS_DATA_DIR")?;
+        Ok(MarsContext {
+            layout: crate::layout::Layout::user(config_dir, data_dir),
+            meridian_managed: crate::types::meridian_managed_from_env(),
+        })
+    }
 }
 
 /// mars — agent package manager for agent and skill packages.
@@ -96,8 +120,13 @@ pub struct Cli {
     pub command: Command,
 
     /// Path to project root containing mars.toml (default: auto-detect).
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "user")]
     pub root: Option<PathBuf>,
+
+    /// Use your user level (manifest in the Mars config folder, store in the Mars data folder)
+    /// instead of a project.
+    #[arg(long, global = true)]
+    pub user: bool,
 
     /// Output in JSON format.
     #[arg(long, global = true)]
@@ -214,7 +243,7 @@ pub fn dispatch(cli: Cli) -> i32 {
                 if let Some(report) = report {
                     payload["route_trace"] = serde_json::json!(report);
                 }
-                println!("{}", payload);
+                output::print_json(&payload);
             } else {
                 output::print_diagnostics(err.diagnostics(), false);
                 eprintln!("error: {cause}");
@@ -231,10 +260,21 @@ pub fn dispatch(cli: Cli) -> i32 {
 }
 
 fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
+    if cli.user
+        && let Some(reason) = refused_at_user_level(&cli.command)
+    {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!("`--user` cannot be used here: {reason}"),
+        }));
+    }
+    let user = cli.user.then(MarsContext::user).transpose()?;
     match &cli.command {
         // Root-free commands resolve their own root, because it is theirs to check.
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
-        Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
+        Command::Check(args) => {
+            let root = user.as_ref().map(|ctx| ctx.layout.root());
+            check::run(args, root.or(cli.root.as_deref()), cli.json)
+        }
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
         Command::Hook(args) => Ok(crate::hook_run::run(args)),
@@ -242,24 +282,41 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
             command: models::ModelsCommand::RefreshCatalog(args),
         }) => models::run_refresh_catalog(args),
         cmd => {
-            let ctx = match find_agents_root(cli.root.as_deref()) {
-                Ok(ctx) => ctx,
-                Err(err) if should_auto_init_project(cmd, &err) => {
-                    let initialized = init::initialize_project(cli.root.as_deref(), None)?;
-                    if !cli.json {
-                        output::print_info(&format!(
-                            "auto-initialized {} with mars.toml",
-                            initialized.project_root.display()
-                        ));
+            let ctx = if let Some(user) = user {
+                user
+            } else {
+                match find_agents_root(cli.root.as_deref()) {
+                    Ok(ctx) => ctx,
+                    Err(err) if is_project_not_found(&err) && is_lookup(cmd) => {
+                        MarsContext::user()?
                     }
-                    MarsContext::new(initialized.project_root.clone())?
+                    Err(err) if is_project_not_found(&err) && auto_inits_project(cmd) => {
+                        let initialized = init::initialize_project(cli.root.as_deref(), None)?;
+                        if !cli.json {
+                            output::print_info(&format!(
+                                "auto-initialized {} with mars.toml",
+                                initialized.project_root.display()
+                            ));
+                        }
+                        MarsContext::new(initialized.project_root.clone())?
+                    }
+                    Err(err) if is_project_not_found(&err) && runs_in_place(cmd) => {
+                        let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
+                        MarsContext::new(project_root.clone())?
+                    }
+                    Err(err) => return Err(err),
                 }
-                Err(err) if can_run_without_project(cmd, &err) => {
-                    let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
-                    MarsContext::new(project_root.clone())?
-                }
-                Err(err) => return Err(err),
             };
+            output::set_json_root(ctx.layout.root_json());
+            if fallback_root(cmd).is_some() {
+                output::warn(
+                    "fallback-root-deprecated",
+                    format!(
+                        "`--fallback-root` is deprecated and goes in the next minor release: install those items at your user level (`{}`), which a lookup outside a project reads",
+                        managed_cmd("mars --user add <source>")
+                    ),
+                );
+            }
             dispatch_with_root(
                 cmd,
                 &ctx,
@@ -270,26 +327,70 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     }
 }
 
-fn should_auto_init_project(cmd: &Command, err: &MarsError) -> bool {
-    matches!(cmd, Command::Add(_) | Command::Link(_))
-        && matches!(
-            err,
-            MarsError::Config(ConfigError::ProjectRootNotFound { .. })
-        )
-}
-
-fn can_run_without_project(cmd: &Command, err: &MarsError) -> bool {
+fn is_project_not_found(err: &MarsError) -> bool {
     matches!(
         err,
         MarsError::Config(ConfigError::ProjectRootNotFound { .. })
-    ) && matches!(
+    )
+}
+
+/// Commands that only read installed items: with no project, they read the user level. A command
+/// that writes needs a project, or `--user` to say the user level is meant; `models alias`
+/// writes `mars.toml`. The model catalog is a shared cache, not a root's, so a refresh counts
+/// as a lookup.
+fn is_lookup(cmd: &Command) -> bool {
+    matches!(
         cmd,
         Command::Build(build::BuildArgs {
-            command: build::BuildCommand::LaunchBundle(build::LaunchBundleArgs { agent: None, .. })
-        }) | Command::Build(build::BuildArgs {
+            command: build::BuildCommand::LaunchBundle(_)
+        }) | Command::Agents(_)
+            | Command::Skills(_)
+            | Command::List(_)
+            | Command::Why(_)
+    ) || matches!(cmd, Command::Models(args) if !matches!(args.command, models::ModelsCommand::Alias(_)))
+}
+
+fn fallback_root(cmd: &Command) -> Option<&Path> {
+    match cmd {
+        Command::Agents(args) => args.fallback_root.as_deref(),
+        Command::Skills(args) => args.fallback_root.as_deref(),
+        Command::Build(build::BuildArgs {
+            command: build::BuildCommand::LaunchBundle(args),
+        }) => args.fallback_root.as_deref(),
+        _ => None,
+    }
+}
+
+fn auto_inits_project(cmd: &Command) -> bool {
+    matches!(cmd, Command::Add(_) | Command::Link(_))
+}
+
+/// A plugin build of an explicit package path needs no project around it.
+fn runs_in_place(cmd: &Command) -> bool {
+    matches!(
+        cmd,
+        Command::Build(build::BuildArgs {
             command: build::BuildCommand::Plugin(build::PluginArgs { path: Some(_), .. })
         })
     )
+}
+
+/// Why a command has no meaning at the user level, or `None` when `--user` applies to it.
+fn refused_at_user_level(cmd: &Command) -> Option<&'static str> {
+    match cmd {
+        Command::Init(_) => {
+            Some("the user level needs no init; `mars --user add` creates its mars.toml")
+        }
+        Command::Link(_) | Command::Unlink(_) => {
+            Some("the user level has no targets; its items are installed by each project's sync")
+        }
+        Command::Provide(_) => Some("a host's content is provided to projects, not the user level"),
+        Command::Version(_)
+        | Command::Build(build::BuildArgs {
+            command: build::BuildCommand::Plugin(_),
+        }) => Some("it authors a package, which the user level is not"),
+        _ => None,
+    }
 }
 
 fn dispatch_with_root(
@@ -363,6 +464,11 @@ pub fn is_symlink(path: &Path) -> bool {
 /// root — git boundaries do not stop the walk.
 ///
 /// If `--root` is provided, it sets the walk-up start path, not a direct target.
+///
+/// The home directory is never a project by walk-up: its `mars.toml` was the user level before
+/// Mars had one. For one minor release (`.context/TODO`) a `--root` naming home exactly still
+/// opens it, so an older host keeps working and the user can `unlink` its targets; each time
+/// the walk-up meets one, it warns how to move it.
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     let start = if let Some(root) = explicit {
         if let Some(basename) = root.file_name().and_then(|f| f.to_str())
@@ -383,16 +489,31 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
         std::env::current_dir()?
     };
 
-    find_agents_root_from(&start)
+    find_agents_root_from(&start, explicit.is_some(), canonical_home().as_deref())
 }
 
-fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
+/// The home directory, canonical so a symlinked `/home` still compares equal.
+pub(crate) fn canonical_home() -> Option<PathBuf> {
+    crate::platform::config::home_dir().map(|home| dunce::canonicalize(&home).unwrap_or(home))
+}
+
+fn find_agents_root_from(
+    start: &Path,
+    explicit: bool,
+    home: Option<&Path>,
+) -> Result<MarsContext, MarsError> {
     let start_canon = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut dir = start_canon.as_path();
 
     loop {
         if crate::layout::Layout::project(dir).manifest().exists() {
-            return MarsContext::new(dir.to_path_buf());
+            if Some(dir) != home {
+                return MarsContext::new(dir.to_path_buf());
+            }
+            warn_home_project(dir);
+            if explicit && dir == start_canon {
+                return MarsContext::new(dir.to_path_buf());
+            }
         }
 
         match dir.parent() {
@@ -404,6 +525,27 @@ fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
     Err(MarsError::Config(ConfigError::ProjectRootNotFound {
         start: start.to_path_buf(),
     }))
+}
+
+fn warn_home_project(home: &Path) {
+    let manifest = crate::layout::Layout::project(home).manifest();
+    let user_manifest = MarsContext::user().map_or_else(
+        |_| "the Mars config folder".to_string(),
+        |user| user.layout.manifest().display().to_string(),
+    );
+    output::warn(
+        "home-project",
+        format!(
+            "{manifest} makes your home directory a project, which Mars no longer uses: \
+             move it to {user_manifest} without its `targets` line, move {home}/.mars-src/ \
+             beside it if you have one, run `{sync}`, then `{unlink}` for each target and delete \
+             {manifest} (a later Mars stops reading it; see https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)",
+            manifest = manifest.display(),
+            home = home.display(),
+            sync = managed_cmd("mars --user sync"),
+            unlink = managed_cmd(&format!("mars --root {} unlink <target>", home.display())),
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -458,7 +600,7 @@ mod tests {
         let inner = outer.join("inner");
         std::fs::create_dir_all(inner.join(".git")).unwrap();
 
-        let ctx = find_agents_root_from(&inner).unwrap();
+        let ctx = find_agents_root_from(&inner, false, None).unwrap();
         assert_eq!(
             ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
@@ -476,7 +618,7 @@ mod tests {
         let subdir = root.join("src").join("lib");
         std::fs::create_dir_all(&subdir).unwrap();
 
-        let ctx = find_agents_root_from(&subdir).unwrap();
+        let ctx = find_agents_root_from(&subdir, false, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
@@ -495,7 +637,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = find_agents_root_from(&child).unwrap();
+        let ctx = find_agents_root_from(&child, false, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&child).unwrap());
     }
 
@@ -509,7 +651,7 @@ mod tests {
         let deep = root.join("src").join("foo").join("bar");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let ctx = find_agents_root_from(&deep).unwrap();
+        let ctx = find_agents_root_from(&deep, false, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
@@ -528,7 +670,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = find_agents_root_from(&submodule).unwrap();
+        let ctx = find_agents_root_from(&submodule, false, None).unwrap();
         assert_eq!(
             ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
@@ -542,7 +684,7 @@ mod tests {
         let deep = dir.path().join("a").join("b").join("c");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let result = find_agents_root_from(&deep);
+        let result = find_agents_root_from(&deep, false, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

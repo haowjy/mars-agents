@@ -23,7 +23,7 @@ struct SkillEntry {
 /// Arguments for `mars skills`.
 #[derive(Debug, clap::Args)]
 pub struct SkillsArgs {
-    /// Secondary Mars project used only for missing skills.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing skills.
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 

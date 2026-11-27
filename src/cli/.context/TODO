@@ -2,3 +2,5 @@
 
 - `src/cli/provide.rs`: decide whether an invalid provided skill should be refused individually so the rest of the host bundle can install.
   Provided bundles are read strictly, so one invalid skill currently refuses the entire bundle; the host may then fall back to its own skills.
+
+- Next minor after 0.41.0: remove the home-project window. `find_agents_root_from` then refuses a `--root` that is exactly home instead of opening it, and `warn_home_project` goes. Delete `--fallback-root` (`agents`, `skills`, `build launch-bundle`, `content::ContentRoots`' fallback layer) and its deprecation warning in `dispatch_result`.

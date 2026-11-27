@@ -11,20 +11,28 @@ and surface ownership (`resolve_copy`; see
 
 ## Project resolution
 
-How `mars` decides the project root for a command, including the two cases where it invents one.
-`find_agents_root` and `find_agents_root_from` walk up from the working directory or `--root`
-looking for `mars.toml`, with no git boundary. `dispatch_result` applies three `Err` arms, using
-`should_auto_init_project` and `can_run_without_project`.
+How `mars` decides the root for a command. `--user` forces the user level
+(`MarsContext::user`, `Layout::user`); a command with no meaning there is refused first
+(`refused_at_user_level`). Otherwise `find_agents_root` and `find_agents_root_from` walk up from
+the working directory or `--root` looking for `mars.toml`, with no git boundary, and skip the
+home directory. `dispatch_result` then applies its `Err` arms (`is_lookup`,
+`auto_inits_project`, `runs_in_place`), and the root it chose goes to
+`output::set_json_root`, so every JSON object names it.
 
 ```mermaid
 stateDiagram-v2
+  [*] --> UserLevel: --user, command allowed there
+  [*] --> Refused: --user with init, link, unlink, provide, version, build plugin
   [*] --> Searching: walk up from cwd or --root looking for mars.toml
+  Searching --> Searching: dir is home: warn, skip (unless it is exactly --root)
   Searching --> Found: mars.toml exists, a MarsContext is built
   Searching --> NoProject: reached the filesystem root
-  NoProject --> AutoInitialized: command is add or link, init then continue
-  NoProject --> Rootless: build launch-bundle without --agent, build plugin with --path, models __refresh-catalog
-  NoProject --> Error: anything else, ProjectRootNotFound
+  NoProject --> UserLevel: lookup (build launch-bundle, agents, skills, models but alias, list, why)
+  NoProject --> AutoInitialized: add or link, init then continue (refused at home)
+  NoProject --> Rootless: build plugin with --path
+  NoProject --> Error: anything else, ProjectRootNotFound naming --user
   Found --> [*]
+  UserLevel --> [*]: nothing created until a command writes
   AutoInitialized --> [*]
   Rootless --> [*]: a context whose .mars may not exist
 ```
@@ -32,14 +40,21 @@ stateDiagram-v2
 - **A wrong edit changes where files are written**, which is the one thing the CLI can get
   catastrophically wrong. `MarsContext::new` rejects a `.mars/` that resolves
   outside the project root, because Mars deletes and rewrites inside it. Targets are not checked:
-  one may be a symlink out of the project, and Mars writes there only what it recorded.
+  one may be a symlink out of the project, and Mars writes there only what it recorded. The
+  user level's store is outside its root by design (the data folder) and has no targets.
+- **The home directory is never a project by walk-up**, compared canonically. A `--root` that
+  is exactly home still opens it, with the move warning, for one minor release (`TODO`). `init`
+  refuses home in `init::initialize_project`, which the auto-init shares.
+- A lookup in a project-less directory must create nothing: the user level's folders appear
+  only when a command writes to them.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
-  also refuses a `--root` that is not itself a project root.
+  also refuses a `--root` that is not itself a project root. `check --user` checks the config
+  folder.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
   `resolve_cli_path` decides whether a relative argument resolves against the working directory
   or the found root.
-- The two predicates repeat the command list in `dispatch_with_root`; a new command that needs
-  no project must be added to both.
+- The predicates repeat the command list in `dispatch_with_root`; a new command must be placed
+  in them (lookup or write, allowed under `--user` or not).
 
 ## Target claim
 

@@ -4,7 +4,8 @@
 //! If TARGET is provided, also creates `<project-root>/TARGET` as a managed output dir.
 //! Use `--root` to select an explicit project root.
 //!
-//! Init does NOT walk up — it creates a project at cwd or the `--root` target.
+//! Init does NOT walk up — it creates a project at cwd or the `--root` target, never in the
+//! home directory (the user level is `mars --user`).
 //! Idempotent: re-running is a no-op for initialization but still processes
 //! `--link` flags.
 
@@ -68,6 +69,18 @@ pub(super) fn initialize_project(
     let project_root = explicit_root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
+    // The walk-up never opens a home project, so one made here would be invisible.
+    if super::canonical_home()
+        .is_some_and(|home| dunce::canonicalize(&project_root).is_ok_and(|root| root == home))
+    {
+        return Err(MarsError::Config(ConfigError::Invalid {
+            message: format!(
+                "{} is your home directory, which is never a Mars project; use `{}` to install for yourself, or start a project in a folder of its own",
+                project_root.display(),
+                crate::types::managed_cmd("mars --user add <source>"),
+            ),
+        }));
+    }
 
     let layout = Layout::project(&project_root);
     std::fs::create_dir_all(layout.store())?;

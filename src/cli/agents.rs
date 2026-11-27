@@ -56,7 +56,7 @@ struct AgentDetail<'a> {
 /// Arguments for `mars agents`.
 #[derive(Debug, clap::Args)]
 pub struct AgentsArgs {
-    /// Secondary Mars project used only for missing agents.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing agents.
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 

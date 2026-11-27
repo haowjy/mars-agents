@@ -43,6 +43,35 @@ pub struct SyncArgs {
     /// Ignore package `requires-meridian` version constraints.
     #[arg(long)]
     pub ignore_requires_meridian: bool,
+
+    #[command(flatten)]
+    pub host: HostArg,
+}
+
+/// `--provided-root`, taken by every command that syncs, so a host can pass it wherever it runs
+/// one.
+#[derive(Debug, Default, clap::Args)]
+pub struct HostArg {
+    /// A host's bundle, `<host>@<version>=<dir>`: installs its skills, agents, hooks and MCP
+    /// servers into the targets no host launches (`.agy`), recorded in `.mars/machine.lock`.
+    /// Later syncs keep it while the directory exists.
+    #[arg(long, value_name = "HOST@VERSION=DIR")]
+    pub provided_root: Option<String>,
+}
+
+impl HostArg {
+    pub fn host(&self) -> Result<Option<crate::sync::layers::HostRoot>, MarsError> {
+        self.provided_root
+            .as_deref()
+            .map(|raw| {
+                crate::provided::ProvideSpec::parse(raw).map(|spec| crate::sync::layers::HostRoot {
+                    provider: spec.provider,
+                    version: spec.version,
+                    dir: spec.package_dir,
+                })
+            })
+            .transpose()
+    }
 }
 
 /// Run `mars sync`.
@@ -61,6 +90,7 @@ pub fn run(args: &SyncArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             ignore_requires_mars: args.ignore_requires_mars,
             preview_warnings: args.diff,
             ignore_requires_meridian: args.ignore_requires_meridian,
+            host: args.host.host()?,
         },
         recovery: Default::default(),
         lossiness_mode: if args.verbose {

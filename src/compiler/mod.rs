@@ -39,7 +39,7 @@ pub(crate) fn warn_unknown_visibility(
         format!(
             "{item_kind} `{item_name}` from source `{source_name}` has unknown \
              visibility `{unknown}`; treating it as `local`",
-            source_name = crate::provided::provider_label(source_name),
+            source_name = crate::layer::source_label(source_name),
         ),
     );
 }
@@ -91,11 +91,38 @@ fn compile_inner(
         request.options.refresh_models,
         request.options.no_refresh_models,
     )?;
-    let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
+    let mut targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
     }
+    // Hook schemas and native allowlists are resolved before any mutation.
+    let rendered_hooks = config_entries::render::preflight_config_entries(ctx, &targeted, diag)?;
+
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
+    // What this machine's content may write is decided here, before the plan: a withheld entry's
+    // item is not planned either.
+    let exclude = {
+        let loaded = &targeted.resolved.loaded;
+        crate::sync::machine_local::decide(
+            &ctx.layout,
+            &targeted.facts,
+            &mut targeted.target,
+            &rendered_hooks,
+            &crate::config::targets::managed_targets(&loaded.effective.settings),
+            &crate::config::targets::project_targets(&loaded.config),
+            targeted
+                .resolved
+                .graph
+                .nodes
+                .keys()
+                .map(|source| source.as_str()),
+            &loaded.old_lock,
+            diag,
+        )
+    };
     let planned = create_plan(ctx, targeted, request, diag)?;
 
     // Frozen gate: no pending changes allowed.
@@ -103,12 +130,8 @@ fn compile_inner(
         check_frozen_gate(&planned)?;
     }
 
-    // Hook schemas and native allowlists are resolved before any mutation.
-    let rendered_hooks =
-        config_entries::render::preflight_config_entries(ctx, &planned.targeted, diag)?;
-
-    if enforce_diagnostic_gate {
-        diag.fail_on_errors()?;
+    if !request.options.dry_run {
+        crate::sync::exclude::protect(&ctx.layout, exclude)?;
     }
     let mut applied = apply_plan(ctx, planned, request)?;
     if !request.options.dry_run {
@@ -119,8 +142,8 @@ fn compile_inner(
             .preparation
             .path()
             .to_path_buf();
-        let published = ctx.project_root.join(".mars/staging");
-        crate::platform::fs::publish_staging_generation(&pending, &ctx.project_root.join(".mars"))?;
+        let published = ctx.layout.store().join("staging");
+        crate::platform::fs::publish_staging_generation(&pending, ctx.layout.store())?;
         applied
             .planned
             .targeted
@@ -147,7 +170,7 @@ fn compile_inner(
     );
     let configured_emit_harnesses =
         crate::config::targets::configured_emit_harnesses(effective_settings);
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     let catalog_providers = effective_settings
         .catalog_providers
         .clone()
@@ -155,10 +178,10 @@ fn compile_inner(
     // The catalog is settled here, before any model or effort is resolved against it: a refresh
     // after the agents are written would leave them lowered against the catalog it replaced.
     let models_cache = if request.options.dry_run {
-        crate::models::read_cache(&mars_dir, &catalog_providers).unwrap_or_default()
+        crate::models::read_cache(mars_dir, &catalog_providers).unwrap_or_default()
     } else {
         refreshed_models_cache(
-            &mars_dir,
+            mars_dir,
             effective_settings.models_cache_ttl_hours(),
             refresh.catalog_mode,
             &catalog_providers,
@@ -175,7 +198,7 @@ fn compile_inner(
         routing_settings,
     )
     .with_settings(effective_settings.clone());
-    let mars_agent_scan = native_agents::scan_mars_agents(&mars_dir, diag);
+    let mars_agent_scan = native_agents::scan_mars_agents(mars_dir, diag);
     // Nothing is lost: the stale-cache line already says the catalog is refreshing, so this
     // is not repeated beside it.
     if mars_agent_scan.has_agents()
@@ -226,12 +249,12 @@ fn compile_inner(
     };
     let fanout_agents = loaded.effective.settings.meridian_fanout_agents();
     let native_reconcile_ctx = native_agents::NativeAgentReconcileCtx {
-        project_root: &ctx.project_root,
+        layout: &ctx.layout,
         old_lock,
         dry_run: request.options.dry_run,
     };
     let native_compile_ctx = native_agents::NativeAgentCompileCtx {
-        project_root: &ctx.project_root,
+        layout: &ctx.layout,
         old_lock: native_ownership_lock,
         configured_emit_harnesses: &configured_emit_harnesses,
         options: native_agents::NativeAgentSurfaceCompileOptions {
@@ -337,7 +360,7 @@ pub fn omit_agent_outcomes(outcomes: &[ActionOutcome]) -> Vec<ActionOutcome> {
 /// project them the same way; they come back for the caller to record in the lock.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_targets_under_policy(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
     targets: &[String],
     outcomes: &[ActionOutcome],
     provided: &crate::provided::ProvidedNames,
@@ -349,7 +372,6 @@ pub(crate) fn sync_targets_under_policy(
     Vec<crate::target_sync::TargetSyncOutcome>,
     Vec<ActionOutcome>,
 ) {
-    let mars_dir = project_root.join(".mars");
     // A package or the project holding a provided skill's name wins it: one key, one outcome.
     let taken = outcomes
         .iter()
@@ -357,7 +379,7 @@ pub(crate) fn sync_targets_under_policy(
         .map(|outcome| outcome.item_id.name.to_string())
         .collect();
     let provided_skills =
-        crate::provided::skill_outcomes(provided, &mars_dir, &taken, targets, diag);
+        crate::provided::skill_outcomes(provided, layout.store(), &taken, targets, diag);
     let mut preserve = config_entries::file_hooks::file_hook_output_preserve_paths(old_lock);
     for (target, paths) in native_agent_orphan_preserve_paths(old_lock, targets) {
         preserve.entry(target).or_default().extend(paths);
@@ -373,8 +395,7 @@ pub(crate) fn sync_targets_under_policy(
             let mut outcomes = agent_outcomes_for_target(policy, target, outcomes);
             outcomes.extend(provided_skills.iter().cloned());
             crate::target_sync::sync_managed_targets(
-                project_root,
-                &mars_dir,
+                layout,
                 std::slice::from_ref(target),
                 &outcomes,
                 &ctx,

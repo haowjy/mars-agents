@@ -11,6 +11,9 @@ use super::output;
 pub struct RemoveArgs {
     /// Name of the source to remove.
     pub source: String,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars remove`.
@@ -20,7 +23,10 @@ pub fn run(args: &RemoveArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
         mutation: Some(ConfigMutation::RemoveDependency {
             name: SourceName::from(args.source.as_str()),
         }),
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            host: args.host.host()?,
+            ..SyncOptions::default()
+        },
         recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };

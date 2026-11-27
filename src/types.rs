@@ -184,8 +184,8 @@ impl<'de> Deserialize<'de> for DestPath {
 /// Resolved context for a mars command.
 #[derive(Debug, Clone)]
 pub struct MarsContext {
-    /// Project root containing mars.toml and mars.lock.
-    pub project_root: PathBuf,
+    /// Where the root's manifest, locks, store and targets are.
+    pub layout: crate::layout::Layout,
     /// Whether mars is running under Meridian management.
     ///
     /// Captured at context construction time so compilation decisions are stable
@@ -198,7 +198,7 @@ impl MarsContext {
     /// Create a MarsContext for tests without any validation.
     pub fn for_test(project_root: PathBuf) -> Self {
         MarsContext {
-            project_root,
+            layout: crate::layout::Layout::project(project_root),
             meridian_managed: meridian_managed_from_env(),
         }
     }

@@ -23,7 +23,7 @@ struct SkillEntry {
 /// Arguments for `mars skills`.
 #[derive(Debug, clap::Args)]
 pub struct SkillsArgs {
-    /// Secondary Mars project used only for missing skills.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing skills.
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 
@@ -155,7 +155,7 @@ struct SkillDetail {
 
 fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(
-        &ctx.project_root,
+        &ctx.layout,
         args.fallback_root.as_deref(),
         args.provided_root.as_deref(),
     )?;
@@ -196,7 +196,7 @@ fn run_show(
     args: &SkillsArgs,
 ) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(
-        &ctx.project_root,
+        &ctx.layout,
         args.fallback_root.as_deref(),
         args.provided_root.as_deref(),
     )?;
@@ -236,11 +236,10 @@ fn dir_name(path: &std::path::Path) -> String {
 /// collision, so the caller learns which names to use instead.
 fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
     match roots.skill(name) {
-        Ok(crate::content::Lookup::Renamed(renamed)) => {
+        crate::content::Lookup::Renamed(renamed) => {
             crate::content::not_found(ItemKind::Skill, name, &renamed)
         }
-        Ok(_) => crate::content::not_found(ItemKind::Skill, name, &[]),
-        Err(err) => err,
+        _ => crate::content::not_found(ItemKind::Skill, name, &[]),
     }
 }
 

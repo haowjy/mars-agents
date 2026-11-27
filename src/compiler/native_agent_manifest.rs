@@ -1,5 +1,6 @@
 //! On-disk native agent manifest (`.mars/native-agents.json`) — schema, lock projection, queries.
 
+use crate::layout::Layout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -124,12 +125,12 @@ fn read_native_agent_manifest_state(mars_dir: &Path) -> NativeAgentManifestRead 
 }
 
 fn write_native_agent_manifest_file(
-    project_root: &Path,
+    layout: &Layout,
     manifest: &NativeAgentManifestFile,
 ) -> Result<(), MarsError> {
-    let mars_dir = project_root.join(".mars");
-    std::fs::create_dir_all(&mars_dir)?;
-    let path = manifest_path(&mars_dir);
+    let mars_dir = layout.store();
+    std::fs::create_dir_all(mars_dir)?;
+    let path = manifest_path(mars_dir);
     let json = serde_json::to_string_pretty(manifest).map_err(|err| {
         MarsError::Config(ConfigError::Invalid {
             message: format!("failed to serialize native agent manifest: {err}"),
@@ -140,24 +141,24 @@ fn write_native_agent_manifest_file(
 
 /// Write `.mars/native-agents.json` from the authoritative lock native-output set.
 pub fn write_native_agent_manifest_from_lock(
-    project_root: &Path,
+    layout: &Layout,
     lock: &crate::lock::LockFile,
 ) -> Result<(), MarsError> {
     let manifest = NativeAgentManifestFile {
         version: NATIVE_AGENT_MANIFEST_VERSION,
         agents: manifest_agents_from_records(&compiled_native_outputs_from_lock(lock)),
     };
-    write_native_agent_manifest_file(project_root, &manifest)
+    write_native_agent_manifest_file(layout, &manifest)
 }
 
 /// Persist the lock first, then best-effort write the native-agent manifest projection.
 pub fn persist_lock_then_native_agent_manifest(
-    project_root: &Path,
+    layout: &Layout,
     lock: &crate::lock::LockFile,
     project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<Option<String>, MarsError> {
-    crate::lock::write(project_root, lock, project_targets)?;
-    match write_native_agent_manifest_from_lock(project_root, lock) {
+    crate::lock::write(layout, lock, project_targets)?;
+    match write_native_agent_manifest_from_lock(layout, lock) {
         Ok(()) => Ok(None),
         Err(err) => Ok(Some(format!(
             "could not write native agent manifest: {err}"

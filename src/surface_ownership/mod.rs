@@ -199,6 +199,7 @@ mod tests {
             )]),
             config_entries: Default::default(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }

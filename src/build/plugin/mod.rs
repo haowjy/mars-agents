@@ -261,10 +261,15 @@ fn stage_plugin_inner(
         diag,
     )?;
     // No previous install to keep: an invalid dependency hook is left out with a warning.
-    let built_target =
-        crate::sync::build_target_state(&graph, &effective, &root_source, None, diag, |_, _| {
-            Ok(())
-        })?;
+    let built_target = crate::sync::build_target_state(
+        &graph,
+        &effective,
+        &root_source,
+        None,
+        &Default::default(),
+        diag,
+        |_, _| Ok(()),
+    )?;
     let mut prepared_target = crate::sync::apply_target_renames(
         built_target,
         &graph,

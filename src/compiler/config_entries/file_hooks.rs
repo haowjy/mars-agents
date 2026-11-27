@@ -95,7 +95,7 @@ pub(super) fn write_file_hook_outputs(
     rewritten_outputs: &mut Vec<(String, String)>,
 ) {
     let target_root = write.target_root().to_owned();
-    let (target_dir, files) = write.into_parts(&ctx.project_root);
+    let (target_dir, files) = write.into_parts(&ctx.layout);
     for (owner_canonical_dest_path, relative, content) in files {
         let path = target_dir.join(&relative);
         let dest_exists = crate::surface_ownership::target_dest_exists(&path);

@@ -123,7 +123,15 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         let rendered = render_all(&file, target, desired, &mut diag);
         let records = reconcile(
-            &MCP_KIND, &file.at, root, target, previous, &rendered, force, false, &mut diag,
+            &MCP_KIND,
+            &file.at,
+            &crate::layout::Layout::project(root),
+            target,
+            previous,
+            &rendered,
+            force,
+            false,
+            &mut diag,
         )
         .records;
         (

@@ -307,7 +307,7 @@ fn located(toml_path: &Path, hook_name: &str, source_name: &str, source: HookSou
         HookSource::Dependency { .. } if crate::provided::is_provided_source(source_name) => {
             format!(
                 "hook `{hook_name}` from {}",
-                crate::provided::provider_label(source_name)
+                crate::layer::source_label(source_name)
             )
         }
         HookSource::Dependency { version } => {

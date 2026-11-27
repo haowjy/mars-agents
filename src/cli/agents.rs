@@ -56,7 +56,7 @@ struct AgentDetail<'a> {
 /// Arguments for `mars agents`.
 #[derive(Debug, clap::Args)]
 pub struct AgentsArgs {
-    /// Secondary Mars project used only for missing agents.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing agents.
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 
@@ -123,9 +123,9 @@ fn visible_agents(
 ) -> Result<Vec<VisibleAgent>, MarsError> {
     let visible = roots.visible_items(ItemKind::Agent)?;
     output::print_diagnostics(&visible.warnings, false);
-    let config = crate::build::load_effective_project_config_or_default(&ctx.project_root)?;
+    let config = crate::build::load_effective_project_config_or_default(&ctx.layout)?;
     let fanout = config.settings.meridian_fanout_agents();
-    let native = read_native_agent_manifest(&roots.primary_mars_dir());
+    let native = read_native_agent_manifest(roots.primary_mars_dir());
 
     let mut agents = Vec::new();
     for crate::content::VisibleItem {
@@ -186,7 +186,7 @@ fn visible_agents(
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(
-        &ctx.project_root,
+        &ctx.layout,
         args.fallback_root.as_deref(),
         args.provided_root.as_deref(),
     )?;
@@ -223,7 +223,7 @@ fn run_show(
     args: &AgentsArgs,
 ) -> Result<i32, MarsError> {
     let roots = ContentRoots::new(
-        &ctx.project_root,
+        &ctx.layout,
         args.fallback_root.as_deref(),
         args.provided_root.as_deref(),
     )?;
@@ -302,11 +302,10 @@ fn path_stem(path: &std::path::Path) -> String {
 /// collision, so the caller learns which names to use instead.
 fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
     match roots.agent(name) {
-        Ok(crate::content::Lookup::Renamed(renamed)) => {
+        crate::content::Lookup::Renamed(renamed) => {
             crate::content::not_found(ItemKind::Agent, name, &renamed)
         }
-        Ok(_) => crate::content::not_found(ItemKind::Agent, name, &[]),
-        Err(err) => err,
+        _ => crate::content::not_found(ItemKind::Agent, name, &[]),
     }
 }
 

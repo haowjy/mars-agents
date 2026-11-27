@@ -484,10 +484,13 @@ fn fresh_and_nonexistent_fallback_roots_are_silent_noops_for_cli_lists() {
                 .output()
                 .unwrap();
             assert!(output.status.success());
+            // The flag's own deprecation warning is the only line.
+            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
-                output.stderr.is_empty(),
-                "unexpected stderr: {}",
-                String::from_utf8_lossy(&output.stderr)
+                stderr
+                    .lines()
+                    .all(|line| line.contains("`--fallback-root` is deprecated")),
+                "unexpected stderr: {stderr}"
             );
             let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
             assert!(

@@ -105,6 +105,7 @@ fn root(name: &str, version: &str) -> Dependency {
         required_by: "mars.toml".to_string(),
         declared_in: None,
         dialect: None,
+        namespace: None,
     }
 }
 

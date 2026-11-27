@@ -24,6 +24,9 @@ pub struct LinkArgs {
     /// committed `mars.lock` do not change.
     #[arg(long)]
     pub local: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars link`.
@@ -39,7 +42,14 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         });
     }
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
-    link_target(ctx, &target_name, args.force, args.local, json)
+    link_target(
+        ctx,
+        &target_name,
+        args.force,
+        args.local,
+        args.host.host()?,
+        json,
+    )
 }
 
 fn link_target(
@@ -47,15 +57,16 @@ fn link_target(
     target_name: &str,
     force: bool,
     local_only: bool,
+    host: Option<crate::sync::layers::HostRoot>,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config_path = ctx.project_root.join("mars.toml");
+    let config_path = ctx.layout.manifest();
     if !config_path.exists() {
         return Err(MarsError::Link {
             target: target_name.to_string(),
             message: format!(
                 "mars.toml not found at {} — run `{cmd}` first",
-                ctx.project_root.display(),
+                ctx.layout.root().display(),
                 cmd = managed_cmd("mars init"),
             ),
         });
@@ -68,8 +79,8 @@ fn link_target(
         );
     }
 
-    let config = crate::config::load(&ctx.project_root)?;
-    let local = crate::config::load_local(&ctx.project_root)?;
+    let config = crate::config::load(&ctx.layout)?;
+    let local = crate::config::load_local(&ctx.layout)?;
     let (settings_changed, local_changed) =
         crate::sync::mutation::link_changes(&config, &local, target_name, local_only);
     let in_project = crate::config::targets::project_targets(&config).contains(target_name);
@@ -84,6 +95,7 @@ fn link_target(
         }),
         options: SyncOptions {
             force,
+            host,
             ..SyncOptions::default()
         },
         recovery: Default::default(),

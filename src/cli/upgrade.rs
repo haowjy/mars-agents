@@ -27,6 +27,9 @@ pub struct UpgradeArgs {
     /// Ignore package `requires-meridian` version constraints.
     #[arg(long)]
     pub ignore_requires_meridian: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars upgrade`.
@@ -44,6 +47,7 @@ pub fn run(args: &UpgradeArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         options: SyncOptions {
             ignore_requires_mars: args.ignore_requires_mars,
             ignore_requires_meridian: args.ignore_requires_meridian,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,

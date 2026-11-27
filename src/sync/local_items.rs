@@ -34,8 +34,6 @@ pub(super) fn merge_local_items(
         request,
         local_source_name: SourceOrigin::LocalPackage.to_string().into(),
         owns: resolved.loaded.ownership(),
-        // `.mars/` is the canonical content root for diff and collision checks.
-        mars_dir: ctx.project_root.join(".mars"),
     };
     let managed_targets =
         crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
@@ -60,7 +58,6 @@ struct LocalMerge<'a> {
     request: &'a SyncRequest,
     local_source_name: SourceName,
     owns: Ownership<'a>,
-    mars_dir: std::path::PathBuf,
 }
 
 impl LocalMerge<'_> {
@@ -91,7 +88,7 @@ impl LocalMerge<'_> {
                 );
             }
             target_state.select_hook(&target_name, &target_item, hook.clone());
-            let disk_path = dest_path.resolve(&self.mars_dir);
+            let disk_path = dest_path.resolve(self.ctx.layout.store());
             if !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok() {
                 diag.warn(
                     "unmanaged-collision",
@@ -132,7 +129,7 @@ impl LocalMerge<'_> {
                 targets.sort();
                 targets.dedup();
                 crate::local_source::flat_skill_excluded_paths(
-                    &self.ctx.project_root,
+                    &self.ctx.layout,
                     &item.disk_path(),
                     &targets,
                 )?
@@ -187,10 +184,10 @@ impl LocalMerge<'_> {
             );
         }
 
-        let disk_path = dest_path.resolve(&self.mars_dir);
+        let disk_path = dest_path.resolve(self.ctx.layout.store());
         let unowned_collision = !self.owns.owns(&dest_path) && disk_path.symlink_metadata().is_ok();
-        let adoptable =
-            unowned_collision && force_adoptable_self_destination(&disk_path, &self.mars_dir, kind);
+        let adoptable = unowned_collision
+            && force_adoptable_self_destination(&disk_path, self.ctx.layout.store(), kind);
         if unowned_collision && !(self.request.options.force && adoptable) {
             let guidance = if adoptable {
                 format!(

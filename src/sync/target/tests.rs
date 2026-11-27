@@ -147,8 +147,14 @@ fn invalid_windows_agent_filename_emits_diagnostic_and_skips() {
     )]);
     let mut diag = DiagnosticCollector::new();
 
-    let (target, _, _, _) =
-        build_with_collisions_and_diag(&graph, &config, &test_local_source(), &mut diag).unwrap();
+    let (target, _, _, _) = build_with_collisions_and_diag(
+        &graph,
+        &config,
+        &test_local_source(),
+        &Default::default(),
+        &mut diag,
+    )
+    .unwrap();
     let diagnostics = diag.drain();
 
     assert!(!target.items.contains_key("agents/bad:name.md"));
@@ -187,6 +193,7 @@ fn build_with_invalid_rename_destination_returns_error() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap_err();
@@ -215,6 +222,7 @@ fn same_source_explicit_rename_collision_stays_hard_error() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap_err();
@@ -238,6 +246,7 @@ fn mixed_kind_explicit_rename_collision_stays_hard_error() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap_err();
@@ -267,8 +276,14 @@ fn duplicate_source_in_cross_source_group_stays_hard_error_without_auto_warning(
         .insert("agents/reviewer.md".into(), "agents/coder.md".into());
     let mut diag = DiagnosticCollector::new();
 
-    let err = build_with_collisions_and_diag(&graph, &config, &test_local_source(), &mut diag)
-        .unwrap_err();
+    let err = build_with_collisions_and_diag(
+        &graph,
+        &config,
+        &test_local_source(),
+        &Default::default(),
+        &mut diag,
+    )
+    .unwrap_err();
     let diagnostics = diag.drain();
 
     assert!(matches!(err, MarsError::Collision { .. }));
@@ -300,6 +315,7 @@ fn build_with_agents_filter_pulls_transitive_skills() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -325,6 +341,7 @@ fn build_with_exclude_filter() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -347,6 +364,7 @@ fn unmanaged_disk_path_collision_reported() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -383,6 +401,7 @@ fn unmanaged_collision_skipped_when_hash_matches() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -416,6 +435,7 @@ fn unmanaged_collision_reported_on_different_content() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -451,6 +471,7 @@ fn unmanaged_collision_skipped_under_force() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

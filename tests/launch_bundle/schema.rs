@@ -284,13 +284,6 @@ fn ad_hoc_launch_bundle_refreshes_stale_catalog_without_mars_toml() {
     }
     assert_eq!(refresh.hits(), 1);
     assert!(!project.child("mars.toml").exists());
-
-    let mut catalog = mars();
-    configure_assert_cmd(&mut catalog, temp.path(), &server.url(API_PATH));
-    catalog
-        .current_dir(project.path())
-        .args(["models", "catalog"]);
-    catalog.assert().failure();
 }
 
 #[test]

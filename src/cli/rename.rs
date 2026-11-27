@@ -13,11 +13,14 @@ pub struct RenameArgs {
     pub from: String,
     /// New item path (e.g., agents/coder.md).
     pub to: String,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars rename`.
 pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
+    let lock = crate::lock::load(&ctx.layout)?;
 
     // Validate `from` is a managed item
     let from_dest = DestPath::new(&args.from).map_err(|e| MarsError::Source {
@@ -56,7 +59,10 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             from: args.from.clone(),
             to: args.to.clone(),
         }),
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            host: args.host.host()?,
+            ..SyncOptions::default()
+        },
         recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };

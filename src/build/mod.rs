@@ -62,14 +62,15 @@ pub fn build_launch_bundle(
     let agent_body: Option<String>;
     let agent_source_path: Option<PathBuf>;
     let content_roots = ContentRoots::new(
-        &ctx.project_root,
+        &ctx.layout,
         request.fallback_root.as_deref(),
         request.provided_root.as_deref(),
     )?;
+    diagnostics.extend(content_roots.warnings().iter().cloned());
 
     if let Some(agent) = request.agent.as_deref() {
         let agent_path = content_roots
-            .agent(agent)?
+            .agent(agent)
             .require(mars_schema::item::ItemKind::Agent, agent)?;
         let agent_content =
             std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
@@ -102,7 +103,7 @@ pub fn build_launch_bundle(
         agent_source_path = None;
     }
 
-    let effective_project_config = load_effective_project_config_or_default(&ctx.project_root)?;
+    let effective_project_config = load_effective_project_config_or_default(&ctx.layout)?;
     if let Some(diagnostic) = crate::diagnostic::compatibility_preflight(
         effective_project_config
             .settings
@@ -143,7 +144,7 @@ pub fn build_launch_bundle(
         ),
     };
     profile.tools = effective_tools;
-    let lock = crate::lock::load_for_runtime_aliases(&ctx.project_root)?;
+    let lock = crate::lock::load_for_runtime_aliases(&ctx.layout)?;
     let runtime_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,
         Some(&effective_project_config.models),
@@ -152,7 +153,7 @@ pub fn build_launch_bundle(
     let policy = resolve_policy(
         &effective_project_config,
         PolicyInput {
-            project_root: &ctx.project_root,
+            layout: &ctx.layout,
             runtime_aliases: &runtime_aliases,
             agent: request.agent.as_deref(),
             profile: &profile,
@@ -244,9 +245,9 @@ fn empty_agent_profile() -> AgentProfile {
 }
 
 pub(crate) fn load_effective_project_config_or_default(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
 ) -> Result<EffectiveProjectConfig, MarsError> {
-    match crate::config::load_effective_project_config(project_root) {
+    match crate::config::load_effective_project_config(layout) {
         Ok(config) => Ok(config),
         Err(MarsError::Config(ConfigError::NotFound { .. })) => {
             crate::config::load_user_effective_project_config()

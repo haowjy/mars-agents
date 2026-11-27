@@ -1,8 +1,8 @@
 //! Which records of a lock live in the machine-local `.mars/machine.lock` and which in the
 //! committed `mars.lock`, and how the two are joined back.
 //!
-//! A record is machine-local when it describes one machine: provided content (`mars provide`),
-//! or anything that serves a target `mars.toml` does not name, because only this machine's
+//! A record is machine-local when it describes one machine: content from a layer other than the
+//! project's (the user level's `_user-*`, a host's `_provided-*`; `crate::layer`), or anything that serves a target `mars.toml` does not name, because only this machine's
 //! `mars.local.toml` asked for it. Everything else is shared. [`split`] and [`join`] are
 //! inverses over the lock a sync sees.
 
@@ -10,20 +10,21 @@ use std::collections::BTreeSet;
 
 use super::targets::Away;
 use super::{LockFile, record_local_dependency};
-use crate::provided::is_provided_source;
+use crate::layer::is_machine_local;
 use crate::types::SourceOrigin;
 
 /// `(committed, machine-local)`. `project_targets` are the targets `mars.toml` names.
-pub(super) fn split(lock: LockFile, project_targets: &BTreeSet<String>) -> (LockFile, LockFile) {
+pub(crate) fn split(lock: LockFile, project_targets: &BTreeSet<String>) -> (LockFile, LockFile) {
     let provided = lock.provided_entries.clone();
     let off_project = |target: &str| !project_targets.contains(target);
     let (mut committed, mut local) = lock.split_by(&Away {
         target: &off_project,
-        source: &is_provided_source,
+        source: &is_machine_local,
         entry: &|target, key| {
             off_project(target) || provided.contains(&(target.to_string(), key.to_string()))
         },
     });
+    local.yielded = std::mem::take(&mut committed.yielded);
     // `_self` names the project's own package in the file whose items use it.
     for lock in [&mut committed, &mut local] {
         let local_source: crate::types::SourceName = SourceOrigin::LocalPackage.to_string().into();

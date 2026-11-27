@@ -226,7 +226,7 @@ impl<'a> Run<'a> {
         subpath: Option<&SourceSubpath>,
     ) -> Flow<Option<String>> {
         let dep = pending.dep;
-        let mode = self.req.mode.version_mode(&dep.name);
+        let mode = self.req.version_mode(dep);
         if mode == VersionMode::Choose(SelectionPolicy::LatestOnly) {
             return Ok(None);
         }
@@ -271,7 +271,7 @@ impl<'a> Run<'a> {
             if self.tree(repository, &commit, path)?.is_some() {
                 return Ok(commit);
             }
-            if self.req.mode.version_mode(&dep.name) == VersionMode::Frozen {
+            if self.req.version_mode(dep) == VersionMode::Frozen {
                 return self.missing_commit(repository, &commit, path);
             }
             self.note(

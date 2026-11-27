@@ -6,8 +6,9 @@
 pub(crate) mod file_hooks;
 pub(crate) mod render;
 pub mod resolve;
+use crate::layout::Layout;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::compiler::mcp::{ParsedMcpItem, lower_transport};
 use crate::diagnostic::DiagnosticCollector;
@@ -255,7 +256,7 @@ pub(crate) fn compile_config_entries(
         let keyed: Vec<(KeyedKind, keyed_entries::Rendered)> = rendered
             .into_iter()
             .map(|server| (MCP_KIND, server))
-            .chain(spec.fixed_entries(&ctx.project_root))
+            .chain(spec.fixed_entries(&ctx.layout))
             .chain(keyed_hooks.into_iter().map(|hook| (HOOK_ENTRY_KIND, hook)))
             .collect();
         let target_records: BTreeMap<_, _> = keyed
@@ -315,7 +316,7 @@ pub(crate) fn compile_config_entries(
         let holds_previous = desired == previous
             && merge_file(&target_root).is_some_and(|merge| {
                 crate::target::hook_file::holds_recorded(
-                    &ctx.project_root.join(&target_root).join(merge.file),
+                    &ctx.layout.in_target(&target_root, merge.file),
                     &pending_hooks[&target_root],
                 )
             });
@@ -350,7 +351,7 @@ pub(crate) fn compile_config_entries(
             .iter()
             .flat_map(|(target_root, files)| {
                 files.iter().filter_map(move |(_, relative, content)| {
-                    let path = ctx.project_root.join(target_root).join(relative);
+                    let path = ctx.layout.in_target(target_root, relative);
                     let current = std::fs::read(path).ok();
                     (current.as_deref() != Some(content.as_bytes()))
                         .then(|| (target_root.clone(), relative.clone()))
@@ -370,7 +371,7 @@ pub(crate) fn compile_config_entries(
             &mut scratch
         };
         let config_files_changed = reconcile_all_keyed(
-            &ctx.project_root,
+            &ctx.layout,
             previous_records,
             &desired_keyed,
             force,
@@ -405,7 +406,7 @@ pub(crate) fn compile_config_entries(
                     if pending_hooks.contains_key(operation.target_root()) {
                         return RemovalReport::confirmed();
                     }
-                    remove_hooks(operation, &ctx.project_root, diag)
+                    remove_hooks(operation, &ctx.layout, diag)
                 },
                 diag,
             );
@@ -425,7 +426,7 @@ pub(crate) fn compile_config_entries(
             else {
                 continue;
             };
-            let path = ctx.project_root.join(&target_root).join(&dest_path);
+            let path = ctx.layout.in_target(&target_root, &dest_path);
             match crate::target_sync::removal::remove_recorded(&path, kind, record) {
                 Removal::Absent | Removal::Removed => removed_outputs.push(pair),
                 Removal::Kept => {
@@ -445,7 +446,7 @@ pub(crate) fn compile_config_entries(
         removed: keyed_removed,
         files_changed: config_files_changed,
     } = reconcile_all_keyed(
-        &ctx.project_root,
+        &ctx.layout,
         previous_records,
         &desired_keyed,
         force,
@@ -489,7 +490,7 @@ fn trust_snapshots(ctx: &MarsContext, target_roots: &[String]) -> TrustSnapshots
             let target = mars_schema::hooks::targets::target(root)?;
             let file = target.merge_file().filter(|m| m.trust_gated)?.file;
             let positions = crate::target::hook_file::trust_positions(
-                &ctx.project_root.join(root).join(file),
+                &ctx.layout.in_target(root, file),
                 |event| target.reads(event),
             );
             Some((root.clone(), (format!("{root}/{file}"), positions)))
@@ -519,11 +520,11 @@ fn warn_untrusted(before: &TrustSnapshots, after: &TrustSnapshots, diag: &mut Di
 
 pub(crate) fn remove_hooks(
     operation: RemovalOperation<'_>,
-    project_root: &Path,
+    layout: &Layout,
     diag: &mut DiagnosticCollector,
 ) -> RemovalReport {
     let target_root = operation.target_root().to_owned();
-    let (target_dir, removal) = operation.into_parts(project_root);
+    let (target_dir, removal) = operation.into_parts(layout);
     let report = match hook_file(&target_root) {
         Some((file, ignored)) => crate::target::hook_file::remove_recorded(
             &target_dir.join(file),
@@ -582,7 +583,7 @@ pub(crate) struct KeyedReconciliation {
 /// Reconcile every keyed section each target's adapter declares: a target no longer managed
 /// still gets its recorded entries removed.
 pub(crate) fn reconcile_all_keyed(
-    project_root: &Path,
+    layout: &Layout,
     previous_records: &BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     desired: &DesiredKeyed,
     force: bool,
@@ -612,7 +613,7 @@ pub(crate) fn reconcile_all_keyed(
             let reconciled = keyed_entries::reconcile(
                 &kind,
                 &section,
-                project_root,
+                layout,
                 target_root,
                 previous,
                 &wanted,
@@ -675,7 +676,7 @@ fn apply_replacement_writes(
         let Some(merge) = merge_file(write.target_root()) else {
             continue;
         };
-        let (target_dir, hooks) = write.into_parts(&ctx.project_root);
+        let (target_dir, hooks) = write.into_parts(&ctx.layout);
         let prior = prior_records.get(&target_root);
         if let Err(error) = crate::target::hook_file::replace(
             &target_dir.join(merge.file),
@@ -796,7 +797,7 @@ fn emits_installed_copy(
 
 /// The file `target_root`'s hook entries merge into, for a target Mars writes or one it
 /// retired, and the keys Mars wrote there beside `hooks`.
-fn hook_file(target_root: &str) -> Option<(&'static str, &'static [&'static str])> {
+pub(crate) fn hook_file(target_root: &str) -> Option<(&'static str, &'static [&'static str])> {
     merge_file(target_root)
         .map(|merge| (merge.file, &[][..]))
         .or_else(|| {
@@ -810,7 +811,7 @@ fn merge_file(target_root: &str) -> Option<&'static mars_schema::hooks::targets:
 }
 
 fn installed_path(ctx: &MarsContext, dir: &PackageDir) -> PathBuf {
-    ctx.project_root.join(dir.target()).join(dir.native())
+    ctx.layout.in_target(dir.target(), dir.native())
 }
 
 fn installed_token(ctx: &MarsContext, dir: &PackageDir) -> String {

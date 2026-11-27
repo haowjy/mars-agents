@@ -110,7 +110,8 @@ pub fn run(args: &CheckArgs, root: Option<&Path>, json: bool) -> Result<i32, Mar
 
     let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
     let (lens, prepared, mut report) = examine(&authored_base, &mut publish_diag)?;
-    let lock = crate::lock::load_for_runtime_aliases(&authored_base)?;
+    let lock =
+        crate::lock::load_for_runtime_aliases(&crate::layout::Layout::project(&authored_base))?;
     let known_aliases = crate::models::merged_runtime_aliases(
         &lock.dependency_model_aliases,
         lens.manifest.as_ref().map(|config| &config.models),

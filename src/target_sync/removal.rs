@@ -1,6 +1,7 @@
 //! Remove everything Mars installed for a set of targets: `mars unlink` and a sync that finds a
 //! target no config file names both end here, so what leaves is the same.
 
+use crate::layout::Layout;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -96,14 +97,12 @@ pub(crate) struct RemovalPreview {
     pub kept: Vec<(String, String)>,
 }
 
-pub(crate) fn preview_removal(project_root: &Path, served: &LockFile) -> RemovalPreview {
+pub(crate) fn preview_removal(layout: &Layout, served: &LockFile) -> RemovalPreview {
     let mut removed = BTreeSet::new();
     let mut kept = BTreeSet::new();
     for item in served.items.values() {
         for record in &item.outputs {
-            let path = project_root
-                .join(&record.target_root)
-                .join(record.dest_path.as_str());
+            let path = layout.in_target(&record.target_root, record.dest_path.as_str());
             let pair = (record.target_root.clone(), record.dest_path.to_string());
             match check(&path, item.kind, record) {
                 Ok(Check::Own) => removed.insert(pair),
@@ -132,7 +131,7 @@ pub(crate) struct Removed {
 /// (`remove_recorded`). `served` is the half of the lock `LockFile::split_targets` set aside; a
 /// crash before the caller writes `lock` leaves the records, and the next run removes the rest.
 pub(crate) fn remove_served(
-    project_root: &Path,
+    layout: &Layout,
     lock: &mut LockFile,
     mut served: LockFile,
 ) -> Result<Removed, MarsError> {
@@ -152,7 +151,7 @@ pub(crate) fn remove_served(
     let mut failed = BTreeSet::new();
     let mut removed = BTreeSet::new();
     for (root, kind, record) in outputs {
-        let root_dir = project_root.join(&root);
+        let root_dir = layout.target(&root);
         let dest_path = record.dest_path.as_str();
         let path = root_dir.join(dest_path);
         match remove_recorded(&path, kind, &record) {
@@ -196,12 +195,12 @@ pub(crate) fn remove_served(
     )
     .execute(
         |operation, diagnostics| {
-            crate::compiler::config_entries::remove_hooks(operation, project_root, diagnostics)
+            crate::compiler::config_entries::remove_hooks(operation, layout, diagnostics)
         },
         &mut diagnostics,
     );
     let reconciled = crate::compiler::config_entries::reconcile_all_keyed(
-        project_root,
+        layout,
         &served.config_entries,
         &std::collections::BTreeMap::new(),
         false,
@@ -235,7 +234,7 @@ pub(crate) fn remove_served(
 
     // Removing config entries can empty a directory the outputs loop already passed.
     for target in targets {
-        let dir = project_root.join(&target);
+        let dir = layout.target(&target);
         remove_empty_ancestors(&dir, &dir);
     }
     Ok(Removed {

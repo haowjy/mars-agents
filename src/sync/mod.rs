@@ -1,9 +1,12 @@
 pub mod apply;
 pub mod diff;
+pub(crate) mod exclude;
 mod finalize;
 mod halt;
 mod kept_hooks;
+pub(crate) mod layers;
 mod local_items;
+pub(crate) mod machine_local;
 pub mod mutation;
 pub(crate) mod ownership;
 pub(crate) mod package_dir;
@@ -75,6 +78,8 @@ pub struct SyncReport {
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
+    /// The sync was the user level's, which projects pick up on their own next sync.
+    pub user_level: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +138,8 @@ pub(crate) struct LoadedConfig {
     pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
+    /// The user level's roots and lock rows, the only pins its `_user-*` sources replay.
+    pub user_layer: crate::resolve::UserLayer,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
@@ -157,6 +164,8 @@ pub(crate) struct ResolvedState {
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
+    /// What git and the exclude block said about this sync's paths, for `machine_local::decide`.
+    pub facts: machine_local::Facts,
 }
 
 pub(crate) struct PlannedState {
@@ -211,6 +220,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             config_files_changed: Vec::new(),
             recovery_halt: Some(recovery_halt),
             engine_fallbacks: diag.take_engine_fallbacks(),
+            user_level: ctx.layout.kind() == crate::layout::RootKind::User,
         });
     }
     crate::compiler::compile(ctx, ir, request, &mut diag)
@@ -234,8 +244,8 @@ pub(crate) fn load_config(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<LoadedConfig, MarsError> {
-    let project_root = &ctx.project_root;
-    let mars_dir = project_root.join(".mars");
+    let layout = &ctx.layout;
+    let mars_dir = layout.store();
 
     // A dry run is a preview: it must leave the project's files as it found
     // them. It never creates the lock file or reclaims a pending generation,
@@ -249,13 +259,13 @@ pub(crate) fn load_config(
         // The lock is the sole project-state write allowed before preparation's
         // complete diagnostic gate. All package trees live in owned scratch space.
         let lock = crate::fs::FileLock::acquire(&mars_dir.join("sync.lock"))?;
-        if crate::platform::fs::recover_pending_staging(&mars_dir)? {
+        if crate::platform::fs::recover_pending_staging(mars_dir)? {
             diag.warn(
                 "sync-recovered-staging",
                 "reclaimed an interrupted canonical staging generation",
             );
         }
-        if crate::platform::fs::recover_interrupted_skill_installs(&mars_dir)? {
+        if crate::platform::fs::recover_interrupted_skill_installs(mars_dir)? {
             diag.warn(
                 "sync-recovered-skill-install",
                 "reclaimed an interrupted skill install left staged under .mars/skills",
@@ -264,7 +274,12 @@ pub(crate) fn load_config(
         Some(lock)
     };
 
-    let mut config = match crate::config::load(project_root) {
+    // The user level's config folder is missing until its first write, and a relative
+    // `../pkg` in the manifest this mutation writes resolves only through an existing folder.
+    if request.mutation.is_some() && !request.options.dry_run {
+        std::fs::create_dir_all(layout.root())?;
+    }
+    let mut config = match crate::config::load(layout) {
         Ok(config) => config,
         Err(err) if mutation::is_config_not_found(&err) && request.mutation.is_some() => Config {
             settings: Settings::default(),
@@ -279,25 +294,16 @@ pub(crate) fn load_config(
     };
 
     let user = crate::config::load_user_config()?;
-    let mut local = crate::config::load_local(project_root)?;
+    let mut local = crate::config::load_local(layout)?;
     let local_before = local.clone();
     if let Some(m) = &request.mutation {
-        mutation::apply_local_mutation(&mut local, &config, &user, project_root, m)?;
+        mutation::apply_local_mutation(&mut local, &config, &user, layout.root(), m)?;
     }
     let local_changed = local != local_before;
 
     let (mut effective, config_diagnostics) =
-        crate::config::merge_with_root(config.clone(), local.clone(), &user, project_root)?;
+        crate::config::merge_with_root(config.clone(), local.clone(), &user, layout.root())?;
     diag.extend(config_diagnostics);
-    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: a
-    // host's content belongs to this machine's sync and to nothing it builds or publishes.
-    if crate::provided::takes_provided_any(&crate::config::targets::managed_targets(
-        &effective.settings,
-    )) {
-        effective
-            .dependencies
-            .extend(crate::provided::staged_dependencies(project_root)?);
-    }
     diag.extend(
         crate::diagnostic::compatibility_preflight(effective.settings.min_mars_version.as_deref())
             .map_err(|message| crate::error::ConfigError::Invalid { message })?
@@ -322,7 +328,7 @@ pub(crate) fn load_config(
         crate::resolve::check_consumer_package_requirements(package, &options)?;
     }
 
-    let (mut old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(project_root) {
+    let (mut old_lock, lock_diagnostics) = match crate::lock::load_with_diagnostics(layout) {
         Ok(loaded) => loaded,
         Err(MarsError::Lock(crate::error::LockError::Corrupt { message }))
             if request.recovery == RecoveryPolicy::Repair =>
@@ -336,7 +342,7 @@ pub(crate) fn load_config(
         Err(err) => return Err(err),
     };
     diag.extend(lock_diagnostics);
-    let recovered = recovery::recover(project_root, &mut old_lock)?;
+    let recovered = recovery::recover(layout, &mut old_lock)?;
     if recovered > 0 && request.options.frozen {
         return Err(MarsError::FrozenViolation {
             message: "interrupted canonical writes require ownership recovery; run sync without --frozen first".into(),
@@ -352,11 +358,23 @@ pub(crate) fn load_config(
     }
 
     let managed = crate::config::targets::managed_targets(&effective.settings);
+    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: the
+    // user level's and a host's content belong to this machine's sync and to nothing it builds
+    // or publishes.
+    let layers = layers::load(
+        layout,
+        &managed,
+        &old_lock,
+        request.options.host.as_ref(),
+        diag,
+    )?;
+    effective.dependencies.extend(layers.dependencies);
     let (old_lock, unmanaged) =
         old_lock.split_targets(|target| managed.iter().any(|m| m == target));
     let named = crate::config::targets::named_targets(&config, &local);
     let (carried, dropped) = unmanaged.split_targets(|target| named.contains(target));
-    let provided = crate::provided::ProvidedNames::load(project_root, diag)?;
+    let mut provided = crate::provided::ProvidedNames::load(layout, diag)?;
+    provided.record_host_versions(layers.host_versions);
 
     Ok(LoadedConfig {
         config,
@@ -367,6 +385,7 @@ pub(crate) fn load_config(
         carried,
         dropped,
         provided,
+        user_layer: layers.user_layer,
         dependency_changes,
         sync_lock,
     })
@@ -379,15 +398,16 @@ pub(crate) fn resolve_graph(
     diag: &mut DiagnosticCollector,
 ) -> Result<ResolvedState, MarsError> {
     let cache = GlobalCache::new()?;
-    let source_provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
-    let source_overrides = loaded.local.source_overrides(&ctx.project_root);
+    let source_provider = crate::resolve::RealSourceProvider::new(&cache, ctx.layout.root());
+    let source_overrides = loaded.local.source_overrides(ctx.layout.root());
     let preparation = if request.options.dry_run {
         crate::platform::fs::PendingStagingGeneration::scratch()?
     } else {
-        crate::platform::fs::PendingStagingGeneration::create(&ctx.project_root.join(".mars"))?
+        crate::platform::fs::PendingStagingGeneration::create(ctx.layout.store())?
     };
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_source_overrides(source_overrides);
+        .with_source_overrides(source_overrides)
+        .with_user_layer(std::mem::take(&mut loaded.user_layer));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -483,11 +503,12 @@ pub(crate) fn build_target_state(
     effective: &EffectiveConfig,
     local_source: &SourceName,
     old_lock: Option<&crate::lock::LockFile>,
+    project: &machine_local::ProjectClaims<'_>,
     diag: &mut DiagnosticCollector,
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<BuiltTarget, MarsError> {
     let (mut target, explicit_renames, collision_renames, invalid_hooks) =
-        target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
+        target::build_with_collisions_and_diag(graph, effective, local_source, project, diag)?;
     extend(&mut target, diag)?;
     let managed_targets = crate::config::targets::managed_targets(&effective.settings);
     target.kept_hooks = kept_hooks::settle(
@@ -544,14 +565,25 @@ pub(crate) fn build_target(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<TargetedState, MarsError> {
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
+    let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
+    let facts = machine_local::Facts::load(&ctx.layout, &managed);
+    let project = machine_local::ProjectClaims::new(
+        &local_items,
+        &ctx.layout,
+        &facts,
+        &resolved.loaded.old_lock,
+        &resolved.loaded.provided,
+        &managed,
+    );
 
     let mut built = build_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
         &local_source,
         Some(&resolved.loaded.old_lock),
+        &project,
         diag,
         |target_state, diag| {
             local_items::merge_local_items(
@@ -572,7 +604,7 @@ pub(crate) fn build_target(
     // not also reported as missing it.
     let mut held_back_skills = std::collections::HashSet::new();
     for collision in target::check_unmanaged_collisions(
-        &mars_dir,
+        mars_dir,
         &resolved.loaded.ownership(),
         &built.target,
         request.options.force,
@@ -584,8 +616,8 @@ pub(crate) fn build_target(
                 item.id.kind,
                 mars_schema::item::ItemKind::Agent | mars_schema::item::ItemKind::Skill
             ) || local_items::force_adoptable_self_destination(
-                &collision.path.resolve(&mars_dir),
-                &mars_dir,
+                &collision.path.resolve(mars_dir),
+                mars_dir,
                 item.id.kind,
             )
         });
@@ -658,9 +690,11 @@ pub(crate) fn build_target(
         diag,
     );
 
+    drop(project);
     Ok(TargetedState {
         resolved,
         target: target_state,
+        facts,
     })
 }
 
@@ -696,10 +730,10 @@ pub(crate) fn create_plan(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<PlannedState, MarsError> {
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
 
     let sync_diff = diff::compute(
-        &mars_dir,
+        mars_dir,
         &targeted.resolved.loaded.old_lock,
         &targeted.target,
         request.options.force,
@@ -744,7 +778,7 @@ pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError>
     }
     let lock_index = crate::lock::LockIndex::new(&planned.targeted.resolved.loaded.old_lock);
     let has_changes = planned.plan.actions.iter().any(|a| {
-        if crate::provided::is_provided_source(a.source_name().as_ref()) {
+        if crate::layer::is_machine_local(a.source_name().as_ref()) {
             return false;
         }
         match a {
@@ -775,9 +809,6 @@ pub(crate) fn apply_plan(
     planned: PlannedState,
     request: &SyncRequest,
 ) -> Result<AppliedState, MarsError> {
-    let project_root = &ctx.project_root;
-    let mars_dir = project_root.join(".mars");
-
     recovery::validate_plan(&planned.plan)?;
 
     // Persist config/local only after validation gate and before apply.
@@ -785,13 +816,13 @@ pub(crate) fn apply_plan(
 
     if !request.options.dry_run {
         recovery::prepare(
-            project_root,
+            &ctx.layout,
             &planned.plan,
             &planned.targeted.resolved.graph,
             &planned.targeted.resolved.loaded.old_lock,
         )?;
     }
-    let applied = apply::execute(&mars_dir, &planned.plan, &request.options)?;
+    let applied = apply::execute(ctx.layout.store(), &planned.plan, &request.options)?;
 
     Ok(AppliedState { planned, applied })
 }
@@ -806,8 +837,7 @@ pub(crate) fn sync_targets(
 ) -> SyncedState {
     if request.options.dry_run {
         crate::target_sync::preview_native_skill_repairs(
-            &ctx.project_root,
-            &ctx.project_root.join(".mars"),
+            &ctx.layout,
             &applied.planned.targeted.resolved.loaded.old_lock,
             &crate::config::targets::managed_targets(
                 &applied.planned.targeted.resolved.loaded.effective.settings,
@@ -833,7 +863,7 @@ pub(crate) fn sync_targets(
         &applied.planned.targeted.resolved.loaded.effective.settings,
     );
     let (target_outcomes, provided_skills) = crate::compiler::sync_targets_under_policy(
-        &ctx.project_root,
+        &ctx.layout,
         &targets,
         &applied.applied.outcomes,
         &applied.planned.targeted.resolved.loaded.provided,

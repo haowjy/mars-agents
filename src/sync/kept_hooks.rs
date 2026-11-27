@@ -134,7 +134,7 @@ pub(super) fn settle(
         let remedy = if crate::provided::is_provided_source(invalid.source_name.as_ref()) {
             format!(
                 "update {}",
-                crate::provided::provider_label(invalid.source_name.as_ref())
+                crate::layer::source_label(invalid.source_name.as_ref())
             )
         } else {
             format!(

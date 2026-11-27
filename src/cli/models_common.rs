@@ -4,9 +4,9 @@ use crate::error::MarsError;
 use crate::models::{self, ModelAlias};
 
 pub(super) fn load_project_config_layers_optional(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
 ) -> Result<Option<crate::config::LoadedProjectConfig>, MarsError> {
-    match crate::config::load_project_config_layers(project_root) {
+    match crate::config::load_project_config_layers(layout) {
         Ok(loaded) => Ok(Some(loaded)),
         Err(MarsError::Config(crate::error::ConfigError::NotFound { .. })) => Ok(None),
         Err(err) => Err(err),
@@ -32,10 +32,10 @@ pub(super) fn catalog_providers(
 /// Load model aliases by combining lock-persisted dependency aliases with effective
 /// project/local consumer aliases.
 pub(super) fn load_merged_aliases(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
     project_config: Option<&crate::config::LoadedProjectConfig>,
 ) -> Result<indexmap::IndexMap<String, ModelAlias>, MarsError> {
-    let lock = crate::lock::load_for_runtime_aliases(project_root)?;
+    let lock = crate::lock::load_for_runtime_aliases(layout)?;
     Ok(models::merged_runtime_aliases(
         &lock.dependency_model_aliases,
         project_config.map(|loaded| &loaded.effective.models),

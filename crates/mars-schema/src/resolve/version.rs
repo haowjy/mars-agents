@@ -24,8 +24,17 @@ pub(super) enum VersionMode {
     Frozen,
 }
 
+impl super::Request {
+    pub(super) fn version_mode(&self, dep: &super::Dependency) -> VersionMode {
+        if dep.namespace.is_some() {
+            return VersionMode::Frozen;
+        }
+        self.mode.version_mode(&dep.name)
+    }
+}
+
 impl Mode {
-    pub(super) fn version_mode(&self, name: &str) -> VersionMode {
+    fn version_mode(&self, name: &str) -> VersionMode {
         match self {
             Self::Frozen => VersionMode::Frozen,
             Self::Upgrade { targets } if targets.is_empty() || targets.contains(name) => {
@@ -78,7 +87,7 @@ fn read_path(dep: &Dependency) -> Option<&str> {
 impl<'a> Run<'a> {
     pub(super) fn resolve_single_source(&mut self, pending: &Pending<'_>) -> Single<Ref> {
         let dep = pending.dep;
-        let mode = self.req.mode.version_mode(&dep.name);
+        let mode = self.req.version_mode(dep);
         match &dep.spec {
             Spec::Path(path) => {
                 let (canonical, _) = self.path_source(dep, path, None, dep.declared_in.as_ref())?;

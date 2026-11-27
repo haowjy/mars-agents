@@ -4,7 +4,6 @@
 //! None of these is a lost restriction, so `mars sync` stays quiet about them.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::compiler::{ToolConfig, installed_agent_tools};
 use crate::config::LoadedProjectConfig;
@@ -12,13 +11,13 @@ use crate::diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticCollector, Dia
 use mars_schema::tool_cover::covered;
 
 pub(crate) fn tool_rule_notices(
-    project_root: &Path,
+    layout: &crate::layout::Layout,
     loaded: &LoadedProjectConfig,
 ) -> Vec<Diagnostic> {
     let mut notes = Vec::new();
     let mut scan_diag = DiagnosticCollector::new();
     let agents = installed_agent_tools(
-        &project_root.join(".mars"),
+        layout.store(),
         ToolConfig {
             agent_overlays: &loaded.effective.agents,
             project_tools: &loaded.effective.settings.tools,

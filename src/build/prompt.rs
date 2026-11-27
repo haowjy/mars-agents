@@ -1,11 +1,12 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::build::bundle::{AvailableSkill, LoadedSkill, SupplementalDoc};
 use crate::compiler::variants::harness_skill_variant_path;
-use crate::content::ContentRoots;
+use crate::content::{ContentRoots, Lookup};
 use crate::diagnostic::Diagnostic;
 use mars_schema::frontmatter::{Frontmatter, SkillsSpec};
+use mars_schema::item::ItemKind;
 
 const REPORT_INSTRUCTION: &str = "# Report\n\n**IMPORTANT - Your final assistant message must be the run report.**\n\nProvide a plain markdown report in your final assistant message.\n\nInclude: what was done, key decisions made, files created/modified, verification results, and any issues or blockers.";
 
@@ -195,10 +196,9 @@ fn load_skill_document(
     harness_id: &str,
     warnings: &mut Vec<Diagnostic>,
 ) -> Result<SkillLoadOutcome, String> {
-    let base_skill_path = content_roots.skill_file_path(skill_name);
-    if !base_skill_path.is_file() {
+    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings)? else {
         return Ok(SkillLoadOutcome::Missing);
-    }
+    };
     let skill_dir = base_skill_path
         .parent()
         .expect("skill file lookup always includes a parent directory");
@@ -239,10 +239,9 @@ fn resolve_available_skill(
     skill_name: &str,
     warnings: &mut Vec<Diagnostic>,
 ) -> Result<AvailableSkillOutcome, String> {
-    let base_skill_path = content_roots.skill_file_path(skill_name);
-    if !base_skill_path.is_file() {
+    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings)? else {
         return Ok(AvailableSkillOutcome::Missing);
-    }
+    };
 
     // model-invocable gates global discovery, not explicit profile references.
     let base_profile = parse_skill_file(skill_name, &base_skill_path, warnings)?.fields;
@@ -259,6 +258,31 @@ fn resolve_available_skill(
         description,
         source_path: base_skill_path,
     }))
+}
+
+/// The skill's `SKILL.md`, or `None` when it is missing; a name sync renamed on a collision
+/// also warns with the names to use instead.
+fn found_skill(
+    content_roots: &ContentRoots,
+    skill_name: &str,
+    warnings: &mut Vec<Diagnostic>,
+) -> Result<Option<PathBuf>, String> {
+    Ok(
+        match content_roots
+            .skill(skill_name)
+            .map_err(|err| err.to_string())?
+        {
+            Lookup::Found(path) => Some(path),
+            Lookup::Renamed(renamed) => {
+                warnings.push(Diagnostic::warning(
+                    "skill.renamed",
+                    crate::content::not_found_message(ItemKind::Skill, skill_name, &renamed),
+                ));
+                None
+            }
+            Lookup::Missing => None,
+        },
+    )
 }
 
 fn read_skill_body(skill_name: &str, skill_path: &Path) -> Result<String, String> {

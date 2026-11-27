@@ -32,6 +32,7 @@ mod spec;
 
 use serde::Serialize;
 
+pub(crate) use entries::is_entry_name;
 pub(crate) use names::{ProvidedNames, skill_outcomes};
 pub(crate) use reconcile::reconcile;
 pub(crate) use source::{

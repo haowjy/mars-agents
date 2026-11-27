@@ -240,6 +240,12 @@ pub enum MarsError {
     )]
     ModelCacheUnavailable { reason: String },
 
+    /// A name matched no content layer; `code` (`agent_not_found`, `agent_renamed`,
+    /// `skill_not_found`, `skill_renamed`) is the JSON error code a caller tells a missing item
+    /// from other failures by.
+    #[error("{message}")]
+    NotFound { code: &'static str, message: String },
+
     #[error("{operation} failed for {}: {source}", path.display())]
     Io {
         operation: String,
@@ -297,6 +303,7 @@ impl MarsError {
             | MarsError::ManifestDeclaredPathEscape { .. }
             | MarsError::ManifestDeclaredPathMissing { .. }
             | MarsError::ModelCacheUnavailable { .. }
+            | MarsError::NotFound { .. }
             | MarsError::Io { .. }
             | MarsError::Http { .. }
             | MarsError::GitCli { .. }

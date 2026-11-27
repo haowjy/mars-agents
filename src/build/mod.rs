@@ -28,6 +28,8 @@ pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
     pub fallback_root: Option<PathBuf>,
+    /// A host's bundle directory, the last content layer; see `ContentRoots`.
+    pub provided_root: Option<PathBuf>,
     pub model: Option<String>,
     pub literal_model: bool,
     pub harness: Option<String>,
@@ -59,10 +61,16 @@ pub fn build_launch_bundle(
     let mut profile: AgentProfile;
     let agent_body: Option<String>;
     let agent_source_path: Option<PathBuf>;
-    let content_roots = ContentRoots::new(&ctx.layout, request.fallback_root.as_deref());
+    let content_roots = ContentRoots::new(
+        &ctx.layout,
+        request.fallback_root.as_deref(),
+        request.provided_root.as_deref(),
+    )?;
 
     if let Some(agent) = request.agent.as_deref() {
-        let agent_path = content_roots.agent_file_path(agent);
+        let agent_path = content_roots
+            .agent(agent)?
+            .require(mars_schema::item::ItemKind::Agent, agent)?;
         let agent_content =
             std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
                 operation: "read launch bundle agent".to_string(),

@@ -106,6 +106,11 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub fallback_root: Option<PathBuf>,
 
+    /// A host's bundle directory (`agents/<name>.md`, `skills/<name>/SKILL.md`), read in place
+    /// for agents and skills no installed layer has.
+    #[arg(long, value_name = "DIR")]
+    pub provided_root: Option<PathBuf>,
+
     /// Override model token or canonical model id.
     #[arg(long)]
     pub model: Option<String>,
@@ -244,6 +249,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         LaunchBundleRequest {
             agent: args.agent.clone(),
             fallback_root: args.fallback_root.clone(),
+            provided_root: args.provided_root.clone(),
             model: args.model.clone(),
             literal_model: args.literal_model,
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),

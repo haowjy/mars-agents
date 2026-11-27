@@ -27,6 +27,11 @@ pub struct SkillsArgs {
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 
+    /// A host's bundle directory (`agents/<name>.md`, `skills/<name>/SKILL.md`), read in place
+    /// for skills no installed layer has.
+    #[arg(long, value_name = "DIR", global = true)]
+    pub provided_root: Option<PathBuf>,
+
     /// Filter by skill type (e.g. guardrail, reference, principle).
     ///
     /// Global so it is accepted both as `mars skills --type ...` and on the
@@ -60,9 +65,7 @@ pub enum SkillsCommand {
 pub fn run(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(SkillsCommand::List) => run_list(args, ctx, json),
-        Some(SkillsCommand::Show { name }) => {
-            run_show(name, ctx, json, args.fallback_root.as_deref())
-        }
+        Some(SkillsCommand::Show { name }) => run_show(name, ctx, json, args),
         None => run_list(args, ctx, json),
     }
 }
@@ -83,12 +86,17 @@ fn visible_skills(
     roots: &ContentRoots,
     source: Option<&str>,
 ) -> Result<Vec<VisibleSkill>, MarsError> {
-    let visible = roots.visible_locked_items(ItemKind::Skill)?;
+    let visible = roots.visible_items(ItemKind::Skill)?;
     output::print_diagnostics(&visible.warnings, false);
 
     let mut skills = Vec::new();
-    for (scope, item, disk_path) in visible.items {
-        if source.is_some_and(|source| item.source != source) {
+    for crate::content::VisibleItem {
+        scope,
+        source: item_source,
+        disk_path,
+    } in visible.items
+    {
+        if source.is_some_and(|source| item_source.as_deref() != Some(source)) {
             continue;
         }
         let skill_md = disk_path.join("SKILL.md");
@@ -146,7 +154,11 @@ struct SkillDetail {
 }
 
 fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.layout, args.fallback_root.as_deref());
+    let roots = ContentRoots::new(
+        &ctx.layout,
+        args.fallback_root.as_deref(),
+        args.provided_root.as_deref(),
+    )?;
     let mut entries: Vec<SkillEntry> = visible_skills(&roots, args.source.as_deref())?
         .iter()
         .filter(|skill| !args.model_invocable || skill.profile.model_invocable)
@@ -181,15 +193,18 @@ fn run_show(
     name: &str,
     ctx: &super::MarsContext,
     json: bool,
-    fallback_root: Option<&std::path::Path>,
+    args: &SkillsArgs,
 ) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.layout, fallback_root);
+    let roots = ContentRoots::new(
+        &ctx.layout,
+        args.fallback_root.as_deref(),
+        args.provided_root.as_deref(),
+    )?;
     let found = visible_skills(&roots, None)?.into_iter().find(|skill| {
         skill.name.eq_ignore_ascii_case(name) || skill.dir.eq_ignore_ascii_case(name)
     });
     let Some(skill) = found else {
-        eprintln!("error: skill `{name}` not found");
-        return Ok(1);
+        return Err(not_found(&roots, name));
     };
 
     let entry = skill.entry();
@@ -215,6 +230,18 @@ fn dir_name(path: &std::path::Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// `show`'s error for a name no visible skill matches: renamed when sync renamed it on a
+/// collision, so the caller learns which names to use instead.
+fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
+    match roots.skill(name) {
+        Ok(crate::content::Lookup::Renamed(renamed)) => {
+            crate::content::not_found(ItemKind::Skill, name, &renamed)
+        }
+        Ok(_) => crate::content::not_found(ItemKind::Skill, name, &[]),
+        Err(err) => err,
+    }
 }
 
 #[cfg(test)]

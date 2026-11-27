@@ -96,7 +96,6 @@ Review code changes."#;
     let mut cmd = mars_cmd(&project_root, temp.path(), &server.url(API_PATH));
     cmd.args(["build", "launch-bundle", "--agent", "missing-agent"]);
     cmd.assert()
-        .failure()
-        .stderr(predicates::str::contains("missing-agent"))
-        .stderr(predicates::str::contains("read launch bundle agent"));
+        .code(3)
+        .stderr(predicates::str::contains("agent `missing-agent` not found"));
 }

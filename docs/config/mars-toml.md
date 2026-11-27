@@ -592,7 +592,7 @@ The earlier per-agent `fanout:` frontmatter key is gone from schema 1; this list
 
 Overlays are **your project's** policy for an installed agent or skill, layered over the package's text without forking it. They are consumer configuration: they are not part of [schema v1](schema-v1.md), the package files never see them, and a dependency's own `[agents.*]` and `[skills.*]` tables are inert in your project. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the composing network and `tools` permission sets.
 
-An agent overlay is read when Mars builds a launch bundle and when it writes native agent files. `.mars/agents/<name>.md` keeps the package's text.
+An agent overlay is read when Mars builds a launch bundle and when it writes native agent files. `.mars/agents/<name>.md` keeps the package's text. A launch bundle applies the overlay to an agent from `--provided-root` too, by its name.
 
 ```toml
 [agents.reviewer]

@@ -60,6 +60,11 @@ pub struct AgentsArgs {
     #[arg(long, global = true)]
     pub fallback_root: Option<PathBuf>,
 
+    /// A host's bundle directory (`agents/<name>.md`, `skills/<name>/SKILL.md`), read in place
+    /// for agents no installed layer has.
+    #[arg(long, value_name = "DIR", global = true)]
+    pub provided_root: Option<PathBuf>,
+
     /// Filter by mode (primary or subagent).
     ///
     /// Global so it is accepted both as `mars agents --mode ...` and on the
@@ -94,9 +99,7 @@ pub enum AgentsCommand {
 pub fn run(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     match &args.command {
         Some(AgentsCommand::List) => run_list(args, ctx, json),
-        Some(AgentsCommand::Show { name }) => {
-            run_show(name, ctx, json, args.fallback_root.as_deref())
-        }
+        Some(AgentsCommand::Show { name }) => run_show(name, ctx, json, args),
         None => run_list(args, ctx, json),
     }
 }
@@ -118,15 +121,20 @@ fn visible_agents(
     ctx: &super::MarsContext,
     source: Option<&str>,
 ) -> Result<Vec<VisibleAgent>, MarsError> {
-    let visible = roots.visible_locked_items(ItemKind::Agent)?;
+    let visible = roots.visible_items(ItemKind::Agent)?;
     output::print_diagnostics(&visible.warnings, false);
     let config = crate::build::load_effective_project_config_or_default(&ctx.project_root)?;
     let fanout = config.settings.meridian_fanout_agents();
     let native = read_native_agent_manifest(&roots.primary_mars_dir());
 
     let mut agents = Vec::new();
-    for (scope, item, disk_path) in visible.items {
-        if source.is_some_and(|source| item.source != source) {
+    for crate::content::VisibleItem {
+        scope,
+        source: item_source,
+        disk_path,
+    } in visible.items
+    {
+        if source.is_some_and(|source| item_source.as_deref() != Some(source)) {
             continue;
         }
         let content = match std::fs::read_to_string(&disk_path) {
@@ -177,7 +185,11 @@ fn visible_agents(
 }
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let roots = ContentRoots::new(
+        &ctx.project_root,
+        args.fallback_root.as_deref(),
+        args.provided_root.as_deref(),
+    )?;
     let mut entries: Vec<AgentEntry> = visible_agents(&roots, ctx, args.source.as_deref())?
         .into_iter()
         .map(|agent| agent.entry)
@@ -208,17 +220,20 @@ fn run_show(
     name: &str,
     ctx: &super::MarsContext,
     json: bool,
-    fallback_root: Option<&std::path::Path>,
+    args: &AgentsArgs,
 ) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let roots = ContentRoots::new(
+        &ctx.project_root,
+        args.fallback_root.as_deref(),
+        args.provided_root.as_deref(),
+    )?;
     let found = visible_agents(&roots, ctx, None)?
         .into_iter()
         .find(|agent| {
             agent.stem.eq_ignore_ascii_case(name) || agent.entry.name.eq_ignore_ascii_case(name)
         });
     let Some(VisibleAgent { profile, entry, .. }) = found else {
-        eprintln!("error: agent `{name}` not found");
-        return Ok(1);
+        return Err(not_found(&roots, name));
     };
 
     let harness = profile.harness.as_ref().map_or("", |h| h.as_str());
@@ -281,6 +296,18 @@ fn path_stem(path: &std::path::Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string()
+}
+
+/// `show`'s error for a name no visible agent matches: renamed when sync renamed it on a
+/// collision, so the caller learns which names to use instead.
+fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
+    match roots.agent(name) {
+        Ok(crate::content::Lookup::Renamed(renamed)) => {
+            crate::content::not_found(ItemKind::Agent, name, &renamed)
+        }
+        Ok(_) => crate::content::not_found(ItemKind::Agent, name, &[]),
+        Err(err) => err,
+    }
 }
 
 #[cfg(test)]

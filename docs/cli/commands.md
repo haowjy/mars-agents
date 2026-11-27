@@ -205,9 +205,9 @@ Default view shows name + description from frontmatter (the YAML metadata block 
 Inspect the installed agents or skills, after variants and overrides are applied.
 
 ```bash
-mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH] [--provided-root DIR]
 mars agents show NAME
-mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH] [--provided-root DIR]
 mars skills show NAME
 ```
 
@@ -218,14 +218,19 @@ mars skills show NAME
 | `--model-invocable` | Only items a model may pick for itself |
 | `--source NAME` | Filter by dependency name |
 | `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
+| `--provided-root DIR` | A host's bundle directory, read in place for items neither the project nor the fallback has; see [Provided content](#provided-content) |
 
-The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
+The table shows name, mode or type, `M-INV` (model-invocable), scope (`root`, `fallback` or `provided`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
 
 - `native-harnesses`: the harnesses the last `mars sync` installed the agent into natively.
 - `fanout`: `true` when `[settings.meridian.fanout].agents` names it, so Meridian launches it even where it is native.
 - `subagents`: the profile's list of agents it may spawn.
 
-`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. A name that matches nothing fails with exit 3 and, with `--json`, the error code `agent_not_found` or `skill_not_found`; a name sync renamed on a collision (`mars.lock` records only `<name>__<source>` copies of it) fails with `agent_renamed` or `skill_renamed` and lists the names to use. `--source` keeps only items from that dependency, so it leaves out provided items. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+
+### Provided content
+
+`--provided-root DIR` names a host's bundle directory, the one it gives [`mars provide`](#mars-provide), and reads it in place: nothing is installed or recorded, so it needs no sync. The layout is `agents/<name>.md` and `skills/<name>/SKILL.md`; a name starting with `_` or `.` is not an entry, and neither is an agent file that is a symlink or a skill directory with a symlink anywhere in it, which `mars provide` would refuse. It is the last layer every by-name lookup of an agent or skill goes through, after the project root and `--fallback-root`, and it answers a name only when neither installed layer has it. A name sync renamed on a collision counts as installed: when an installed layer's `mars.lock` records two or more `<name>__<source>` copies of it, each from the source its suffix names, the lookup fails and lists them instead of falling through to the host's copy. A `__` name the lock does not record that way, such as a `<skill>__<provider>` skill `mars provide` installed, is not a rename. A `DIR` that is not a directory fails with exit 2.
 
 ---
 
@@ -875,8 +880,9 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 - Uses no agent profile; routing is driven by `--model` and the installed harness environment
 
 **Agent/profile mode** (`--agent <name>`):
-- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
-- Requires a project with `mars sync` already run
+- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project, then from `--fallback-root`, then `agents/<name>.md` from `--provided-root` ([Provided content](#provided-content))
+- Requires a `mars.toml` project; an agent from `.mars/agents/` needs `mars sync` to have run, and a provided agent does not
+- An agent no layer has fails with exit 3 and the JSON error code `agent_not_found`; a name sync renamed on a collision fails with `agent_renamed`, listing the renamed names
 - Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
 - Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.
@@ -884,6 +890,8 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 | Flag | Description |
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
+| `--fallback-root <path>` | A secondary Mars project consulted for agents and skills the project lacks. |
+| `--provided-root <dir>` | A host's bundle directory, the last layer for agents and skills; see [Provided content](#provided-content). The `[agents.<name>]` overlay applies to a provided agent as to an installed one. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`, `agy`). Only a pin reaches `agy`, which Meridian builds a command for and does not run; the bundle's `harness_model` is one `agy` slug that carries the effort too ([Antigravity slugs](../config/agent-compilation.md#agy-model-and-effort)). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
@@ -970,7 +978,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 }
 ```
 
-- `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
+- `agent_body` is the raw post-frontmatter markdown body of the agent's file in agent/profile mode, and `agent_source_path` is that file, wherever the lookup found it.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
 - `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Antigravity, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
@@ -1059,6 +1067,9 @@ mars build launch-bundle --model gpt-5.4-mini --json
 
 # Agent mode: build bundle for a synced agent
 mars build launch-bundle --agent my-agent --json
+
+# Agent mode with a host's built-in agents; [agents.router] still applies
+mars build launch-bundle --agent router --provided-root /opt/tool/bundle --json
 
 # Override harness explicitly
 mars build launch-bundle --model gpt-5.4-mini --harness codex --json

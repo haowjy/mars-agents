@@ -40,7 +40,7 @@ pub mod validate;
 pub mod version;
 pub mod why;
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -398,7 +398,7 @@ fn dispatch_with_root(
     match cmd {
         Command::Validate(args) => validate::run(args, ctx, json),
         Command::Export(args) => export::run(args, ctx, json),
-        Command::Add(args) => add::run(args, ctx, json),
+        Command::Add(args) => add::run(args, ctx, explicit_root, json),
         Command::Adopt(args) => adopt::run(args, ctx, explicit_root, json),
         Command::Remove(args) => remove::run(args, ctx, json),
         Command::Sync(args) => sync::run(args, ctx, json),
@@ -409,7 +409,7 @@ fn dispatch_with_root(
         Command::Why(args) => why::run(args, ctx, json),
         Command::Rename(args) => rename::run(args, ctx, json),
         Command::Resolve(args) => resolve_cmd::run(args, ctx, json),
-        Command::Override(args) => override_cmd::run(args, ctx, json),
+        Command::Override(args) => override_cmd::run(args, ctx, explicit_root, json),
         Command::Link(args) => link::run(args, ctx, json),
         Command::Unlink(args) => unlink::run(args, ctx, json),
         Command::Doctor(args) => doctor::run(args, ctx, json),
@@ -445,6 +445,42 @@ pub(crate) fn resolve_cli_path(
         Some(root) if from_cwd.symlink_metadata().is_err() => Ok(root.join(path)),
         _ => Ok(from_cwd),
     }
+}
+
+/// A path typed on the command line, in the form a manifest in `manifest_dir` stores it. A
+/// relative path resolves as [`resolve_cli_path`] says and is rewritten relative to
+/// `manifest_dir`, where the manifest's relative paths resolve; a rooted path stays as typed.
+/// The rewrite uses `/`, which every platform reads, so a committed manifest works on all of them.
+pub(crate) fn manifest_cli_path(
+    path: &Path,
+    explicit_root: Option<&Path>,
+    manifest_dir: &Path,
+) -> Result<PathBuf, MarsError> {
+    if path.has_root() || matches!(path.components().next(), Some(Component::Prefix(_))) {
+        return Ok(path.to_path_buf());
+    }
+    // Both sides are physical paths: the working directory is, and so is the canonical base.
+    let target = crate::fs::lexical_absolute(&resolve_cli_path(path, explicit_root)?)?;
+    let base = crate::fs::canonicalize_existing_prefix(manifest_dir)?;
+    let target: Vec<_> = target.components().collect();
+    let base: Vec<_> = base.components().collect();
+    let common = target
+        .iter()
+        .zip(&base)
+        .take_while(|(left, right)| left == right)
+        .count();
+    if common == 0 {
+        // Another drive: no relative path reaches it.
+        return Ok(target.iter().collect());
+    }
+    let mut parts: Vec<String> = vec![if common == base.len() { "." } else { ".." }.to_string()];
+    parts.extend((common + 1..base.len()).map(|_| "..".to_string()));
+    parts.extend(
+        target[common..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
+    Ok(PathBuf::from(parts.join("/")))
 }
 
 pub fn is_symlink(path: &Path) -> bool {

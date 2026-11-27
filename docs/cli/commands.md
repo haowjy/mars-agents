@@ -86,7 +86,7 @@ mars add <source...> [filter flags]
   - GitHub: `owner/repo`, `owner/repo/plugins/foo`, `github:owner/repo`, `https://github.com/owner/repo/tree/main/plugins/foo`
   - GitLab: `gitlab:group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo/-/tree/main/plugins/foo`
   - Generic git: `git@example.com:org/repo.git`, `git://host/org/repo.git`
-  - Local paths
+  - Local paths. A relative path resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects. `mars.toml` stores it relative to its own folder (the project root, or the config folder under `--user`), as you would write it there; an absolute path is stored as typed.
 - A dependency whose definitions break schema v1 is rejected before any content is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
 - Archive-download and direct file-download URLs are rejected in v1.
 
@@ -351,7 +351,7 @@ Set a local development override for a source.
 mars override <name> --path <local-path>
 ```
 
-Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](../dev/local-development.md).
+Writes to `mars.local.toml` and re-syncs. A relative `--path` resolves and is stored as `mars add` does with a local path. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](../dev/local-development.md).
 
 ---
 

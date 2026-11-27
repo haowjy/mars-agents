@@ -52,7 +52,8 @@ stateDiagram-v2
   folder.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
   `resolve_cli_path` decides whether a relative argument resolves against the working directory
-  or the found root.
+  or the found root; `manifest_cli_path` adds the rewrite relative to the manifest's folder for a
+  path `add` or `override` stores.
 - The predicates repeat the command list in `dispatch_with_root`; a new command must be placed
   in them (lookup or write, allowed under `--user` or not).
 

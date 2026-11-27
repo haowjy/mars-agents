@@ -274,6 +274,11 @@ pub(crate) fn load_config(
         Some(lock)
     };
 
+    // The user level's config folder is missing until its first write, and a relative
+    // `../pkg` in the manifest this mutation writes resolves only through an existing folder.
+    if request.mutation.is_some() && !request.options.dry_run {
+        std::fs::create_dir_all(layout.root())?;
+    }
     let mut config = match crate::config::load(layout) {
         Ok(config) => config,
         Err(err) if mutation::is_config_not_found(&err) && request.mutation.is_some() => Config {

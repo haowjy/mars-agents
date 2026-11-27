@@ -16,7 +16,8 @@ pub const FLAT_SKILL_EXCLUDED_TOP_LEVEL: &[&str] = &[
     ".gitignore",
 ];
 
-pub(crate) fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsError> {
+/// `path` made absolute against the working directory, with `.` and `..` removed by text.
+pub(crate) fn lexical_absolute(path: &Path) -> Result<PathBuf, MarsError> {
     let absolute = std::path::absolute(path)?;
     let mut normalized = PathBuf::new();
     for component in absolute.components() {
@@ -28,6 +29,11 @@ pub(crate) fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsE
             component => normalized.push(component.as_os_str()),
         }
     }
+    Ok(normalized)
+}
+
+pub(crate) fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, MarsError> {
+    let normalized = lexical_absolute(path)?;
 
     let mut existing = normalized.as_path();
     let mut missing = Vec::new();

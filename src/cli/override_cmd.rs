@@ -21,12 +21,18 @@ pub struct OverrideArgs {
 }
 
 /// Run `mars override`.
-pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+pub fn run(
+    args: &OverrideArgs,
+    ctx: &super::MarsContext,
+    explicit_root: Option<&std::path::Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
+    let local_path = super::manifest_cli_path(&args.path, explicit_root, ctx.layout.root())?;
     let request = SyncRequest {
         resolution: ResolutionMode::Normal,
         mutation: Some(ConfigMutation::SetOverride {
             source_name: SourceName::from(args.source.as_str()),
-            local_path: args.path.clone(),
+            local_path: local_path.clone(),
         }),
         options: SyncOptions {
             host: args.host.host()?,
@@ -41,7 +47,7 @@ pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<
         output::print_success(&format!(
             "override `{}` → {}",
             args.source,
-            args.path.display()
+            local_path.display()
         ));
     }
     output::print_sync_report(&report, json, true, false);

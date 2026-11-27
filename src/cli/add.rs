@@ -9,6 +9,7 @@ use crate::types::SourceName;
 use mars_schema::dependency::{Entry, Source};
 use mars_schema::filter::FilterConfig;
 use mars_schema::names::{ItemName, SourceSubpath};
+use std::path::Path;
 
 use super::output;
 
@@ -65,7 +66,12 @@ struct ParsedDependency {
     entry: Entry,
 }
 
-pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
+pub fn run(
+    args: &AddArgs,
+    ctx: &super::MarsContext,
+    explicit_root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
     let has_filters = !args.agents.is_empty()
         || !args.skills.is_empty()
         || !args.exclude.is_empty()
@@ -94,11 +100,14 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         .sources
         .iter()
         .map(|source| {
-            let parsed = parse_dependency_specifier(
+            let mut parsed = parse_dependency_specifier(
                 source,
                 args.subpath.as_deref(),
                 args.plugin.as_deref(),
             )?;
+            if let Source::Path { path } = &mut parsed.entry.source {
+                *path = super::manifest_cli_path(path, explicit_root, ctx.layout.root())?;
+            }
             let entry = Entry {
                 filter: filter_config.clone(),
                 ..parsed.entry
@@ -345,7 +354,6 @@ fn format_item_names(items: &[ItemName]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn parse_github_shorthand() {

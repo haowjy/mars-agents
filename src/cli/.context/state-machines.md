@@ -48,8 +48,10 @@ stateDiagram-v2
   refuses home and the user config folder in `init::initialize_project`, which the auto-init
   shares; `init::no_project_in` is the one rule, and `ProjectRootNotFound` carries its refusal
   so the error names `mars init` only where a project can start. `warn_home_project` builds the
-  move warning from what exists: once the user `mars.toml` exists it names only the unlinks (one
-  per target the home files name) and the deletes.
+  move warning from what exists: the manifest move while the user `mars.toml` is absent, the
+  `.mars-src/` move while home has one, `mars --user sync` after either, then the unlinks (one per
+  target the home files name) and the deletes. A user who wrote the user `mars.toml` first must
+  still be told to move `~/.mars-src/`, or their own items never reach the user level.
 - A lookup in a project-less directory must create nothing: the user level's folders appear
   only when a command writes to them. When `Layout::user_level` cannot locate them (no absolute
   HOME, or on Windows no AppData folder), the lookup runs in place instead of failing: an ad-hoc

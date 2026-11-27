@@ -575,15 +575,14 @@ fn find_agents_root_from(
     }))
 }
 
-/// The steps left to move a home project to the user level, read from where things stand: once
-/// the user level's `mars.toml` exists, only the cleanup is left. The unlink commands name the
-/// targets the home project's files name.
+/// The steps left to move a home project to the user level, read from where things stand: the
+/// manifest move while the user level has no `mars.toml`, the `.mars-src/` move while home has
+/// one, the user sync after either, and always the cleanup. The unlink commands name the targets
+/// the home project's files name.
 fn warn_home_project(home: &Path) {
     let layout = crate::layout::Layout::project(home);
     let manifest = layout.manifest();
-    let user_manifest = crate::layout::Layout::user_level()
-        .ok()
-        .map(|user| user.manifest());
+    let user = crate::layout::Layout::user_level().ok();
     let targets = crate::config::load(&layout).ok().map(|config| {
         let local = crate::config::load_local(&layout).unwrap_or_default();
         crate::config::targets::named_targets(&config, &local)
@@ -608,21 +607,33 @@ fn warn_home_project(home: &Path) {
         lock = layout.lock().display(),
         store = layout.store().display(),
     );
-    let steps = match &user_manifest {
-        Some(user_manifest) if user_manifest.exists() => format!(
-            "your user level ({}) is already set up, so only the cleanup is left: {cleanup}",
-            user_manifest.display()
-        ),
-        _ => format!(
-            "move it to {user_manifest} without its `targets` line, move {home}/.mars-src/ \
-             beside it if you have one, run `{sync}`, then {cleanup}",
-            user_manifest = user_manifest.map_or_else(
+    let mut steps = Vec::new();
+    if !user.as_ref().is_some_and(|user| user.manifest().exists()) {
+        steps.push(format!(
+            "move it to {} without its `targets` line",
+            user.as_ref().map_or_else(
                 || "the Mars config folder".to_string(),
-                |path| path.display().to_string()
-            ),
-            home = home.display(),
-            sync = managed_cmd("mars --user sync"),
-        ),
+                |user| user.manifest().display().to_string()
+            )
+        ));
+    }
+    if layout.local_source().is_dir() {
+        steps.push(format!(
+            "move what is in {}/ to {}",
+            layout.local_source().display(),
+            user.as_ref().map_or_else(
+                || ".mars-src/ in the Mars config folder".to_string(),
+                |user| format!("{}/", user.local_source().display())
+            )
+        ));
+    }
+    if !steps.is_empty() {
+        steps.push(format!("run `{}`", managed_cmd("mars --user sync")));
+    }
+    let steps = if steps.is_empty() {
+        cleanup
+    } else {
+        format!("{}, then {cleanup}", steps.join(", "))
     };
     output::warn(
         "home-project",

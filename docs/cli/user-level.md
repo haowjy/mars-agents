@@ -139,8 +139,8 @@ a command run from home that finds no project names only `--user`.
 
 Before the user level, a `~/mars.toml` was how people installed for themselves. Mars no longer
 opens it by walk-up, and warns whenever the walk-up passes one. The warning names the steps still
-left: once `<config>/mars.toml` exists, only steps 4 and 5, with the targets the old file names.
-To move it:
+left: step 1 while `<config>/mars.toml` does not exist, step 2 while `~/.mars-src/` exists, step 3
+after either of them, and steps 4 and 5, with the targets the old file names. To move it:
 
 1. Copy `~/mars.toml` to `<config>/mars.toml` and delete its `targets` line.
 2. Move `~/.mars-src/`, if you have one, to `<config>/.mars-src/`. A path dependency written

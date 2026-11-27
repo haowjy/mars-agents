@@ -80,7 +80,7 @@ pub(super) const OUTSIDE_RULES_NOTE: &str = "OpenCode applies an agent file's ru
 /// Whether the project's `opencode.json` (or `.jsonc`, here or under `.opencode/`) has a
 /// `permission` key. A text search, not a parse: JSONC has comments, and the answer only
 /// decides whether the note above is worth a line.
-pub(crate) fn project_sets_permission(project_root: &std::path::Path) -> bool {
+pub(crate) fn project_sets_permission(layout: &crate::layout::Layout) -> bool {
     [
         "opencode.json",
         "opencode.jsonc",
@@ -88,7 +88,7 @@ pub(crate) fn project_sets_permission(project_root: &std::path::Path) -> bool {
         ".opencode/opencode.jsonc",
     ]
     .iter()
-    .filter_map(|name| std::fs::read_to_string(project_root.join(name)).ok())
+    .filter_map(|name| std::fs::read_to_string(layout.file(name)).ok())
     .any(|text| text.contains("\"permission\""))
 }
 

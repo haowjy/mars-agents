@@ -25,11 +25,11 @@ pub struct ListArgs {
 }
 
 pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
+    let lock = crate::lock::load(&ctx.layout)?;
 
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     if args.status {
-        return run_status(args, &mars_dir, &lock, json);
+        return run_status(args, mars_dir, &lock, json);
     }
 
     let mut agents = Vec::new();
@@ -56,7 +56,7 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
             }
         }
 
-        let disk_path = dest_path.resolve(&mars_dir);
+        let disk_path = dest_path.resolve(mars_dir);
         let content_path = match item.kind {
             ItemKind::Agent | ItemKind::Hook | ItemKind::McpServer | ItemKind::BootstrapDoc => {
                 disk_path.clone()

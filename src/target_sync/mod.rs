@@ -12,6 +12,7 @@ use std::path::Path;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
+use crate::layout::Layout;
 use crate::lock::{LockFile, RecordRef};
 use crate::platform::fs as fs_ops;
 use crate::surface_ownership;
@@ -52,8 +53,7 @@ pub struct TargetSyncContext<'a> {
 /// Target sync is non-fatal by default (D9) — errors per-target are recorded but don't
 /// stop other targets from being synced.
 pub fn sync_managed_targets(
-    project_root: &Path,
-    mars_dir: &Path,
+    layout: &Layout,
     targets: &[String],
     outcomes: &[ActionOutcome],
     ctx: &TargetSyncContext<'_>,
@@ -62,8 +62,15 @@ pub fn sync_managed_targets(
     let mut results = Vec::new();
 
     for target_name in targets {
-        let target_root = project_root.join(target_name);
-        match sync_one_target(mars_dir, &target_root, target_name, outcomes, ctx, diag) {
+        let target_root = layout.target(target_name);
+        match sync_one_target(
+            layout.store(),
+            &target_root,
+            target_name,
+            outcomes,
+            ctx,
+            diag,
+        ) {
             Ok(outcome) => {
                 if !outcome.errors.is_empty() {
                     for err in &outcome.errors {
@@ -136,8 +143,7 @@ fn edited_since_written(
 /// What a dry run shows of `sync_one_target`'s skill refresh: a native skill projection that
 /// differs from what a real sync would write is repaired, so it is named here as it is there.
 pub fn preview_native_skill_repairs(
-    project_root: &Path,
-    mars_dir: &Path,
+    layout: &Layout,
     old_lock: &LockFile,
     targets: &[String],
     outcomes: &[ActionOutcome],
@@ -158,8 +164,8 @@ pub fn preview_native_skill_repairs(
             let Some(dest_rel) = target_dest_rel(outcome, target_name) else {
                 continue;
             };
-            let source = mars_dir.join(outcome.dest_path.as_str());
-            let dest = project_root.join(target_name).join(&dest_rel);
+            let source = layout.store().join(outcome.dest_path.as_str());
+            let dest = layout.in_target(target_name, &dest_rel);
             if !source.exists() || !surface_ownership::target_dest_exists(&dest) {
                 continue;
             }
@@ -789,8 +795,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".agents".to_string()],
             &outcomes,
             &target_sync_ctx(&LockFile::empty(), false),
@@ -822,8 +827,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".claude".to_string()],
             &[],
             &TargetSyncContext {
@@ -910,8 +914,7 @@ mod tests {
         let outcomes = vec![make_skipped_with_checksum("agents/coder.md", &checksum)];
         let mut diag = DiagnosticCollector::new();
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".agents".to_string()],
             &outcomes,
             &target_sync_ctx(
@@ -953,8 +956,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".agents".to_string()],
             &outcomes,
             &target_sync_ctx(&lock, false),
@@ -1014,8 +1016,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".opencode".to_string()],
             &outcomes,
             &target_sync_ctx(&lock, false),
@@ -1063,8 +1064,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".agents".to_string()],
             &outcomes,
             &target_sync_ctx(&lock, false),
@@ -1116,8 +1116,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
 
         let results = sync_managed_targets(
-            dir.path(),
-            &mars_dir,
+            &crate::layout::Layout::project(dir.path()),
             &[".agents".to_string()],
             &outcomes,
             &target_sync_ctx(&lock, true),

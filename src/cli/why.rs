@@ -27,7 +27,7 @@ struct WhyResult {
 }
 
 pub fn run(args: &WhyArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
+    let lock = crate::lock::load(&ctx.layout)?;
 
     let mut found = None;
     for (dest_path, item) in lock.canonical_flat_items() {
@@ -50,10 +50,10 @@ pub fn run(args: &WhyArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         }
     };
 
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     let required_by = if item.kind == ItemKind::Skill {
         let skill_name = dest_path.item_name(ItemKind::Skill);
-        find_referencing_agents(&mars_dir, &lock, &skill_name)
+        find_referencing_agents(mars_dir, &lock, &skill_name)
     } else {
         Vec::new()
     };

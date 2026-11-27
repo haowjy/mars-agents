@@ -264,15 +264,11 @@ fn default_inherit() -> bool {
 }
 
 impl CuratedRules {
-    pub fn load(project_root: &Path) -> Result<Self, MarsError> {
+    pub fn load(layout: &crate::layout::Layout) -> Result<Self, MarsError> {
         let user = crate::platform::config::mars_config_dir()
             .ok_or_else(|| invalid("cannot determine config directory; set MARS_CONFIG_DIR"))?
             .join("curated.toml");
-        Self::load_paths(
-            &user,
-            &project_root.join("mars.curated.toml"),
-            &project_root.join("mars.curated.local.toml"),
-        )
+        Self::load_paths(&user, &layout.curated(), &layout.curated_local())
     }
 
     fn load_paths(user: &Path, project: &Path, local: &Path) -> Result<Self, MarsError> {

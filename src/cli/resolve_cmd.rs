@@ -20,17 +20,17 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         "command.deprecated",
         "`mars resolve` is deprecated and goes away in the next minor release: it records an edit to an installed item that the next `mars sync` replaces with the source. To keep a change, use an overlay (`[agents.<name>]` or `[skills.<name>]` in `mars.toml`), or edit the source: https://github.com/haowjy/mars-agents/blob/main/docs/config/retired-keys.md#mars-resolve",
     );
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let mut lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
+    let mut lock = crate::sync::recovery::load_lock(&ctx.layout)?;
     let mut resolved_files = Vec::new();
     let mut still_conflicted = Vec::new();
 
     let items_to_check: Vec<DestPath> = if let Some(file) = &args.file {
         let rel_input = if file.is_absolute() {
-            file.strip_prefix(&mars_dir).map_or_else(
+            file.strip_prefix(mars_dir).map_or_else(
                 |_| file.to_string_lossy().to_string(),
                 |r| r.to_string_lossy().to_string(),
             )
@@ -54,7 +54,7 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     };
 
     for dest_path_str in &items_to_check {
-        let disk_path = dest_path_str.resolve(&mars_dir);
+        let disk_path = dest_path_str.resolve(mars_dir);
         if !disk_path.exists() {
             continue;
         }
@@ -85,9 +85,9 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     if !resolved_files.is_empty()
         && let Some(warning) = crate::sync::recovery::publish(
-            &ctx.project_root,
+            &ctx.layout,
             &lock,
-            &crate::config::targets::project_targets(&crate::config::load(&ctx.project_root)?),
+            &crate::config::targets::project_targets(&crate::config::load(&ctx.layout)?),
         )?
     {
         output::warn("recovery-publish", warning);

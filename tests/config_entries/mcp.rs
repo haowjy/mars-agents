@@ -331,7 +331,8 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
         .assert()
         .success();
 
-    let mut lock = mars_agents::lock::load(project.path()).unwrap();
+    let mut lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     let pending = lock
         .items
         .values_mut()
@@ -341,7 +342,12 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
         })
         .expect("native output");
     pending.mark_pending_deletion();
-    mars_agents::lock::write(project.path(), &lock, &lock.recorded_targets()).unwrap();
+    mars_agents::lock::write(
+        &mars_agents::layout::Layout::project(project.path()),
+        &lock,
+        &lock.recorded_targets(),
+    )
+    .unwrap();
 
     mars()
         .args([
@@ -359,7 +365,8 @@ fn unlink_retires_pending_deletion_output_and_counts_it() {
     project
         .child(".claude/agents/owned.md")
         .assert(predicate::path::missing());
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(
         !lock.contains_output(".claude", "agents/owned.md"),
         "unlink must retire confirmed deletion authority"

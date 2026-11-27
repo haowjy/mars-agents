@@ -23,17 +23,17 @@ struct OutdatedEntry {
 }
 
 pub fn run(_args: &OutdatedArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let config = crate::config::load(&ctx.project_root)?;
-    let local = crate::config::load_local(&ctx.project_root)?;
+    let lock = crate::lock::load(&ctx.layout)?;
+    let config = crate::config::load(&ctx.layout)?;
+    let local = crate::config::load_local(&ctx.layout)?;
     let user = crate::config::load_user_config()?;
-    let source_overrides = local.source_overrides(&ctx.project_root);
-    let (effective, _) = crate::config::merge_with_root(config, local, &user, &ctx.project_root)?;
+    let source_overrides = local.source_overrides(ctx.layout.root());
+    let (effective, _) = crate::config::merge_with_root(config, local, &user, ctx.layout.root())?;
     let cache = crate::source::GlobalCache::new()?;
 
     // Resolve as sync does, so the constraints every package puts on a dependency narrow the
     // version reported here the same way they narrow `mars upgrade` and the sync hint.
-    let provider = crate::resolve::RealSourceProvider::new(&cache, &ctx.project_root);
+    let provider = crate::resolve::RealSourceProvider::new(&cache, ctx.layout.root());
     let overridden: Vec<_> = source_overrides.keys().cloned().collect();
     let options = crate::resolve::ResolveOptions::default().with_source_overrides(source_overrides);
     let mut diag = crate::diagnostic::DiagnosticCollector::new();

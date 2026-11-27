@@ -95,7 +95,8 @@ fn add_auto_inits_project_when_root_has_no_mars_toml() {
         .success()
         .stdout(predicate::str::contains("auto-initialized"));
 
-    let saved = mars_agents::config::load(project.path()).unwrap();
+    let saved =
+        mars_agents::config::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert_eq!(
         saved.dependencies["bootstrap-source"].path.as_deref(),
         Some(source.as_path())

@@ -25,9 +25,9 @@ pub(crate) fn is_provided_source(name: &str) -> bool {
 /// path dependencies sync resolves them through. A host's content takes the same reader, filter
 /// and lock paths as a package's, so nothing downstream knows a provider from a dependency.
 pub(crate) fn staged_dependencies(
-    project_root: &Path,
+    layout: &crate::layout::Layout,
 ) -> Result<Vec<(SourceName, EffectiveDependency)>, MarsError> {
-    let staging = project_root.join(".mars").join("provided");
+    let staging = layout.store().join("provided");
     let entries = match std::fs::read_dir(&staging) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -45,7 +45,7 @@ pub(crate) fn staged_dependencies(
             declared_source_id,
             source_id,
             spec,
-        } = crate::config::entry_source(&dependency, project_root, None);
+        } = crate::config::entry_source(&dependency, layout.root(), None);
         dependencies.push((
             SourceName::from(source_name(&provider)),
             EffectiveDependency {

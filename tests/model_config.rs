@@ -56,7 +56,8 @@ fn scenario_f_add_sync_force_and_resolve_dependency_alias() {
         cache["fetched_at"].as_str().is_some(),
         "expected fetched_at to be set after sync"
     );
-    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(&project_root))
+        .expect("failed to load mars.lock");
     assert!(
         lock.dependency_model_aliases.get("test-alias").is_some(),
         "expected dependency alias winner persisted in mars.lock"
@@ -101,7 +102,7 @@ fn scenario_h_add_immediately_resolve_alias_without_explicit_sync() {
         "expected resolved pinned model in resolve output:\n{resolve_stdout}"
     );
     assert!(
-        mars_agents::lock::load(&project_root)
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(&project_root))
             .expect("failed to load mars.lock")
             .dependency_model_aliases
             .contains_key("test-alias-immediate"),
@@ -192,7 +193,8 @@ fn sync_empty_project_persists_empty_dependency_aliases_in_lock() {
     sync_cmd.args(["sync", "--no-refresh-models"]);
     sync_cmd.assert().success();
 
-    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(&project_root))
+        .expect("failed to load mars.lock");
     assert!(
         lock.dependency_model_aliases.is_empty(),
         "empty project should persist an empty dependency alias set in mars.lock"
@@ -278,7 +280,8 @@ model = "gpt-5"
     sync_cmd.args(["sync", "--no-refresh-models"]);
     sync_cmd.assert().success();
 
-    let lock = mars_agents::lock::load(&project_root).expect("failed to load mars.lock");
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(&project_root))
+        .expect("failed to load mars.lock");
     assert!(
         lock.dependency_model_aliases.is_empty(),
         "local-only alias projects should keep dependency alias winners empty"

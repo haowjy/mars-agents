@@ -123,7 +123,7 @@ pub fn run(_args: &ExportArgs, ctx: &MarsContext, _json: bool) -> Result<i32, Ma
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };
 
-    let config = crate::config::load(&ctx.project_root).unwrap_or_default();
+    let config = crate::config::load(&ctx.layout).unwrap_or_default();
 
     let dependencies: Vec<ExportDependency> = config
         .dependencies

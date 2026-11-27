@@ -30,7 +30,7 @@ fn catalog(
 ) -> Result<(ModelsCache, models::RefreshOutcome), MarsError> {
     let refresh = models::resolve_models_refresh_control(refresh_models, no_refresh_models)?;
     models::ensure_fresh_with_catalog_providers(
-        &ctx.project_root.join(".mars"),
+        ctx.layout.store(),
         models_cache_ttl_hours(config),
         refresh.catalog_mode,
         &catalog_providers(config),
@@ -42,7 +42,7 @@ pub(super) fn run_catalog(
     ctx: &MarsContext,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
     let (cache, outcome) = catalog(
         ctx,
         config.as_ref(),
@@ -108,8 +108,8 @@ pub(super) fn run_aliases(
     ctx: &MarsContext,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
-    let aliases = load_merged_aliases(&ctx.project_root, config.as_ref())?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
+    let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = catalog(
         ctx,
         config.as_ref(),
@@ -177,7 +177,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             })
         })
         .transpose()?;
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
     let defaults = crate::config::Settings::default();
     let settings = config
         .as_ref()
@@ -193,8 +193,8 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         print_warnings(&routing_diagnostics);
     }
     let scope = &routing_settings.harness_scope;
-    let rules = CuratedRules::load(&ctx.project_root)?;
-    let aliases = load_merged_aliases(&ctx.project_root, config.as_ref())?;
+    let rules = CuratedRules::load(&ctx.layout)?;
+    let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = match catalog(
         ctx,
         config.as_ref(),

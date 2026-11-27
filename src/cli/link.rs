@@ -49,13 +49,13 @@ fn link_target(
     local_only: bool,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config_path = ctx.project_root.join("mars.toml");
+    let config_path = ctx.layout.manifest();
     if !config_path.exists() {
         return Err(MarsError::Link {
             target: target_name.to_string(),
             message: format!(
                 "mars.toml not found at {} — run `{cmd}` first",
-                ctx.project_root.display(),
+                ctx.layout.root().display(),
                 cmd = managed_cmd("mars init"),
             ),
         });
@@ -68,8 +68,8 @@ fn link_target(
         );
     }
 
-    let config = crate::config::load(&ctx.project_root)?;
-    let local = crate::config::load_local(&ctx.project_root)?;
+    let config = crate::config::load(&ctx.layout)?;
+    let local = crate::config::load_local(&ctx.layout)?;
     let (settings_changed, local_changed) =
         crate::sync::mutation::link_changes(&config, &local, target_name, local_only);
     let in_project = crate::config::targets::project_targets(&config).contains(target_name);

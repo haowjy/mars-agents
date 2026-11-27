@@ -155,19 +155,15 @@ pub fn run(args: &ModelsArgs, ctx: &MarsContext, json: bool) -> Result<i32, Mars
     }
 }
 
-fn mars_dir(ctx: &MarsContext) -> std::path::PathBuf {
-    ctx.project_root.join(".mars")
-}
-
 fn run_refresh(ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let mars = mars_dir(ctx);
-    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
+    let mars = ctx.layout.store();
+    let project_config = load_project_config_layers_optional(&ctx.layout)?;
     let ttl = models_cache_ttl_hours(project_config.as_ref());
     let providers = catalog_providers(project_config.as_ref());
     eprint!("Fetching models catalog... ");
 
     let (cache, outcome) = models::ensure_fresh_with_catalog_providers(
-        &mars,
+        mars,
         ttl,
         models::RefreshMode::Force,
         &providers,
@@ -406,9 +402,9 @@ fn print_route_text(report: &RouteDecisionReport) {
 
 fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
     let native_auth = NativeAuthCache::default();
-    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
-    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
-    let mars = mars_dir(ctx);
+    let project_config = load_project_config_layers_optional(&ctx.layout)?;
+    let merged = load_merged_aliases(&ctx.layout, project_config.as_ref())?;
+    let mars = ctx.layout.store();
     let ttl = models_cache_ttl_hours(project_config.as_ref());
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
@@ -431,7 +427,7 @@ fn run_resolve(args: &ResolveAliasArgs, ctx: &MarsContext, json: bool) -> Result
     // Cache is enrichment, not a gate. If unavailable, skip to passthrough.
     let mut cache_error = None;
     let providers = catalog_providers(project_config.as_ref());
-    let cache_result = match ensure_fresh_or_json_error(&mars, ttl, mode, json, &providers)? {
+    let cache_result = match ensure_fresh_or_json_error(mars, ttl, mode, json, &providers)? {
         FreshOrJsonError::Fresh(cache, outcome) => Some((cache, outcome)),
         FreshOrJsonError::JsonError(error_message) => {
             cache_error = Some(error_message);
@@ -580,7 +576,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
                 ),
             })
         })?;
-    let mut config = crate::config::load(&ctx.project_root)?;
+    let mut config = crate::config::load(&ctx.layout)?;
     config.models.insert(
         args.name.clone(),
         ModelAlias {
@@ -596,7 +592,7 @@ fn run_alias(args: &AddAliasArgs, ctx: &MarsContext, json: bool) -> Result<i32, 
             },
         },
     );
-    crate::config::save(&ctx.project_root, &config)?;
+    crate::config::save(&ctx.layout, &config)?;
 
     if json {
         println!(
@@ -1453,7 +1449,7 @@ description = "Old alias"
         let exit = run_alias(&args, &ctx, false).unwrap();
         assert_eq!(exit, 0);
 
-        let config = crate::config::load(temp.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(temp.path())).unwrap();
         assert_eq!(config.models.len(), 1);
 
         let alias = config.models.get("fast").unwrap();
@@ -1502,7 +1498,7 @@ description = "Old alias"
         let exit = run_alias(&args, &ctx, false).unwrap();
         assert_eq!(exit, 0);
 
-        let config = crate::config::load(temp.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(temp.path())).unwrap();
         let alias = config.models.get("fast").unwrap();
         assert_eq!(alias.harness.as_deref(), Some("opencode"));
     }

@@ -16,6 +16,7 @@
 //! keeps the full record instead: owning an absent path is harmless, and the record must cover a
 //! directory a crash has not left behind yet.
 
+use crate::layout::Layout;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -42,15 +43,15 @@ pub(crate) struct ProvidedNames {
 }
 
 impl ProvidedNames {
-    pub(crate) fn load(root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let record = match ProvidedLock::load(root)? {
+    pub(crate) fn load(layout: &Layout, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
+        let record = match ProvidedLock::load(layout)? {
             Ok(record) => record,
             Err(unusable) => {
                 diag.warn_advisory("provided-lock-unusable", unusable.reader_message());
                 return Ok(Self::default());
             }
         };
-        let skills_dir = root.join(".mars").join("skills");
+        let skills_dir = layout.store().join("skills");
         let recorded: HashSet<String> = record
             .providers()
             .flat_map(|(_, provider)| provider.skills.iter().cloned())
@@ -62,7 +63,7 @@ impl ProvidedNames {
             .collect();
         let mut staged = BTreeMap::new();
         for (provider, _) in record.providers() {
-            let dir = super::reconcile::staged_dir(root, provider);
+            let dir = super::reconcile::staged_dir(layout, provider);
             if dir.is_dir() {
                 staged.insert(provider.to_string(), super::entries::tree_digest(&dir)?);
             }

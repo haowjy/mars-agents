@@ -436,7 +436,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
     let project_root = TempDir::new().unwrap();
     let mars_dir = project_root.path().join(".agents");
     crate::config::save(
-        project_root.path(),
+        &crate::layout::Layout::project(project_root.path()),
         &Config {
             dependencies: Default::default(),
             settings: Settings::default(),
@@ -469,7 +469,7 @@ fn execute_dry_run_with_mutation_does_not_write_config() {
     let report = execute(&ctx, &request).unwrap();
     assert!(!report.applied.outcomes.is_empty());
 
-    let saved = crate::config::load(project_root.path()).unwrap();
+    let saved = crate::config::load(&crate::layout::Layout::project(project_root.path())).unwrap();
     assert!(!saved.dependencies.contains_key("base"));
     assert!(!mars_dir.join("agents/coder.md").exists());
     assert!(!project_root.path().join("mars.lock").exists());

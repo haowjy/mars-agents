@@ -26,21 +26,21 @@ pub struct ProvideArgs {
 /// names the root it wants filled, and silently filling a parent's `.mars/` instead would leave
 /// the host reading a copy it did not ask for.
 pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
-    let project_root = super::find_agents_root(root)?.project_root;
+    let layout = super::find_agents_root(root)?.layout;
     if let Some(given) = root {
         let given = dunce::canonicalize(given).unwrap_or_else(|_| given.to_path_buf());
-        if given != project_root {
+        if given != layout.root() {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
                     "--root {} has no `mars.toml`; the nearest project root is {}. `mars provide` writes only into the root it is given",
                     given.display(),
-                    project_root.display()
+                    layout.root().display()
                 ),
             }));
         }
     }
 
-    let report = crate::provided::reconcile(&project_root, &args.spec)?;
+    let report = crate::provided::reconcile(&layout, &args.spec)?;
     if json {
         output::print_json(&report);
     } else {

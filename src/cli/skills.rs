@@ -146,7 +146,7 @@ struct SkillDetail {
 }
 
 fn run_list(args: &SkillsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let roots = ContentRoots::new(&ctx.layout, args.fallback_root.as_deref());
     let mut entries: Vec<SkillEntry> = visible_skills(&roots, args.source.as_deref())?
         .iter()
         .filter(|skill| !args.model_invocable || skill.profile.model_invocable)
@@ -183,7 +183,7 @@ fn run_show(
     json: bool,
     fallback_root: Option<&std::path::Path>,
 ) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let roots = ContentRoots::new(&ctx.layout, fallback_root);
     let found = visible_skills(&roots, None)?.into_iter().find(|skill| {
         skill.name.eq_ignore_ascii_case(name) || skill.dir.eq_ignore_ascii_case(name)
     });

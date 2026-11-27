@@ -11,8 +11,8 @@ use super::{
     AGENTS_TARGET, HOOK_ENTRY_KIND, KeyedKind, KeyedSection, McpDirs, McpFile, SectionFormat,
     codex, mcp_file, opencode,
 };
+use crate::layout::Layout;
 use crate::types::DestPath;
-use std::path::Path;
 
 /// What `${MARS_MCP_DIR}` becomes in a server's `args`.
 #[derive(Debug, Clone, Copy)]
@@ -122,9 +122,9 @@ impl TargetSpec {
     }
 
     /// Entries the target has whenever it is managed, whatever packages install.
-    pub fn fixed_entries(&self, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
+    pub fn fixed_entries(&self, layout: &Layout) -> Vec<(KeyedKind, Rendered)> {
         self.plugin
-            .map(|plugin| plugin.fixed_entries(&self.name(), project_root))
+            .map(|plugin| plugin.fixed_entries(&self.name(), layout))
             .unwrap_or_default()
     }
 }

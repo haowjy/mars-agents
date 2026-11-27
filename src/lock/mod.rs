@@ -425,10 +425,7 @@ pub(crate) fn can_be_provided(key: &str) -> bool {
         || crate::target::HookEntry::parse_key(key).is_some()
 }
 
-const LOCK_FILE: &str = "mars.lock";
-/// The records only this machine has: provided content (`mars provide`) and the targets
-/// `mars.toml` does not name. See `machine.rs`.
-const MACHINE_LOCK_FILE: &str = ".mars/machine.lock";
+use crate::layout::{LOCK_FILE, Layout};
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
@@ -466,8 +463,8 @@ struct ConfigEntryRecordWire {
 
 /// A version 2 lock keeps only its dependencies and aliases; other older schemas
 /// fail with actionable re-sync guidance.
-pub fn load(root: &Path) -> Result<LockFile, MarsError> {
-    let (lock, _) = load_with_diagnostics(root)?;
+pub fn load(layout: &Layout) -> Result<LockFile, MarsError> {
+    let (lock, _) = load_with_diagnostics(layout)?;
     Ok(lock)
 }
 
@@ -477,8 +474,8 @@ pub fn load(root: &Path) -> Result<LockFile, MarsError> {
 /// may omit `dependency_model_aliases` entirely. When dependency entries exist, runtime
 /// alias consumers must fail closed so dependency alias authority is not silently treated
 /// as empty.
-pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
-    let path = root.join(LOCK_FILE);
+pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> {
+    let path = layout.lock();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LockFile::empty()),
@@ -494,7 +491,7 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
         .map(|table| table.contains_key("dependency_model_aliases"))
         .unwrap_or(false);
 
-    let (lock, _) = load_with_diagnostics(root)?;
+    let (lock, _) = load_with_diagnostics(layout)?;
 
     if !has_dependency_alias_field && !lock.dependencies.is_empty() {
         return Err(LockError::Corrupt {
@@ -513,9 +510,9 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 /// The lock of a project: `mars.lock` with the machine-local `machine.lock` merged in,
 /// so every reader sees one lock. A record both files hold takes the machine-local value; see
 /// [`write`] for how that happens.
-pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE), false)?;
-    let local_path = root.join(MACHINE_LOCK_FILE);
+pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+    let (committed, mut diagnostics) = read_lock_file(&layout.lock(), false)?;
+    let local_path = layout.machine_lock();
     if !local_path.exists() {
         return Ok((committed, diagnostics));
     }
@@ -713,19 +710,19 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
 /// `mars.lock`, then the machine file as it should be: a record moving either way is in both
 /// files for a while, and loading takes the machine-local copy.
 pub fn write(
-    root: &Path,
+    layout: &Layout,
     lock: &LockFile,
     project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<(), MarsError> {
     let (committed, local) = machine::split(lock.clone(), project_targets);
-    let local_path = root.join(MACHINE_LOCK_FILE);
+    let local_path = layout.machine_lock();
     let (old_local, _) = read_lock_file(&local_path, true)?;
     let mut widened = old_local;
     widened.join(local.clone());
     if !widened.is_empty() {
         write_lock_file(&local_path, &widened, true)?;
     }
-    write_lock_file(&root.join(LOCK_FILE), &committed, false)?;
+    write_lock_file(&layout.lock(), &committed, false)?;
     if local.is_empty() {
         crate::platform::fs::safe_remove(&local_path)?;
     } else if widened != local {
@@ -1670,8 +1667,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
         let old = "version = 3\n[config_entries.\".agy\".\"mcp:srv\"]\nemitted_json = '{}'\n";
-        std::fs::write(dir.path().join(MACHINE_LOCK_FILE), old).unwrap();
-        let lock = load(dir.path()).unwrap();
+        std::fs::write(
+            crate::layout::Layout::project(dir.path()).machine_lock(),
+            old,
+        )
+        .unwrap();
+        let lock = load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(
             lock.provided_entries
                 .contains(&(".agy".into(), "mcp:srv".into()))
@@ -1681,8 +1682,18 @@ mod tests {
         // take a local-only target's entries for provided ones.
         let mut lock = lock;
         lock.provided_entries.clear();
-        write(dir.path(), &lock, &Default::default()).unwrap();
-        assert!(load(dir.path()).unwrap().provided_entries.is_empty());
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(
+            load(&crate::layout::Layout::project(dir.path()))
+                .unwrap()
+                .provided_entries
+                .is_empty()
+        );
         let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
         assert!(!committed.contains("provided_entries") && !committed.contains(".agy"));
     }
@@ -1708,18 +1719,33 @@ mod tests {
         );
         // `mars.lock` cannot be written: the machine-local file, saved first, already is.
         std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
-        write(dir.path(), &lock, &lock.recorded_targets()).unwrap_err();
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &lock.recorded_targets(),
+        )
+        .unwrap_err();
         std::fs::remove_dir(dir.path().join(LOCK_FILE)).unwrap();
 
-        let recovered = load(dir.path()).unwrap();
+        let recovered = load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(recovered.items.contains_key("skill/probe__meridian"));
         assert!(!recovered.items.contains_key("agent/coder"));
 
         // The next write puts each record in its own file.
-        write(dir.path(), &lock, &lock.recorded_targets()).unwrap();
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &lock.recorded_targets(),
+        )
+        .unwrap();
         let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
         assert!(committed.contains("agent/coder") && !committed.contains("probe__meridian"));
-        assert_eq!(load(dir.path()).unwrap().items, lock.items);
+        assert_eq!(
+            load(&crate::layout::Layout::project(dir.path()))
+                .unwrap()
+                .items,
+            lock.items
+        );
     }
 
     #[cfg(unix)]
@@ -1799,7 +1825,8 @@ installed_checksum = "sha256:bbb"
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
 
-        let err = load_for_runtime_aliases(dir.path()).unwrap_err();
+        let err =
+            load_for_runtime_aliases(&crate::layout::Layout::project(dir.path())).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
         assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));

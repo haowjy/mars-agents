@@ -190,9 +190,9 @@ fn run_plugin(
 ) -> Result<i32, MarsError> {
     let package_root = match &args.path {
         Some(path) => super::resolve_cli_path(path, explicit_root)?,
-        None => ctx.project_root.clone(),
+        None => ctx.layout.root().to_path_buf(),
     };
-    let manifest = crate::config::load(&package_root)?;
+    let manifest = crate::config::load(&crate::layout::Layout::project(&package_root))?;
     let metadata = crate::build::plugin::validate_plugin_build(&manifest)?;
     let destination = args
         .out

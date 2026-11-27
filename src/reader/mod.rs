@@ -25,7 +25,7 @@ pub fn read(
         .package
         .as_ref()
         .map(|p| p.name.as_str());
-    let local_items = local_source::discover_local_items(&ctx.project_root, package_name, diag)?;
+    let local_items = local_source::discover_local_items(&ctx.layout, package_name, diag)?;
 
     if enforce_preparation_gate {
         diag.fail_on_errors()?;

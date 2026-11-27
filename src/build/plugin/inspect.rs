@@ -245,7 +245,7 @@ pub fn inspect(package_root: &Path) -> Result<PluginOutputState, MarsError> {
         path: package_root.to_path_buf(),
         source,
     })?;
-    let manifest = crate::config::load(&package_root)?;
+    let manifest = crate::config::load(&crate::layout::Layout::project(&package_root))?;
     if manifest.plugin.is_none() {
         return Err(MarsError::InvalidRequest {
             message: "inspecting plugin output needs a [plugin] table in mars.toml".to_string(),

@@ -47,12 +47,14 @@ model-policies:
 "#;
 
 fn lock_has_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
-    let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path()))
+        .expect("load mars.lock");
     lock.contains_output(".claude", &format!("agents/{agent}.md"))
 }
 
 fn lock_has_codex_native_agent(project: &assert_fs::fixture::ChildPath, agent: &str) -> bool {
-    let lock = mars_agents::lock::load(project.path()).expect("load mars.lock");
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path()))
+        .expect("load mars.lock");
     lock.contains_output(".codex", &format!("agents/{agent}.toml"))
 }
 

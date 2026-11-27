@@ -18,6 +18,7 @@
 //! anywhere after the pre-record leaves `digest = "pending"`, which the next run can never read
 //! as current, so a skill the host dropped meanwhile is still on record and still removed.
 
+use crate::layout::Layout;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -32,22 +33,22 @@ use super::lock::{PENDING_DIGEST, ProvidedLock, ProviderRecord};
 use super::spec::ProvideSpec;
 use super::{ProvideReport, Status};
 
-pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, MarsError> {
+pub(crate) fn reconcile(layout: &Layout, raw_spec: &str) -> Result<ProvideReport, MarsError> {
     let spec = ProvideSpec::parse(raw_spec)?;
     let (entries, mut warnings) = entries::discover(&spec)?;
-    let skills_dir = root.join(".mars").join("skills");
+    let skills_dir = layout.store().join("skills");
 
-    if sync_pending(root) {
+    if sync_pending(layout) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
             &spec,
             warnings,
         ));
     }
-    let staged_dir = staged_dir(root, &spec.provider);
-    let unlocked = assess(root, &spec)?;
+    let staged_dir = staged_dir(layout, &spec.provider);
+    let unlocked = assess(layout, &spec)?;
     if matches_source(&unlocked.previous, &spec, &entries) {
-        let plan = plan_against_disk(root, &entries, &unlocked.previous, &skills_dir)?;
+        let plan = plan_against_disk(layout, &entries, &unlocked.previous, &skills_dir)?;
         if plan.writes_nothing(&entries, &unlocked.previous, &spec)
             && staged_is_current(&staged_dir, &entries)
         {
@@ -55,26 +56,26 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
         }
     }
 
-    let lock_path = root.join(".mars").join("sync.lock");
+    let lock_path = layout.store().join("sync.lock");
     let Some(_sync_lock) = FileLock::try_acquire(&lock_path)? else {
         return Ok(ProvideReport::without_record(Status::Busy, &spec, warnings));
     };
 
-    if sync_pending(root) {
+    if sync_pending(layout) {
         return Ok(ProvideReport::without_record(
             Status::SyncPending,
             &spec,
             warnings,
         ));
     }
-    if crate::platform::fs::recover_interrupted_skill_installs(&root.join(".mars"))? {
+    if crate::platform::fs::recover_interrupted_skill_installs(layout.store())? {
         warnings.push(
             "reclaimed an interrupted skill install left staged under .mars/skills".to_string(),
         );
     }
-    let mut assessed = assess(root, &spec)?;
+    let mut assessed = assess(layout, &spec)?;
     warnings.extend(assessed.warning.take());
-    let plan = plan_against_disk(root, &entries, &assessed.previous, &skills_dir)?;
+    let plan = plan_against_disk(layout, &entries, &assessed.previous, &skills_dir)?;
     if plan.writes_nothing(&entries, &assessed.previous, &spec)
         && staged_is_current(&staged_dir, &entries)
     {
@@ -95,7 +96,7 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             skills: pre_record.into_iter().collect(),
         },
     );
-    assessed.record.save(root)?;
+    assessed.record.save(layout)?;
 
     for index in plan.installs.iter().chain(&plan.replaces) {
         let skill = &entries.skills[*index];
@@ -118,7 +119,7 @@ pub(crate) fn reconcile(root: &Path, raw_spec: &str) -> Result<ProvideReport, Ma
             skills: skills.clone(),
         },
     );
-    assessed.record.save(root)?;
+    assessed.record.save(layout)?;
 
     Ok(ProvideReport {
         status: Status::Applied,
@@ -143,8 +144,8 @@ struct Assessed {
 
 /// The unlocked pass discards `warning`: a run that writes nothing prints nothing (JSON keeps it
 /// on the applied run that reports it).
-fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
-    let (record, warning) = match ProvidedLock::load(root)? {
+fn assess(layout: &Layout, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
+    let (record, warning) = match ProvidedLock::load(layout)? {
         Ok(record) => (record, None),
         Err(unusable) => unusable.for_write()?,
     };
@@ -157,8 +158,8 @@ fn assess(root: &Path, spec: &ProvideSpec) -> Result<Assessed, MarsError> {
 }
 
 /// `.mars/provided/<provider>/`: the hooks and MCP servers sync reads as the provider's node.
-pub(super) fn staged_dir(root: &Path, provider: &str) -> std::path::PathBuf {
-    root.join(".mars").join("provided").join(provider)
+pub(super) fn staged_dir(layout: &Layout, provider: &str) -> std::path::PathBuf {
+    layout.store().join("provided").join(provider)
 }
 
 /// A staged directory that was removed or edited by hand is restaged, whatever the record says.
@@ -181,12 +182,12 @@ fn matches_source(
 }
 
 fn plan_against_disk(
-    root: &Path,
+    layout: &Layout,
     entries: &ProvidedEntries,
     previous: &ProviderRecord,
     skills_dir: &Path,
 ) -> Result<Plan, MarsError> {
-    let package_lock = crate::lock::load(root)?;
+    let package_lock = crate::lock::load(layout)?;
     let claims = LockIndex::new(&package_lock);
     plan(entries, previous, &claims, skills_dir)
 }
@@ -205,8 +206,8 @@ fn current_report(
     }
 }
 
-fn sync_pending(root: &Path) -> bool {
-    crate::sync::recovery::intent_path(root).exists()
+fn sync_pending(layout: &Layout) -> bool {
+    crate::sync::recovery::intent_path(layout).exists()
 }
 
 fn claimed(claims: &LockIndex, name: &str) -> bool {

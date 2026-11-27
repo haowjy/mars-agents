@@ -1,7 +1,6 @@
 //! Write the lock and build the `SyncReport`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
@@ -19,7 +18,7 @@ pub(crate) fn finalize(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
-    let project_root = &ctx.project_root;
+    let layout = &ctx.layout;
     let old_lock = &state.applied.planned.targeted.resolved.loaded.old_lock;
     let graph = &state.applied.planned.targeted.resolved.graph;
     // Native-agent surface deltas for the summary: removals are unambiguous; emits
@@ -38,7 +37,7 @@ pub(crate) fn finalize(
     // A dry run names what a real run would delete; a real run, what it did.
     let mut dropped_outputs = Vec::new();
     if request.options.dry_run {
-        let preview = crate::target_sync::removal::preview_removal(project_root, dropped);
+        let preview = crate::target_sync::removal::preview_removal(layout, dropped);
         dropped_outputs = preview.removed;
         if request.options.preview_warnings {
             for (root, dest_path) in &preview.kept {
@@ -100,12 +99,8 @@ pub(crate) fn finalize(
             state.native_removals.dropped_records(),
         );
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
-        confirmed_output_removals.extend(retry_tombstone_removals(
-            project_root,
-            old_lock,
-            &new_lock,
-            diag,
-        ));
+        confirmed_output_removals
+            .extend(retry_tombstone_removals(layout, old_lock, &new_lock, diag));
         crate::lock::retain_unremoved_noncanonical_outputs(
             &mut new_lock,
             old_lock,
@@ -128,7 +123,7 @@ pub(crate) fn finalize(
         let loaded = &state.applied.planned.targeted.resolved.loaded;
         new_lock.join(loaded.carried.clone());
         let removed = crate::target_sync::removal::remove_served(
-            project_root,
+            layout,
             &mut new_lock,
             loaded.dropped.clone(),
         )?;
@@ -140,7 +135,7 @@ pub(crate) fn finalize(
             .into_iter()
             .partition(|target| remaining.contains(target));
         let project_targets = crate::config::targets::project_targets(&loaded.config);
-        if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
+        if let Some(warning) = recovery::publish(layout, &new_lock, &project_targets)? {
             diag.warn("native-agent-manifest-write", warning);
         }
     }
@@ -307,7 +302,7 @@ fn unplaced_hook_records(
 }
 
 fn retry_tombstone_removals(
-    project_root: &Path,
+    layout: &crate::layout::Layout,
     old_lock: &crate::lock::LockFile,
     current_lock: &crate::lock::LockFile,
     diag: &mut DiagnosticCollector,
@@ -339,9 +334,7 @@ fn retry_tombstone_removals(
                 continue;
             }
 
-            let path = project_root
-                .join(&output.target_root)
-                .join(output.dest_path.as_str());
+            let path = layout.in_target(&output.target_root, output.dest_path.as_str());
             let result = if matches!(item.kind, ItemKind::Agent)
                 || crate::lock::is_generated_hook_file(item.kind, output.dest_path.as_str())
             {

@@ -1716,7 +1716,8 @@ fn link_force_adopts_unmanaged_collision_and_records_lock() {
         "# Planning from Mars"
     );
 
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(lock.contains_output(".agents", "skills/planning"));
 }
 
@@ -1961,7 +1962,8 @@ fn sync_keeps_a_hook_entry_the_user_edited_in_a_dropped_target() {
 
 /// What 0.37 left in `.cursor`: a copy of each `.claude` skill, recorded in the lock.
 fn give_cursor_the_claude_skills(project: &assert_fs::fixture::ChildPath) {
-    let mut lock = mars_agents::lock::load(project.path()).unwrap();
+    let mut lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     for item in lock.items.values_mut() {
         let claude: Vec<_> = item
             .outputs
@@ -1983,7 +1985,12 @@ fn give_cursor_the_claude_skills(project: &assert_fs::fixture::ChildPath) {
                 ));
         }
     }
-    mars_agents::lock::write(project.path(), &lock, &lock.recorded_targets()).unwrap();
+    mars_agents::lock::write(
+        &mars_agents::layout::Layout::project(project.path()),
+        &lock,
+        &lock.recorded_targets(),
+    )
+    .unwrap();
 }
 
 #[test]

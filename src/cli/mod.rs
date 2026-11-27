@@ -66,22 +66,23 @@ impl MarsContext {
         // Mars deletes and rewrites inside `.mars/`, so it must not be a symlink out of the
         // project. A target may be a symlink (a dotfiles repo, say) and is only written where
         // Mars recorded an item, so that is the user's layout, not a widening of the workspace.
-        let mars_dir = project_canon.join(".mars");
-        if let Ok(resolved) = dunce::canonicalize(&mars_dir)
-            && !resolved.starts_with(&project_canon)
+        let layout = crate::layout::Layout::project(project_canon);
+        let mars_dir = layout.store();
+        if let Ok(resolved) = dunce::canonicalize(mars_dir)
+            && !resolved.starts_with(layout.root())
         {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
                     "{} resolves to {} which is outside {}. Use --root to override.",
                     mars_dir.display(),
                     resolved.display(),
-                    project_canon.display(),
+                    layout.root().display(),
                 ),
             }));
         }
 
         Ok(MarsContext {
-            project_root: project_canon,
+            layout,
             meridian_managed: crate::types::meridian_managed_from_env(),
         })
     }
@@ -262,7 +263,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
             dispatch_with_root(
                 cmd,
                 &ctx,
-                cli.root.is_some().then_some(ctx.project_root.as_path()),
+                cli.root.is_some().then_some(ctx.layout.root()),
                 cli.json,
             )
         }
@@ -390,8 +391,7 @@ fn find_agents_root_from(start: &Path) -> Result<MarsContext, MarsError> {
     let mut dir = start_canon.as_path();
 
     loop {
-        let config_path = dir.join("mars.toml");
-        if config_path.exists() {
+        if crate::layout::Layout::project(dir).manifest().exists() {
             return MarsContext::new(dir.to_path_buf());
         }
 
@@ -420,7 +420,7 @@ mod tests {
         .unwrap();
 
         let ctx = find_agents_root(Some(dir.path())).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(dir.path()).unwrap());
+        assert_eq!(ctx.layout.root(), dunce::canonicalize(dir.path()).unwrap());
     }
     #[cfg(unix)]
     #[test]
@@ -460,7 +460,7 @@ mod tests {
 
         let ctx = find_agents_root_from(&inner).unwrap();
         assert_eq!(
-            ctx.project_root,
+            ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
             "should find outer config even when inner has .git"
         );
@@ -477,7 +477,7 @@ mod tests {
         std::fs::create_dir_all(&subdir).unwrap();
 
         let ctx = find_agents_root_from(&subdir).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&root).unwrap());
+        assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
     #[test]
@@ -496,7 +496,7 @@ mod tests {
         .unwrap();
 
         let ctx = find_agents_root_from(&child).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&child).unwrap());
+        assert_eq!(ctx.layout.root(), dunce::canonicalize(&child).unwrap());
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
 
         let ctx = find_agents_root_from(&deep).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&root).unwrap());
+        assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
     #[test]
@@ -530,7 +530,7 @@ mod tests {
 
         let ctx = find_agents_root_from(&submodule).unwrap();
         assert_eq!(
-            ctx.project_root,
+            ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
             "should find outer config through submodule .git file boundary"
         );
@@ -566,6 +566,6 @@ mod tests {
         std::fs::create_dir_all(&subdir).unwrap();
 
         let ctx = find_agents_root(Some(&subdir)).unwrap();
-        assert_eq!(ctx.project_root, dunce::canonicalize(&project).unwrap());
+        assert_eq!(ctx.layout.root(), dunce::canonicalize(&project).unwrap());
     }
 }

@@ -49,7 +49,7 @@ pub(crate) fn preflight_config_entries(
     for target in &managed {
         for (kind, _) in crate::target::spec(target)
             .into_iter()
-            .flat_map(|spec| spec.fixed_entries(&ctx.project_root))
+            .flat_map(|spec| spec.fixed_entries(&ctx.layout))
         {
             keyed_touched
                 .entry(target.clone())
@@ -94,8 +94,8 @@ pub(crate) fn preflight_config_entries(
         .chain(hook_targets.iter())
         .collect::<BTreeSet<_>>()
     {
-        let target_dir = ctx.project_root.join(target_name);
-        if let Err(error) = validate_destination_path(&ctx.project_root, &target_dir, true) {
+        let target_dir = ctx.layout.target(target_name);
+        if let Err(error) = validate_destination_path(ctx.layout.root(), &target_dir, true) {
             errors.push(error);
             continue;
         }
@@ -109,8 +109,8 @@ pub(crate) fn preflight_config_entries(
             {
                 continue;
             }
-            let path = ctx.project_root.join(location.path);
-            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+            let path = ctx.layout.file(location.path);
+            if let Err(error) = validate_destination_path(ctx.layout.root(), &path, false) {
                 errors.push(error);
             } else if let Err(error) = crate::target::keyed_entries::validate(&location, &path) {
                 errors.push(format!(
@@ -125,7 +125,7 @@ pub(crate) fn preflight_config_entries(
             && let Some(merge) = super::merge_file(target_name)
         {
             let path = target_dir.join(merge.file);
-            if let Err(error) = validate_destination_path(&ctx.project_root, &path, false) {
+            if let Err(error) = validate_destination_path(ctx.layout.root(), &path, false) {
                 errors.push(error);
             }
             if let Err(error) = crate::target::hook_file::validate(&path) {
@@ -169,9 +169,9 @@ pub(crate) fn preflight_config_entries(
         match &output {
             HookOutput::Merge(merged) | HookOutput::Keyed(merged) => {
                 for file in &merged.files {
-                    let destination = ctx.project_root.join(target_name).join(&file.path);
+                    let destination = ctx.layout.in_target(target_name, &file.path);
                     if let Err(error) =
-                        validate_destination_path(&ctx.project_root, &destination, false)
+                        validate_destination_path(ctx.layout.root(), &destination, false)
                     {
                         errors.push(error);
                     }
@@ -204,9 +204,9 @@ pub(crate) fn preflight_config_entries(
             HookOutput::File(files) => {
                 let mut valid = true;
                 for file in &files.files {
-                    let destination = ctx.project_root.join(target_name).join(&file.path);
+                    let destination = ctx.layout.in_target(target_name, &file.path);
                     if let Err(error) =
-                        validate_destination_path(&ctx.project_root, &destination, false)
+                        validate_destination_path(ctx.layout.root(), &destination, false)
                     {
                         errors.push(error);
                         valid = false;

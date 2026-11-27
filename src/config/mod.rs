@@ -257,8 +257,7 @@ pub struct EffectiveDependency {
     pub dialect: Option<Dialect>,
 }
 
-const CONFIG_FILE: &str = "mars.toml";
-const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
+use crate::layout::{CONFIG_FILE, LOCAL_CONFIG_FILE, Layout};
 
 pub(super) fn read_error(path: &Path, source: std::io::Error) -> MarsError {
     MarsError::Io {
@@ -285,9 +284,9 @@ impl LocalConfig {
     }
 }
 
-/// Load mars.toml from the given root directory.
-pub fn load(root: &Path) -> Result<Config, MarsError> {
-    let path = root.join(CONFIG_FILE);
+/// Load the root's `mars.toml`.
+pub fn load(layout: &Layout) -> Result<Config, MarsError> {
+    let path = layout.manifest();
     let content = std::fs::read_to_string(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             ConfigError::NotFound { path: path.clone() }.into()
@@ -370,8 +369,8 @@ fn parse_local(
 }
 
 /// Load mars.local.toml (returns Default if absent).
-pub fn load_local(root: &Path) -> Result<LocalConfig, MarsError> {
-    let path = root.join(LOCAL_CONFIG_FILE);
+pub fn load_local(layout: &Layout) -> Result<LocalConfig, MarsError> {
+    let path = layout.local_config();
     match std::fs::read_to_string(&path) {
         Ok(content) => parse_local(&content, &path, keys::Document::Local),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalConfig::default()),
@@ -419,9 +418,9 @@ pub fn overlay_then_profile_policies<'a>(
         )
 }
 
-pub fn load_config_with_local(root: &Path) -> Result<(Config, LocalConfig), MarsError> {
-    let config = load(root)?;
-    let local = load_local(root)?;
+pub fn load_config_with_local(layout: &Layout) -> Result<(Config, LocalConfig), MarsError> {
+    let config = load(layout)?;
+    let local = load_local(layout)?;
     Ok((config, local))
 }
 
@@ -429,7 +428,7 @@ fn effective_project_config(
     config: &Config,
     local: &LocalConfig,
     user: &UserConfig,
-    root: &Path,
+    layout: Option<&Layout>,
 ) -> EffectiveProjectConfig {
     let ComposedLayers {
         settings,
@@ -438,11 +437,11 @@ fn effective_project_config(
         agents,
         ..
     } = compose_layers(config, local, &user.local);
-    target_source.path = match target_source.origin {
-        targets::TargetOrigin::Project => Some(root.join("mars.toml")),
-        targets::TargetOrigin::Local => Some(root.join("mars.local.toml")),
+    target_source.path = layout.and_then(|layout| match target_source.origin {
+        targets::TargetOrigin::Project => Some(layout.manifest()),
+        targets::TargetOrigin::Local => Some(layout.local_config()),
         targets::TargetOrigin::Unset => None,
-    };
+    });
     EffectiveProjectConfig {
         settings,
         target_source,
@@ -538,8 +537,8 @@ fn project_config_diagnostics(
     unknown_keys.chain(floors).collect()
 }
 
-pub fn load_effective_project_config(root: &Path) -> Result<EffectiveProjectConfig, MarsError> {
-    Ok(load_project_config_layers(root)?.effective)
+pub fn load_effective_project_config(layout: &Layout) -> Result<EffectiveProjectConfig, MarsError> {
+    Ok(load_project_config_layers(layout)?.effective)
 }
 
 /// The effective config outside a Mars project: the user's `config.toml` alone.
@@ -548,7 +547,7 @@ pub fn load_user_effective_project_config() -> Result<EffectiveProjectConfig, Ma
         &Config::default(),
         &LocalConfig::default(),
         &user::load()?,
-        Path::new(""),
+        None,
     ))
 }
 
@@ -557,10 +556,12 @@ pub(crate) fn load_user_config() -> Result<UserConfig, MarsError> {
     user::load()
 }
 
-pub(crate) fn load_project_config_layers(root: &Path) -> Result<LoadedProjectConfig, MarsError> {
-    let (config, local) = load_config_with_local(root)?;
+pub(crate) fn load_project_config_layers(
+    layout: &Layout,
+) -> Result<LoadedProjectConfig, MarsError> {
+    let (config, local) = load_config_with_local(layout)?;
     let user = user::load()?;
-    let effective = effective_project_config(&config, &local, &user, root);
+    let effective = effective_project_config(&config, &local, &user, Some(layout));
     Ok(LoadedProjectConfig {
         config,
         local,
@@ -752,14 +753,14 @@ pub(crate) fn source_id_for_spec(
 }
 
 /// Write mars.toml, changing only what differs from the file as it stands.
-pub fn save(root: &Path, config: &Config) -> Result<(), MarsError> {
-    let path = root.join(CONFIG_FILE);
+pub fn save(layout: &Layout, config: &Config) -> Result<(), MarsError> {
+    let path = layout.manifest();
     save::save_document(&path, config, |text| parse_config(text, &path))
 }
 
 /// Write mars.local.toml, changing only what differs from the file as it stands.
-pub fn save_local(root: &Path, local: &LocalConfig) -> Result<(), MarsError> {
-    let path = root.join(LOCAL_CONFIG_FILE);
+pub fn save_local(layout: &Layout, local: &LocalConfig) -> Result<(), MarsError> {
+    let path = layout.local_config();
     save::save_document(&path, local, |text| {
         parse_local(text, &path, keys::Document::Local)
     })
@@ -791,7 +792,7 @@ mod tests {
             )
             .unwrap();
 
-            let config = load(dir.path()).unwrap();
+            let config = load(&crate::layout::Layout::project(dir.path())).unwrap();
             let error = crate::build::plugin::validate_plugin_build(&config)
                 .err()
                 .unwrap()
@@ -820,7 +821,7 @@ mod tests {
             )
             .unwrap();
 
-            let config = load(dir.path()).unwrap();
+            let config = load(&crate::layout::Layout::project(dir.path())).unwrap();
             let error = crate::build::plugin::validate_plugin_build(&config)
                 .err()
                 .unwrap()
@@ -958,9 +959,9 @@ harness_order = ["pi", "opencode", "codex"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
+        let config = load(&crate::layout::Layout::project(dir.path())).unwrap();
+        save(&crate::layout::Layout::project(dir.path()), &config).unwrap();
+        let reloaded = load(&crate::layout::Layout::project(dir.path())).unwrap();
 
         assert_eq!(
             reloaded.package.as_ref().map(|p| p.name.as_str()),
@@ -1383,7 +1384,8 @@ override = { effort = "high" }
         )
         .unwrap();
 
-        let effective = load_effective_project_config(dir.path()).unwrap();
+        let effective =
+            load_effective_project_config(&crate::layout::Layout::project(dir.path())).unwrap();
         // The user's own `config.toml` is read too, and what it says is not this test's.
         let notes: Vec<_> = effective
             .diagnostics
@@ -1419,9 +1421,10 @@ override = { effort = "high" }
         assert_eq!(notes.len(), 6, "{warnings}");
 
         // Saving changes only what the command changed.
-        let (mut config, _) = load_config_with_local(dir.path()).unwrap();
+        let (mut config, _) =
+            load_config_with_local(&crate::layout::Layout::project(dir.path())).unwrap();
         config.settings.default_harness = Some("claude".into());
-        save(dir.path(), &config).unwrap();
+        save(&crate::layout::Layout::project(dir.path()), &config).unwrap();
         let saved = std::fs::read_to_string(dir.path().join("mars.toml")).unwrap();
         assert!(
             saved.contains("[futuretable]") && saved.contains("colour = 'red'"),
@@ -1578,16 +1581,16 @@ targets = [".claude"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
-        let mut config = load(dir.path()).unwrap();
+        let mut config = load(&crate::layout::Layout::project(dir.path())).unwrap();
         if let Some(targets) = config.settings.targets.as_mut() {
             targets.retain(|target| target != ".claude");
             if targets.is_empty() {
                 config.settings.targets = None;
             }
         }
-        save(dir.path(), &config).unwrap();
+        save(&crate::layout::Layout::project(dir.path()), &config).unwrap();
 
-        let reloaded = load(dir.path()).unwrap();
+        let reloaded = load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert_eq!(
             reloaded.package.as_ref().map(|p| p.name.as_str()),
             Some("sample")
@@ -1633,9 +1636,9 @@ only_agents = true
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
+        let config = load(&crate::layout::Layout::project(dir.path())).unwrap();
+        save(&crate::layout::Layout::project(dir.path()), &config).unwrap();
+        let reloaded = load(&crate::layout::Layout::project(dir.path())).unwrap();
 
         let include = &reloaded.dependencies["include"].filter;
         assert_eq!(
@@ -1878,9 +1881,9 @@ skills = ["prompt-helper"]
 "#;
         std::fs::write(dir.path().join("mars.toml"), original).unwrap();
 
-        let config = load(dir.path()).unwrap();
-        save(dir.path(), &config).unwrap();
-        let reloaded = load(dir.path()).unwrap();
+        let config = load(&crate::layout::Layout::project(dir.path())).unwrap();
+        save(&crate::layout::Layout::project(dir.path()), &config).unwrap();
+        let reloaded = load(&crate::layout::Layout::project(dir.path())).unwrap();
 
         assert_eq!(reloaded.dependencies.len(), 1);
         assert_eq!(reloaded.local_dependencies.len(), 1);

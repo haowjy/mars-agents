@@ -119,7 +119,7 @@ stateDiagram-v2
   Managed --> [*]
 ```
 
-- **The move is not staged.** `move_item` is a bare `rename` into `preferred_local_source_root`.
+- **The move is not staged.** `move_item` is a bare `rename` into the local source (`Layout::local_source`).
   Killed between that rename and the sync, the user's file exists only under `.mars-src/` with no
   lock record and nothing at its original path. The rollback covers a sync error, not a kill.
 - **A cross-device rename is refused with a message, not copied**, because a copy would leave two

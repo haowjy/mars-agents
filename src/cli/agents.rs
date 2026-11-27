@@ -120,9 +120,9 @@ fn visible_agents(
 ) -> Result<Vec<VisibleAgent>, MarsError> {
     let visible = roots.visible_locked_items(ItemKind::Agent)?;
     output::print_diagnostics(&visible.warnings, false);
-    let config = crate::build::load_effective_project_config_or_default(&ctx.project_root)?;
+    let config = crate::build::load_effective_project_config_or_default(&ctx.layout)?;
     let fanout = config.settings.meridian_fanout_agents();
-    let native = read_native_agent_manifest(&roots.primary_mars_dir());
+    let native = read_native_agent_manifest(roots.primary_mars_dir());
 
     let mut agents = Vec::new();
     for (scope, item, disk_path) in visible.items {
@@ -177,7 +177,7 @@ fn visible_agents(
 }
 
 fn run_list(args: &AgentsArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, args.fallback_root.as_deref());
+    let roots = ContentRoots::new(&ctx.layout, args.fallback_root.as_deref());
     let mut entries: Vec<AgentEntry> = visible_agents(&roots, ctx, args.source.as_deref())?
         .into_iter()
         .map(|agent| agent.entry)
@@ -210,7 +210,7 @@ fn run_show(
     json: bool,
     fallback_root: Option<&std::path::Path>,
 ) -> Result<i32, MarsError> {
-    let roots = ContentRoots::new(&ctx.project_root, fallback_root);
+    let roots = ContentRoots::new(&ctx.layout, fallback_root);
     let found = visible_agents(&roots, ctx, None)?
         .into_iter()
         .find(|agent| {

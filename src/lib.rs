@@ -13,6 +13,7 @@ pub mod fs;
 pub mod harness;
 pub mod hash;
 pub mod hook_run;
+pub mod layout;
 pub mod local_source;
 pub mod lock;
 pub(crate) mod model;

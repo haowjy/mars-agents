@@ -108,7 +108,8 @@ fn auto_meridian_managed_suppresses_native_agent() {
         !native_agent_path(&project).exists(),
         "MERIDIAN_MANAGED=1 auto mode should suppress native harness agent"
     );
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(!lock.contains_output(".claude", "agents/coder.md"));
 }
 
@@ -142,7 +143,8 @@ fn never_suppresses_native_agent() {
         !native_agent_path(&project).exists(),
         "never mode should suppress native harness agent"
     );
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(!lock.contains_output(".claude", "agents/coder.md"));
 }
 
@@ -215,7 +217,8 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
         .success()
         .stderr(predicates::str::contains("could not remove"));
 
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(
         lock.contains_output(".codex", "agents/coder.toml"),
         "failed native removal must leave retry authority"
@@ -255,7 +258,8 @@ fn failed_native_agent_removal_tombstone_does_not_reclaim_canonical_path() {
     canonical
         .child("user.txt")
         .assert(predicates::str::contains("unmanaged"));
-    let lock = mars_agents::lock::load(project.path()).unwrap();
+    let lock =
+        mars_agents::lock::load(&mars_agents::layout::Layout::project(project.path())).unwrap();
     assert!(
         !lock.contains_output(".codex", "agents/coder.toml"),
         "successful retry must clear the linked-output tombstone"

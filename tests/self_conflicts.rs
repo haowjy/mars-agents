@@ -137,7 +137,8 @@ fn force_adopts_unowned_self_agent_and_skill_outputs() {
                     b"sentinel\n"
                 );
 
-                let installed_lock = lock::load(dir.path()).unwrap();
+                let installed_lock =
+                    lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
                 let item_key = format!(
                     "{kind_name}/{}",
                     if kind_name == "agent" {
@@ -377,7 +378,7 @@ fn failed_force_adoption_does_not_publish_ownership_and_retry_requires_force() {
         .stderr(predicate::str::contains("mars sync --force"));
     assert!(!dir.child("mars.lock").exists());
     sync(dir.path()).arg("--force").assert().success();
-    let lock = mars_agents::lock::load(dir.path()).unwrap();
+    let lock = mars_agents::lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
     assert!(lock.contains_output(".mars", "agents/muse.md"));
     assert!(lock.contains_output(".mars", "skills/craft"));
 }

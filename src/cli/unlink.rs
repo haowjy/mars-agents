@@ -21,14 +21,14 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let parsed_target = super::target::normalize_target_name(&args.target)?;
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
 
-    let mars_dir = ctx.project_root.join(".mars");
-    std::fs::create_dir_all(&mars_dir)?;
+    let mars_dir = ctx.layout.store();
+    std::fs::create_dir_all(mars_dir)?;
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let mut config = crate::config::load(&ctx.project_root)?;
-    let mut local = crate::config::load_local(&ctx.project_root)?;
-    let mut lock = crate::sync::recovery::load_lock(&ctx.project_root)?;
+    let mut config = crate::config::load(&ctx.layout)?;
+    let mut local = crate::config::load_local(&ctx.layout)?;
+    let mut lock = crate::sync::recovery::load_lock(&ctx.layout)?;
     let mut settings_updated = false;
     let mut local_updated = false;
     let mut target_was_managed = false;
@@ -54,12 +54,12 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let project_keeps = crate::config::targets::project_targets(&config).contains(&target_name);
     let target_was_managed = target_was_managed && !project_keeps;
 
-    let target_dir = ctx.project_root.join(&target_name);
+    let target_dir = ctx.layout.target(&target_name);
     let had_dir = target_dir.exists();
     let (removed_outputs, diagnostics) = if target_was_managed {
         let (kept, served) = lock.split_targets(|target| target != target_name);
         lock = kept;
-        let removed = remove_served(&ctx.project_root, &mut lock, served)?;
+        let removed = remove_served(&ctx.layout, &mut lock, served)?;
         (removed.outputs.len(), removed.diagnostics)
     } else {
         (0, Vec::new())
@@ -70,14 +70,14 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let removed_dir = target_was_managed && had_dir && !target_dir.exists();
 
     if settings_updated {
-        crate::config::save(&ctx.project_root, &config)?;
+        crate::config::save(&ctx.layout, &config)?;
     }
     if local_updated {
-        crate::config::save_local(&ctx.project_root, &local)?;
+        crate::config::save_local(&ctx.layout, &local)?;
     }
     if target_was_managed
         && let Some(warning) = crate::sync::recovery::publish(
-            &ctx.project_root,
+            &ctx.layout,
             &lock,
             &crate::config::targets::project_targets(&config),
         )?

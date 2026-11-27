@@ -10,6 +10,7 @@
 //! Harness-specific skill variants resolve beside the selected skill, including
 //! when that skill came from the fallback root.
 
+use crate::layout::Layout;
 use std::path::{Path, PathBuf};
 
 use crate::error::MarsError;
@@ -33,17 +34,13 @@ impl ContentScope {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ContentRoot {
-    project_root: PathBuf,
+    layout: Layout,
     scope: ContentScope,
 }
 
 impl ContentRoot {
-    pub(crate) fn project_root(&self) -> &Path {
-        &self.project_root
-    }
-
-    pub(crate) fn mars_dir(&self) -> PathBuf {
-        self.project_root.join(".mars")
+    pub(crate) fn mars_dir(&self) -> &Path {
+        self.layout.store()
     }
 
     pub(crate) fn scope(&self) -> ContentScope {
@@ -62,18 +59,17 @@ pub(crate) struct VisibleLockedItems {
 }
 
 impl ContentRoots {
-    pub(crate) fn new(primary_root: &Path, fallback_root: Option<&Path>) -> Self {
-        let primary_root = absolute_path(primary_root);
+    pub(crate) fn new(primary: &Layout, fallback_root: Option<&Path>) -> Self {
         let mut roots = vec![ContentRoot {
-            project_root: primary_root.clone(),
+            layout: primary.clone(),
             scope: ContentScope::Root,
         }];
 
         if let Some(fallback_root) = fallback_root {
-            let fallback_root = absolute_path(fallback_root);
-            if fallback_root != primary_root && fallback_root.join("mars.toml").is_file() {
+            let fallback = Layout::project(absolute_path(fallback_root));
+            if fallback.root() != primary.root() && fallback.manifest().is_file() {
                 roots.push(ContentRoot {
-                    project_root: fallback_root,
+                    layout: fallback,
                     scope: ContentScope::Fallback,
                 });
             }
@@ -86,7 +82,7 @@ impl ContentRoots {
         self.roots.iter()
     }
 
-    pub(crate) fn primary_mars_dir(&self) -> PathBuf {
+    pub(crate) fn primary_mars_dir(&self) -> &Path {
         self.roots[0].mars_dir()
     }
 
@@ -109,14 +105,14 @@ impl ContentRoots {
         let mut warnings = Vec::new();
 
         for root in self.layers() {
-            let lock = match crate::lock::load(root.project_root()) {
+            let lock = match crate::lock::load(&root.layout) {
                 Ok(lock) => lock,
                 Err(err) if root.scope() == ContentScope::Fallback => {
                     warnings.push(crate::diagnostic::Diagnostic::warning(
                         "content-skipped",
                         format!(
                             "skipping fallback content from {}: {err}",
-                            root.project_root().display()
+                            root.layout.root().display()
                         ),
                     ));
                     continue;
@@ -130,7 +126,7 @@ impl ContentRoots {
                     continue;
                 }
 
-                let disk_path = dest_path.resolve(&mars_dir);
+                let disk_path = dest_path.resolve(mars_dir);
                 if !self.is_visible(kind, &disk_path) {
                     continue;
                 }
@@ -224,7 +220,7 @@ mod tests {
         let primary_skill = write_skill(&primary, "planning");
         write_skill(&fallback, "planning");
 
-        let roots = ContentRoots::new(&primary, Some(&fallback));
+        let roots = ContentRoots::new(&Layout::project(&primary), Some(&fallback));
 
         assert_eq!(roots.agent_file_path("reviewer"), primary_agent);
         assert_eq!(roots.skill_file_path("planning"), primary_skill);
@@ -240,7 +236,7 @@ mod tests {
         let fallback_agent = write_agent(&fallback, "reviewer");
         let fallback_skill = write_skill(&fallback, "planning");
 
-        let roots = ContentRoots::new(&primary, Some(&fallback));
+        let roots = ContentRoots::new(&Layout::project(&primary), Some(&fallback));
 
         assert_eq!(roots.agent_file_path("reviewer"), fallback_agent);
         assert_eq!(roots.skill_file_path("planning"), fallback_skill);
@@ -255,7 +251,7 @@ mod tests {
         write_agent(&manifestless, "reviewer");
 
         for fallback in [&absent, &manifestless] {
-            let roots = ContentRoots::new(&primary, Some(fallback));
+            let roots = ContentRoots::new(&Layout::project(&primary), Some(fallback));
             assert_eq!(roots.layers().count(), 1);
             assert_eq!(
                 roots.agent_file_path("reviewer"),

@@ -290,11 +290,14 @@ pub(crate) fn publish(
             .into_iter()
             .collect();
     complete(layout)?;
-    let paths = super::exclude::locked_paths(layout, lock, project_targets);
-    if let Err(error) = super::exclude::settle(layout, paths) {
-        warnings.push(format!(
+    match super::exclude::settle(
+        layout,
+        super::machine_local::settled(layout, lock, project_targets),
+    ) {
+        Ok(hidden) => warnings.extend(hidden),
+        Err(error) => warnings.push(format!(
             "could not list machine-local items in git's info/exclude, so `git status` may show them: {error}"
-        ));
+        )),
     }
     Ok(warnings)
 }

@@ -5,8 +5,8 @@
 //! target projection ([`offered_to`]) all read it.
 //!
 //! A layer other than the project's is recognized by its reserved source prefix: every source
-//! it brings into a project's graph is named `<prefix><name>`, and config refuses a dependency
-//! named with one.
+//! it brings into a project's graph is named `<prefix><name>`, and no manifest may name a
+//! dependency with one (`mars_schema::dependency::RESERVED_PREFIXES`).
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -22,10 +22,7 @@ pub(crate) enum Layer {
     Host,
 }
 
-/// The source prefix of the user level's dependencies in a project: `_user-<name>`.
-pub(crate) const USER_PREFIX: &str = "_user-";
-/// The source prefix of a host's content in a project: `_provided-<host>`.
-pub(crate) const HOST_PREFIX: &str = "_provided-";
+pub(crate) use mars_schema::dependency::{HOST_PREFIX, USER_PREFIX};
 /// The user level's own items (`.mars-src` in the Mars config folder) in a project.
 pub(crate) const USER_SELF: &str = "_user-self";
 
@@ -85,11 +82,6 @@ impl Layer {
     pub(crate) fn machine_local(self) -> bool {
         self.prefix().is_some()
     }
-}
-
-/// The reserved prefixes, for config's check on dependency names.
-pub(crate) fn reserved_prefixes() -> impl Iterator<Item = &'static str> {
-    LAYERS.iter().filter_map(|row| row.prefix)
 }
 
 /// Whether `source_name` came from a layer other than the project's.

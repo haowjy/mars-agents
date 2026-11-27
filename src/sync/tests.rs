@@ -212,7 +212,7 @@ fn build_target_prunes_unmanaged_collision_before_rewriting_refs() {
             carried: crate::lock::LockFile::empty(),
             dropped: crate::lock::LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
-            user_pins: Default::default(),
+            user_layer: Default::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
         },
@@ -276,7 +276,7 @@ fn build_target_warns_when_skill_overlay_references_explicitly_renamed_skill() {
             carried: crate::lock::LockFile::empty(),
             dropped: crate::lock::LockFile::empty(),
             provided: crate::provided::ProvidedNames::default(),
-            user_pins: Default::default(),
+            user_layer: Default::default(),
             dependency_changes: Vec::new(),
             sync_lock: Some(sync_lock),
         },
@@ -488,6 +488,7 @@ fn local_modification_preserved() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -516,6 +517,7 @@ fn local_modification_preserved() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -545,6 +547,7 @@ fn dry_run_produces_plan_without_changes() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -580,6 +583,7 @@ fn pipeline_only_skills_filter() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -606,6 +610,7 @@ fn pipeline_only_agents_filter() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();
@@ -627,6 +632,7 @@ fn pipeline_only_agents_no_agents_source() {
         &graph,
         &config,
         &test_local_source(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

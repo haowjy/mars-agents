@@ -15,6 +15,9 @@ pub struct RepairArgs {
     /// Ignore package `requires-meridian` version constraints.
     #[arg(long)]
     pub ignore_requires_meridian: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars repair`.
@@ -34,6 +37,7 @@ pub fn run(args: &RepairArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             force: true,
             ignore_requires_mars: args.ignore_requires_mars,
             ignore_requires_meridian: args.ignore_requires_meridian,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: crate::sync::RecoveryPolicy::Repair,

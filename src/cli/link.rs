@@ -24,6 +24,9 @@ pub struct LinkArgs {
     /// committed `mars.lock` do not change.
     #[arg(long)]
     pub local: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars link`.
@@ -39,7 +42,14 @@ pub fn run(args: &LinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
         });
     }
     let target_name = crate::config::migrations::link::normalize_link(&parsed_target).target;
-    link_target(ctx, &target_name, args.force, args.local, json)
+    link_target(
+        ctx,
+        &target_name,
+        args.force,
+        args.local,
+        args.host.host()?,
+        json,
+    )
 }
 
 fn link_target(
@@ -47,6 +57,7 @@ fn link_target(
     target_name: &str,
     force: bool,
     local_only: bool,
+    host: Option<crate::sync::layers::HostRoot>,
     json: bool,
 ) -> Result<i32, MarsError> {
     let config_path = ctx.layout.manifest();
@@ -84,6 +95,7 @@ fn link_target(
         }),
         options: SyncOptions {
             force,
+            host,
             ..SyncOptions::default()
         },
         recovery: Default::default(),

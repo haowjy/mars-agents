@@ -97,17 +97,75 @@ pub fn run(args: &ListArgs, ctx: &super::MarsContext, json: bool) -> Result<i32,
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     bootstrap.sort_by(|a, b| a.name.cmp(&b.name));
 
+    // What of the user level or a host this project left out, and why: nothing else shows it.
+    let yielded: Vec<&crate::lock::YieldedRecord> = lock
+        .yielded
+        .iter()
+        .filter(|record| {
+            args.source
+                .as_deref()
+                .is_none_or(|source| record.source == *source)
+        })
+        .filter(|record| {
+            args.kind.as_deref().is_none_or(|kind| {
+                kind == record.kind.to_string() || kind == kind_plural(record.kind)
+            })
+        })
+        .collect();
+
     if json {
         output::print_json(&serde_json::json!({
             "agents": agents,
             "skills": skills,
             "bootstrap": bootstrap,
+            "yielded": yielded
+                .iter()
+                .map(|record| serde_json::json!({
+                    "name": record.name,
+                    "kind": record.kind.to_string(),
+                    "target": record.target,
+                    "source": crate::layer::source_label(&record.source),
+                    "why": record.why,
+                }))
+                .collect::<Vec<_>>(),
         }));
     } else {
         output::print_catalog(&agents, &skills, &bootstrap, args.kind.as_deref());
+        if !yielded.is_empty() {
+            println!();
+            println!("NOT INSTALLED HERE");
+            for record in yielded {
+                println!("- {}: {}", describe_yielded(record), record.why);
+            }
+        }
     }
 
     Ok(0)
+}
+
+fn kind_plural(kind: ItemKind) -> &'static str {
+    match kind {
+        ItemKind::Agent => "agents",
+        ItemKind::Skill => "skills",
+        ItemKind::Hook => "hooks",
+        ItemKind::McpServer => "mcp",
+        ItemKind::BootstrapDoc => "bootstrap",
+    }
+}
+
+/// `skill foo from upkg (user level)`, with the target for a hook or MCP server.
+pub(super) fn describe_yielded(record: &crate::lock::YieldedRecord) -> String {
+    let on = if record.target == crate::lock::CANONICAL_TARGET_ROOT {
+        String::new()
+    } else {
+        format!(" on `{}`", record.target)
+    };
+    format!(
+        "{} `{}`{on} from {}",
+        record.kind,
+        record.name,
+        crate::layer::source_label(&record.source)
+    )
 }
 
 fn read_name_description(path: &Path, fallback_name: &str, kind: ItemKind) -> (String, String) {

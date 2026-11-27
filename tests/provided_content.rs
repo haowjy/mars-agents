@@ -147,17 +147,21 @@ fn a_hosts_hook_and_mcp_server_yield_to_a_package_with_one_warning_in_either_ord
     write_bundle(package.path(), true);
     let bundle = dir.child("bundle");
     write_bundle(bundle.path(), false);
-    let yielded = |text: &str| text.matches("from meridian is not installed").count();
+    let yielded = |text: &str| {
+        text.lines()
+            .filter(|line| line.contains("from meridian") && line.contains("not installed"))
+            .count()
+    };
 
-    // Package first, then the host arrives.
+    // Package first, then the host arrives: one line for the one cause.
     let first = project(&dir);
     add_package(&first, package.path());
     provide(&first, bundle.path());
     let arrival = sync(&first);
-    assert_eq!(
-        yielded(&arrival),
-        2,
-        "hook and MCP server, once each:\n{arrival}"
+    assert!(
+        yielded(&arrival) == 1
+            && arrival.contains("2 items from meridian are not installed here: hook `guard` on `.agy`, MCP server `meridian` on `.agy`"),
+        "hook and MCP server, on one line:\n{arrival}"
     );
     assert_eq!(yielded(&sync(&first)), 0);
 
@@ -168,7 +172,7 @@ fn a_hosts_hook_and_mcp_server_yield_to_a_package_with_one_warning_in_either_ord
     sync(&second);
     let arrival = add_package(&second, package.path());
     assert!(
-        arrival.contains("hook guard@agy from meridian is not installed"),
+        arrival.contains("from meridian are not installed here: hook `guard` on `.agy`"),
         "{arrival}"
     );
     assert_eq!(yielded(&sync(&second)), 0);

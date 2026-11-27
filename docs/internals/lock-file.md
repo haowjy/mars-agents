@@ -48,6 +48,11 @@ never sees those records, so their sync neither warns about nor removes them.
   content wrote (the name predates the user level), because
   a local-only target's entries sit in the same file and must follow their target when it moves.
   Mars 0.38.0 wrote `machine.lock` without the list; there every config entry is provided.
+- **`yielded`.** `machine.lock` lists each user-level or host item the sync did not install
+  because the project claims its name or path, or did not write because its entry would go in a
+  file that can be committed: `kind`, `target`, `name`, `source` and `why`. `mars list` and
+  `mars why` read it, and a sync warns about a record only when it is new or its reason changed.
+  An older Mars ignores the list.
 - **Older Mars.** Mars 0.38.0 reads `machine.lock` too, but replaces a whole item with the
   machine file's copy. A skill that has a local-only output then loses its `.mars` output in memory,
   and 0.38.0's sync stops with `blocked by unmanaged destination` until `mars sync --force`.

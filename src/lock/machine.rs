@@ -24,6 +24,7 @@ pub(crate) fn split(lock: LockFile, project_targets: &BTreeSet<String>) -> (Lock
             off_project(target) || provided.contains(&(target.to_string(), key.to_string()))
         },
     });
+    local.yielded = std::mem::take(&mut committed.yielded);
     // `_self` names the project's own package in the file whose items use it.
     for lock in [&mut committed, &mut local] {
         let local_source: crate::types::SourceName = SourceOrigin::LocalPackage.to_string().into();

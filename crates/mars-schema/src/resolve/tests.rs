@@ -105,6 +105,7 @@ fn root(name: &str, version: &str) -> Dependency {
         required_by: "mars.toml".to_string(),
         declared_in: None,
         dialect: None,
+        namespace: None,
     }
 }
 
@@ -115,7 +116,6 @@ fn request(root: Vec<Dependency>) -> Request {
         overrides: BTreeMap::new(),
         locked: BTreeMap::new(),
         mode: Mode::Sync,
-        namespaces: Vec::new(),
         engine: Engine {
             mars: Version::new(1, 0, 0),
             meridian: None,

@@ -132,6 +132,11 @@ fn request(
                 required_by: "mars.toml".to_string(),
                 declared_in: None,
                 dialect: dependency.dialect,
+                namespace: options
+                    .user_layer
+                    .roots
+                    .contains(name)
+                    .then(|| crate::layer::USER_PREFIX.to_string()),
             }
         })
         .collect();
@@ -151,10 +156,9 @@ fn request(
             .into_iter()
             .flat_map(|lock| &lock.dependencies)
             .filter(|(name, _)| crate::layer::Layer::of(name) != crate::layer::Layer::User)
-            .chain(&options.user_pins)
+            .chain(&options.user_layer.pins)
             .map(|(name, source)| (name.to_string(), source.clone()))
             .collect(),
-        namespaces: vec![crate::layer::USER_PREFIX.to_string()],
         mode: match &options.mode {
             ResolveMode::Sync => Mode::Sync,
             ResolveMode::Frozen => Mode::Frozen,

@@ -543,6 +543,7 @@ fn root_dependencies(manifest: &str) -> Result<Vec<Dependency>, InputError> {
                 required_by: ROOT_CORE.to_string(),
                 declared_in: None,
                 dialect: entry.dialect,
+                namespace: None,
             }
         })
         .collect())
@@ -573,7 +574,6 @@ pub fn run(input: Input) -> Result<Output, InputError> {
         supplied: BTreeMap::new(),
         overrides: BTreeMap::new(),
         locked: input.locked,
-        namespaces: Vec::new(),
         mode: match input.refresh {
             Refresh::None => Mode::Sync,
             Refresh::All(_) => Mode::Upgrade {

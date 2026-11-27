@@ -101,6 +101,43 @@ impl ProvidedNames {
     }
 }
 
+/// Drop from `.mars/provided.lock` every skill `lock` records an install of in `.mars/skills/`:
+/// a package's or a host's bundle (`sync --provided-root`) replaced `mars provide`'s copy, and a
+/// path has one owner. Called by sync under the sync lock, after it published `lock`. A record
+/// this Mars cannot read is left as it is: it is not this build's to rewrite.
+pub(crate) fn retire_claimed(
+    layout: &Layout,
+    lock: &crate::lock::LockFile,
+) -> Result<(), MarsError> {
+    let Ok(mut record) = ProvidedLock::load(layout)? else {
+        return Ok(());
+    };
+    let claims = crate::lock::LockIndex::new(lock);
+    let claimed = |name: &String| {
+        claims.contains_installed_output(
+            crate::lock::CANONICAL_TARGET_ROOT,
+            &DestPath::from(format!("skills/{name}")),
+        )
+    };
+    let mut changed = false;
+    let providers: Vec<(String, super::lock::ProviderRecord)> = record
+        .providers()
+        .map(|(name, provider)| (name.to_string(), provider.clone()))
+        .collect();
+    for (name, mut provider) in providers {
+        let before = provider.skills.len();
+        provider.skills.retain(|skill| !claimed(skill));
+        if provider.skills.len() != before {
+            changed = true;
+            record.set_provider(&name, provider);
+        }
+    }
+    if changed {
+        record.save(layout)?;
+    }
+    Ok(())
+}
+
 /// Every skill name `mars provide` recorded at `layout`, for launch lookup, which never serves
 /// those copies. A record this Mars cannot read hides nothing: lookup then reads the lock alone.
 pub(crate) fn recorded_skills(layout: &Layout) -> Vec<String> {

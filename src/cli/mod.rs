@@ -224,6 +224,9 @@ pub fn dispatch(cli: Cli) -> i32 {
                         message,
                         report,
                     } => (*code, message.clone(), Some(report)),
+                    MarsError::Config(ConfigError::ProjectRootNotFound { .. }) => {
+                        ("project_not_found", cause.to_string(), None)
+                    }
                     MarsError::Config(_) => ("invalid_config", cause.to_string(), None),
                     MarsError::NotFound { code, message } => (*code, message.clone(), None),
                     _ => ("command_failed", cause.to_string(), None),
@@ -264,10 +267,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     match &cli.command {
         // Root-free commands resolve their own root, because it is theirs to check.
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
-        Command::Check(args) => {
-            let root = user.as_ref().map(|ctx| ctx.layout.root());
-            check::run(args, root.or(cli.root.as_deref()), cli.json)
-        }
+        Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
         Command::Provide(args) => provide::run(args, cli.root.as_deref(), cli.json),
         Command::Hook(args) => Ok(crate::hook_run::run(args)),
@@ -378,6 +378,9 @@ fn refused_at_user_level(cmd: &Command) -> Option<&'static str> {
             Some("the user level has no targets; its items are installed by each project's sync")
         }
         Command::Provide(_) => Some("a host's content is provided to projects, not the user level"),
+        Command::Check(_) => {
+            Some("it checks a package you are authoring, which the user level is not")
+        }
         Command::Version(_)
         | Command::Build(build::BuildArgs {
             command: build::BuildCommand::Plugin(_),
@@ -482,23 +485,30 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
         std::env::current_dir()?
     };
 
-    find_agents_root_from(&start, explicit.is_some(), canonical_home().as_deref())
+    let user = crate::layout::Layout::user_level().ok();
+    find_agents_root_from(
+        &start,
+        explicit.is_some(),
+        crate::platform::config::canonical_home().as_deref(),
+        user.as_ref().map(|user| user.root()),
+    )
 }
 
-/// The home directory, canonical so a symlinked `/home` still compares equal.
-pub(crate) fn canonical_home() -> Option<PathBuf> {
-    crate::platform::config::home_dir().map(|home| dunce::canonicalize(&home).unwrap_or(home))
-}
-
+/// `user_config` is the user level's config folder: its `mars.toml` is the user level's, so a
+/// walk-up that reaches it is at the user level, not in a project.
 fn find_agents_root_from(
     start: &Path,
     explicit: bool,
     home: Option<&Path>,
+    user_config: Option<&Path>,
 ) -> Result<MarsContext, MarsError> {
     let start_canon = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut dir = start_canon.as_path();
 
     loop {
+        if Some(dir) == user_config {
+            return MarsContext::user();
+        }
         if crate::layout::Layout::project(dir).manifest().exists() {
             if Some(dir) != home {
                 return MarsContext::new(dir.to_path_buf());
@@ -593,7 +603,7 @@ mod tests {
         let inner = outer.join("inner");
         std::fs::create_dir_all(inner.join(".git")).unwrap();
 
-        let ctx = find_agents_root_from(&inner, false, None).unwrap();
+        let ctx = find_agents_root_from(&inner, false, None, None).unwrap();
         assert_eq!(
             ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
@@ -611,7 +621,7 @@ mod tests {
         let subdir = root.join("src").join("lib");
         std::fs::create_dir_all(&subdir).unwrap();
 
-        let ctx = find_agents_root_from(&subdir, false, None).unwrap();
+        let ctx = find_agents_root_from(&subdir, false, None, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
@@ -630,7 +640,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = find_agents_root_from(&child, false, None).unwrap();
+        let ctx = find_agents_root_from(&child, false, None, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&child).unwrap());
     }
 
@@ -644,7 +654,7 @@ mod tests {
         let deep = root.join("src").join("foo").join("bar");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let ctx = find_agents_root_from(&deep, false, None).unwrap();
+        let ctx = find_agents_root_from(&deep, false, None, None).unwrap();
         assert_eq!(ctx.layout.root(), dunce::canonicalize(&root).unwrap());
     }
 
@@ -663,7 +673,7 @@ mod tests {
         )
         .unwrap();
 
-        let ctx = find_agents_root_from(&submodule, false, None).unwrap();
+        let ctx = find_agents_root_from(&submodule, false, None, None).unwrap();
         assert_eq!(
             ctx.layout.root(),
             dunce::canonicalize(&outer).unwrap(),
@@ -677,7 +687,7 @@ mod tests {
         let deep = dir.path().join("a").join("b").join("c");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let result = find_agents_root_from(&deep, false, None);
+        let result = find_agents_root_from(&deep, false, None, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(

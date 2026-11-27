@@ -97,7 +97,19 @@ pub enum EntryError {
     /// A filter that contradicts itself, refused under [`Strictness::Consumer`].
     #[error(transparent)]
     Filter(#[from] FilterError),
+    #[error(
+        "dependency name `{name}` is reserved: names starting `{prefix}` are what Mars records the user level's and a host's content under in a project"
+    )]
+    Reserved { name: String, prefix: &'static str },
 }
+
+/// The prefix of the dependencies a project's sync brings in from the user level: `_user-<name>`.
+pub const USER_PREFIX: &str = "_user-";
+/// The prefix of a host's content in a project: `_provided-<host>`.
+pub const HOST_PREFIX: &str = "_provided-";
+/// The prefixes no manifest may name a dependency with: Mars gives them only to the content it
+/// brings into a project from another layer, so a package naming one would pass as that layer.
+pub const RESERVED_PREFIXES: [&str; 2] = [USER_PREFIX, HOST_PREFIX];
 
 impl EntryError {
     /// The diagnostic code the manifest reading reports it under.
@@ -106,6 +118,7 @@ impl EntryError {
             Self::BothSources { .. } | Self::NoSource { .. } => "dependency.source",
             Self::PluginSelector(_) => "dependency.plugin-selector",
             Self::Filter(_) => "dependency.filter-conflict",
+            Self::Reserved { .. } => "dependency.reserved-name",
         }
     }
 }
@@ -170,14 +183,24 @@ impl Entry {
 
     /// Read an authored entry under every rule: exactly one of `url` and `path`, a bare
     /// `host/path` URL spelled with `https://` (see [`crate::git_url::with_default_scheme`]), a
-    /// `plugin` selector that does not contradict `subpath` or `dialect`, and a consistent filter
-    /// ([`FilterConfig::validate`]). `strictness` decides whether a broken filter or a `plugin`
-    /// with `dialect` refuses or warns; the rest refuse for every reader.
+    /// `plugin` selector that does not contradict `subpath` or `dialect`, a consistent filter
+    /// ([`FilterConfig::validate`]), and a name with no reserved prefix ([`RESERVED_PREFIXES`]).
+    /// `strictness` decides whether a broken filter or a `plugin` with `dialect` refuses or warns;
+    /// the rest refuse for every reader.
     pub fn read(
         name: &str,
         mut raw: RawEntry,
         strictness: Strictness,
     ) -> Result<(Self, Vec<EntryWarning>), EntryError> {
+        if let Some(prefix) = RESERVED_PREFIXES
+            .into_iter()
+            .find(|prefix| name.starts_with(prefix))
+        {
+            return Err(EntryError::Reserved {
+                name: name.into(),
+                prefix,
+            });
+        }
         let mut warnings = Vec::new();
         if strictness == Strictness::Package && raw.plugin.is_some() && raw.dialect.take().is_some()
         {

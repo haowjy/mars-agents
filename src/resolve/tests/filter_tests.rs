@@ -123,6 +123,7 @@ fn filtered_parent_transitive_dep_materializes_only_frontmatter_required_items()
         &graph,
         &config,
         &crate::types::SourceOrigin::LocalPackage.to_string().into(),
+        &Default::default(),
         &mut DiagnosticCollector::new(),
     )
     .unwrap();

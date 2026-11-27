@@ -90,7 +90,10 @@ pub(crate) fn short_commit(commit: &str) -> String {
 }
 
 /// The git dependencies `mars upgrade` would move: the version it would pick is newer than the
-/// one resolved, or an unversioned dependency's repository has gained a tag.
+/// one resolved, or an unversioned dependency's repository has gained a tag. A layer's
+/// dependencies are not the project's to move (the user level's replay its own lock, which
+/// `mars --user upgrade` moves), so they are not asked about and the sync contacts no remote
+/// for them.
 pub(crate) fn pending_upgrades(
     graph: &ResolvedGraph,
     effective: &EffectiveConfig,
@@ -101,6 +104,7 @@ pub(crate) fn pending_upgrades(
     graph
         .nodes
         .values()
+        .filter(|node| !crate::layer::is_machine_local(&node.source_name))
         .filter_map(|node| {
             let candidate = match check_upgrade(node, graph, provider, options) {
                 Ok(checked) => checked?.candidate?,

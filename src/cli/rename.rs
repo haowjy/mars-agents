@@ -13,6 +13,9 @@ pub struct RenameArgs {
     pub from: String,
     /// New item path (e.g., agents/coder.md).
     pub to: String,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars rename`.
@@ -56,7 +59,10 @@ pub fn run(args: &RenameArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
             from: args.from.clone(),
             to: args.to.clone(),
         }),
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            host: args.host.host()?,
+            ..SyncOptions::default()
+        },
         recovery: Default::default(),
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };

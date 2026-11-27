@@ -69,6 +69,13 @@ pub(crate) fn finalize(
             &state.applied.planned.targeted.resolved.loaded.provided,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
+        new_lock.yielded = state
+            .applied
+            .planned
+            .targeted
+            .target
+            .yielded_items()
+            .to_vec();
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
@@ -138,6 +145,8 @@ pub(crate) fn finalize(
         for warning in recovery::publish(layout, &new_lock, &project_targets)? {
             diag.warn("recovery-publish", warning);
         }
+        // A path has one owner: a provided copy this sync's lock now records is the sync's.
+        crate::provided::retire_claimed(layout, &new_lock)?;
     }
 
     dropped_outputs.retain(|(root, _)| root != crate::lock::CANONICAL_TARGET_ROOT);

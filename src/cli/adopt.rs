@@ -20,6 +20,9 @@ pub struct AdoptArgs {
     /// Show what would happen without moving content or syncing.
     #[arg(long)]
     pub dry_run: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 #[derive(Debug)]
@@ -95,6 +98,7 @@ pub fn run(
         mutation: None,
         options: SyncOptions {
             dry_run: true,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: Default::default(),

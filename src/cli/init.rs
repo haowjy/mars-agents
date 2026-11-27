@@ -70,7 +70,7 @@ pub(super) fn initialize_project(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
     // The walk-up never opens a home project, so one made here would be invisible.
-    if super::canonical_home()
+    if crate::platform::config::canonical_home()
         .is_some_and(|home| dunce::canonicalize(&project_root).is_ok_and(|root| root == home))
     {
         return Err(MarsError::Config(ConfigError::Invalid {
@@ -123,6 +123,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
                 target: link_target.clone(),
                 force: false,
                 local: false,
+                host: Default::default(),
             };
             super::link::run(&link_args, &ctx, json)?;
         }

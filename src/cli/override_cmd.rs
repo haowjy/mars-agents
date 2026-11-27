@@ -15,6 +15,9 @@ pub struct OverrideArgs {
     /// Local path to use instead.
     #[arg(long)]
     pub path: std::path::PathBuf,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// Run `mars override`.
@@ -25,7 +28,10 @@ pub fn run(args: &OverrideArgs, ctx: &super::MarsContext, json: bool) -> Result<
             source_name: SourceName::from(args.source.as_str()),
             local_path: args.path.clone(),
         }),
-        options: SyncOptions::default(),
+        options: SyncOptions {
+            host: args.host.host()?,
+            ..SyncOptions::default()
+        },
         recovery: crate::sync::RecoveryPolicy::DeferOnUnreadable,
         lossiness_mode: crate::diagnostic::LossinessMode::Hidden,
     };

@@ -64,6 +64,11 @@ fn user_dir(
     base.map(|dir| dir.join("mars"))
 }
 
+/// The home directory, canonical so a symlinked `/home` still compares equal.
+pub(crate) fn canonical_home() -> Option<PathBuf> {
+    home_dir().map(|home| dunce::canonicalize(&home).unwrap_or(home))
+}
+
 /// The user's home directory, when it is known as an absolute path.
 pub fn home_dir() -> Option<PathBuf> {
     dirs::home_dir().filter(|home| home.is_absolute())

@@ -28,6 +28,24 @@ pub struct LockFile {
     /// `mars.toml`, and a local-only target's own entries are not in it. Only a hook or MCP key
     /// can be provided ([`can_be_provided`]).
     pub provided_entries: std::collections::BTreeSet<(String, String)>,
+    /// What of a layer other than the project's, or of a local-only target, this project does
+    /// not install, with why (`sync::machine_local`): an item the project claims, an entry kept
+    /// out of a file that can be committed. What `mars list` and `mars why` show of them, and the
+    /// record whose change makes the warning news. Always machine-local.
+    pub yielded: Vec<YieldedRecord>,
+}
+
+/// One thing a sync left out for the project's sake, as `machine.lock` records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct YieldedRecord {
+    pub kind: ItemKind,
+    /// `.mars` for an agent, skill or bootstrap doc, which yields on every target; the target
+    /// for a hook or MCP server.
+    pub target: String,
+    pub name: String,
+    pub source: SourceName,
+    /// Why, as the sync's warning says it.
+    pub why: String,
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
@@ -64,6 +82,7 @@ impl LockFile {
             items: wire.items,
             config_entries,
             provided_entries,
+            yielded: wire.yielded,
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
@@ -76,6 +95,7 @@ impl LockFile {
             items: IndexMap::new(),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -442,6 +462,8 @@ struct LockFileWire {
     #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
     provided_entries: Option<std::collections::BTreeSet<(String, String)>>,
+    #[serde(default)]
+    yielded: Vec<YieldedRecord>,
 }
 
 /// The parts of a v2 lock (mars 0.11 and earlier) that still mean something: the
@@ -744,6 +766,8 @@ struct LockFileOut<'a> {
     dependency_model_aliases: &'a IndexMap<String, ModelAlias>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provided_entries: Option<&'a std::collections::BTreeSet<(String, String)>>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    yielded: &'a [YieldedRecord],
 }
 
 fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), MarsError> {
@@ -752,6 +776,15 @@ fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), Ma
     normalized.dependencies.sort_keys();
     normalized.items.sort_keys();
     normalized.dependency_model_aliases.sort_keys();
+    normalized.yielded.sort_by(|a, b| {
+        (a.kind.to_string(), &a.target, &a.name, &a.source).cmp(&(
+            b.kind.to_string(),
+            &b.target,
+            &b.name,
+            &b.source,
+        ))
+    });
+    normalized.yielded.dedup();
     for item in normalized.items.values_mut() {
         item.outputs.sort_by(|a, b| {
             a.target_root
@@ -767,6 +800,7 @@ fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), Ma
         config_entries: &normalized.config_entries,
         dependency_model_aliases: &normalized.dependency_model_aliases,
         provided_entries: machine.then_some(&normalized.provided_entries),
+        yielded: &normalized.yielded,
     })
     .map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
@@ -969,6 +1003,7 @@ pub(crate) fn build(
         items,
         config_entries,
         provided_entries,
+        yielded: Vec::new(),
         dependency_model_aliases: IndexMap::new(),
     })
 }
@@ -1535,6 +1570,14 @@ pub(crate) enum RecordRef {
     Entry { target_root: String, key: String },
     /// A dependency's own record, by name.
     Dependency(String),
+    /// What a sync left out for the project's sake, by kind, target, name and source: news when
+    /// it is newly left out or for a new reason.
+    Yielded {
+        kind: ItemKind,
+        target: String,
+        name: String,
+        source: String,
+    },
     /// News when any of them is.
     Any(Vec<RecordRef>),
 }
@@ -1585,6 +1628,26 @@ impl RecordRef {
                 .dependencies
                 .get(name.as_str())
                 .is_some_and(|now| old.dependencies.get(name.as_str()) != Some(now)),
+            Self::Yielded {
+                kind,
+                target,
+                name,
+                source,
+            } => {
+                let find = |lock: &'_ LockFile| {
+                    lock.yielded
+                        .iter()
+                        .find(|record| {
+                            record.kind == *kind
+                                && record.target == *target
+                                && record.name == *name
+                                && record.source.as_str() == source
+                        })
+                        .cloned()
+                };
+                let now = find(new);
+                now.is_some() && now != find(old)
+            }
             Self::Any(records) => records.iter().any(|record| record.is_news(old, new)),
         }
     }
@@ -1659,6 +1722,7 @@ mod tests {
             items,
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -2079,6 +2143,7 @@ installed_checksum = "sha256:bbb"
             ]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -2163,6 +2228,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -2241,6 +2307,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let mut lock = old_lock.clone();
@@ -2533,6 +2600,7 @@ installed_checksum = "sha256:bbb"
             items: IndexMap::new(),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
 
@@ -2664,6 +2732,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
@@ -2774,6 +2843,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {

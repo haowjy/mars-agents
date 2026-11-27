@@ -5,7 +5,7 @@
 //! targets and the machine-local split.
 //!
 //! The user level enters as `_user-<name>` per entry of its manifest's `[dependencies]`, pinned
-//! to its own `mars.lock` (`ResolveOptions::with_user_pins`): a project sync replays what
+//! to its own `mars.lock` (`ResolveOptions::with_user_layer`): a project sync replays what
 //! `mars --user sync` resolved, from the shared source cache, and never resolves it again. Its
 //! own items enter as `_user-self`, a path dependency on its `.mars-src/`. A user level whose lock
 //! does not load, or that was never synced, contributes nothing, with a warning.
@@ -18,9 +18,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
 use mars_schema::dependency::Entry;
-use mars_schema::resolve::LockedDependency;
 
 use crate::config::{EffectiveDependency, EntrySource, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
@@ -42,7 +40,7 @@ pub struct HostRoot {
 #[derive(Default)]
 pub(crate) struct Layers {
     pub dependencies: Vec<(SourceName, EffectiveDependency)>,
-    pub user_pins: IndexMap<SourceName, LockedDependency>,
+    pub user_layer: crate::resolve::UserLayer,
     /// The version the lock records for each host read from a bundle directory, by host.
     pub host_versions: BTreeMap<String, String>,
 }
@@ -55,8 +53,12 @@ pub(crate) fn load(
     diag: &mut DiagnosticCollector,
 ) -> Result<Layers, MarsError> {
     let mut layers = Layers::default();
-    // The user level is the layer, not something it pulls in.
-    if layout.kind() == crate::layout::RootKind::Project {
+    // The user level is the layer, not something it pulls in; and the home project (opened by
+    // `--root ~` for one minor, to clean up) is where the user level used to be, so pulling the
+    // user level into it would write it to the harness user folders again.
+    if layout.kind() == crate::layout::RootKind::Project
+        && Some(layout.root()) != crate::platform::config::canonical_home().as_deref()
+    {
         user_layer(&mut layers, diag)?;
     }
     if crate::provided::takes_provided_any(managed_targets) {
@@ -147,12 +149,12 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
                 git.version.clone_from(&pin.version);
             }
         }
-        layers
-            .dependencies
-            .push((SourceName::from(format!("{USER_PREFIX}{name}")), dependency));
+        let name = SourceName::from(format!("{USER_PREFIX}{name}"));
+        layers.user_layer.roots.insert(name.clone());
+        layers.dependencies.push((name, dependency));
     }
     let own = SourceName::from(crate::types::SourceOrigin::LocalPackage.to_string());
-    layers.user_pins = lock
+    layers.user_layer.pins = lock
         .dependencies
         .iter()
         .filter(|(name, _)| **name != own)

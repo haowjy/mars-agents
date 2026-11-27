@@ -6,6 +6,7 @@ mod halt;
 mod kept_hooks;
 pub(crate) mod layers;
 mod local_items;
+pub(crate) mod machine_local;
 pub mod mutation;
 pub(crate) mod ownership;
 pub(crate) mod package_dir;
@@ -137,8 +138,8 @@ pub(crate) struct LoadedConfig {
     pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
-    /// The user level's lock rows, the only pins its `_user-*` sources replay.
-    pub user_pins: indexmap::IndexMap<SourceName, mars_schema::resolve::LockedDependency>,
+    /// The user level's roots and lock rows, the only pins its `_user-*` sources replay.
+    pub user_layer: crate::resolve::UserLayer,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
@@ -163,6 +164,8 @@ pub(crate) struct ResolvedState {
 pub(crate) struct TargetedState {
     pub resolved: ResolvedState,
     pub target: TargetState,
+    /// What git and the exclude block said about this sync's paths, for `machine_local::decide`.
+    pub facts: machine_local::Facts,
 }
 
 pub(crate) struct PlannedState {
@@ -377,7 +380,7 @@ pub(crate) fn load_config(
         carried,
         dropped,
         provided,
-        user_pins: layers.user_pins,
+        user_layer: layers.user_layer,
         dependency_changes,
         sync_lock,
     })
@@ -399,7 +402,7 @@ pub(crate) fn resolve_graph(
     };
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
         .with_source_overrides(source_overrides)
-        .with_user_pins(std::mem::take(&mut loaded.user_pins));
+        .with_user_layer(std::mem::take(&mut loaded.user_layer));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -495,11 +498,12 @@ pub(crate) fn build_target_state(
     effective: &EffectiveConfig,
     local_source: &SourceName,
     old_lock: Option<&crate::lock::LockFile>,
+    project: &machine_local::ProjectClaims<'_>,
     diag: &mut DiagnosticCollector,
     extend: impl FnOnce(&mut target::TargetState, &mut DiagnosticCollector) -> Result<(), MarsError>,
 ) -> Result<BuiltTarget, MarsError> {
     let (mut target, explicit_renames, collision_renames, invalid_hooks) =
-        target::build_with_collisions_and_diag(graph, effective, local_source, diag)?;
+        target::build_with_collisions_and_diag(graph, effective, local_source, project, diag)?;
     extend(&mut target, diag)?;
     let managed_targets = crate::config::targets::managed_targets(&effective.settings);
     target.kept_hooks = kept_hooks::settle(
@@ -558,12 +562,23 @@ pub(crate) fn build_target(
 ) -> Result<TargetedState, MarsError> {
     let mars_dir = ctx.layout.store();
     let local_source = crate::types::SourceOrigin::LocalPackage.to_string().into();
+    let managed = crate::config::targets::managed_targets(&resolved.loaded.effective.settings);
+    let facts = machine_local::Facts::load(&ctx.layout, &managed);
+    let project = machine_local::ProjectClaims::new(
+        &local_items,
+        &ctx.layout,
+        &facts,
+        &resolved.loaded.old_lock,
+        &resolved.loaded.provided,
+        &managed,
+    );
 
     let mut built = build_target_state(
         &resolved.graph,
         &resolved.loaded.effective,
         &local_source,
         Some(&resolved.loaded.old_lock),
+        &project,
         diag,
         |target_state, diag| {
             local_items::merge_local_items(
@@ -670,9 +685,11 @@ pub(crate) fn build_target(
         diag,
     );
 
+    drop(project);
     Ok(TargetedState {
         resolved,
         target: target_state,
+        facts,
     })
 }
 

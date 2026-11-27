@@ -143,7 +143,7 @@ mars sync [--force] [--diff] [--frozen]
 
 A project's sync also installs the [user level](user-level.md#in-a-project): its pinned dependencies as `_user-<name>`, its `.mars-src` as `_user-self`, recorded in `.mars/machine.lock` and kept out of commits. `mars --user sync` resolves the user level and says that projects install the change on their next sync.
 
-`--provided-root HOST@VERSION=DIR` installs a host's bundle (the directory it gives lookups as `--provided-root DIR`; skills, agents, hooks and MCP servers) as the dependency `_provided-<HOST>`, only into targets whose harness the host does not launch (`.agy` today). Its name, version and directory are recorded in `.mars/machine.lock`, and a later sync without the flag keeps it while that directory exists. A package's or the user level's item of the same name wins over the host's. Launch lookups never read a host's copies in a store; they read the bundle in place ([Provided content](#provided-content)).
+`--provided-root HOST@VERSION=DIR` installs a host's bundle (the directory it gives lookups as `--provided-root DIR`; skills, agents, hooks and MCP servers) as the dependency `_provided-<HOST>`, only into targets whose harness the host does not launch (`.agy` today). Its name, version and directory are recorded in `.mars/machine.lock`, and a later sync without the flag keeps it while that directory exists. Every command that syncs takes the flag: `sync`, `add`, `remove`, `upgrade`, `repair`, `rename`, `override`, `adopt` and `link`. A package's or the user level's item of the same name wins over the host's. Launch lookups never read a host's copies in a store; they read the bundle in place ([Provided content](#provided-content)).
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key or table Mars does not read in the project's own `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key it does read (`target` → `targets`, `[setting]` → `[settings]`), because a misspelt `targets` leaves no targets and the sync removes what Mars installed in them. In a dependency or the user config it is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
@@ -208,7 +208,9 @@ mars list [--source NAME] [--kind KIND] [--status]
 | `--kind KIND` | Filter by item kind (`agents` or `skills`) |
 | `--status` | Show detailed status (source, version, hash check) |
 
-Default view shows name + description from frontmatter (the YAML metadata block at the top of each Markdown profile). With `--status`, output includes the dependency source name, version, and integrity status (`ok`, `modified`, `missing`, `conflicted`).
+Default view shows name + description from frontmatter (the YAML metadata block at the top of each Markdown profile). With `--status`, output includes the dependency source name, version, and integrity status (`ok`, `modified`, `missing`, `conflicted`). Items from the [user level](user-level.md#in-a-project) or a host that the project's own copy or path kept out are listed under NOT INSTALLED HERE, with the reason.
+
+`--json` prints an object: `root`, `agents`, `skills`, `bootstrap` and `yielded` (each with `name`, `kind`, `target`, `source` and `why`). `--status --json` prints a top-level array of the status rows.
 
 ---
 
@@ -254,7 +256,7 @@ Explain why an item is installed.
 mars why <name>
 ```
 
-Shows the item's source dependency name, version, install path, and which agents depend on it (for skills). Matches by name stem (agents) or directory name (skills).
+Shows the item's source dependency name, version, install path, and which agents depend on it (for skills). Matches by name stem (agents) or directory name (skills). An item from the user level or a host names the layer (`provided by: upkg (user level), v0.1.1`); one the project kept out is shown with the reason it was not installed.
 
 ```bash
 mars why frontend-design
@@ -787,7 +789,7 @@ component ending in `__<that provider>`; anything else makes the file corrupt
 (one warning, an empty record) rather than letting a record point a removal at
 another provider's directory.
 
-`mars sync` reads it and never writes it. It counts a recorded name as available for refs from a
+`mars sync` reads it. It writes it only to drop a skill whose `.mars/skills/<name>` the sync now records as its own in the lock (a host that moved to `--provided-root`), so each directory has one owner. It counts a recorded name as available for refs from a
 package that declares the provider in `uses-providers` (see
 [mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)) only while
 `.mars/skills/<name>` is a directory, and treats a recorded destination as Mars-owned, so a

@@ -54,6 +54,9 @@ pub struct AddArgs {
     /// Ignore package `requires-meridian` version constraints.
     #[arg(long)]
     pub ignore_requires_meridian: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 #[derive(Debug)]
@@ -123,6 +126,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
             options: SyncOptions {
                 ignore_requires_mars: args.ignore_requires_mars,
                 ignore_requires_meridian: args.ignore_requires_meridian,
+                host: args.host.host()?,
                 ..SyncOptions::default()
             },
             recovery: Default::default(),
@@ -145,6 +149,7 @@ pub fn run(args: &AddArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, 
         options: SyncOptions {
             ignore_requires_mars: args.ignore_requires_mars,
             ignore_requires_meridian: args.ignore_requires_meridian,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: Default::default(),

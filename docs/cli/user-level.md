@@ -28,16 +28,18 @@ is an error.
 ## Choosing the root
 
 - `--user` uses the user level. It cannot be combined with `--root`.
+- Inside `<config>` (or below it), every command uses the user level, as if `--user` were given.
 - Commands that only read installed items (`build launch-bundle`, `agents`, `skills`,
   `models` other than `models alias`, `list`, `why`) use the nearest project, and the user level when no project
   encloses the working directory.
 - Commands that write (`sync`, `add`, `remove`, `upgrade`, `models alias`, …) use the nearest project. With
-  none they fail and name `--user`: a write to the user level is always asked for.
+  none they fail and name `--user`: a write to the user level is always asked for. Under
+  `--json` the error code is `project_not_found`.
 - `--user` works with `sync`, `add`, `remove`, `upgrade`, `outdated`, `list`, `why`,
-  `rename`, `override`, `adopt`, `repair`, `doctor`, `validate`, `check`, `agents`, `skills`,
+  `rename`, `override`, `adopt`, `repair`, `doctor`, `validate`, `agents`, `skills`,
   `models`, `resolve`, `export` and `build launch-bundle`. It is refused, with the reason, by
   `init`, `link`, `unlink` (the user level has no targets), `provide` (a host provides to
-  projects) and `version` and `build plugin` (they author a package).
+  projects) and `version`, `check` and `build plugin` (they author a package).
 
 The user level never restricts routing: it has no `targets`, so every harness is allowed.
 
@@ -49,8 +51,8 @@ Every `--json` output that is an object carries the root it used:
           "config_dir": "/home/me/.config/mars", "store_dir": "/home/me/.local/share/mars"}}
 ```
 
-`mars list --json` and `mars outdated --json` print a top-level array, which has no place for
-the key; their shape is unchanged.
+`mars outdated --json` and `mars list --status --json` print a top-level array, which has no
+place for the key; their shape is unchanged.
 
 ## In a project
 
@@ -75,22 +77,34 @@ cache is fetched at that commit; offline, the project sync fails and changes not
 **The project wins.** An agent, skill, hook or MCP server the project's packages or
 `.mars-src` provide is not installed from the user level, even when the project's copies were
 renamed on a collision (`reviewer__a`, `reviewer__b`): a launch of `reviewer` then fails and
-lists the renamed names, instead of running your copy. The sync warns once, when the record is
-new. Within the user level, a collision renames every side, as in a project, except your own
-`.mars-src` item, which keeps its name.
+lists the renamed names, instead of running your copy. Neither is one whose path in a target
+(`.claude/skills/foo`) holds something git tracks or Mars did not install; `--force` does not
+adopt over it. The sync warns once, when the record is new, one line per source and reason:
+`2 items from upkg (user level) are not installed here: skill `foo`, agent `bar`. For each: the
+project also provides it`. `mars list` shows them under NOT INSTALLED HERE (`yielded` in
+`--json`), and `mars why <name>` gives the reason. Within the user level, a collision renames
+every side, as in a project, except your own `.mars-src` item, which keeps its name.
 
 **Records stay on this machine.** Everything from the user level is recorded in
-`.mars/machine.lock`, never in `mars.lock`. Remove an item from the user level and the next
+`.mars/machine.lock`, never in `mars.lock`, including what it did not install and why. Remove an item from the user level and the next
 project sync removes it from the project.
 
 **Commits stay clean.** In a git work tree, the paths Mars writes for user-level items (and
 for a host's content and for targets only `mars.local.toml` names) are listed in a block Mars
-owns in the repository's `info/exclude`, so `git add -A` leaves them out. Each work tree of a
-repository has its own block, keyed by its path; lines outside the blocks are yours and stay.
-A user-level hook or MCP server whose entry would go in a file git tracks (`.mcp.json`,
-`.claude/settings.json`, `.codex/config.toml`, …) is not installed, with a warning once: one
-entry of a committed file cannot be kept out of a commit. An untracked file gets the entry.
-Without git there is nothing to write.
+owns in the repository's `info/exclude`, so `git add -A` leaves them out. That includes a
+config file (`.mcp.json`, `.codex/hooks.json`, …) the sync creates only to hold user-level
+entries. Each work tree of a repository has its own block, keyed by its path; lines outside the
+blocks are yours and stay.
+
+A user-level hook or MCP server is not installed, with a warning once, when its entry would go
+in a config file that could be committed: one entry of a file cannot be kept out of a commit.
+That is a file git tracks, a file that also holds the project's own entries, and a file Mars
+did not create that git does not ignore. A file git ignores gets the entry.
+
+Git reads one `info/exclude` for all work trees of a repository, so a path one work tree's
+block lists is hidden from `git add` in every other work tree too. When another work tree's
+block lists a path this project holds, the sync warns once, naming the path and that work
+tree; `git add -f` adds it. Without git there is nothing to write.
 
 A directory outside every project installs nothing; lookups there read the user store.
 

@@ -674,17 +674,6 @@ pub fn merge_with_root(
             .into());
         }
 
-        if let Some(prefix) =
-            crate::layer::reserved_prefixes().find(|prefix| name.as_ref().starts_with(prefix))
-        {
-            return Err(ConfigError::Invalid {
-                message: format!(
-                    "dependency name `{name}` is reserved: names starting `{prefix}` are what the user level's and a host's content is recorded under in a project"
-                ),
-            }
-            .into());
-        }
-
         // Reject duplicate names across sections
         if dependencies.contains_key(name) {
             return Err(ConfigError::Invalid {

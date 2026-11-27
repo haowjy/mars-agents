@@ -196,9 +196,19 @@ pub struct ResolveOptions {
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
     /// The package selected for, when it is not a node of the graph. See [`Self::with_root`].
     pub(crate) root: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
-    /// The user level's lock rows, as `_user-<name>`: the only pins its sources replay. See
-    /// [`Self::with_user_pins`].
-    pub(crate) user_pins: indexmap::IndexMap<SourceName, LockedDependency>,
+    /// The user level's part of the graph. See [`Self::with_user_layer`].
+    pub(crate) user_layer: UserLayer,
+}
+
+/// What `sync::layers` injected for the user level into a project's graph.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UserLayer {
+    /// The root dependencies the injection added (`_user-<name>`). Each is namespaced
+    /// (`mars_schema::resolve::Dependency::namespace`): what its packages declare is named
+    /// `_user-*` too and replays [`Self::pins`] exactly.
+    pub roots: HashSet<SourceName>,
+    /// The user level's lock rows, as `_user-<name>`: the only pins its sources replay.
+    pub pins: indexmap::IndexMap<SourceName, LockedDependency>,
 }
 
 impl Default for ResolveOptions {
@@ -212,7 +222,7 @@ impl Default for ResolveOptions {
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
             root: None,
-            user_pins: indexmap::IndexMap::new(),
+            user_layer: UserLayer::default(),
         }
     }
 }
@@ -261,11 +271,8 @@ impl ResolveOptions {
 
     /// Pin the user level's sources to its own lock: a project sync replays them and never
     /// resolves them again (`mars --user sync` does), whatever the project's lock says.
-    pub(crate) fn with_user_pins(
-        mut self,
-        pins: indexmap::IndexMap<SourceName, LockedDependency>,
-    ) -> Self {
-        self.user_pins = pins;
+    pub(crate) fn with_user_layer(mut self, user_layer: UserLayer) -> Self {
+        self.user_layer = user_layer;
         self
     }
 

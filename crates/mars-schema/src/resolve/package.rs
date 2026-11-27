@@ -56,7 +56,7 @@ struct Pass {
     registry: IndexMap<String, Node>,
     /// Names whose resolution began: one in here and not in the registry is waiting on an answer.
     started: BTreeSet<String>,
-    /// The name each source resolved under, per namespace (`Request::namespaces`; `None` for the
+    /// The name each source resolved under, per namespace (`Dependency::namespace`; `None` for the
     /// root's own): one source has one name within a graph, and a namespaced subgraph is a graph
     /// of its own.
     ids: BTreeMap<(Option<String>, SourceId), String>,
@@ -549,7 +549,7 @@ impl<'a> Run<'a> {
     fn resolve_package(&mut self, dep: &Dependency) -> Flow<()> {
         self.counter.borrow_mut().reading.clone_from(&dep.name);
         let (declared, id) = self.identities(dep)?;
-        let namespace = self.req.namespace_of(&dep.name).map(str::to_owned);
+        let namespace = dep.namespace.clone();
         if let Some(existing) = self.pass.ids.get(&(namespace.clone(), id.clone()))
             && existing != &dep.name
         {
@@ -947,7 +947,7 @@ impl<'a> Run<'a> {
             .dependencies
             .iter()
             .map(|(name, entry)| {
-                let name = match self.req.namespace_of(&dep.name) {
+                let name = match &dep.namespace {
                     Some(prefix) => format!("{prefix}{name}"),
                     None => name.clone(),
                 };
@@ -967,6 +967,7 @@ impl<'a> Run<'a> {
                     required_by: dep.name.clone(),
                     declared_in: Some(rooted.clone()),
                     dialect: None,
+                    namespace: dep.namespace.clone(),
                 }
             })
             .collect()

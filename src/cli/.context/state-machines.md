@@ -28,6 +28,7 @@ stateDiagram-v2
   Searching --> Found: mars.toml exists, a MarsContext is built
   Searching --> NoProject: reached the filesystem root
   NoProject --> UserLevel: lookup (build launch-bundle, agents, skills, models but alias, list, why)
+  NoProject --> Rootless: lookup when the user level cannot be located
   NoProject --> AutoInitialized: add or link, init then continue (refused at home)
   NoProject --> Rootless: build plugin with --path
   NoProject --> Error: anything else, ProjectRootNotFound naming --user
@@ -50,7 +51,9 @@ stateDiagram-v2
   move warning from what exists: once the user `mars.toml` exists it names only the unlinks (one
   per target the home files name) and the deletes.
 - A lookup in a project-less directory must create nothing: the user level's folders appear
-  only when a command writes to them.
+  only when a command writes to them. When `Layout::user_level` cannot locate them (no absolute
+  HOME, or on Windows no AppData folder), the lookup runs in place instead of failing: an ad-hoc
+  launch bundle there worked before the user level existed, and hosts still issue one.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
   also refuses a `--root` that is not itself a project root. `check --user` checks the config
   folder.

@@ -93,7 +93,8 @@ impl MarsContext {
         let layout = crate::layout::Layout::user_level().map_err(|variable| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!(
-                    "cannot find the user level: no home directory is known; set {variable}"
+                    "cannot find the user level: its folders cannot be located ({}); set {variable}",
+                    crate::platform::config::UNLOCATED_REASON
                 ),
             })
         })?;
@@ -275,13 +276,20 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
             command: models::ModelsCommand::RefreshCatalog(args),
         }) => models::run_refresh_catalog(args),
         cmd => {
+            let in_place =
+                || MarsContext::new(cli.root.clone().unwrap_or(std::env::current_dir()?));
             let ctx = if let Some(user) = user {
                 user
             } else {
                 match find_agents_root(cli.root.as_deref()) {
                     Ok(ctx) => ctx,
                     Err(err) if is_project_not_found(&err) && is_lookup(cmd) => {
-                        MarsContext::user()?
+                        match MarsContext::user() {
+                            Ok(user) => user,
+                            // No user level can be located: the lookup runs in place, where no
+                            // project is, as an ad-hoc launch bundle did before the user level.
+                            Err(_) => in_place()?,
+                        }
                     }
                     Err(err) if is_project_not_found(&err) && auto_inits_project(cmd) => {
                         let initialized = init::initialize_project(cli.root.as_deref(), None)?;
@@ -293,10 +301,7 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                         }
                         MarsContext::new(initialized.project_root.clone())?
                     }
-                    Err(err) if is_project_not_found(&err) && runs_in_place(cmd) => {
-                        let project_root = cli.root.clone().unwrap_or(std::env::current_dir()?);
-                        MarsContext::new(project_root.clone())?
-                    }
+                    Err(err) if is_project_not_found(&err) && runs_in_place(cmd) => in_place()?,
                     Err(err) => return Err(err),
                 }
             };

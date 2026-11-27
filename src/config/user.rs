@@ -13,14 +13,14 @@ pub struct UserConfig {
     pub local: LocalConfig,
     /// Where the file should be, when it was read from the old macOS folder instead.
     pub moved_to: Option<PathBuf>,
-    /// The Mars config folder could not be located (no absolute home directory and no
-    /// `MARS_CONFIG_DIR`), so there is no user config and no user level.
+    /// The Mars config folder could not be located (`platform::config::UNLOCATED_REASON`, and
+    /// no `MARS_CONFIG_DIR`), so there is no user config and no user level.
     pub unlocated: bool,
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
     // Only `--user` needs the folder (`MarsContext::user` fails without it); a project command
-    // runs with no user layer.
+    // runs with no user layer, and a lookup outside a project runs in place.
     let Some((path, moved_to)) = crate::platform::config::user_file("config.toml") else {
         return Ok(UserConfig {
             unlocated: true,
@@ -86,7 +86,10 @@ pub(crate) fn unlocated_info() -> crate::diagnostic::Diagnostic {
     crate::diagnostic::Diagnostic::new(
         crate::diagnostic::DiagnosticLevel::Info,
         "user-config-unlocated",
-        "no user config and no user level: the Mars config folder cannot be located (HOME is not an absolute path); set MARS_CONFIG_DIR to use them",
+        format!(
+            "no user config and no user level: the Mars config folder cannot be located ({}); set MARS_CONFIG_DIR to use them",
+            crate::platform::config::UNLOCATED_REASON
+        ),
     )
 }
 

@@ -58,8 +58,8 @@ impl Layout {
     }
 
     /// The user level at the folders `platform::config` resolves, canonical when they exist.
-    /// Nothing is created. `Err` names the variable to set when a folder cannot be located (no
-    /// absolute home directory).
+    /// Nothing is created. `Err` names the variable to set when a folder cannot be located
+    /// (`platform::config::UNLOCATED_REASON`).
     pub fn user_level() -> Result<Self, &'static str> {
         let folder = |dir: Option<PathBuf>, variable: &'static str| {
             dir.map(|dir| dunce::canonicalize(&dir).unwrap_or(dir))

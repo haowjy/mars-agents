@@ -64,6 +64,11 @@ fn user_dir(
     base.map(|dir| dir.join("mars"))
 }
 
+/// Why `mars_config_dir` or `mars_data_dir` found no folder: on Windows the known folder lookup
+/// fails when the AppData folder does not exist (as under a `USERPROFILE` with none).
+pub const UNLOCATED_REASON: &str =
+    "HOME is not an absolute path, or on Windows the AppData folder does not exist";
+
 /// The home directory, canonical so a symlinked `/home` still compares equal.
 pub(crate) fn canonical_home() -> Option<PathBuf> {
     home_dir().map(|home| dunce::canonicalize(&home).unwrap_or(home))

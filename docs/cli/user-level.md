@@ -124,7 +124,9 @@ A directory outside every project installs nothing; lookups there read the user 
 
 With no absolute `HOME` and no `MARS_CONFIG_DIR`, the config folder cannot be located: project
 commands run with no user config and no user level (an `info` note under `--verbose`), and
-`--user` fails.
+`--user` fails. On Windows the same holds when the user's AppData folder does not exist. A lookup
+outside a project then has no user level to read: it runs in the working directory, finds nothing
+installed there, and reports `{"kind": "project", "path": "<working directory>"}` as its root.
 
 ## The home directory is never a project
 

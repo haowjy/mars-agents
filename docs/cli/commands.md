@@ -875,7 +875,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 - Uses no agent profile; routing is driven by `--model` and the installed harness environment
 
 **Agent/profile mode** (`--agent <name>`):
-- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
+- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project, or the file `--agent-file` names
 - Requires a project with `mars sync` already run
 - Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
@@ -884,6 +884,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 | Flag | Description |
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
+| `--agent-file <path>` | Read the `--agent` profile from this file instead of `.mars/agents/<name>.md`; requires `--agent`. A relative path resolves against the working directory. Everything keyed by the name still uses the `--agent` name (the `[agents.<name>]` overlay, warning text), the file's frontmatter `name` is not checked against it, and `agent_source_path` is the file. The file is read as it is: `[package.tools]` rules, which `mars sync` writes into installed agents, do not apply. A missing or invalid file fails as a missing or invalid installed agent does, naming the file. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`, `agy`). Only a pin reaches `agy`, which Meridian builds a command for and does not run; the bundle's `harness_model` is one `agy` slug that carries the effort too ([Antigravity slugs](../config/agent-compilation.md#agy-model-and-effort)). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
@@ -970,7 +971,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 }
 ```
 
-- `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
+- `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` (or the `--agent-file` file) in agent/profile mode, and `agent_source_path` is that file.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
 - `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Antigravity, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
@@ -1059,6 +1060,9 @@ mars build launch-bundle --model gpt-5.4-mini --json
 
 # Agent mode: build bundle for a synced agent
 mars build launch-bundle --agent my-agent --json
+
+# Agent mode with a profile from outside .mars/; [agents.router] still applies
+mars build launch-bundle --agent router --agent-file /opt/tool/agents/router.md --json
 
 # Override harness explicitly
 mars build launch-bundle --model gpt-5.4-mini --harness codex --json

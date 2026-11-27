@@ -102,6 +102,11 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub agent: Option<String>,
 
+    /// Read the `--agent` profile from this file instead of `.mars/agents/<name>.md`; a relative
+    /// path resolves against the working directory. Overlays stay keyed by the `--agent` name.
+    #[arg(long, value_name = "PATH", requires = "agent")]
+    pub agent_file: Option<PathBuf>,
+
     /// Secondary Mars project used only for missing agents and skills.
     #[arg(long)]
     pub fallback_root: Option<PathBuf>,
@@ -243,6 +248,11 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         ctx,
         LaunchBundleRequest {
             agent: args.agent.clone(),
+            agent_file: args
+                .agent_file
+                .as_deref()
+                .map(|path| super::resolve_cli_path(path, None))
+                .transpose()?,
             fallback_root: args.fallback_root.clone(),
             model: args.model.clone(),
             literal_model: args.literal_model,

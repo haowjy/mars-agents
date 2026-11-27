@@ -12,7 +12,7 @@ OpenCode loads no agent files from a plugin, so its generated plugin registers a
 
 ## Launch bundles
 
-Ad-hoc mode works without a project or agent profile, allowing callers to route without a sync; an omitted model lets the selected harness choose its default. Agent mode reads the synced profile and skills. The project-discovery bypass is limited to explicit supported routes.
+Ad-hoc mode works without a project or agent profile, allowing callers to route without a sync; an omitted model lets the selected harness choose its default. Agent mode reads the synced profile and skills, or the profile from `--agent-file`: a caller that found the profile itself (Meridian ships one in its wheel) hands Mars that file so the two lookups cannot disagree, while overlays stay keyed by the `--agent` name. The project-discovery bypass is limited to explicit supported routes.
 
 `routing.harness_model` is the selected runtime ID, including effort when encoded into the slug. `routing.catalog_row` is the models.dev row of the model the harness runs, joined once per harness for effort (`models::reasoning::catalog_row`); consumers read prices from it and never rebuild the join. `candidate_slugs` and route traces are diagnostic, not launch instructions. A selected trace records route selection, not successful bundle construction or process launch. A literal model bypasses alias lookup and backups but still goes through permission, support and authentication assessment.
 

@@ -27,6 +27,8 @@ pub const LAUNCH_BUNDLE_VERSION: u32 = 4;
 
 pub struct LaunchBundleRequest {
     pub agent: Option<String>,
+    /// Read the agent's profile from this file instead of the content roots; requires `agent`.
+    pub agent_file: Option<PathBuf>,
     pub fallback_root: Option<PathBuf>,
     pub model: Option<String>,
     pub literal_model: bool,
@@ -62,7 +64,10 @@ pub fn build_launch_bundle(
     let content_roots = ContentRoots::new(&ctx.project_root, request.fallback_root.as_deref());
 
     if let Some(agent) = request.agent.as_deref() {
-        let agent_path = content_roots.agent_file_path(agent);
+        let agent_path = request
+            .agent_file
+            .clone()
+            .unwrap_or_else(|| content_roots.agent_file_path(agent));
         let agent_content =
             std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
                 operation: "read launch bundle agent".to_string(),

@@ -369,24 +369,21 @@ fn runs_in_place(cmd: &Command) -> bool {
 }
 
 /// Why a command has no meaning at the user level, or `None` when `--user` applies to it.
-fn refused_at_user_level(cmd: &Command) -> Option<&'static str> {
-    match cmd {
-        Command::Init(_) => {
-            Some("the user level needs no init; `mars --user add` creates its mars.toml")
-        }
+fn refused_at_user_level(cmd: &Command) -> Option<String> {
+    let reason = match cmd {
+        Command::Init(_) => return Some(init::user_level_needs_no_init()),
         Command::Link(_) | Command::Unlink(_) => {
-            Some("the user level has no targets; its items are installed by each project's sync")
+            "the user level has no targets; its items are installed by each project's sync"
         }
-        Command::Provide(_) => Some("a host's content is provided to projects, not the user level"),
-        Command::Check(_) => {
-            Some("it checks a package you are authoring, which the user level is not")
-        }
+        Command::Provide(_) => "a host's content is provided to projects, not the user level",
+        Command::Check(_) => "it checks a package you are authoring, which the user level is not",
         Command::Version(_)
         | Command::Build(build::BuildArgs {
             command: build::BuildCommand::Plugin(_),
-        }) => Some("it authors a package, which the user level is not"),
-        _ => None,
-    }
+        }) => "it authors a package, which the user level is not",
+        _ => return None,
+    };
+    Some(reason.to_string())
 }
 
 fn dispatch_with_root(
@@ -569,26 +566,65 @@ fn find_agents_root_from(
 
     Err(MarsError::Config(ConfigError::ProjectRootNotFound {
         start: start.to_path_buf(),
+        refusal: init::no_project_in(&start_canon, home, user_config),
     }))
 }
 
+/// The steps left to move a home project to the user level, read from where things stand: once
+/// the user level's `mars.toml` exists, only the cleanup is left. The unlink commands name the
+/// targets the home project's files name.
 fn warn_home_project(home: &Path) {
-    let manifest = crate::layout::Layout::project(home).manifest();
-    let user_manifest = MarsContext::user().map_or_else(
-        |_| "the Mars config folder".to_string(),
-        |user| user.layout.manifest().display().to_string(),
+    let layout = crate::layout::Layout::project(home);
+    let manifest = layout.manifest();
+    let user_manifest = crate::layout::Layout::user_level()
+        .ok()
+        .map(|user| user.manifest());
+    let targets = crate::config::load(&layout).ok().map(|config| {
+        let local = crate::config::load_local(&layout).unwrap_or_default();
+        crate::config::targets::named_targets(&config, &local)
+    });
+    let unlink = |target: &str| {
+        format!(
+            "`{}`",
+            managed_cmd(&format!("mars --root {} unlink {target}", home.display()))
+        )
+    };
+    let cleanup = match targets {
+        None => format!("run {} for each target it names, then ", unlink("<target>")),
+        Some(targets) if targets.is_empty() => String::new(),
+        Some(targets) => {
+            let unlinks: Vec<_> = targets.iter().map(|target| unlink(target)).collect();
+            format!("run {}, then ", unlinks.join(" and "))
+        }
+    };
+    let cleanup = format!(
+        "{cleanup}delete {manifest}, {lock} and {store}/",
+        manifest = manifest.display(),
+        lock = layout.lock().display(),
+        store = layout.store().display(),
     );
+    let steps = match &user_manifest {
+        Some(user_manifest) if user_manifest.exists() => format!(
+            "your user level ({}) is already set up, so only the cleanup is left: {cleanup}",
+            user_manifest.display()
+        ),
+        _ => format!(
+            "move it to {user_manifest} without its `targets` line, move {home}/.mars-src/ \
+             beside it if you have one, run `{sync}`, then {cleanup}",
+            user_manifest = user_manifest.map_or_else(
+                || "the Mars config folder".to_string(),
+                |path| path.display().to_string()
+            ),
+            home = home.display(),
+            sync = managed_cmd("mars --user sync"),
+        ),
+    };
     output::warn(
         "home-project",
         format!(
-            "{manifest} makes your home directory a project, which Mars no longer uses: \
-             move it to {user_manifest} without its `targets` line, move {home}/.mars-src/ \
-             beside it if you have one, run `{sync}`, then `{unlink}` for each target and delete \
-             {manifest} (a later Mars stops reading it; see https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)",
+            "{manifest} makes your home directory a project, which Mars no longer uses: {steps} \
+             (a later Mars stops reading it; see https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)",
             manifest = manifest.display(),
-            home = home.display(),
-            sync = managed_cmd("mars --user sync"),
-            unlink = managed_cmd(&format!("mars --root {} unlink <target>", home.display())),
         ),
     );
 }

@@ -62,6 +62,48 @@ fn ensure_consumer_config(layout: &Layout) -> Result<bool, MarsError> {
     Ok(false)
 }
 
+/// Why no project can be started at `dir`, or `None` when one can. The walk-up never opens a
+/// home project, so one made there would be invisible; the user config folder's `mars.toml` is
+/// the user level's.
+pub(super) fn no_project_at(dir: &Path) -> Option<String> {
+    let user = Layout::user_level().ok();
+    no_project_in(
+        &dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
+        crate::platform::config::canonical_home().as_deref(),
+        user.as_ref().map(Layout::root),
+    )
+}
+
+/// [`no_project_at`] for a canonical `dir`, with the home and user config folders given.
+pub(super) fn no_project_in(
+    dir: &Path,
+    home: Option<&Path>,
+    user_config: Option<&Path>,
+) -> Option<String> {
+    if Some(dir) == user_config {
+        Some(format!(
+            "{} is your user level's config folder: {}",
+            dir.display(),
+            user_level_needs_no_init()
+        ))
+    } else if Some(dir) == home {
+        Some(format!(
+            "{} is your home directory, which is never a Mars project; use `{}` for your user level, or start a project in a folder of its own",
+            dir.display(),
+            crate::types::managed_cmd("mars --user <command>"),
+        ))
+    } else {
+        None
+    }
+}
+
+pub(super) fn user_level_needs_no_init() -> String {
+    format!(
+        "the user level needs no init; `{}` creates its mars.toml",
+        crate::types::managed_cmd("mars --user add <source>")
+    )
+}
+
 pub(super) fn initialize_project(
     explicit_root: Option<&Path>,
     target_override: Option<&str>,
@@ -69,17 +111,8 @@ pub(super) fn initialize_project(
     let project_root = explicit_root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
-    // The walk-up never opens a home project, so one made here would be invisible.
-    if crate::platform::config::canonical_home()
-        .is_some_and(|home| dunce::canonicalize(&project_root).is_ok_and(|root| root == home))
-    {
-        return Err(MarsError::Config(ConfigError::Invalid {
-            message: format!(
-                "{} is your home directory, which is never a Mars project; use `{}` to install for yourself, or start a project in a folder of its own",
-                project_root.display(),
-                crate::types::managed_cmd("mars --user add <source>"),
-            ),
-        }));
+    if let Some(message) = no_project_at(&project_root) {
+        return Err(MarsError::Config(ConfigError::Invalid { message }));
     }
 
     let layout = Layout::project(&project_root);

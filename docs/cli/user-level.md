@@ -130,12 +130,15 @@ commands run with no user config and no user level (an `info` note under `--verb
 
 The walk-up for `mars.toml` skips your home directory, including when it starts there, so
 `cd ~ && mars sync` does not open `~/mars.toml`. `mars init` and the automatic init of
-`mars add` and `mars link` refuse the home directory and name `--user`.
+`mars add` and `mars link` refuse the home directory and the config folder and name `--user`, and
+a command run from home that finds no project names only `--user`.
 
 ### Moving a home project
 
 Before the user level, a `~/mars.toml` was how people installed for themselves. Mars no longer
-opens it by walk-up, and warns whenever the walk-up passes one. To move it:
+opens it by walk-up, and warns whenever the walk-up passes one. The warning names the steps still
+left: once `<config>/mars.toml` exists, only steps 4 and 5, with the targets the old file names.
+To move it:
 
 1. Copy `~/mars.toml` to `<config>/mars.toml` and delete its `targets` line.
 2. Move `~/.mars-src/`, if you have one, to `<config>/.mars-src/`. A path dependency written

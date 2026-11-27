@@ -7,13 +7,12 @@ pub enum ConfigError {
     #[error("config file not found: {path}")]
     NotFound { path: PathBuf },
 
-    #[error(
-        "no mars.toml found from {} to filesystem root. Run `{init}` to start a project here, or `{user}` to use your user level.",
-        start.display(),
-        init = managed_cmd("mars init"),
-        user = managed_cmd("mars --user <command>"),
-    )]
-    ProjectRootNotFound { start: PathBuf },
+    /// `refusal` says why no project can be started at `start`; then `mars init` is no way out.
+    #[error("{}", project_root_not_found(start, refusal.as_deref()))]
+    ProjectRootNotFound {
+        start: PathBuf,
+        refusal: Option<String>,
+    },
 
     #[error("{message}")]
     Invalid { message: String },
@@ -32,6 +31,21 @@ pub enum ConfigError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+fn project_root_not_found(start: &Path, refusal: Option<&str>) -> String {
+    let searched = format!(
+        "no mars.toml found from {} to filesystem root",
+        start.display()
+    );
+    match refusal {
+        Some(refusal) => format!("{searched}, and {refusal}."),
+        None => format!(
+            "{searched}. Run `{init}` to start a project here, or `{user}` to use your user level.",
+            init = managed_cmd("mars init"),
+            user = managed_cmd("mars --user <command>"),
+        ),
+    }
 }
 
 /// Lock file errors

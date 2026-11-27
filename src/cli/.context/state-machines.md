@@ -44,7 +44,11 @@ stateDiagram-v2
   user level's store is outside its root by design (the data folder) and has no targets.
 - **The home directory is never a project by walk-up**, compared canonically. A `--root` that
   is exactly home still opens it, with the move warning, for one minor release (`TODO`). `init`
-  refuses home in `init::initialize_project`, which the auto-init shares.
+  refuses home and the user config folder in `init::initialize_project`, which the auto-init
+  shares; `init::no_project_in` is the one rule, and `ProjectRootNotFound` carries its refusal
+  so the error names `mars init` only where a project can start. `warn_home_project` builds the
+  move warning from what exists: once the user `mars.toml` exists it names only the unlinks (one
+  per target the home files name) and the deletes.
 - A lookup in a project-less directory must create nothing: the user level's folders appear
   only when a command writes to them.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`

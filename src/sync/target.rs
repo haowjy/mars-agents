@@ -984,14 +984,20 @@ fn parse_rename_dest(
     })
 }
 
+/// The `__<source>` suffix sync gives a dependency's item renamed on a collision. Readers that
+/// recognise a rename from the lock (`content.rs`) use it too, so the two cannot drift.
+pub(crate) fn collision_suffix(source_name: &SourceName) -> String {
+    // A `--plugin` dependency is named `<repo>/<plugin>`; a `/` in the suffix would nest the
+    // skill one directory too deep for any harness to load it.
+    format!("__{}", source_name.as_str().replace(['/', '\\'], "-"))
+}
+
 fn suffixed_collision_dest_path(
     dest_path: &DestPath,
     kind: RenamableKind,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
-    // A `--plugin` dependency is named `<repo>/<plugin>`; a `/` in the suffix would nest the
-    // skill one directory too deep for any harness to load it.
-    let suffix = format!("__{}", source_name.as_str().replace(['/', '\\'], "-"));
+    let suffix = collision_suffix(source_name);
     let path = dest_path.as_str();
     let renamed = match kind {
         RenamableKind::Agent => {

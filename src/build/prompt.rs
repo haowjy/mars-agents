@@ -196,7 +196,7 @@ fn load_skill_document(
     harness_id: &str,
     warnings: &mut Vec<Diagnostic>,
 ) -> Result<SkillLoadOutcome, String> {
-    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings) else {
+    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings)? else {
         return Ok(SkillLoadOutcome::Missing);
     };
     let skill_dir = base_skill_path
@@ -239,7 +239,7 @@ fn resolve_available_skill(
     skill_name: &str,
     warnings: &mut Vec<Diagnostic>,
 ) -> Result<AvailableSkillOutcome, String> {
-    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings) else {
+    let Some(base_skill_path) = found_skill(content_roots, skill_name, warnings)? else {
         return Ok(AvailableSkillOutcome::Missing);
     };
 
@@ -266,18 +266,23 @@ fn found_skill(
     content_roots: &ContentRoots,
     skill_name: &str,
     warnings: &mut Vec<Diagnostic>,
-) -> Option<PathBuf> {
-    match content_roots.skill(skill_name) {
-        Lookup::Found(path) => Some(path),
-        Lookup::Renamed(renamed) => {
-            warnings.push(Diagnostic::warning(
-                "skill.renamed",
-                crate::content::renamed_message(ItemKind::Skill, skill_name, &renamed),
-            ));
-            None
-        }
-        Lookup::Missing(_) => None,
-    }
+) -> Result<Option<PathBuf>, String> {
+    Ok(
+        match content_roots
+            .skill(skill_name)
+            .map_err(|err| err.to_string())?
+        {
+            Lookup::Found(path) => Some(path),
+            Lookup::Renamed(renamed) => {
+                warnings.push(Diagnostic::warning(
+                    "skill.renamed",
+                    crate::content::not_found_message(ItemKind::Skill, skill_name, &renamed),
+                ));
+                None
+            }
+            Lookup::Missing => None,
+        },
+    )
 }
 
 fn read_skill_body(skill_name: &str, skill_path: &Path) -> Result<String, String> {

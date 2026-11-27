@@ -43,9 +43,19 @@ pub(crate) struct ProvidedEntries {
     pub digest: String,
 }
 
-/// The subdirectories of `<dir>/<kind>/` that are entries: not `_`/`.` plumbing (`__pycache__/`,
-/// `AGENTS.md` beside Meridian's bundle), and a real directory, so a file or a symlink is left
-/// out rather than copied through from outside the bundle. Sorted.
+/// Whether `name` can be a bundle's entry: not `_`/`.` plumbing (`__pycache__/`), and one path
+/// component. The in-place read of a provided root
+/// (`content.rs`) uses it too; each caller adds its own type check.
+pub(crate) fn is_entry_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('_')
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+}
+
+/// The subdirectories of `<dir>/<kind>/` that are entries: an [`is_entry_name`] that is a real
+/// directory, so a file (`AGENTS.md` beside Meridian's bundle) or a symlink is left out rather
+/// than copied through from outside the bundle. Sorted.
 fn entry_names(kind_dir: &Path) -> Result<BTreeSet<String>, MarsError> {
     let mut names = BTreeSet::new();
     if !kind_dir.is_dir() {
@@ -57,10 +67,7 @@ fn entry_names(kind_dir: &Path) -> Result<BTreeSet<String>, MarsError> {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if name.starts_with('_') || name.starts_with('.') {
-            continue;
-        }
-        if entry.file_type()?.is_dir() {
+        if is_entry_name(name) && entry.file_type()?.is_dir() {
             names.insert(name.to_string());
         }
     }

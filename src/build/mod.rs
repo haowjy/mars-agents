@@ -7,7 +7,7 @@ pub mod prompt;
 use std::path::PathBuf;
 
 use crate::compiler::agents::{agy_permission, opencode_permission};
-use crate::content::{ContentRoots, Lookup};
+use crate::content::ContentRoots;
 use bundle::{CapabilityNativeSpec, LaunchBundle, ScaffoldSlots, Skills, ToolRuleSpec, ToolsSpec};
 use mars_schema::HarnessId;
 use mars_schema::tool_policy::ToolAction;
@@ -68,36 +68,15 @@ pub fn build_launch_bundle(
     )?;
 
     if let Some(agent) = request.agent.as_deref() {
-        let agent_path = match content_roots.agent(agent) {
-            Lookup::Found(path) | Lookup::Missing(path) => path,
-            Lookup::Renamed(renamed) => {
-                return Err(MarsError::NotFound {
-                    code: "agent_renamed",
-                    message: crate::content::renamed_message(
-                        mars_schema::item::ItemKind::Agent,
-                        agent,
-                        &renamed,
-                    ),
-                });
-            }
-        };
-        let agent_content = std::fs::read_to_string(&agent_path).map_err(|source| {
-            let missing = source.kind() == std::io::ErrorKind::NotFound;
-            let error = MarsError::Io {
+        let agent_path = content_roots
+            .agent(agent)?
+            .require(mars_schema::item::ItemKind::Agent, agent)?;
+        let agent_content =
+            std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {
                 operation: "read launch bundle agent".to_string(),
                 path: agent_path.clone(),
                 source,
-            };
-            // The text stays the I/O error's; the code is what callers branch on.
-            if missing {
-                MarsError::NotFound {
-                    code: "agent_not_found",
-                    message: error.to_string(),
-                }
-            } else {
-                error
-            }
-        })?;
+            })?;
 
         let valid = mars_schema::agent::read(&agent_content)
             .into_valid()

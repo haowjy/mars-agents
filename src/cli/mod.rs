@@ -203,6 +203,7 @@ pub fn dispatch(cli: Cli) -> i32 {
                         report,
                     } => (*code, message.clone(), Some(report)),
                     MarsError::Config(_) => ("invalid_config", cause.to_string(), None),
+                    MarsError::NotFound { code, message } => (*code, message.clone(), None),
                     _ => ("command_failed", cause.to_string(), None),
                 };
                 let mut payload =

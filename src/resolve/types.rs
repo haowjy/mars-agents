@@ -1,3 +1,4 @@
+use mars_schema::resolve::LockedDependency;
 use mars_schema::version::Constraint;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -195,6 +196,9 @@ pub struct ResolveOptions {
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
     /// The package selected for, when it is not a node of the graph. See [`Self::with_root`].
     pub(crate) root: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
+    /// The user level's lock rows, as `_user-<name>`: the only pins its sources replay. See
+    /// [`Self::with_user_pins`].
+    pub(crate) user_pins: indexmap::IndexMap<SourceName, LockedDependency>,
 }
 
 impl Default for ResolveOptions {
@@ -208,6 +212,7 @@ impl Default for ResolveOptions {
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
             root: None,
+            user_pins: indexmap::IndexMap::new(),
         }
     }
 }
@@ -251,6 +256,16 @@ impl ResolveOptions {
         source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     ) -> Self {
         self.source_overrides = source_overrides;
+        self
+    }
+
+    /// Pin the user level's sources to its own lock: a project sync replays them and never
+    /// resolves them again (`mars --user sync` does), whatever the project's lock says.
+    pub(crate) fn with_user_pins(
+        mut self,
+        pins: indexmap::IndexMap<SourceName, LockedDependency>,
+    ) -> Self {
+        self.user_pins = pins;
         self
     }
 

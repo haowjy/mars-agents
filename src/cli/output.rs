@@ -486,6 +486,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
+    } else if report.user_level && !dry {
+        let _ = writeln!(
+            stdout,
+            "  projects install the change on their next `{}`",
+            crate::types::managed_cmd("mars sync")
+        );
     }
 
     let mut stderr = stderr_stream();
@@ -788,6 +794,7 @@ mod tests {
             config_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
+            user_level: false,
         }
     }
 

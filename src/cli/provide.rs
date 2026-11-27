@@ -40,6 +40,11 @@ pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, M
         }
     }
 
+    // On stderr only: an older host runs this on every launch and parses the JSON.
+    output::warn(
+        "provide-deprecated",
+        "`mars provide` is deprecated and goes in the next minor release: give the bundle to `mars sync --provided-root <host>@<version>=<dir>`, and to lookups (`build launch-bundle`, `agents`, `skills`) as `--provided-root <dir>`, which read it in place",
+    );
     let report = crate::provided::reconcile(&layout, &args.spec)?;
     if json {
         output::print_json(&report);

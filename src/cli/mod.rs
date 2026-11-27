@@ -90,23 +90,15 @@ impl MarsContext {
     /// The user level, at the folders `platform::config` resolves. Nothing is created: an absent
     /// folder is an empty user level until a command writes to it.
     pub fn user() -> Result<Self, MarsError> {
-        let folder = |dir: Option<PathBuf>, variable: &str| {
-            dir.map(|dir| dunce::canonicalize(&dir).unwrap_or(dir))
-                .ok_or_else(|| {
-                    MarsError::Config(ConfigError::Invalid {
-                        message: format!(
-                            "cannot find the user level: no home directory is known; set {variable}"
-                        ),
-                    })
-                })
-        };
-        let config_dir = folder(
-            crate::platform::config::mars_config_dir(),
-            "MARS_CONFIG_DIR",
-        )?;
-        let data_dir = folder(crate::platform::config::mars_data_dir(), "MARS_DATA_DIR")?;
+        let layout = crate::layout::Layout::user_level().map_err(|variable| {
+            MarsError::Config(ConfigError::Invalid {
+                message: format!(
+                    "cannot find the user level: no home directory is known; set {variable}"
+                ),
+            })
+        })?;
         Ok(MarsContext {
-            layout: crate::layout::Layout::user(config_dir, data_dir),
+            layout,
             meridian_managed: crate::types::meridian_managed_from_env(),
         })
     }

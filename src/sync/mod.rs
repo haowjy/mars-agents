@@ -1,8 +1,10 @@
 pub mod apply;
 pub mod diff;
+pub(crate) mod exclude;
 mod finalize;
 mod halt;
 mod kept_hooks;
+pub(crate) mod layers;
 mod local_items;
 pub mod mutation;
 pub(crate) mod ownership;
@@ -75,6 +77,8 @@ pub struct SyncReport {
     /// materialization because at least one hook surface was unreadable.
     pub recovery_halt: Option<RecoveryHalt>,
     pub engine_fallbacks: Vec<crate::resolve::EngineFallback>,
+    /// The sync was the user level's, which projects pick up on their own next sync.
+    pub user_level: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +137,8 @@ pub(crate) struct LoadedConfig {
     pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
+    /// The user level's lock rows, the only pins its `_user-*` sources replay.
+    pub user_pins: indexmap::IndexMap<SourceName, mars_schema::resolve::LockedDependency>,
     pub dependency_changes: Vec<DependencyUpsertChange>,
     /// Intentional keepalive — holds the sync file lock for the duration of the pipeline. Dropping this field releases the lock. A dry run holds it only when `.mars/sync.lock` already exists, and never creates it: it mutates nothing the lock guards.
     #[allow(dead_code)]
@@ -211,6 +217,7 @@ pub fn execute(ctx: &MarsContext, request: &SyncRequest) -> Result<SyncReport, M
             config_files_changed: Vec::new(),
             recovery_halt: Some(recovery_halt),
             engine_fallbacks: diag.take_engine_fallbacks(),
+            user_level: ctx.layout.kind() == crate::layout::RootKind::User,
         });
     }
     crate::compiler::compile(ctx, ir, request, &mut diag)
@@ -289,15 +296,6 @@ pub(crate) fn load_config(
     let (mut effective, config_diagnostics) =
         crate::config::merge_with_root(config.clone(), local.clone(), &user, layout.root())?;
     diag.extend(config_diagnostics);
-    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: a
-    // host's content belongs to this machine's sync and to nothing it builds or publishes.
-    if crate::provided::takes_provided_any(&crate::config::targets::managed_targets(
-        &effective.settings,
-    )) {
-        effective
-            .dependencies
-            .extend(crate::provided::staged_dependencies(layout)?);
-    }
     diag.extend(
         crate::diagnostic::compatibility_preflight(effective.settings.min_mars_version.as_deref())
             .map_err(|message| crate::error::ConfigError::Invalid { message })?
@@ -352,11 +350,23 @@ pub(crate) fn load_config(
     }
 
     let managed = crate::config::targets::managed_targets(&effective.settings);
+    // Injected here, not in `merge_with_root`, which publish and the plugin build also call: the
+    // user level's and a host's content belong to this machine's sync and to nothing it builds
+    // or publishes.
+    let layers = layers::load(
+        layout,
+        &managed,
+        &old_lock,
+        request.options.host.as_ref(),
+        diag,
+    )?;
+    effective.dependencies.extend(layers.dependencies);
     let (old_lock, unmanaged) =
         old_lock.split_targets(|target| managed.iter().any(|m| m == target));
     let named = crate::config::targets::named_targets(&config, &local);
     let (carried, dropped) = unmanaged.split_targets(|target| named.contains(target));
-    let provided = crate::provided::ProvidedNames::load(layout, diag)?;
+    let mut provided = crate::provided::ProvidedNames::load(layout, diag)?;
+    provided.record_host_versions(layers.host_versions);
 
     Ok(LoadedConfig {
         config,
@@ -367,6 +377,7 @@ pub(crate) fn load_config(
         carried,
         dropped,
         provided,
+        user_pins: layers.user_pins,
         dependency_changes,
         sync_lock,
     })
@@ -387,7 +398,8 @@ pub(crate) fn resolve_graph(
         crate::platform::fs::PendingStagingGeneration::create(ctx.layout.store())?
     };
     let resolve_options = to_resolve_options(&request.resolution, &request.options)
-        .with_source_overrides(source_overrides);
+        .with_source_overrides(source_overrides)
+        .with_user_pins(std::mem::take(&mut loaded.user_pins));
     let graph = crate::resolve::resolve(
         &loaded.effective,
         &source_provider,
@@ -744,7 +756,7 @@ pub(crate) fn check_frozen_gate(planned: &PlannedState) -> Result<(), MarsError>
     }
     let lock_index = crate::lock::LockIndex::new(&planned.targeted.resolved.loaded.old_lock);
     let has_changes = planned.plan.actions.iter().any(|a| {
-        if crate::provided::is_provided_source(a.source_name().as_ref()) {
+        if crate::layer::is_machine_local(a.source_name().as_ref()) {
             return false;
         }
         match a {

@@ -123,7 +123,7 @@ impl TargetState {
                     .iter()
                     .map(String::as_str)
                     .filter(move |target| {
-                        crate::provided::offered_to(&hook.source_name, target)
+                        crate::layer::offered_to(&hook.source_name, target)
                             && !self.hook_yielded(hook, target)
                             && self.placed_hook(hook, target).is_none()
                             && !hook.def.skips_for(target).is_empty()
@@ -145,33 +145,43 @@ impl TargetState {
             .map(|(dir, _)| dir)
     }
 
-    /// The one pass where a host's content yields: after collection, a provided hook or MCP
-    /// server that a package also provides on the same target is dropped, with one warning. The
-    /// warning is news when the host's record changes (it arrives, or its bundle changes) or when
-    /// the package's does, so it prints once whichever came first. Nothing of a dropped hook is
-    /// installed, so no loss is recorded for it.
-    fn select_hooks_and_yield(
+    /// The one pass where a layer's content yields to a better layer's (`layer::yielded`): after
+    /// collection, an agent, skill, hook or MCP server that a better-ranked layer also has on the
+    /// same target is dropped, with one warning. Agents and skills are keyed by their name before
+    /// collision renames, so a name the project renamed still blocks the user level's copy. The
+    /// warning is news when the yielding source's record changes or the winner's does, so it
+    /// prints once whichever came first. Nothing of a dropped item is installed, so no loss is
+    /// recorded for it.
+    fn select_and_yield(
         &mut self,
         collected: &mut Vec<TargetItem>,
         claims: Vec<HookClaim>,
         diag: &mut DiagnosticCollector,
     ) {
+        use crate::layer::{Layer, source_label, yielded};
         use crate::lock::RecordRef;
-        use crate::provided::{is_provided_source, provider_label, yielded};
 
+        let item_key = |item: &TargetItem| {
+            (
+                item.id.kind,
+                crate::lock::CANONICAL_TARGET_ROOT.to_string(),
+                item.dest_path.item_name(item.id.kind),
+            )
+        };
         let dropped = yielded(
-            claims
+            collected
                 .iter()
-                .map(|claim| {
+                .map(|item| (item_key(item), Layer::of(&item.source_name)))
+                .chain(claims.iter().map(|claim| {
                     (
                         (
                             ItemKind::Hook,
                             claim.target_name.clone(),
                             claim.parsed.def.name.clone(),
                         ),
-                        is_provided_source(&claim.parsed.source_name),
+                        Layer::of(&claim.parsed.source_name),
                     )
-                })
+                }))
                 .chain(self.selected_mcp.iter().map(|selected| {
                     (
                         (
@@ -179,28 +189,48 @@ impl TargetState {
                             selected.dir.target().to_string(),
                             selected.item.name.clone(),
                         ),
-                        is_provided_source(&selected.item.source_name),
+                        Layer::of(&selected.item.source_name),
                     )
                 })),
         );
+        let gives_way = |key: (ItemKind, String, String), source: &str| {
+            dropped.contains(&(key, Layer::of(source)))
+        };
         let warn =
             |diag: &mut DiagnosticCollector, concerns: RecordRef, source: &str, what: String| {
+                let winner = match Layer::of(source) {
+                    Layer::Host => "a package or the user level also provides it",
+                    _ => "the project also provides it",
+                };
                 diag.hold_warning(
                     RecordRef::Any(vec![concerns, RecordRef::Dependency(source.to_owned())]),
                     "provided-shadowed",
                     format!(
-                        "{what} from {} is not installed: a package also provides it",
-                        provider_label(source)
+                        "{what} from {} is not installed: {winner}",
+                        source_label(source)
                     ),
                 );
             };
+        collected.retain(|item| {
+            if !gives_way(item_key(item), &item.source_name) {
+                return true;
+            }
+            warn(
+                diag,
+                RecordRef::Item(crate::lock::item_key(&item.id)),
+                &item.source_name,
+                format!("{} {}", item.id.kind, item.id.name),
+            );
+            false
+        });
         for claim in claims {
             let name = &claim.parsed.def.name;
             let target = claim.target_name.trim_start_matches('.');
             let source = &claim.parsed.source_name;
-            if is_provided_source(source)
-                && dropped.contains(&(ItemKind::Hook, claim.target_name.clone(), name.clone()))
-            {
+            if gives_way(
+                (ItemKind::Hook, claim.target_name.clone(), name.clone()),
+                source,
+            ) {
                 self.yielded_hooks.insert((
                     claim.target_name.clone(),
                     source.to_string(),
@@ -220,12 +250,14 @@ impl TargetState {
         let (yielded_mcp, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.selected_mcp)
             .into_iter()
             .partition(|selected| {
-                is_provided_source(&selected.item.source_name)
-                    && dropped.contains(&(
+                gives_way(
+                    (
                         ItemKind::McpServer,
                         selected.dir.target().to_string(),
                         selected.item.name.clone(),
-                    ))
+                    ),
+                    &selected.item.source_name,
+                )
             });
         self.selected_mcp = kept;
         for selected in yielded_mcp {
@@ -491,7 +523,7 @@ pub(crate) fn build_with_collisions_and_diag(
         let source_config = config.dependencies.get(source_name);
         let offered_targets: Vec<String> = managed_target_roots
             .iter()
-            .filter(|target| crate::provided::offered_to(source_name.as_str(), target))
+            .filter(|target| crate::layer::offered_to(source_name.as_str(), target))
             .cloned()
             .collect();
         let offered_mcp_targets = mcp_config_targets(&offered_targets);
@@ -587,7 +619,7 @@ pub(crate) fn build_with_collisions_and_diag(
                     format!(
                         "failed to scan MCP items in `{}`: {error}; \
                          MCP servers installed by the last sync stay as they are",
-                        crate::provided::provider_label(source_name)
+                        crate::layer::source_label(source_name)
                     ),
                 );
             }
@@ -678,7 +710,7 @@ pub(crate) fn build_with_collisions_and_diag(
         }
     }
 
-    target.select_hooks_and_yield(&mut collected_items, hook_claims, diag);
+    target.select_and_yield(&mut collected_items, hook_claims, diag);
 
     let collision_renames =
         rename_destination_collisions(&mut collected_items, local_source, diag)?;
@@ -806,7 +838,9 @@ fn rename_destination_collisions(
             let item = &mut items[index];
             // The consumer's own package keeps the destination it declares; every
             // dependency that landed on it takes the suffix instead.
-            if item.source_name == *local_source {
+            // So does the user level's (`_user-self`): a collision here is within its layer,
+            // since one across layers has yielded before this.
+            if item.source_name == *local_source || item.source_name == crate::layer::USER_SELF {
                 continue;
             }
             let original_name = item.id.name.clone();

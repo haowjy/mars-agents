@@ -91,6 +91,7 @@ pub(crate) fn compile_config_entries(
     let mut desired_file_outputs = std::collections::BTreeSet::new();
     let emitted_outputs = Vec::new();
     let mut removed_outputs = Vec::new();
+    let mut tracked = TrackedFiles::new(&ctx.layout);
 
     // First lower every target without mutating its config. Stale hook removal
     // is name-based across native events, so it must run before replacement
@@ -104,7 +105,18 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_hooks_for_target(target_root)
-            .filter(|(dir, _)| emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag))
+            .filter(|(dir, item)| {
+                if !emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag) {
+                    return false;
+                }
+                let file = match rendered_hooks.get(dir) {
+                    HookOutput::Merge(_) => merge_file(target_root).map(|merge| merge.file),
+                    HookOutput::Keyed(_) => mars_schema::hooks::targets::target(target_root)
+                        .and_then(|target| target.keyed_path()),
+                    HookOutput::File(_) => None,
+                };
+                !tracked.withholds(&item.source_name, file, dir, "hook", &item.def.name, diag)
+            })
             .collect::<Vec<_>>();
         let selected_mcp = applied
             .planned
@@ -114,8 +126,13 @@ pub(crate) fn compile_config_entries(
             .filter(|(dir, item)| {
                 // A server whose `command`/`args` name no directory has nothing
                 // to wait for: its entry is all it installs.
-                !item.uses_dir_token()
-                    || emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
+                if item.uses_dir_token()
+                    && !emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
+                {
+                    return false;
+                }
+                let file = spec.mcp.map(|mcp| mcp.at.path);
+                !tracked.withholds(&item.source_name, file, dir, "MCP server", &item.name, diag)
             })
             .collect::<Vec<_>>();
         let mcp_entries = selected_mcp
@@ -797,6 +814,63 @@ fn emits_installed_copy(
 
 /// The file `target_root`'s hook entries merge into, for a target Mars writes or one it
 /// retired, and the keys Mars wrote there beside `hooks`.
+/// Which root-relative files git tracks, asked of git once per file. No git binary, or no
+/// repository, tracks nothing.
+struct TrackedFiles<'a> {
+    layout: &'a Layout,
+    known: BTreeMap<&'static str, bool>,
+}
+
+impl<'a> TrackedFiles<'a> {
+    fn new(layout: &'a Layout) -> Self {
+        Self {
+            layout,
+            known: BTreeMap::new(),
+        }
+    }
+
+    /// Whether a machine-local source's entry is left out of `file` because git tracks it:
+    /// one entry of a committed file cannot be kept out of a commit, so it is not written, and
+    /// the user is told once, when the item's or its source's record is new.
+    fn withholds(
+        &mut self,
+        source: &str,
+        file: Option<&'static str>,
+        dir: &PackageDir,
+        noun: &str,
+        name: &str,
+        diag: &mut DiagnosticCollector,
+    ) -> bool {
+        let Some(file) = file.filter(|_| crate::layer::is_machine_local(source)) else {
+            return false;
+        };
+        let root = self.layout.root();
+        let tracked = *self.known.entry(file).or_insert_with(|| {
+            std::process::Command::new("git")
+                .args(["ls-files", "--error-unmatch", "--", file])
+                .current_dir(root)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        });
+        if tracked {
+            diag.hold_warning(
+                crate::lock::RecordRef::Any(vec![
+                    crate::lock::RecordRef::Item(dir.lock_key()),
+                    crate::lock::RecordRef::Dependency(source.to_owned()),
+                ]),
+                "machine-local-entry-withheld",
+                format!(
+                    "{noun} `{name}` from {} is not installed here: `{file}` is committed, and an entry in it would be too",
+                    crate::layer::source_label(source)
+                ),
+            );
+        }
+        tracked
+    }
+}
+
 fn hook_file(target_root: &str) -> Option<(&'static str, &'static [&'static str])> {
     merge_file(target_root)
         .map(|merge| (merge.file, &[][..]))

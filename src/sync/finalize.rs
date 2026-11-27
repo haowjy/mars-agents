@@ -135,8 +135,8 @@ pub(crate) fn finalize(
             .into_iter()
             .partition(|target| remaining.contains(target));
         let project_targets = crate::config::targets::project_targets(&loaded.config);
-        if let Some(warning) = recovery::publish(layout, &new_lock, &project_targets)? {
-            diag.warn("native-agent-manifest-write", warning);
+        for warning in recovery::publish(layout, &new_lock, &project_targets)? {
+            diag.warn("recovery-publish", warning);
         }
     }
 
@@ -184,6 +184,7 @@ pub(crate) fn finalize(
         config_files_changed: state.config_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
+        user_level: ctx.layout.kind() == crate::layout::RootKind::User,
     })
 }
 
@@ -213,9 +214,10 @@ fn record_hook_source_paths(
     }
 }
 
-/// The config entries a host's provided content wrote, which the lock saves in
+/// The config entries the user level's or a host's content wrote, which the lock saves in
 /// `machine.lock`. A record carries no source, so this reads the selection: an entry is
-/// the host's when a selected hook or MCP server of a provided source has its key. One no
+/// machine-local when a selected hook or MCP server of such a source (`layer::is_machine_local`)
+/// has its key. One no
 /// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
 fn provided_entries(
     target: &crate::sync::target::TargetState,
@@ -251,7 +253,7 @@ fn provided_entries(
     for (target_root, source, keys) in hooks.chain(servers) {
         for key in keys {
             let owner = (target_root.to_string(), key);
-            if crate::provided::is_provided_source(source) {
+            if crate::layer::is_machine_local(source) {
                 provided.insert(owner);
             } else {
                 claimed.insert(owner);

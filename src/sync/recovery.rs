@@ -276,17 +276,27 @@ pub(crate) fn load_lock(layout: &Layout) -> Result<LockFile, MarsError> {
 }
 
 /// The publish step for every writer of `mars.lock`, given the targets `mars.toml` names (they
-/// decide which lock file a record goes to): ownership first, then the journal
-/// goes. Returns the native-agent manifest warning, if any.
+/// decide which lock file a record goes to): ownership first, then the journal goes, then the
+/// work tree's exclude block is set to the machine-local paths the lock records
+/// (`sync::exclude`). Returns the warnings of the best-effort steps: the native-agent manifest
+/// and the exclude block.
 pub(crate) fn publish(
     layout: &Layout,
     lock: &LockFile,
     project_targets: &std::collections::BTreeSet<String>,
-) -> Result<Option<String>, MarsError> {
-    let warning =
-        crate::compiler::persist_lock_then_native_agent_manifest(layout, lock, project_targets)?;
+) -> Result<Vec<String>, MarsError> {
+    let mut warnings: Vec<String> =
+        crate::compiler::persist_lock_then_native_agent_manifest(layout, lock, project_targets)?
+            .into_iter()
+            .collect();
     complete(layout)?;
-    Ok(warning)
+    let paths = super::exclude::locked_paths(layout, lock, project_targets);
+    if let Err(error) = super::exclude::settle(layout, paths) {
+        warnings.push(format!(
+            "could not list machine-local items in git's info/exclude, so `git status` may show them: {error}"
+        ));
+    }
+    Ok(warnings)
 }
 
 /// Recover only outputs whose pre-write intent still belongs to this lock and

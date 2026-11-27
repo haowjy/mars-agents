@@ -28,8 +28,9 @@ per-target records (below).
 ## Two files
 
 `mars.lock` is committed and shared. `.mars/machine.lock` (the same schema, never committed) holds
-what only this machine has: provided content (`mars provide`), and every record that serves a
-target `mars.toml` does not name, which only this machine's `mars.local.toml` asked for. A teammate
+what only this machine has: every record of a source from another layer (the user level's
+`_user-*`, a host's `_provided-*`; see [The user level](../cli/user-level.md#in-a-project)),
+and every record that serves a target `mars.toml` does not name, which only this machine's `mars.local.toml` asked for. A teammate
 never sees those records, so their sync neither warns about nor removes them.
 
 - **Which file.** A record goes to `mars.lock` when it is shared (a shared item's `.mars` output,
@@ -43,13 +44,16 @@ never sees those records, so their sync neither warns about nor removes them.
 - **Moving.** Naming a target in `mars.toml` moves its records to `mars.lock` on the next write,
   and naming it only in `mars.local.toml` moves them back. The write is ordered so a kill leaves a
   record in both files, never in neither.
-- **`provided_entries`.** `machine.lock` lists the config entries provided content wrote, because
+- **`provided_entries`.** `machine.lock` lists the config entries the user level's or a host's
+  content wrote (the name predates the user level), because
   a local-only target's entries sit in the same file and must follow their target when it moves.
   Mars 0.38.0 wrote `machine.lock` without the list; there every config entry is provided.
 - **Older Mars.** Mars 0.38.0 reads `machine.lock` too, but replaces a whole item with the
   machine file's copy. A skill that has a local-only output then loses its `.mars` output in memory,
   and 0.38.0's sync stops with `blocked by unmanaged destination` until `mars sync --force`.
-  Nothing on disk is lost, and the next sync of this version restores the two files.
+  Nothing on disk is lost, and the next sync of this version restores the two files. Mars 0.40.0
+  does not know the user level: its sync of a project removes the `_user-*` items as orphans
+  (only what Mars installed, unedited), and the next sync of this version installs them again.
 
 ## Format
 

@@ -1,9 +1,10 @@
 # The user level
 
-The user level holds the agents and skills you install for yourself rather than for one
-project. Mars treats it as a root of its own, with a manifest, a lock and a store, but it has
-no targets. A user-level sync writes only its store and its lock and never touches `~/.claude`,
-`~/.codex` or any other harness folder.
+The user level holds the agents, skills, hooks and MCP servers you install for yourself rather
+than for one project. Mars treats it as a root of its own, with a manifest, a lock and a store,
+but it has no targets. A user-level sync writes only its store and its lock and never touches
+`~/.claude`, `~/.codex` or any other harness folder. Every project's sync installs it into that
+project, kept out of the project's commits ([In a project](#in-a-project)).
 
 ## Where its files are
 
@@ -50,6 +51,52 @@ Every `--json` output that is an object carries the root it used:
 
 `mars list --json` and `mars outdated --json` print a top-level array, which has no place for
 the key; their shape is unchanged.
+
+## In a project
+
+Each `mars sync` in a project installs the user level beside the project's own packages, into
+the project's targets:
+
+- One dependency `_user-<name>` per entry of the user `[dependencies]`, at the exact version
+  the user `mars.lock` records, read from the shared source cache. A project sync never
+  resolves the user level again, so `mars upgrade` in a project leaves it alone: `mars --user
+  upgrade` moves it, and each project installs the change on its next sync. A user
+  dependency's own dependencies come in as `_user-<name>` too, so they never merge with the
+  project's.
+- `_user-self`: your `<config>/.mars-src/`.
+- Hooks and MCP servers come in as well. The user store holds only agents and skills (it has
+  no targets), so a project installs those from the source.
+
+A user level that has never been synced, or whose lock or manifest Mars cannot read, adds
+nothing, and the sync warns with what to run. So does a user dependency whose manifest entry
+changed since the last `mars --user sync`. A user dependency whose pinned commit is not in the
+cache is fetched at that commit; offline, the project sync fails and changes nothing.
+
+**The project wins.** An agent, skill, hook or MCP server the project's packages or
+`.mars-src` provide is not installed from the user level, even when the project's copies were
+renamed on a collision (`reviewer__a`, `reviewer__b`): a launch of `reviewer` then fails and
+lists the renamed names, instead of running your copy. The sync warns once, when the record is
+new. Within the user level, a collision renames every side, as in a project, except your own
+`.mars-src` item, which keeps its name.
+
+**Records stay on this machine.** Everything from the user level is recorded in
+`.mars/machine.lock`, never in `mars.lock`. Remove an item from the user level and the next
+project sync removes it from the project.
+
+**Commits stay clean.** In a git work tree, the paths Mars writes for user-level items (and
+for a host's content and for targets only `mars.local.toml` names) are listed in a block Mars
+owns in the repository's `info/exclude`, so `git add -A` leaves them out. Each work tree of a
+repository has its own block, keyed by its path; lines outside the blocks are yours and stay.
+A user-level hook or MCP server whose entry would go in a file git tracks (`.mcp.json`,
+`.claude/settings.json`, `.codex/config.toml`, …) is not installed, with a warning once: one
+entry of a committed file cannot be kept out of a commit. An untracked file gets the entry.
+Without git there is nothing to write.
+
+A directory outside every project installs nothing; lookups there read the user store.
+
+With no absolute `HOME` and no `MARS_CONFIG_DIR`, the config folder cannot be located: project
+commands run with no user config and no user level (an `info` note under `--verbose`), and
+`--user` fails.
 
 ## The home directory is never a project
 

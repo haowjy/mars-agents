@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::{ConfigError, MarsError};
+use crate::error::MarsError;
 
 use super::LocalConfig;
 use mars_schema::diagnostic::{SchemaDiagnostic, Severity};
@@ -13,13 +13,20 @@ pub struct UserConfig {
     pub local: LocalConfig,
     /// Where the file should be, when it was read from the old macOS folder instead.
     pub moved_to: Option<PathBuf>,
+    /// The Mars config folder could not be located (no absolute home directory and no
+    /// `MARS_CONFIG_DIR`), so there is no user config and no user level.
+    pub unlocated: bool,
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
-    let (path, moved_to) =
-        crate::platform::config::user_file("config.toml").ok_or_else(|| ConfigError::Invalid {
-            message: "cannot determine config directory; set MARS_CONFIG_DIR".to_string(),
-        })?;
+    // Only `--user` needs the folder (`MarsContext::user` fails without it); a project command
+    // runs with no user layer.
+    let Some((path, moved_to)) = crate::platform::config::user_file("config.toml") else {
+        return Ok(UserConfig {
+            unlocated: true,
+            ..UserConfig::default()
+        });
+    };
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -56,6 +63,7 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
         path,
         local,
         moved_to,
+        unlocated: false,
     })
 }
 
@@ -69,6 +77,16 @@ pub(crate) fn moved_warning(read: &Path, moved_to: &Path) -> crate::diagnostic::
             read.display(),
             moved_to.display()
         ),
+    )
+}
+
+/// What a project command says when the user config folder cannot be located: nothing is lost
+/// that the user set, since nothing could be read.
+pub(crate) fn unlocated_info() -> crate::diagnostic::Diagnostic {
+    crate::diagnostic::Diagnostic::new(
+        crate::diagnostic::DiagnosticLevel::Info,
+        "user-config-unlocated",
+        "no user config and no user level: the Mars config folder cannot be located (HOME is not an absolute path); set MARS_CONFIG_DIR to use them",
     )
 }
 

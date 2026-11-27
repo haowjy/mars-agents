@@ -83,14 +83,14 @@ pub fn run(args: &ResolveArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    if !resolved_files.is_empty()
-        && let Some(warning) = crate::sync::recovery::publish(
+    if !resolved_files.is_empty() {
+        for warning in crate::sync::recovery::publish(
             &ctx.layout,
             &lock,
             &crate::config::targets::project_targets(&crate::config::load(&ctx.layout)?),
-        )?
-    {
-        output::warn("recovery-publish", warning);
+        )? {
+            output::warn("recovery-publish", warning);
+        }
     }
 
     if json {

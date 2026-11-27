@@ -288,8 +288,23 @@ pub struct Request {
     pub overrides: BTreeMap<String, String>,
     pub locked: BTreeMap<String, LockedDependency>,
     pub mode: Mode,
+    /// Prefixes of root dependencies that bring in another root's graph whole (the user level's
+    /// `_user-`): a dependency a namespaced package's manifest declares is named with the same
+    /// prefix, so the subgraph never merges with this root's own packages, and every namespaced
+    /// name replays its `locked` row exactly, as `--frozen` does, whatever `mode` says.
+    pub namespaces: Vec<String>,
     pub engine: Engine,
     pub bounds: Bounds,
+}
+
+impl Request {
+    /// The namespace `name` is in, if any.
+    pub(super) fn namespace_of(&self, name: &str) -> Option<&str> {
+        self.namespaces
+            .iter()
+            .map(String::as_str)
+            .find(|prefix| name.starts_with(prefix))
+    }
 }
 
 /// A package's resolved version: the tag it was selected at (`version` and `tag`), or a pinned

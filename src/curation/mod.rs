@@ -267,20 +267,25 @@ fn default_inherit() -> bool {
 
 impl CuratedRules {
     pub fn load(layout: &crate::layout::Layout) -> Result<Self, MarsError> {
-        let (user, moved_to) = crate::platform::config::user_file("curated.toml")
-            .ok_or_else(|| invalid("cannot determine config directory; set MARS_CONFIG_DIR"))?;
-        let mut rules = Self::load_paths(&user, &layout.curated(), &layout.curated_local())?;
-        rules.moved = moved_to.map(|moved_to| (user, moved_to));
+        // No user tier when the config folder cannot be located; the user config's load says so.
+        let user = crate::platform::config::user_file("curated.toml");
+        let mut rules = Self::load_paths(
+            user.as_ref().map(|(path, _)| path.as_path()),
+            &layout.curated(),
+            &layout.curated_local(),
+        )?;
+        rules.moved = user.and_then(|(user, moved_to)| moved_to.map(|moved_to| (user, moved_to)));
         Ok(rules)
     }
 
-    fn load_paths(user: &Path, project: &Path, local: &Path) -> Result<Self, MarsError> {
+    fn load_paths(user: Option<&Path>, project: &Path, local: &Path) -> Result<Self, MarsError> {
         let tiers = [
-            (TierId::User, user),
-            (TierId::Project, project),
-            (TierId::Local, local),
+            user.map(|user| (TierId::User, user)),
+            Some((TierId::Project, project)),
+            Some((TierId::Local, local)),
         ]
         .into_iter()
+        .flatten()
         .filter_map(|(id, path)| match load_tier(id, path) {
             Ok(tier) => tier.map(Ok),
             Err(error) => Some(Err(error)),

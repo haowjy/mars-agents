@@ -66,10 +66,11 @@ pub fn build_launch_bundle(
         request.fallback_root.as_deref(),
         request.provided_root.as_deref(),
     )?;
+    diagnostics.extend(content_roots.warnings().iter().cloned());
 
     if let Some(agent) = request.agent.as_deref() {
         let agent_path = content_roots
-            .agent(agent)?
+            .agent(agent)
             .require(mars_schema::item::ItemKind::Agent, agent)?;
         let agent_content =
             std::fs::read_to_string(&agent_path).map_err(|source| MarsError::Io {

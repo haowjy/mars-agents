@@ -236,11 +236,10 @@ fn dir_name(path: &std::path::Path) -> String {
 /// collision, so the caller learns which names to use instead.
 fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
     match roots.skill(name) {
-        Ok(crate::content::Lookup::Renamed(renamed)) => {
+        crate::content::Lookup::Renamed(renamed) => {
             crate::content::not_found(ItemKind::Skill, name, &renamed)
         }
-        Ok(_) => crate::content::not_found(ItemKind::Skill, name, &[]),
-        Err(err) => err,
+        _ => crate::content::not_found(ItemKind::Skill, name, &[]),
     }
 }
 

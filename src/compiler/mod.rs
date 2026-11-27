@@ -39,7 +39,7 @@ pub(crate) fn warn_unknown_visibility(
         format!(
             "{item_kind} `{item_name}` from source `{source_name}` has unknown \
              visibility `{unknown}`; treating it as `local`",
-            source_name = crate::provided::provider_label(source_name),
+            source_name = crate::layer::source_label(source_name),
         ),
     );
 }
@@ -109,6 +109,15 @@ fn compile_inner(
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
+    }
+    if !request.options.dry_run {
+        let managed = crate::config::targets::managed_targets(
+            &planned.targeted.resolved.loaded.effective.settings,
+        );
+        crate::sync::exclude::protect(
+            &ctx.layout,
+            crate::sync::exclude::planned_paths(&ctx.layout, &planned.targeted.target, &managed),
+        )?;
     }
     let mut applied = apply_plan(ctx, planned, request)?;
     if !request.options.dry_run {

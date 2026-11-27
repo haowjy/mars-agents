@@ -302,11 +302,10 @@ fn path_stem(path: &std::path::Path) -> String {
 /// collision, so the caller learns which names to use instead.
 fn not_found(roots: &ContentRoots, name: &str) -> MarsError {
     match roots.agent(name) {
-        Ok(crate::content::Lookup::Renamed(renamed)) => {
+        crate::content::Lookup::Renamed(renamed) => {
             crate::content::not_found(ItemKind::Agent, name, &renamed)
         }
-        Ok(_) => crate::content::not_found(ItemKind::Agent, name, &[]),
-        Err(err) => err,
+        _ => crate::content::not_found(ItemKind::Agent, name, &[]),
     }
 }
 

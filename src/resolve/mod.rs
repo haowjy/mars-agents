@@ -148,13 +148,13 @@ fn request(
             .map(|(name, path)| (name.to_string(), path.to_string_lossy().into_owned()))
             .collect(),
         locked: locked
-            .map(|lock| {
-                lock.dependencies
-                    .iter()
-                    .map(|(name, source)| (name.to_string(), source.clone()))
-                    .collect()
-            })
-            .unwrap_or_default(),
+            .into_iter()
+            .flat_map(|lock| &lock.dependencies)
+            .filter(|(name, _)| crate::layer::Layer::of(name) != crate::layer::Layer::User)
+            .chain(&options.user_pins)
+            .map(|(name, source)| (name.to_string(), source.clone()))
+            .collect(),
+        namespaces: vec![crate::layer::USER_PREFIX.to_string()],
         mode: match &options.mode {
             ResolveMode::Sync => Mode::Sync,
             ResolveMode::Frozen => Mode::Frozen,

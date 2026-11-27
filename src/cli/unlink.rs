@@ -75,14 +75,14 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     if local_updated {
         crate::config::save_local(&ctx.layout, &local)?;
     }
-    if target_was_managed
-        && let Some(warning) = crate::sync::recovery::publish(
+    if target_was_managed {
+        for warning in crate::sync::recovery::publish(
             &ctx.layout,
             &lock,
             &crate::config::targets::project_targets(&config),
-        )?
-    {
-        output::warn("recovery-publish", warning);
+        )? {
+            output::warn("recovery-publish", warning);
+        }
     }
 
     if json {

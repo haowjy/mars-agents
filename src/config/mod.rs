@@ -592,7 +592,12 @@ fn project_config_diagnostics(
         .moved_to
         .as_ref()
         .map(|moved_to| user::moved_warning(&user.path, moved_to));
-    unknown_keys.chain(floors).chain(moved).collect()
+    let unlocated = user.unlocated.then(user::unlocated_info);
+    unknown_keys
+        .chain(floors)
+        .chain(moved)
+        .chain(unlocated)
+        .collect()
 }
 
 pub fn load_effective_project_config(layout: &Layout) -> Result<EffectiveProjectConfig, MarsError> {
@@ -669,10 +674,12 @@ pub fn merge_with_root(
             .into());
         }
 
-        if crate::provided::is_provided_source(name.as_ref()) {
+        if let Some(prefix) =
+            crate::layer::reserved_prefixes().find(|prefix| name.as_ref().starts_with(prefix))
+        {
             return Err(ConfigError::Invalid {
                 message: format!(
-                    "dependency name `{name}` is reserved: names starting `_provided-` are what a host's provided content is recorded under"
+                    "dependency name `{name}` is reserved: names starting `{prefix}` are what the user level's and a host's content is recorded under in a project"
                 ),
             }
             .into());

@@ -573,6 +573,7 @@ pub fn run(input: Input) -> Result<Output, InputError> {
         supplied: BTreeMap::new(),
         overrides: BTreeMap::new(),
         locked: input.locked,
+        namespaces: Vec::new(),
         mode: match input.refresh {
             Refresh::None => Mode::Sync,
             Refresh::All(_) => Mode::Upgrade {

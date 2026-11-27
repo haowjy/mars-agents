@@ -57,6 +57,23 @@ impl Layout {
         }
     }
 
+    /// The user level at the folders `platform::config` resolves, canonical when they exist.
+    /// Nothing is created. `Err` names the variable to set when a folder cannot be located (no
+    /// absolute home directory).
+    pub fn user_level() -> Result<Self, &'static str> {
+        let folder = |dir: Option<PathBuf>, variable: &'static str| {
+            dir.map(|dir| dunce::canonicalize(&dir).unwrap_or(dir))
+                .ok_or(variable)
+        };
+        Ok(Self::user(
+            folder(
+                crate::platform::config::mars_config_dir(),
+                "MARS_CONFIG_DIR",
+            )?,
+            folder(crate::platform::config::mars_data_dir(), "MARS_DATA_DIR")?,
+        ))
+    }
+
     pub fn kind(&self) -> RootKind {
         self.kind
     }

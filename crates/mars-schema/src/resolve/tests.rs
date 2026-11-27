@@ -115,6 +115,7 @@ fn request(root: Vec<Dependency>) -> Request {
         overrides: BTreeMap::new(),
         locked: BTreeMap::new(),
         mode: Mode::Sync,
+        namespaces: Vec::new(),
         engine: Engine {
             mars: Version::new(1, 0, 0),
             meridian: None,

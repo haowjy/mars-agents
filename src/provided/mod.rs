@@ -33,13 +33,12 @@ mod spec;
 use serde::Serialize;
 
 pub(crate) use entries::is_entry_name;
-pub(crate) use names::{ProvidedNames, skill_outcomes};
+pub(crate) use names::{ProvidedNames, recorded_skills, skill_outcomes};
 pub(crate) use reconcile::reconcile;
 pub(crate) use source::{
-    display_path, is_provided_source, offered_to, provider_label, staged_dependencies,
-    takes_provided_any, yielded,
+    display_path, is_provided_source, source_name, staged_dependencies, takes_provided_any,
 };
-use spec::ProvideSpec;
+pub(crate) use spec::ProvideSpec;
 
 /// What one `mars provide` run did, or why it wrote nothing.
 #[derive(Debug, Serialize)]

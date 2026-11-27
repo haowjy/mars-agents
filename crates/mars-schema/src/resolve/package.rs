@@ -56,7 +56,10 @@ struct Pass {
     registry: IndexMap<String, Node>,
     /// Names whose resolution began: one in here and not in the registry is waiting on an answer.
     started: BTreeSet<String>,
-    ids: BTreeMap<SourceId, String>,
+    /// The name each source resolved under, per namespace (`Request::namespaces`; `None` for the
+    /// root's own): one source has one name within a graph, and a namespaced subgraph is a graph
+    /// of its own.
+    ids: BTreeMap<(Option<String>, SourceId), String>,
     constraints: BTreeMap<String, Vec<(String, Constraint)>>,
     notes: Vec<Diagnostic>,
     open: Vec<Need>,
@@ -546,7 +549,8 @@ impl<'a> Run<'a> {
     fn resolve_package(&mut self, dep: &Dependency) -> Flow<()> {
         self.counter.borrow_mut().reading.clone_from(&dep.name);
         let (declared, id) = self.identities(dep)?;
-        if let Some(existing) = self.pass.ids.get(&id)
+        let namespace = self.req.namespace_of(&dep.name).map(str::to_owned);
+        if let Some(existing) = self.pass.ids.get(&(namespace.clone(), id.clone()))
             && existing != &dep.name
         {
             let failure = Failure::Identity(Identity::OneSourceTwoNames {
@@ -711,7 +715,7 @@ impl<'a> Run<'a> {
                 normalized,
             },
         );
-        self.pass.ids.insert(id, dep.name.clone());
+        self.pass.ids.insert((namespace, id), dep.name.clone());
 
         for request in &requests {
             self.branch(request)?;
@@ -943,14 +947,18 @@ impl<'a> Run<'a> {
             .dependencies
             .iter()
             .map(|(name, entry)| {
+                let name = match self.req.namespace_of(&dep.name) {
+                    Some(prefix) => format!("{prefix}{name}"),
+                    None => name.clone(),
+                };
                 let declared = Spec::of(entry);
                 let spec = self
                     .req
                     .overrides
-                    .get(name)
+                    .get(&name)
                     .map_or_else(|| declared.clone(), |path| Spec::Path(path.clone()));
                 Dependency {
-                    name: name.clone(),
+                    name,
                     constraint: spec.constraint(),
                     declared,
                     spec,

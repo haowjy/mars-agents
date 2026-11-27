@@ -11,7 +11,7 @@ use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
-mod machine;
+pub(crate) mod machine;
 mod targets;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +22,8 @@ pub struct LockFile {
     pub config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
-    /// `(target, record key)` of the config entries a host's provided content wrote. Only
+    /// `(target, record key)` of the config entries a layer other than the project's wrote (the
+    /// user level's, a host's; the wire name predates the user level). Only
     /// `machine.lock` holds the field: a provided entry stays there when its target joins
     /// `mars.toml`, and a local-only target's own entries are not in it. Only a hook or MCP key
     /// can be provided ([`can_be_provided`]).
@@ -831,10 +832,10 @@ pub(crate) fn build(
     for (name, node) in &graph.nodes {
         let mut locked = to_locked_source(node);
         if crate::provided::is_provided_source(name.as_ref()) {
-            // A staged path dependency has no version of its own; its hooks and MCP servers are
-            // what moves.
+            // A host's path dependency has no version of its own: the lock records the host's,
+            // or the digest of what `mars provide` staged.
             locked.version = provided
-                .staged_digest(crate::provided::provider_label(name.as_ref()))
+                .host_version(&crate::layer::source_label(name.as_ref()))
                 .map(str::to_owned);
         }
         dependencies.insert(name.clone(), locked);

@@ -876,7 +876,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 
 **Agent/profile mode** (`--agent <name>`):
 - Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project, or the file `--agent-file` names
-- Requires a project with `mars sync` already run
+- Requires a `mars.toml` project; with `.mars/agents/<name>.md`, one that `mars sync` has populated. With `--agent-file`, no sync is needed
 - Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
 - Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.

@@ -488,7 +488,8 @@ mod tests {
     #[test]
     fn primary_content_shadows_fallback_content() {
         let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
+        // Canonical, as the walk-up gives it: the expected paths are canonical (Windows 8.3 names).
+        let primary = dunce::canonicalize(temp.path()).unwrap().join("primary");
         let fallback = temp.path().join("fallback");
         make_fallback(&fallback);
 
@@ -506,7 +507,8 @@ mod tests {
     #[test]
     fn fallback_fills_missing_agent_and_skill() {
         let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
+        // Canonical, as the walk-up gives it: the expected paths are canonical (Windows 8.3 names).
+        let primary = dunce::canonicalize(temp.path()).unwrap().join("primary");
         let fallback = temp.path().join("fallback");
         make_fallback(&fallback);
 
@@ -522,7 +524,8 @@ mod tests {
     #[test]
     fn absent_or_manifestless_fallback_contributes_nothing() {
         let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
+        // Canonical, as the walk-up gives it: the expected paths are canonical (Windows 8.3 names).
+        let primary = dunce::canonicalize(temp.path()).unwrap().join("primary");
         let absent = temp.path().join("absent");
         let manifestless = temp.path().join("manifestless");
         write_agent(&manifestless, "reviewer");
@@ -551,7 +554,8 @@ mod tests {
     #[test]
     fn only_locked_collision_renames_shadow_provided_content() {
         let temp = TempDir::new().unwrap();
-        let primary = temp.path().join("primary");
+        // Canonical, as the walk-up gives it: the expected paths are canonical (Windows 8.3 names).
+        let primary = dunce::canonicalize(temp.path()).unwrap().join("primary");
         let provided = temp.path().join("provided");
         for name in ["dup__pkg-a", "dup__pkg-b", "solo__pkg-a"] {
             write_agent(&primary, name);

@@ -92,14 +92,28 @@ project sync removes it from the project.
 **Commits stay clean.** In a git work tree, the paths Mars writes for user-level items (and
 for a host's content and for targets only `mars.local.toml` names) are listed in a block Mars
 owns in the repository's `info/exclude`, so `git add -A` leaves them out. That includes a
-config file (`.mcp.json`, `.codex/hooks.json`, …) the sync creates only to hold user-level
-entries. Each work tree of a repository has its own block, keyed by its path; lines outside the
+config file (`.mcp.json`, `.codex/hooks.json`, …) that holds only user-level entries, and,
+unless the project ignores `.mars/`, the user level's staged copy (`.mars/staging/_user-*`) and
+`.mars/machine.lock`. A config file, staged copy or machine lock that your own ignore rules
+already cover is not listed. Each work tree of a repository has its own block, keyed by its path; lines outside the
 blocks are yours and stay.
 
-A user-level hook or MCP server is not installed, with a warning once, when its entry would go
-in a config file that could be committed: one entry of a file cannot be kept out of a commit.
-That is a file git tracks, a file that also holds the project's own entries, and a file Mars
-did not create that git does not ignore. A file git ignores gets the entry.
+A user-level hook or MCP server (or one serving a target only `mars.local.toml` names) is not
+installed, with a warning once, when its entry would go in a config file that could be
+committed: one entry of a file cannot be kept out of a commit. Each config file is judged by
+what the sync puts in it, in this order:
+
+1. A file git tracks: the entry is not installed.
+2. A file git ignores: the entry is installed, whatever else the file holds.
+3. A file that also gets the project's own entries: the entry is not installed.
+4. A file that exists, that Mars has no record of writing and that the exclude block does not
+   list: someone else's, so the entry is not installed. Add the file to `.gitignore` to install
+   it.
+5. Otherwise the file is Mars's: the entry is installed and the file is listed in the block.
+
+Nothing of a withheld hook or MCP server is installed, its copy under `.mars/` and the target
+included, and `mars why` names the reason. Without git, nothing can be committed, so every
+entry is installed.
 
 Git reads one `info/exclude` for all work trees of a repository, so a path one work tree's
 block lists is hidden from `git add` in every other work tree too. When another work tree's

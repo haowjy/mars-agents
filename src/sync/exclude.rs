@@ -119,6 +119,34 @@ pub(crate) fn listed(layout: &Layout) -> BTreeSet<PathBuf> {
         .collect()
 }
 
+/// The repository's `info/exclude` and the 1-based numbers of its lines inside any work tree's
+/// block, markers included: a path one of them matches is hidden by Mars, not ignored by the
+/// user.
+pub(crate) fn block_lines(layout: &Layout) -> Option<(PathBuf, BTreeSet<usize>)> {
+    let tree = work_tree(layout.root())?;
+    let exclude = tree.exclude();
+    let content = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let mut lines = BTreeSet::new();
+    let mut open: Option<&str> = None;
+    for (index, line) in content.lines().enumerate() {
+        match open {
+            Some(owner) => {
+                lines.insert(index + 1);
+                if line.strip_prefix(END) == Some(owner) {
+                    open = None;
+                }
+            }
+            None => {
+                if let Some(owner) = line.strip_prefix(BEGIN) {
+                    lines.insert(index + 1);
+                    open = Some(owner);
+                }
+            }
+        }
+    }
+    Some((exclude, lines))
+}
+
 /// Before a sync writes: add `planned` to this work tree's block, keeping what it lists.
 pub(crate) fn protect(layout: &Layout, planned: BTreeSet<PathBuf>) -> Result<(), MarsError> {
     rewrite(layout, Update::Protect(planned)).map(|_| ())

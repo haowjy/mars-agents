@@ -91,45 +91,47 @@ fn compile_inner(
         request.options.refresh_models,
         request.options.no_refresh_models,
     )?;
-    let targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
+    let mut targeted = build_target(ctx, ir.resolved, ir.local_items, request, diag)?;
 
     if enforce_diagnostic_gate {
         diag.fail_on_errors()?;
     }
-    let mut planned = create_plan(ctx, targeted, request, diag)?;
+    // Hook schemas and native allowlists are resolved before any mutation.
+    let rendered_hooks = config_entries::render::preflight_config_entries(ctx, &targeted, diag)?;
+
+    if enforce_diagnostic_gate {
+        diag.fail_on_errors()?;
+    }
+    // What this machine's content may write is decided here, before the plan: a withheld entry's
+    // item is not planned either.
+    let exclude = {
+        let loaded = &targeted.resolved.loaded;
+        crate::sync::machine_local::decide(
+            &ctx.layout,
+            &targeted.facts,
+            &mut targeted.target,
+            &rendered_hooks,
+            &crate::config::targets::managed_targets(&loaded.effective.settings),
+            &crate::config::targets::project_targets(&loaded.config),
+            targeted
+                .resolved
+                .graph
+                .nodes
+                .keys()
+                .map(|source| source.as_str()),
+            &loaded.old_lock,
+            diag,
+        )
+    };
+    let planned = create_plan(ctx, targeted, request, diag)?;
 
     // Frozen gate: no pending changes allowed.
     if request.options.frozen {
         check_frozen_gate(&planned)?;
     }
 
-    // Hook schemas and native allowlists are resolved before any mutation.
-    let rendered_hooks =
-        config_entries::render::preflight_config_entries(ctx, &planned.targeted, diag)?;
-
-    if enforce_diagnostic_gate {
-        diag.fail_on_errors()?;
-    }
-    // What this machine's content may write is decided here, from the plan, before any write.
-    let mut machine_local = {
-        let loaded = &planned.targeted.resolved.loaded;
-        crate::sync::machine_local::decide(
-            &ctx.layout,
-            &planned.targeted.facts,
-            &planned.targeted.target,
-            &rendered_hooks,
-            &crate::config::targets::managed_targets(&loaded.effective.settings),
-            &crate::config::targets::project_targets(&loaded.config),
-            &loaded.old_lock,
-            diag,
-        )
-    };
-    planned
-        .targeted
-        .target
-        .record_yielded(std::mem::take(&mut machine_local.records));
     if !request.options.dry_run {
-        crate::sync::exclude::protect(&ctx.layout, machine_local.exclude.clone())?;
+        crate::sync::exclude::protect(&ctx.layout, exclude)?;
     }
     let mut applied = apply_plan(ctx, planned, request)?;
     if !request.options.dry_run {
@@ -228,7 +230,6 @@ fn compile_inner(
         &mut ownership_lock,
         &synced.target_outcomes,
         &rendered_hooks,
-        &machine_local,
         request.options.dry_run,
         request.options.force,
         request.options.preview_warnings,

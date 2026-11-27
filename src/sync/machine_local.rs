@@ -3,7 +3,7 @@
 //! `_provided-*`), and whatever serves a target only `mars.local.toml` names. None of it may reach
 //! a commit, and none of it may take a path the project holds. For every such output (an item's
 //! folder or file, an entry in a shared config file, a file made only to hold such entries) the
-//! sync decides, from its plan and before it writes anything, exactly one of:
+//! sync decides, before it plans or writes anything, exactly one of:
 //!
 //! - **yield**: the project claims the name or the path. Its own `.mars-src` items, its
 //!   dependencies (renamed or not), and any path at the output's location that git tracks or Mars
@@ -11,10 +11,12 @@
 //!   `sync::target`), so the item is not installed and `--force` never adopts over the path.
 //!   [`ProjectClaims`] is what the claim rule reads.
 //! - **withhold**: the entry would go into a shared file that can be committed: git tracks it,
-//!   the project's own entries go in it too, or it is someone else's file git does not ignore.
-//!   One entry of a file cannot be kept out of a commit, so it is not written. [`decide`].
-//! - **install and exclude**: everything it creates is listed in this work tree's block of git's
-//!   `info/exclude` (`sync::exclude`) before it is written. [`decide`].
+//!   or, when git does not ignore it, the project's own entries go in it too or it is someone
+//!   else's. One entry of a file cannot be kept out of a commit, so neither it nor its item is
+//!   written. [`decide`].
+//! - **install and exclude**: everything it creates that git does not already ignore is listed
+//!   in this work tree's block of git's `info/exclude` (`sync::exclude`) before it is written,
+//!   the layers' staged copies and the machine lock included. [`decide`].
 //!
 //! The exclude block, the tracked check and the claim rule read these and nothing else: what git
 //! tracks and what the block lists ([`Facts`]) are read once per sync, paths are resolved through
@@ -40,6 +42,8 @@ use crate::types::DestPath;
 #[derive(Debug, Default)]
 pub(crate) struct Facts {
     root: PathBuf,
+    /// Whether the root is in a git work tree; without one nothing can be committed.
+    git: bool,
     /// Root-relative, with `/`.
     tracked: BTreeSet<String>,
     listed: BTreeSet<PathBuf>,
@@ -67,10 +71,13 @@ impl Facts {
         if let Ok(store) = layout.store().strip_prefix(&root) {
             specs.insert(slash(store));
         }
-        let tracked = git_lines(&root, &["ls-files", "-z", "--"], &specs);
+        let tracked = git_fields(&root, &["ls-files", "-z"], &specs, Specs::Args)
+            .into_iter()
+            .collect();
         Self {
             listed: crate::sync::exclude::listed(layout),
             root,
+            git: true,
             tracked,
         }
     }
@@ -106,27 +113,63 @@ fn slash(relative: &Path) -> String {
     relative.to_string_lossy().replace('\\', "/")
 }
 
-/// The NUL-separated lines of `git <args> <specs>` run in `root`; none when git fails or is
-/// missing, which counts as nothing tracked.
-fn git_lines(root: &Path, args: &[&str], specs: &BTreeSet<String>) -> BTreeSet<String> {
+/// How [`git_fields`] hands git its paths.
+#[derive(Clone, Copy)]
+enum Specs {
+    /// After `--`, as `ls-files` takes them.
+    Args,
+    /// NUL-separated on standard input, as `check-ignore --stdin -z` takes them.
+    Stdin,
+}
+
+/// The NUL-separated fields `git <args>` prints run in `root` for `specs`; none when git fails or
+/// is missing, which counts as nothing tracked or ignored.
+fn git_fields(root: &Path, args: &[&str], specs: &BTreeSet<String>, how: Specs) -> Vec<String> {
+    use std::io::Write;
     if specs.is_empty() {
-        return BTreeSet::new();
+        return Vec::new();
     }
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .args(args)
-        .args(specs)
         .current_dir(root)
-        .stderr(std::process::Stdio::null())
-        .output();
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    if let Specs::Args = how {
+        command.arg("--").args(specs);
+    }
+    let Ok(mut child) = command.spawn() else {
+        return Vec::new();
+    };
+    let input: Vec<u8> = match how {
+        Specs::Args => Vec::new(),
+        Specs::Stdin => specs
+            .iter()
+            .flat_map(|spec| spec.bytes().chain(std::iter::once(0)))
+            .collect(),
+    };
+    // `check-ignore --stdin` prints as it reads: write from another thread, so a full output
+    // pipe cannot stall the write.
+    let writer = child.stdin.take().map(|mut stdin| {
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        })
+    });
+    let output = child.wait_with_output();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
     let Ok(output) = output else {
-        return BTreeSet::new();
+        return Vec::new();
     };
     // `check-ignore` exits 1 when nothing is ignored, with nothing printed.
-    String::from_utf8_lossy(&output.stdout)
+    let mut fields: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .split('\0')
-        .filter(|line| !line.is_empty())
         .map(str::to_string)
-        .collect()
+        .collect();
+    fields.pop();
+    fields
 }
 
 /// A claim as the claim rule keys it: `(kind, target, name)`, the target being `.mars` for the
@@ -279,67 +322,48 @@ fn outputs(
     outputs
 }
 
-/// What a sync's plan writes for this machine only, decided before anything is written.
-#[derive(Debug, Default)]
-pub(crate) struct Decision {
-    /// Every path to list in the exclude block.
-    pub exclude: BTreeSet<PathBuf>,
-    /// The lock keys of the hook and MCP directories whose config entry is not written.
-    withheld: HashSet<String>,
-    /// The withheld entries, for the lock.
-    pub records: Vec<crate::lock::YieldedRecord>,
-}
-
-impl Decision {
-    pub(crate) fn withholds(&self, dir: &PackageDir) -> bool {
-        self.withheld.contains(&dir.lock_key())
-    }
-}
-
 /// An entry the plan puts in a shared file.
-struct Entry<'a> {
+struct Entry {
     machine_local: bool,
-    /// The machine-local entry's directory, source and name, for withholding it.
-    of: Option<(&'a PackageDir, &'a str, &'a str, &'static str)>,
+    /// The entry's directory, source, name and noun, for withholding it; none for an entry no
+    /// item owns (a target's fixed entries, the records a failed scan keeps).
+    of: Option<(PackageDir, String, String, &'static str)>,
 }
 
-/// Decide, for `target`'s plan, what is excluded and which machine-local entries are withheld,
-/// warning once per withheld record. `project_targets` are the targets `mars.toml` names: what
-/// serves any other target is machine-local whatever its source.
+/// Decide, before `target` is planned, which machine-local hook and MCP entries are withheld,
+/// and return every path to list in the exclude block. A withheld entry's item is dropped from `target` with it, recorded, and
+/// warned once. `project_targets` are the targets `mars.toml` names: what serves any other
+/// target is machine-local whatever its source. `sources` are the sync's resolved sources, whose
+/// staged copies are in the store.
+///
+/// A shared file is judged by what this sync puts in it and by git, in this order: one git
+/// tracks withholds; one git ignores takes every entry and needs no exclude line; one that also
+/// gets the project's entries withholds; one that exists, that this work tree's block does not
+/// list and that the old lock records nothing in is someone else's and withholds. Otherwise the
+/// file is Mars's, gets the entries, and is excluded.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn decide<'t>(
+pub(crate) fn decide<'s>(
     layout: &Layout,
     facts: &Facts,
-    target: &'t TargetState,
+    target: &mut TargetState,
     rendered: &RenderedHooks,
     managed_targets: &[String],
     project_targets: &BTreeSet<String>,
+    sources: impl Iterator<Item = &'s str>,
     old_lock: &LockFile,
     diag: &mut DiagnosticCollector,
-) -> Decision {
+) -> BTreeSet<PathBuf> {
     let machine_local = |source: &str, target_root: &str| {
         crate::layer::is_machine_local(source) || !project_targets.contains(target_root)
     };
-    let mut decision = Decision::default();
-    for item in target.items.values() {
-        for output in outputs(
-            layout,
-            item.id.kind,
-            &item.dest_path,
-            &item.source_name,
-            managed_targets,
-        ) {
-            if machine_local(&item.source_name, &output.target) {
-                decision.exclude.insert(output.path);
-            }
-        }
-    }
 
-    // Each shared file of each target, with the entries the plan puts in it.
-    let mut files: BTreeMap<PathBuf, Vec<Entry<'t>>> = BTreeMap::new();
+    // Each shared file of each target, with the entries the plan puts in it, and the files a
+    // machine-local keyed or file hook writes beside its entry.
+    let mut files: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
+    let mut hook_files: Vec<(String, Vec<PathBuf>)> = Vec::new();
     for target_root in managed_targets {
         let by_prefix = config_files(layout, target_root);
-        let mut add = |prefix: &str, entry: Entry<'t>| {
+        let mut add = |prefix: &str, entry: Entry| {
             if let Some((path, _)) = by_prefix
                 .iter()
                 .find(|(_, prefixes)| prefixes.contains(&prefix))
@@ -352,7 +376,12 @@ pub(crate) fn decide<'t>(
                 MCP_KIND.key_prefix,
                 Entry {
                     machine_local: machine_local(&item.source_name, target_root),
-                    of: Some((dir, &item.source_name, &item.name, "MCP server")),
+                    of: Some((
+                        dir.clone(),
+                        item.source_name.clone(),
+                        item.name.clone(),
+                        "MCP server",
+                    )),
                 },
             );
         }
@@ -367,38 +396,36 @@ pub(crate) fn decide<'t>(
         }
         for (dir, item) in target.selected_hooks_for_target(target_root) {
             let local = machine_local(&item.source_name, target_root);
-            let prefix = match rendered.get(dir) {
-                HookOutput::Merge(_) => HOOK_KEY_PREFIX,
+            let (prefix, written) = match rendered.get(dir) {
+                HookOutput::Merge(_) => (Some(HOOK_KEY_PREFIX), Vec::new()),
                 HookOutput::Keyed(output) => {
-                    if local {
-                        decision.exclude.extend(
-                            output
-                                .files
-                                .iter()
-                                .map(|file| layout.in_target(target_root, &file.path)),
-                        );
-                    }
-                    HOOK_ENTRY_KIND.key_prefix
+                    (Some(HOOK_ENTRY_KIND.key_prefix), output.files.clone())
                 }
-                HookOutput::File(output) => {
-                    if local {
-                        decision.exclude.extend(
-                            output
-                                .files
-                                .iter()
-                                .map(|file| layout.in_target(target_root, &file.path)),
-                        );
-                    }
-                    continue;
-                }
+                HookOutput::File(output) => (None, output.files.clone()),
             };
-            add(
-                prefix,
-                Entry {
-                    machine_local: local,
-                    of: Some((dir, &item.source_name, &item.def.name, "hook")),
-                },
-            );
+            if local && !written.is_empty() {
+                hook_files.push((
+                    dir.lock_key(),
+                    written
+                        .iter()
+                        .map(|file| layout.in_target(target_root, &file.path))
+                        .collect(),
+                ));
+            }
+            if let Some(prefix) = prefix {
+                add(
+                    prefix,
+                    Entry {
+                        machine_local: local,
+                        of: Some((
+                            dir.clone(),
+                            item.source_name.clone(),
+                            item.def.name.clone(),
+                            "hook",
+                        )),
+                    },
+                );
+            }
         }
         for kept in target.kept_hooks() {
             if kept.dirs.iter().any(|dir| dir.belongs_to(target_root)) {
@@ -425,67 +452,103 @@ pub(crate) fn decide<'t>(
             }
         }
     }
+    files.retain(|_, entries| entries.iter().any(|entry| entry.machine_local));
 
-    // A file Mars has written machine-local entries to before is its own to keep writing: the
-    // block lists it, or (from a build before the block) the lock records only such entries in it.
-    let (_, local_lock) = crate::lock::machine::split(old_lock.clone(), project_targets);
-    let recorded_local = locked_files(layout, &local_lock);
-    let foreign: Vec<&PathBuf> = files
-        .keys()
-        .filter(|path| {
-            path.symlink_metadata().is_ok()
-                && !facts.listed.contains(*path)
-                && !recorded_local.contains(*path)
-        })
+    // A layer's staged copy, and the lock of what this machine installs, are in the store.
+    let mut store: Vec<PathBuf> = sources
+        .filter(|source| crate::layer::is_machine_local(source))
+        .map(|source| layout.store().join("staging").join(source))
         .collect();
-    let ignored = ignored(facts, &foreign);
+    store.push(layout.machine_lock());
 
+    let candidates: Vec<&PathBuf> = files
+        .keys()
+        .chain(&store)
+        .filter(|path| !facts.tracked(path))
+        .collect();
+    let ignored = ignored(layout, facts, &candidates);
+    // Any record of the old lock makes a file Mars's: it wrote there, and what it writes now
+    // replaces what it wrote.
+    let recorded = locked_files(layout, old_lock);
+
+    let mut exclude = BTreeSet::new();
+    let mut withheld: Vec<PackageDir> = Vec::new();
+    let mut records = Vec::new();
     for (path, entries) in &files {
-        if !entries.iter().any(|entry| entry.machine_local) {
-            continue;
-        }
         let file = facts
             .relative(path)
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         let why = if facts.tracked(path) {
-            Some(format!(
-                "`{file}` is committed, and an entry in it would be too"
-            ))
+            format!("`{file}` is committed, and an entry in it would be too")
+        } else if ignored.contains(path) {
+            continue;
         } else if entries.iter().any(|entry| !entry.machine_local) {
-            Some(format!(
-                "`{file}` holds the project's entries too, so it can be committed with them"
-            ))
-        } else if foreign.contains(&path) && !ignored.contains(path) {
-            Some(format!(
+            format!("`{file}` holds the project's entries too, so it can be committed with them")
+        } else if path.symlink_metadata().is_ok()
+            && !facts.listed.contains(path)
+            && !recorded.contains(path)
+        {
+            format!(
                 "`{file}` is not Mars's and git does not ignore it, so it can be committed with the entry; add it to `.gitignore` to install it"
-            ))
+            )
         } else {
-            None
-        };
-        let Some(why) = why else {
-            decision.exclude.insert(path.clone());
+            exclude.insert(path.clone());
             continue;
         };
-        for (dir, source, name, noun) in entries.iter().filter_map(|entry| {
-            entry
-                .of
-                .filter(|(_, source, _, _)| crate::layer::is_machine_local(source))
-        }) {
-            if !decision.withheld.insert(dir.lock_key()) {
+        for (dir, source, name, noun) in entries
+            .iter()
+            .filter(|entry| entry.machine_local)
+            .filter_map(|entry| entry.of.as_ref())
+        {
+            if withheld
+                .iter()
+                .any(|held| held.lock_key() == dir.lock_key())
+            {
                 continue;
             }
+            withheld.push(dir.clone());
             leave_out(
-                &mut decision.records,
+                &mut records,
                 diag,
                 "machine-local-entry-withheld",
-                (dir.kind(), dir.target().to_string(), name.to_string()),
+                (dir.kind(), dir.target().to_string(), name.clone()),
                 source,
                 format!("{noun} `{name}`"),
                 why.clone(),
             );
         }
     }
-    decision
+    target.withhold(&withheld);
+    target.record_yielded(records);
+
+    for item in target.items.values() {
+        for output in outputs(
+            layout,
+            item.id.kind,
+            &item.dest_path,
+            &item.source_name,
+            managed_targets,
+        ) {
+            if machine_local(&item.source_name, &output.target) {
+                exclude.insert(output.path);
+            }
+        }
+    }
+    for (key, paths) in hook_files {
+        if !withheld.iter().any(|dir| dir.lock_key() == key) {
+            exclude.extend(paths);
+        }
+    }
+    // The machine lock holds whatever this sync installs or leaves out for this machine only.
+    if store.len() == 1
+        && exclude.is_empty()
+        && withheld.is_empty()
+        && target.yielded_items().is_empty()
+    {
+        store.pop();
+    }
+    exclude.extend(store.into_iter().filter(|path| !ignored.contains(path)));
+    exclude
 }
 
 /// Joins a source's label and the reason in a [`leave_out`] group's subject.
@@ -500,23 +563,38 @@ fn describe_left_out(subject: &str, count: usize, names: &str) -> String {
     }
 }
 
-/// Which of `paths` git ignores.
-fn ignored(facts: &Facts, paths: &[&PathBuf]) -> BTreeSet<PathBuf> {
+/// Which of `paths` the user has git ignore: all of them outside a work tree, where none can be
+/// committed. A match in a Mars block of `info/exclude` is Mars's listing, not the user's choice.
+fn ignored(layout: &Layout, facts: &Facts, paths: &[&PathBuf]) -> BTreeSet<PathBuf> {
+    if !facts.git {
+        return paths.iter().map(|path| (*path).clone()).collect();
+    }
     let specs: BTreeSet<String> = paths
         .iter()
         .filter_map(|path| facts.relative(path))
         .collect();
-    if specs.is_empty() || facts.root.as_os_str().is_empty() {
-        return BTreeSet::new();
-    }
-    git_lines(
+    let blocks = crate::sync::exclude::block_lines(layout);
+    // `-v` prints source, line number, pattern and path for each ignored path.
+    let fields = git_fields(
         &facts.root,
-        &["check-ignore", "-z", "--no-index", "--"],
+        &["check-ignore", "-z", "-v", "--stdin", "--no-index"],
         &specs,
-    )
-    .into_iter()
-    .map(|relative| facts.root.join(relative))
-    .collect()
+        Specs::Stdin,
+    );
+    let (matches, _) = fields.as_chunks::<4>();
+    matches
+        .iter()
+        .filter(|[source, line, _, _]| {
+            let Some((exclude, lines)) = &blocks else {
+                return true;
+            };
+            let in_block = line.parse().is_ok_and(|line| lines.contains(&line));
+            !(in_block
+                && dunce::canonicalize(facts.root.join(source))
+                    .is_ok_and(|source| source == *exclude))
+        })
+        .map(|[_, _, _, path]| facts.root.join(path))
+        .collect()
 }
 
 /// The shared files a target's config entries go in, each with the lock-key prefixes of the
@@ -579,18 +657,31 @@ pub(crate) fn settled(
             .collect()
     };
     let committed_files = locked_files(layout, &committed);
-    // The store is the project's own record, not what it commits: `mars init` ignores it.
+    // Whether the project commits its store is its own choice, not a path to check.
     let mut project: BTreeSet<PathBuf> = paths(&committed)
         .into_iter()
         .filter(|path| !path.starts_with(layout.store()))
         .collect();
     project.extend(committed_files.iter().cloned());
+    let mut files: BTreeSet<PathBuf> = locked_files(layout, &local)
+        .into_iter()
+        .filter(|file| !committed_files.contains(file))
+        .collect();
+    // A layer's staged copy and the machine lock: listed while listed, since whether git ignores
+    // them was decided before the sync wrote (`decide`).
+    files.extend(
+        local
+            .dependencies
+            .keys()
+            .filter(|source| crate::layer::is_machine_local(source))
+            .map(|source| layout.store().join("staging").join(source.as_str())),
+    );
+    if layout.machine_lock().exists() {
+        files.insert(layout.machine_lock());
+    }
     crate::sync::exclude::Settled {
         machine: paths(&local),
-        files: locked_files(layout, &local)
-            .into_iter()
-            .filter(|file| !committed_files.contains(file))
-            .collect(),
+        files,
         project,
     }
 }

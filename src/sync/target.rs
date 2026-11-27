@@ -317,6 +317,26 @@ impl TargetState {
         self.yielded_items.extend(records);
     }
 
+    /// Drop the hooks and MCP servers of `dirs`, whose config entries are withheld
+    /// (`machine_local::decide`): nothing of them is installed, so no loss is recorded for them.
+    pub(crate) fn withhold(&mut self, dirs: &[PackageDir]) {
+        for dir in dirs {
+            self.items.shift_remove(&dir.canonical());
+            if let Some(hook) = self.selected_hooks.shift_remove(&dir.canonical()) {
+                self.yielded_hooks.insert((
+                    dir.target().to_string(),
+                    hook.item.source_name.to_string(),
+                    hook.item.def.name.to_string(),
+                ));
+            }
+        }
+        self.selected_mcp.retain(|selected| {
+            !dirs
+                .iter()
+                .any(|dir| dir.lock_key() == selected.dir.lock_key())
+        });
+    }
+
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
         self.accepted_hooks.push(hook.clone());
     }

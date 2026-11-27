@@ -56,7 +56,6 @@ pub(crate) fn compile_config_entries(
     ownership_lock: &mut crate::lock::LockFile,
     target_outcomes: &[crate::target_sync::TargetSyncOutcome],
     rendered_hooks: &RenderedHooks,
-    machine_local: &crate::sync::machine_local::Decision,
     dry_run: bool,
     force: bool,
     preview_warnings: bool,
@@ -105,10 +104,7 @@ pub(crate) fn compile_config_entries(
             .targeted
             .target
             .selected_hooks_for_target(target_root)
-            .filter(|(dir, _)| {
-                !machine_local.withholds(dir)
-                    && emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
-            })
+            .filter(|(dir, _)| emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag))
             .collect::<Vec<_>>();
         let selected_mcp = applied
             .planned
@@ -118,9 +114,8 @@ pub(crate) fn compile_config_entries(
             .filter(|(dir, item)| {
                 // A server whose `command`/`args` name no directory has nothing
                 // to wait for: its entry is all it installs.
-                !machine_local.withholds(dir)
-                    && (!item.uses_dir_token()
-                        || emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag))
+                !item.uses_dir_token()
+                    || emits_installed_copy(ctx, dir, target_outcomes, dry_run, diag)
             })
             .collect::<Vec<_>>();
         let mcp_entries = selected_mcp

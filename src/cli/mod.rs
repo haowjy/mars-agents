@@ -459,8 +459,14 @@ pub(crate) fn manifest_cli_path(
     if path.has_root() || matches!(path.components().next(), Some(Component::Prefix(_))) {
         return Ok(path.to_path_buf());
     }
-    // Both sides are physical paths: the working directory is, and so is the canonical base.
-    let target = crate::fs::lexical_absolute(&resolve_cli_path(path, explicit_root)?)?;
+    // Both sides are compared in canonical form (case, junctions, `subst` drives, UNC prefixes
+    // on Windows). The typed path's last component stays as typed, so a symlinked package
+    // directory is stored by its link.
+    let typed = crate::fs::lexical_absolute(&resolve_cli_path(path, explicit_root)?)?;
+    let target = match (typed.parent(), typed.file_name()) {
+        (Some(parent), Some(name)) => crate::fs::canonicalize_existing_prefix(parent)?.join(name),
+        _ => crate::fs::canonicalize_existing_prefix(&typed)?,
+    };
     let base = crate::fs::canonicalize_existing_prefix(manifest_dir)?;
     let target: Vec<_> = target.components().collect();
     let base: Vec<_> = base.components().collect();

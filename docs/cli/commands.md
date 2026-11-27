@@ -41,7 +41,8 @@ mars init [TARGET] [--link DIR...]
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
 - Creates `.mars/` internal state directory
 - Creates `TARGET`, when given, and adds it to `settings.targets`
-- Adds `mars.local.toml` and `.mars/` to `.gitignore`
+- Leaves `.gitignore` alone: add `.mars/` and `mars.local.toml` yourself (`mars doctor` warns
+  when `.mars/` is not ignored)
 - Idempotent: re-running is a no-op for init, but still processes `--link`
 - Refuses the home directory, which is never a project (install for yourself with
   `mars --user add`); `mars add` and `mars link` with no project around them init one the

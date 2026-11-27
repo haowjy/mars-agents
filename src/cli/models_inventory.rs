@@ -194,6 +194,11 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     }
     let scope = &routing_settings.harness_scope;
     let rules = CuratedRules::load(&ctx.layout)?;
+    if let Some((read, moved_to)) = &rules.moved
+        && !json
+    {
+        output::print_diagnostics(&[crate::config::moved_warning(read, moved_to)], false);
+    }
     let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = match catalog(
         ctx,

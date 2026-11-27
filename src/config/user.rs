@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ConfigError, MarsError};
 
@@ -11,14 +11,15 @@ pub struct UserConfig {
     /// Names the file in warnings; empty when no user file exists, and then nothing warns.
     pub path: PathBuf,
     pub local: LocalConfig,
+    /// Where the file should be, when it was read from the old macOS folder instead.
+    pub moved_to: Option<PathBuf>,
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
-    let directory =
-        crate::platform::config::mars_config_dir().ok_or_else(|| ConfigError::Invalid {
+    let (path, moved_to) =
+        crate::platform::config::user_file("config.toml").ok_or_else(|| ConfigError::Invalid {
             message: "cannot determine config directory; set MARS_CONFIG_DIR".to_string(),
         })?;
-    let path = directory.join("config.toml");
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -51,7 +52,24 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
             local.unknown_keys.push(not_read_here(table, key));
         }
     }
-    Ok(UserConfig { path, local })
+    Ok(UserConfig {
+        path,
+        local,
+        moved_to,
+    })
+}
+
+/// The warning for a user file read from the old macOS folder (`platform::config::user_file`).
+/// The user loses nothing yet, but a later Mars stops reading the old path.
+pub(crate) fn moved_warning(read: &Path, moved_to: &Path) -> crate::diagnostic::Diagnostic {
+    crate::diagnostic::Diagnostic::warning(
+        "user-config-moved",
+        format!(
+            "read {}, where Mars no longer looks for user config; move it to {} (a later Mars stops reading the old path)",
+            read.display(),
+            moved_to.display()
+        ),
+    )
 }
 
 /// A real key of another config file that this one leaves unread. It is not a typo or a newer

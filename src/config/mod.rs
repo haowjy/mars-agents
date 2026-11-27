@@ -35,6 +35,7 @@ mod unknown;
 mod user;
 
 pub use user::UserConfig;
+pub(crate) use user::moved_warning;
 
 use layering::{ComposedLayers, compose_layers};
 pub use layering::{overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays};
@@ -534,7 +535,11 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    unknown_keys.chain(floors).collect()
+    let moved = user
+        .moved_to
+        .as_ref()
+        .map(|moved_to| user::moved_warning(&user.path, moved_to));
+    unknown_keys.chain(floors).chain(moved).collect()
 }
 
 pub fn load_effective_project_config(layout: &Layout) -> Result<EffectiveProjectConfig, MarsError> {

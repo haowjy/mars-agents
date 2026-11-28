@@ -8,18 +8,28 @@ project, kept out of the project's commits ([In a project](#in-a-project)).
 
 ## Where its files are
 
+The user level is one folder, `~/.mars`, on Linux, macOS and Windows. `MARS_HOME` moves it; a
+relative `MARS_HOME` is taken from the working directory, and a relative `HOME` is ignored.
+
 | File | What it is |
 |---|---|
-| `<config>/mars.toml` | The user level's manifest: a project `mars.toml` (`[dependencies]`, `[local-dependencies]`, `[settings]`, …) with no `targets` |
-| `<config>/mars.lock` | Its lock, in the same format as a project's |
-| `<config>/.mars-src/` | Your own items, written by hand, as in a project's `.mars-src/` |
-| `<config>/config.toml` | Unchanged: the settings layer beneath every root, the user level included ([User config](../config/mars-toml.md#user-config)) |
-| `<data>/` | The store: what a project keeps in `.mars/` |
+| `~/.mars/mars.toml` | The user level's manifest: a project `mars.toml` (`[dependencies]`, `[local-dependencies]`, `[settings]`, …) with no `targets` |
+| `~/.mars/mars.lock` | Its lock, in the same format as a project's |
+| `~/.mars/.mars-src/` | Your own items, written by hand, as in a project's `.mars-src/` |
+| `~/.mars/config.toml` | The settings layer beneath every root, the user level included ([User config](../config/mars-toml.md#user-config)) |
+| `~/.mars/curated.toml` | The user tier of `mars models list` curation ([Curated model rules](../config/mars-curated.md)) |
+| `~/.mars/skills/`, `agents/`, … | The store: what a project keeps in `.mars/`, directly in the folder |
 
-`<config>` is `MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars`, else `~/.config/mars`.
-`<data>` is `MARS_DATA_DIR`, else `$XDG_DATA_HOME/mars`, else `~/.local/share/mars`. The same
-rule holds on Linux and macOS. A relative `XDG_*` or `HOME` is ignored; a relative `MARS_*_DIR`
-is taken from the working directory.
+The source cache stays where it was (`MARS_CACHE_DIR`, else the platform cache folder).
+
+**From Mars 0.40.** `MARS_CONFIG_DIR` is read as `MARS_HOME` when that is unset, with a
+warning to rename it; when both are set, `MARS_HOME` wins and the warning says to unset the old
+one. Mars 0.40 kept `config.toml` and `curated.toml` in the platform config folder
+(`$XDG_CONFIG_HOME/mars` or `~/.config/mars` on Linux, `~/Library/Application Support/mars` on
+macOS). While `~/.mars` has no copy of a file and the old folder does, Mars reads the old one and
+warns to move it; when both exist, `~/.mars` wins and the warning says the old one is ignored.
+This holds only for the default folder: with `MARS_HOME` or `MARS_CONFIG_DIR` set, Mars reads
+the files from that folder alone. The next minor release reads neither old name.
 
 No `init` step exists. With no `mars.toml` the user level is empty, and `mars --user add`
 creates the file. A `targets` or `managed_root` key in the user `mars.toml` or `mars.local.toml`
@@ -28,7 +38,7 @@ is an error.
 ## Choosing the root
 
 - `--user` uses the user level. It cannot be combined with `--root`.
-- Inside `<config>` (or below it), every command uses the user level, as if `--user` were given.
+- Inside `~/.mars` (or below it), every command uses the user level, as if `--user` were given.
 - Commands that only read installed items (`build launch-bundle`, `agents`, `skills`,
   `models` other than `models alias`, `list`, `why`) use the nearest project, and the user level when no project
   encloses the working directory.
@@ -47,8 +57,7 @@ Every `--json` output that is an object carries the root it used:
 
 ```json
 {"root": {"kind": "project", "path": "/home/me/repo"}}
-{"root": {"kind": "user", "path": "/home/me/.config/mars",
-          "config_dir": "/home/me/.config/mars", "store_dir": "/home/me/.local/share/mars"}}
+{"root": {"kind": "user", "path": "/home/me/.mars"}}
 ```
 
 `mars outdated --json` and `mars list --status --json` print a top-level array, which has no
@@ -65,7 +74,7 @@ the project's targets:
   upgrade` moves it, and each project installs the change on its next sync. A user
   dependency's own dependencies come in as `_user-<name>` too, so they never merge with the
   project's.
-- `_user-self`: your `<config>/.mars-src/`.
+- `_user-self`: your `~/.mars/.mars-src/`.
 - Hooks and MCP servers come in as well. The user store holds only agents and skills (it has
   no targets), so a project installs those from the source.
 
@@ -120,42 +129,54 @@ block lists is hidden from `git add` in every other work tree too. When another 
 block lists a path this project holds, the sync warns once, naming the path and that work
 tree; `git add -f` adds it. Without git there is nothing to write.
 
-A directory outside every project installs nothing; lookups there read the user store.
+A directory outside every project installs nothing; lookups there read the user store. A
+lookup serves only what the user `mars.lock` records: a file in `~/.mars` it does not record (one
+an old home project left there, say) is not the user level's.
 
-With no absolute `HOME` and no `MARS_CONFIG_DIR`, the config folder cannot be located: project
-commands run with no user config and no user level (an `info` note under `--verbose`), and
-`--user` fails. On Windows the same holds when the user's AppData folder does not exist. A lookup
-outside a project then has no user level to read: it runs in the working directory, finds nothing
-installed there, and reports `{"kind": "project", "path": "<working directory>"}` as its root.
+With no absolute `HOME` and no `MARS_HOME`, the user folder cannot be located: project commands
+run with no user config and no user level (an `info` note under `--verbose`), and `--user` fails.
+A lookup outside a project then has no user level to read: it runs in the working directory, finds
+nothing installed there, and reports `{"kind": "project", "path": "<working directory>"}` as its
+root.
 
 ## The home directory is never a project
 
 The walk-up for `mars.toml` skips your home directory, including when it starts there, so
 `cd ~ && mars sync` does not open `~/mars.toml`. `mars init` and the automatic init of
-`mars add` and `mars link` refuse the home directory and the config folder and name `--user`, and
-a command run from home that finds no project names only `--user`.
+`mars add` and `mars link` refuse the home directory and `~/.mars` and name `--user`, and a
+command run from home that finds no project names only `--user`.
 
 ### Moving a home project
 
-Before the user level, a `~/mars.toml` was how people installed for themselves. Mars no longer
-opens it by walk-up, and warns whenever the walk-up passes one. The warning names the steps still
-left: step 1 while `<config>/mars.toml` does not exist, step 2 while `~/.mars-src/` exists, step 3
-after either of them, and steps 4 and 5, with the targets the old file names. To move it:
+Before the user level, a `~/mars.toml` was how people installed for themselves. Its store is
+`~/.mars/`, the folder the user level now uses. Mars no longer opens it by walk-up, and warns
+whenever the walk-up passes one.
 
-1. Copy `~/mars.toml` to `<config>/mars.toml` and delete its `targets` line.
-2. Move `~/.mars-src/`, if you have one, to `<config>/.mars-src/`. A path dependency written
-   relative to `~` must be rewritten relative to `<config>`, or as an absolute path.
-3. Run `mars --user sync`.
-4. Run `mars --root ~ unlink <target>` for each target the old file named, which removes what
+While `~/mars.toml` or `~/mars.lock` exists, `~/.mars` holds that project's files, so the user
+level is not written there: every write with `--user` (`sync`, `add`, `remove`, `upgrade`, …)
+fails, a project's sync installs no user level (with a warning), and `mars --user doctor` warns.
+Each names the steps still left. To move it:
+
+1. Run `mars --root ~ unlink <target>` for each target `~/mars.toml` names, which removes what
    Mars installed there.
-5. Delete `~/mars.toml`, `~/mars.lock` and `~/.mars/`.
+2. Delete `~/mars.lock` and the old store's files in `~/.mars/` (all generated; keep any
+   `config.toml`, `curated.toml`, `mars.toml` and `.mars-src/` you already moved in).
+3. Move `~/mars.toml` to `~/.mars/mars.toml` and delete its `targets` line (or merge it into the
+   `~/.mars/mars.toml` you have). A path dependency written relative to `~` must be rewritten
+   relative to `~/.mars`, or as an absolute path.
+4. Move `~/.mars-src/`, if you have one, to `~/.mars/.mars-src/`.
+5. Run `mars --user sync`.
+
+A file in `~/.mars` that the user `mars.lock` does not record is not the user level's: a user
+sync does not delete it, and replaces it only with `--force` (without, it warns that the path is
+taken, as in a project); lookups do not serve it. The user level reads no `machine.lock` or `provided.lock` there. A home project
+opened with `--root ~` deletes only what its own lock records.
 
 For this minor release, `--root` naming the home directory exactly still opens it as a project,
-with the same warning, so step 4 works and an older Meridian that passes `--root ~` keeps
+with the same warning, so step 1 works and an older Meridian that passes `--root ~` keeps
 working. The next minor release refuses it.
 
 ## `--fallback-root`
-
 `mars agents`, `mars skills` and `mars build launch-bundle` still accept `--fallback-root`, a
 second project consulted for items the root lacks, and warn that it is deprecated. It goes in
 the next minor release: install those items at the user level instead.

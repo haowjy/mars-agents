@@ -66,11 +66,11 @@ visibility = "exported"
 
 /// The mars binary with no user `config.toml`, no user level and its own cache root: the
 /// developer's own settings and items must not reach a fixture. Helpers that test the user layer
-/// set `MARS_CONFIG_DIR` and `MARS_DATA_DIR` again.
+/// set `MARS_HOME` again.
 pub fn mars() -> Command {
     let mut cmd = Command::cargo_bin("mars").unwrap();
-    cmd.env("MARS_CONFIG_DIR", no_user_config_dir())
-        .env("MARS_DATA_DIR", no_user_data_dir())
+    cmd.env("MARS_HOME", no_user_home())
+        .env_remove("MARS_CONFIG_DIR")
         .env("MARS_CACHE_DIR", fresh_cache_dir())
         .env(
             "MARS_NATIVE_HARNESS_AUTH_TIMEOUT_SECS",
@@ -123,13 +123,9 @@ fn fresh_cache_dir() -> PathBuf {
     dir
 }
 
-/// A config directory that is never created.
-pub fn no_user_config_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("no-user-config")
-}
-
-pub fn no_user_data_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("no-user-data")
+/// A user folder that is never created.
+pub fn no_user_home() -> PathBuf {
+    PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("no-user-home")
 }
 
 /// Offline CLI fixture; all writable environment state stays under this test root.
@@ -353,18 +349,10 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
     let xdg_data = temp_root.join("xdg-data");
-    let mars_config = temp_root.join("mars-config");
-    let mars_data = temp_root.join("mars-data");
+    let mars_home = temp_root.join("mars-home");
     let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [
-        &home,
-        &xdg_config,
-        &xdg_data,
-        &mars_config,
-        &mars_data,
-        &mars_cache,
-    ] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_home, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
@@ -375,8 +363,8 @@ pub fn configure_assert_cmd(cmd: &mut Command, temp_root: &Path, api_url: &str) 
         .env("LOCALAPPDATA", &xdg_data)
         .env("XDG_CONFIG_HOME", &xdg_config)
         .env("XDG_DATA_HOME", &xdg_data)
-        .env("MARS_CONFIG_DIR", &mars_config)
-        .env("MARS_DATA_DIR", &mars_data)
+        .env("MARS_HOME", &mars_home)
+        .env_remove("MARS_CONFIG_DIR")
         .env("MARS_CACHE_DIR", &mars_cache)
         .env("NO_COLOR", "1")
         .env_remove("MARS_OFFLINE")
@@ -387,18 +375,10 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
     let home = temp_root.join("home");
     let xdg_config = temp_root.join("xdg-config");
     let xdg_data = temp_root.join("xdg-data");
-    let mars_config = temp_root.join("mars-config");
-    let mars_data = temp_root.join("mars-data");
+    let mars_home = temp_root.join("mars-home");
     let mars_cache = temp_root.join("mars-cache");
 
-    for dir in [
-        &home,
-        &xdg_config,
-        &xdg_data,
-        &mars_config,
-        &mars_data,
-        &mars_cache,
-    ] {
+    for dir in [&home, &xdg_config, &xdg_data, &mars_home, &mars_cache] {
         fs::create_dir_all(dir).expect("failed to create isolated env directory");
     }
 
@@ -413,8 +393,8 @@ pub fn configure_std_cmd(cmd: &mut StdCommand, temp_root: &Path, api_url: &str) 
     .env("LOCALAPPDATA", &xdg_data)
     .env("XDG_CONFIG_HOME", &xdg_config)
     .env("XDG_DATA_HOME", &xdg_data)
-    .env("MARS_CONFIG_DIR", &mars_config)
-    .env("MARS_DATA_DIR", &mars_data)
+    .env("MARS_HOME", &mars_home)
+    .env_remove("MARS_CONFIG_DIR")
     .env("MARS_CACHE_DIR", &mars_cache)
     .env("NO_COLOR", "1")
     .env_remove("MARS_OFFLINE")

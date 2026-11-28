@@ -281,7 +281,7 @@ network-deny = ["blocked.overlay.example"]
         "[settings]\nnetwork-allow = [\"local.example\"]\nnetwork-deny = [\"blocked.local.example\"]\n[agents.reviewer]\neffort = \"high\"\n",
     )
     .unwrap();
-    let user_config = temp.path().join("mars-config");
+    let user_config = temp.path().join("mars-home");
     std::fs::create_dir_all(&user_config).unwrap();
     std::fs::write(
         user_config.join("config.toml"),

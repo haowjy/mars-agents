@@ -13,6 +13,11 @@ pub struct DoctorArgs {}
 
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut diag = DiagnosticCollector::new();
+    if ctx.layout.kind() == crate::layout::RootKind::User
+        && let Some(home) = crate::home_project::HomeProject::in_user_folder()
+    {
+        diag.warn("home-project", home.blocks_user_level());
+    }
 
     let project_config = match crate::config::load_project_config_layers(&ctx.layout) {
         Ok(loaded) => Some(loaded),
@@ -247,8 +252,10 @@ fn check_legacy_agents_directory(
 }
 
 fn check_mars_gitignore(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
-    // The user level's store sits in the data folder, beside no repo.
-    if !layout.store().starts_with(layout.root()) || layout.store().symlink_metadata().is_err() {
+    // The user level's store is its own folder, in no repo.
+    if layout.kind() != crate::layout::RootKind::Project
+        || layout.store().symlink_metadata().is_err()
+    {
         return;
     }
 

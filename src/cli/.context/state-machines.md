@@ -42,23 +42,27 @@ stateDiagram-v2
   catastrophically wrong. `MarsContext::new` rejects a `.mars/` that resolves
   outside the project root, because Mars deletes and rewrites inside it. Targets are not checked:
   one may be a symlink out of the project, and Mars writes there only what it recorded. The
-  user level's store is outside its root by design (the data folder) and has no targets.
+  user level's store is its root folder (`~/.mars`) and it has no targets.
 - **The home directory is never a project by walk-up**, compared canonically. A `--root` that
   is exactly home still opens it, with the move warning, for one minor release (`TODO`). `init`
-  refuses home and the user config folder in `init::initialize_project`, which the auto-init
+  refuses home and the user folder in `init::initialize_project`, which the auto-init
   shares; `init::no_project_in` is the one rule, and `ProjectRootNotFound` carries its refusal
-  so the error names `mars init` only where a project can start. `warn_home_project` builds the
-  move warning from what exists: the manifest move while the user `mars.toml` is absent, the
-  `.mars-src/` move while home has one, `mars --user sync` after either, then the unlinks (one per
-  target the home files name) and the deletes. A user who wrote the user `mars.toml` first must
-  still be told to move `~/.mars-src/`, or their own items never reach the user level.
-- A lookup in a project-less directory must create nothing: the user level's folders appear
-  only when a command writes to them. When `Layout::user_level` cannot locate them (no absolute
-  HOME, or on Windows no AppData folder), the lookup runs in place instead of failing: an ad-hoc
+  so the error names `mars init` only where a project can start. A home project's store is
+  `~/.mars`, the user level's folder unless `MARS_HOME` moves it, so while home holds
+  `mars.toml` or `mars.lock` the folder is that project's (`crate::home_project`): `dispatch_result`
+  refuses every command `writes_root` places as a write at the user level, a project sync skips
+  the user layer (`sync::layers`), and `mars --user doctor` warns. All of them, and the walk-up's
+  warning, give `HomeProject::steps`, built from what exists and in the order a shared folder
+  needs: the unlinks (one per target the manifest names), deleting `~/mars.lock` and the old store
+  files, moving the manifest in, moving `~/.mars-src/`, `mars --user sync`. A user who wrote the
+  user `mars.toml` first must still be told to move `~/.mars-src/`, or their own items never
+  reach the user level.
+- A lookup in a project-less directory must create nothing: the user level's folder appears
+  only when a command writes to it. When `Layout::user_level` cannot locate it (no absolute
+  home and no `MARS_HOME`), the lookup runs in place instead of failing: an ad-hoc
   launch bundle there worked before the user level existed, and hosts still issue one.
 - Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
-  also refuses a `--root` that is not itself a project root. `check --user` checks the config
-  folder.
+  also refuses a `--root` that is not itself a project root.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
   `resolve_cli_path` decides whether a relative argument resolves against the working directory
   or the found root; `manifest_cli_path` adds the rewrite relative to the manifest's folder for a

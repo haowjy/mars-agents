@@ -80,8 +80,8 @@ impl CuratedView {
 #[derive(Debug, Clone, Default)]
 pub struct CuratedRules {
     tiers: Vec<Tier>,
-    /// The user tier's file and where it should be, when it was read from the old macOS folder.
-    pub moved: Option<(PathBuf, PathBuf)>,
+    /// The warning about the user tier's copy where Mars 0.40 kept it, when there is one.
+    pub old_copy: Option<crate::diagnostic::Diagnostic>,
 }
 
 /// Reusable literal/full-launch context for deciding many rows in one pass.
@@ -267,14 +267,14 @@ fn default_inherit() -> bool {
 
 impl CuratedRules {
     pub fn load(layout: &crate::layout::Layout) -> Result<Self, MarsError> {
-        // No user tier when the config folder cannot be located; the user config's load says so.
-        let user = crate::platform::config::user_file("curated.toml");
+        // No user tier when the user folder cannot be located; the user config's load says so.
+        let user = crate::platform::home::user_file("curated.toml");
         let mut rules = Self::load_paths(
-            user.as_ref().map(|(path, _)| path.as_path()),
+            user.as_ref().map(|file| file.path.as_path()),
             &layout.curated(),
             &layout.curated_local(),
         )?;
-        rules.moved = user.and_then(|(user, moved_to)| moved_to.map(|moved_to| (user, moved_to)));
+        rules.old_copy = user.as_ref().and_then(crate::config::old_copy_warning);
         Ok(rules)
     }
 
@@ -291,7 +291,10 @@ impl CuratedRules {
             Err(error) => Some(Err(error)),
         })
         .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { tiers, moved: None })
+        Ok(Self {
+            tiers,
+            old_copy: None,
+        })
     }
 
     fn reachable(&self) -> &[Tier] {

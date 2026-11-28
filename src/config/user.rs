@@ -1,6 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 use crate::error::MarsError;
+use crate::platform::home::{self, OldCopy, UserFile};
 
 use super::LocalConfig;
 use mars_schema::diagnostic::{SchemaDiagnostic, Severity};
@@ -11,26 +13,29 @@ pub struct UserConfig {
     /// Names the file in warnings; empty when no user file exists, and then nothing warns.
     pub path: PathBuf,
     pub local: LocalConfig,
-    /// Where the file should be, when it was read from the old macOS folder instead.
-    pub moved_to: Option<PathBuf>,
-    /// The Mars config folder could not be located (`platform::config::UNLOCATED_REASON`, and
-    /// no `MARS_CONFIG_DIR`), so there is no user config and no user level.
-    pub unlocated: bool,
+    /// What the user should hear about where the file and the user folder are: the Mars 0.40
+    /// copy, `MARS_CONFIG_DIR`, or no folder at all ([`folder_notices`]).
+    pub notices: Vec<Diagnostic>,
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
     // Only `--user` needs the folder (`MarsContext::user` fails without it); a project command
     // runs with no user layer, and a lookup outside a project runs in place.
-    let Some((path, moved_to)) = crate::platform::config::user_file("config.toml") else {
+    let Some(file) = crate::platform::home::user_file("config.toml") else {
         return Ok(UserConfig {
-            unlocated: true,
+            notices: folder_notices(None),
             ..UserConfig::default()
         });
     };
+    let notices = folder_notices(Some(&file));
+    let path = file.path;
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(UserConfig::default());
+            return Ok(UserConfig {
+                notices,
+                ..UserConfig::default()
+            });
         }
         Err(source) => return Err(super::read_error(&path, source)),
     };
@@ -62,35 +67,59 @@ pub(super) fn load() -> Result<UserConfig, MarsError> {
     Ok(UserConfig {
         path,
         local,
-        moved_to,
-        unlocated: false,
+        notices,
     })
 }
 
-/// The warning for a user file read from the old macOS folder (`platform::config::user_file`).
-/// The user loses nothing yet, but a later Mars stops reading the old path.
-pub(crate) fn moved_warning(read: &Path, moved_to: &Path) -> crate::diagnostic::Diagnostic {
-    crate::diagnostic::Diagnostic::warning(
-        "user-config-moved",
-        format!(
-            "read {}, where Mars no longer looks for user config; move it to {} (a later Mars stops reading the old path)",
-            read.display(),
-            moved_to.display()
-        ),
-    )
+/// What a command says about locating the user folder and `config.toml`, given the file it
+/// read (`None`: the folder cannot be located).
+fn folder_notices(file: Option<&UserFile>) -> Vec<Diagnostic> {
+    let Some(file) = file else {
+        // Nothing is lost that the user set, since nothing could be read.
+        return vec![Diagnostic::new(
+            DiagnosticLevel::Info,
+            "user-config-unlocated",
+            format!(
+                "no user config and no user level: the home directory is not an absolute path; set {} to use them",
+                home::HOME_VARIABLE
+            ),
+        )];
+    };
+    let renamed = home::renamed_variable_in_use().map(|used| {
+        let message = if used {
+            format!(
+                "{} is deprecated: rename it {} (a later Mars stops reading it)",
+                home::RENAMED_VARIABLE,
+                home::HOME_VARIABLE
+            )
+        } else {
+            format!(
+                "{} is ignored because {} is set; unset it",
+                home::RENAMED_VARIABLE,
+                home::HOME_VARIABLE
+            )
+        };
+        Diagnostic::warning("mars-config-dir-renamed", message)
+    });
+    renamed.into_iter().chain(old_copy_warning(file)).collect()
 }
 
-/// What a project command says when the user config folder cannot be located: nothing is lost
-/// that the user set, since nothing could be read.
-pub(crate) fn unlocated_info() -> crate::diagnostic::Diagnostic {
-    crate::diagnostic::Diagnostic::new(
-        crate::diagnostic::DiagnosticLevel::Info,
-        "user-config-unlocated",
-        format!(
-            "no user config and no user level: the Mars config folder cannot be located ({}); set MARS_CONFIG_DIR to use them",
-            crate::platform::config::UNLOCATED_REASON
+/// The warning for a user file (`config.toml`, `curated.toml`) with a copy where Mars 0.40 kept
+/// it (`platform::home::user_file`): read until a later Mars stops reading it, or ignored.
+pub(crate) fn old_copy_warning(file: &UserFile) -> Option<Diagnostic> {
+    let message = match file.old.as_ref()? {
+        OldCopy::Read { to } => format!(
+            "read {}, where Mars 0.40 kept it: move it to {} (a later Mars stops reading the old path)",
+            file.path.display(),
+            to.display()
         ),
-    )
+        OldCopy::Ignored { old } => format!(
+            "{} is ignored: Mars reads {} instead; delete the old one",
+            old.display(),
+            file.path.display()
+        ),
+    };
+    Some(Diagnostic::warning("user-config-moved", message))
 }
 
 /// A real key of another config file that this one leaves unread. It is not a typo or a newer

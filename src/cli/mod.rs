@@ -87,14 +87,14 @@ impl MarsContext {
         })
     }
 
-    /// The user level, at the folders `platform::config` resolves. Nothing is created: an absent
+    /// The user level, at the folder `platform::home` resolves. Nothing is created: an absent
     /// folder is an empty user level until a command writes to it.
     pub fn user() -> Result<Self, MarsError> {
-        let layout = crate::layout::Layout::user_level().map_err(|variable| {
+        let layout = crate::layout::Layout::user_level().ok_or_else(|| {
             MarsError::Config(ConfigError::Invalid {
                 message: format!(
-                    "cannot find the user level: its folders cannot be located ({}); set {variable}",
-                    crate::platform::config::UNLOCATED_REASON
+                    "cannot find the user level: the home directory is not an absolute path; set {}",
+                    crate::platform::home::HOME_VARIABLE
                 ),
             })
         })?;
@@ -116,8 +116,7 @@ pub struct Cli {
     #[arg(long, global = true, conflicts_with = "user")]
     pub root: Option<PathBuf>,
 
-    /// Use your user level (manifest in the Mars config folder, store in the Mars data folder)
-    /// instead of a project.
+    /// Use your user level (`~/.mars`, or `MARS_HOME`) instead of a project.
     #[arg(long, global = true)]
     pub user: bool,
 
@@ -306,6 +305,17 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
                 }
             };
             output::set_json_root(ctx.layout.root_json());
+            if ctx.layout.kind() == crate::layout::RootKind::User
+                && writes_root(cmd)
+                && let Some(home) = crate::home_project::HomeProject::in_user_folder()
+            {
+                return Err(MarsError::Config(ConfigError::Invalid {
+                    message: format!(
+                        "the user level cannot be written: {}",
+                        home.blocks_user_level()
+                    ),
+                }));
+            }
             if fallback_root(cmd).is_some() {
                 output::warn(
                     "fallback-root-deprecated",
@@ -346,6 +356,41 @@ fn is_lookup(cmd: &Command) -> bool {
             | Command::List(_)
             | Command::Why(_)
     ) || matches!(cmd, Command::Models(args) if !matches!(args.command, models::ModelsCommand::Alias(_)))
+}
+
+/// Commands that write the root's manifest, lock, own items or store. Every command is placed,
+/// so a new one must be: the user level refuses these while an old home project holds its
+/// folder (`crate::home_project`).
+fn writes_root(cmd: &Command) -> bool {
+    match cmd {
+        Command::Add(_)
+        | Command::Adopt(_)
+        | Command::Remove(_)
+        | Command::Sync(_)
+        | Command::Upgrade(_)
+        | Command::Rename(_)
+        | Command::Resolve(_)
+        | Command::Override(_)
+        | Command::Repair(_)
+        | Command::Init(_)
+        | Command::Link(_)
+        | Command::Unlink(_)
+        | Command::Provide(_)
+        | Command::Version(_) => true,
+        Command::Models(args) => matches!(args.command, models::ModelsCommand::Alias(_)),
+        Command::Build(args) => matches!(args.command, build::BuildCommand::Plugin(_)),
+        Command::Outdated(_)
+        | Command::List(_)
+        | Command::Why(_)
+        | Command::Validate(_)
+        | Command::Export(_)
+        | Command::Check(_)
+        | Command::Doctor(_)
+        | Command::Cache(_)
+        | Command::Agents(_)
+        | Command::Skills(_)
+        | Command::Hook(_) => false,
+    }
 }
 
 fn fallback_root(cmd: &Command) -> Option<&Path> {
@@ -529,35 +574,35 @@ pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsErro
         std::env::current_dir()?
     };
 
-    let user = crate::layout::Layout::user_level().ok();
+    let user = crate::layout::Layout::user_level();
     find_agents_root_from(
         &start,
         explicit.is_some(),
-        crate::platform::config::canonical_home().as_deref(),
+        crate::platform::home::canonical_home().as_deref(),
         user.as_ref().map(|user| user.root()),
     )
 }
 
-/// `user_config` is the user level's config folder: its `mars.toml` is the user level's, so a
-/// walk-up that reaches it is at the user level, not in a project.
+/// `user_root` is the user level's folder: its `mars.toml` is the user level's, so a walk-up
+/// that reaches it is at the user level, not in a project.
 fn find_agents_root_from(
     start: &Path,
     explicit: bool,
     home: Option<&Path>,
-    user_config: Option<&Path>,
+    user_root: Option<&Path>,
 ) -> Result<MarsContext, MarsError> {
     let start_canon = dunce::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     let mut dir = start_canon.as_path();
 
     loop {
-        if Some(dir) == user_config {
+        if Some(dir) == user_root {
             return MarsContext::user();
         }
         if crate::layout::Layout::project(dir).manifest().exists() {
             if Some(dir) != home {
                 return MarsContext::new(dir.to_path_buf());
             }
-            warn_home_project(dir);
+            warn_home_project();
             if explicit && dir == start_canon {
                 return MarsContext::new(dir.to_path_buf());
             }
@@ -571,76 +616,22 @@ fn find_agents_root_from(
 
     Err(MarsError::Config(ConfigError::ProjectRootNotFound {
         start: start.to_path_buf(),
-        refusal: init::no_project_in(&start_canon, home, user_config),
+        refusal: init::no_project_in(&start_canon, home, user_root),
     }))
 }
 
-/// The steps left to move a home project to the user level, read from where things stand: the
-/// manifest move while the user level has no `mars.toml`, the `.mars-src/` move while home has
-/// one, the user sync after either, and always the cleanup. The unlink commands name the targets
-/// the home project's files name.
-fn warn_home_project(home: &Path) {
-    let layout = crate::layout::Layout::project(home);
-    let manifest = layout.manifest();
-    let user = crate::layout::Layout::user_level().ok();
-    let targets = crate::config::load(&layout).ok().map(|config| {
-        let local = crate::config::load_local(&layout).unwrap_or_default();
-        crate::config::targets::named_targets(&config, &local)
-    });
-    let unlink = |target: &str| {
-        format!(
-            "`{}`",
-            managed_cmd(&format!("mars --root {} unlink {target}", home.display()))
-        )
-    };
-    let cleanup = match targets {
-        None => format!("run {} for each target it names, then ", unlink("<target>")),
-        Some(targets) if targets.is_empty() => String::new(),
-        Some(targets) => {
-            let unlinks: Vec<_> = targets.iter().map(|target| unlink(target)).collect();
-            format!("run {}, then ", unlinks.join(" and "))
-        }
-    };
-    let cleanup = format!(
-        "{cleanup}delete {manifest}, {lock} and {store}/",
-        manifest = manifest.display(),
-        lock = layout.lock().display(),
-        store = layout.store().display(),
-    );
-    let mut steps = Vec::new();
-    if !user.as_ref().is_some_and(|user| user.manifest().exists()) {
-        steps.push(format!(
-            "move it to {} without its `targets` line",
-            user.as_ref().map_or_else(
-                || "the Mars config folder".to_string(),
-                |user| user.manifest().display().to_string()
-            )
-        ));
-    }
-    if layout.local_source().is_dir() {
-        steps.push(format!(
-            "move what is in {}/ to {}",
-            layout.local_source().display(),
-            user.as_ref().map_or_else(
-                || ".mars-src/ in the Mars config folder".to_string(),
-                |user| format!("{}/", user.local_source().display())
-            )
-        ));
-    }
-    if !steps.is_empty() {
-        steps.push(format!("run `{}`", managed_cmd("mars --user sync")));
-    }
-    let steps = if steps.is_empty() {
-        cleanup
-    } else {
-        format!("{}, then {cleanup}", steps.join(", "))
+/// The walk-up passed the home project's manifest: say how to move it.
+fn warn_home_project() {
+    let Some(home) = crate::home_project::HomeProject::find() else {
+        return;
     };
     output::warn(
         "home-project",
         format!(
-            "{manifest} makes your home directory a project, which Mars no longer uses: {steps} \
+            "your home directory is a project ({}), which Mars no longer uses: {} \
              (a later Mars stops reading it; see https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)",
-            manifest = manifest.display(),
+            home.files(),
+            home.steps(),
         ),
     );
 }

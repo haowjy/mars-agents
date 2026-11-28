@@ -5,7 +5,7 @@ All commands support three global flags:
 | Flag | Description |
 |---|---|
 | `--root <PATH>` | Where to start looking for the project root (default: the working directory) |
-| `--user` | Use your [user level](user-level.md) instead of a project; conflicts with `--root` |
+| `--user` | Use your [user level](user-level.md) (`~/.mars`, or `MARS_HOME`) instead of a project; conflicts with `--root` |
 | `--json` | Machine-readable JSON output; an object output carries `root` (which root the command used) |
 
 The project root is the nearest directory, walking up from the start, that holds `mars.toml`.
@@ -87,7 +87,7 @@ mars add <source...> [filter flags]
   - GitHub: `owner/repo`, `owner/repo/plugins/foo`, `github:owner/repo`, `https://github.com/owner/repo/tree/main/plugins/foo`
   - GitLab: `gitlab:group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo/-/tree/main/plugins/foo`
   - Generic git: `git@example.com:org/repo.git`, `git://host/org/repo.git`
-  - Local paths. A relative path resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects. `mars.toml` stores it relative to its own folder (the project root, or the config folder under `--user`), as you would write it there; an absolute path is stored as typed.
+  - Local paths. A relative path resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects. `mars.toml` stores it relative to its own folder (the project root, or `~/.mars` under `--user`), as you would write it there; an absolute path is stored as typed.
 - A dependency whose definitions break schema v1 is rejected before any content is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
 - Archive-download and direct file-download URLs are rejected in v1.
 

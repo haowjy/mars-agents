@@ -57,7 +57,7 @@ pub(crate) fn load(
     // `--root ~` for one minor, to clean up) is where the user level used to be, so pulling the
     // user level into it would write it to the harness user folders again.
     if layout.kind() == crate::layout::RootKind::Project
-        && Some(layout.root()) != crate::platform::config::canonical_home().as_deref()
+        && Some(layout.root()) != crate::platform::home::canonical_home().as_deref()
     {
         user_layer(&mut layers, diag)?;
     }
@@ -87,12 +87,9 @@ fn path_dependency(dir: &Path, base: &Path) -> EffectiveDependency {
 
 fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(), MarsError> {
     // A user level that cannot be located is reported once, by the user config's load.
-    let Ok(user) = Layout::user_level() else {
+    let Some(user) = Layout::user_level() else {
         return Ok(());
     };
-    if !user.manifest().is_file() && !user.local_source().is_dir() {
-        return Ok(());
-    }
     // Advisory: the user level is a separate root, so these repeat on every sync until it is
     // fixed there, and the project itself reached the state it asked for.
     let skipped = |diag: &mut DiagnosticCollector, why: String| {
@@ -101,6 +98,14 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
             format!("the user level's agents, skills, hooks and MCP servers are not installed here: {why}"),
         );
     };
+    if !user.manifest().is_file() && !user.local_source().is_dir() {
+        return Ok(());
+    }
+    // Its folder's files are the home project's, whatever user files sit beside them.
+    if let Some(home) = crate::home_project::HomeProject::in_user_folder() {
+        skipped(diag, home.blocks_user_level());
+        return Ok(());
+    }
     if !user.lock().is_file() {
         skipped(
             diag,

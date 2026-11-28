@@ -7,6 +7,41 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-28
+
+### Upgrade notes
+- `mars provide` and `--fallback-root` are deprecated and go in the next minor release. A host gives its bundle to `mars sync --provided-root HOST@VERSION=DIR` instead, and personal items go at the user level. See [`mars sync`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-sync).
+- A `~/mars.toml` no longer makes your home directory a project: Mars skips it when it searches for a project and warns with the steps left to move it to the user level. For this release `--root ~` still opens it, only to read it and to `unlink` its targets (from `~/mars.lock` alone once `~/mars.toml` is gone). Its store, `~/.mars/`, is now the user level's folder, so while `~/mars.toml` or `~/mars.lock` exists every user-level write is refused and project syncs install no user level, each naming the steps. See [Moving a home project](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#moving-a-home-project).
+- `config.toml` and `curated.toml` move to `~/.mars/`. For this release Mars still reads them from the old folder (`~/.config/mars` or `$XDG_CONFIG_HOME/mars` on Linux, `~/Library/Application Support/mars` on macOS) while `~/.mars` has none, and warns to move them. `MARS_CONFIG_DIR` is renamed `MARS_HOME`; the old name is read, with a warning, for this release. See [Where its files are](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#where-its-files-are).
+
+### Added
+- `--provided-root <dir>` on `mars build launch-bundle`, `mars agents` and `mars skills`: a host's
+  bundle directory (`agents/<name>.md`, `skills/<name>/SKILL.md`), read in place as the last
+  layer after the project and `--fallback-root`. It answers a name only when no installed agent
+  or skill has it, and nothing is installed. A launch bundle applies the `[agents.<name>]`
+  overlay to a provided agent, and listings show it with scope `provided`. See
+  [Provided content](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#provided-content).
+- `mars build launch-bundle --agent` and `mars agents show` / `mars skills show` fail with the JSON
+  error codes `agent_not_found` / `skill_not_found` for a name no layer has, and `agent_renamed` /
+  `skill_renamed`, listing the names to use, for a name sync renamed on a collision (two or
+  more `<name>__<source>` copies that `mars.lock` records from the sources their suffixes
+  name). A skill a profile loads under a renamed name warns `skill.renamed`.
+- `mars sync --provided-root HOST@VERSION=DIR`, accepted by every command that syncs, installs a host's bundle into the targets the host does not launch (`.agy`) as the lowest layer. See [`mars sync`](https://github.com/haowjy/mars-agents/blob/main/docs/cli/commands.md#mars-sync).
+- A user level: `mars --user add`, `sync`, `upgrade`, `list` and the other root commands manage agents, skills, hooks and MCP servers for yourself. Its manifest, lock, own items (`.mars-src/`), settings and installed copies are all in `~/.mars/` (`MARS_HOME` moves it). It never writes `~/.claude` or any other harness folder. See [The user level](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md).
+- Every project's `mars sync` installs the user level into the project's targets, at the versions the last `mars --user sync` pinned. These installs are recorded only in `.mars/machine.lock` and listed in a block Mars owns in `.git/info/exclude`, so they never reach a commit. The project's own item of the same name wins, and `mars list` shows the user items it kept out under NOT INSTALLED HERE. See [In a project](https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md#in-a-project).
+- `--json` output objects carry `root`: `{"kind": "project" | "user", "path"}`, and warnings about deprecated settings and a home project appear in `diagnostics`.
+
+### Changed
+- `mars agents show` and `mars skills show` exit 3 instead of 1 when the name matches nothing,
+  the exit code `build launch-bundle` already used for a missing agent. The message is
+  unchanged.
+- `mars build launch-bundle --agent <name>` for an agent no layer has now says
+  ``agent `<name>` not found``, the text `mars agents show` uses, instead of an I/O error
+  naming `.mars/agents/<name>.md`.
+- Commands that only read (`list`, `agents`, `skills`, `models`, `why`, `build launch-bundle`) use the user level when no project encloses the working directory. Commands that write fail there and name `--user`. Under `--json` the error code is `project_not_found`.
+- `mars init` leaves `.gitignore` alone (`mars doctor` warns when `.mars/` isn't ignored). It refuses the home directory and `~/.mars`, and so do the automatic inits of `mars add` and `mars link`.
+- A relative path given to `mars add` or `mars override --path` resolves from the working directory and is stored relative to the manifest.
+
 ## [0.40.0] - 2026-11-23
 
 ### Added

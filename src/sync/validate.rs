@@ -65,12 +65,7 @@ pub(crate) fn validate_skill_refs(
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
         let (owner, declared) = match graph.nodes.get(&item.source_name) {
-            Some(node) => (
-                node.owner(),
-                node.manifest
-                    .as_ref()
-                    .map(|manifest| manifest.package.uses_providers.as_slice()),
-            ),
+            Some(node) => (node.owner(), node.declared()),
             None => (Owner::Own { dir: &own.dir }, own.declared),
         };
         let content = match &item.rewritten_content {

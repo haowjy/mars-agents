@@ -145,6 +145,19 @@ impl ResolvedGraph {
 }
 
 impl ResolvedNode {
+    /// The package's `[package] uses-providers`: `None` when its author wrote no `[package]`
+    /// table, though preparation generates one for a manifest-free tree (the user level's
+    /// `.mars-src`, a foreign plugin), which declares nothing.
+    pub(crate) fn declared(&self) -> Option<&[String]> {
+        self.prepared
+            .manifest
+            .as_ref()
+            .filter(|manifest| manifest.source_path.is_some())?;
+        self.manifest
+            .as_ref()
+            .map(|manifest| manifest.package.uses_providers.as_slice())
+    }
+
     /// Who can change this package's files: the one rule, for every report about them.
     pub(crate) fn owner(&self) -> crate::diagnostic::Owner<'_> {
         let dir = self

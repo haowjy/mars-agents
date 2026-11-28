@@ -96,7 +96,7 @@ impl LocalMerge<'_> {
                         "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched. \
                          Move it out of `{}` and sync again to install the local hook (`--force` does not replace it)",
                         hook.def.name,
-                        crate::layout::store_label(),
+                        self.ctx.layout.store_label(),
                     ),
                 );
                 continue;
@@ -193,7 +193,7 @@ impl LocalMerge<'_> {
             let guidance = if adoptable {
                 format!(
                     "use `{}` to replace and adopt this regular destination",
-                    crate::layout::root_cmd("sync --force")
+                    self.ctx.layout.cmd("sync --force")
                 )
             } else {
                 "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()

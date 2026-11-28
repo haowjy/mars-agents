@@ -11,15 +11,21 @@ and surface ownership (`resolve_copy`; see
 
 ## Project resolution
 
-How `mars` decides the root for a command. Each command is placed once, in `Shape::of`: what it
-does to a root (`Effect`: reads, unlinks, writes), where it runs with no project
-(`WithoutProject`), and why `--user` has no meaning for it. `--user` forces the user level
-(`MarsContext::user`, `Layout::user`) unless the shape refuses it. Otherwise `find_agents_root`
-and `find_agents_root_from` walk up from the working directory or `--root` looking for
-`mars.toml`, with no git boundary, and skip the home directory. `dispatch_result` then applies
-the shape's `WithoutProject`, and the root it chose goes to `layout::set_run_root`: every JSON
-object names it, and `layout::root_cmd` writes "the command for this root" (`mars --user sync`
-at the user level) in every message.
+How `mars` decides the root for a command. Each command is placed once, in `Shape::of`: whether
+it opens a root (`opens: None` for `init`, `check`, `cache`, `hook` and `models refresh-catalog`,
+dispatched before any lookup by `dispatch_without_root`), what it does to the root it opens
+(`Effect`: reads, unlinks, writes), where it runs with no project (`WithoutProject`), and why
+the user level refuses it. `--user` forces the user level (`MarsContext::user`, `Layout::user`)
+unless the shape refuses it; a walk-up that lands in the user folder is refused the same way.
+Otherwise `find_agents_root` and `find_agents_root_from` walk up from the working directory or
+`--root` looking for `mars.toml`, with no git boundary, and skip the home directory.
+`open_root` is the one place a root is opened: it applies the shape's `WithoutProject`, hands
+the root to `layout::set_run_root`, and runs the shared-folder guard, so no command (`provide`
+included) writes a root without passing it. Every JSON object names the run's root. A message
+about a root names its command and store with `Layout::cmd` and `Layout::store_label` when the
+call site has that layout (a project sync reading the user level's lock says `mars --user
+sync`); `layout::root_cmd` and `layout::store_label` are the run root's, for formatters with no
+layout to ask.
 
 ```mermaid
 stateDiagram-v2
@@ -68,14 +74,16 @@ stateDiagram-v2
   only when a command writes to it. When `Layout::user_level` cannot locate it (no absolute
   home and no `MARS_HOME`), the lookup runs in place instead of failing: an ad-hoc
   launch bundle there worked before the user level existed, and hosts still issue one.
-- Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
-  also refuses a `--root` that is not itself a project root.
+- Commands that open no root bypass the search: `init`, `check`, `cache`, `hook` and `models
+  refresh-catalog`. `provide` opens its root through `open_root` like any write, and also
+  refuses a `--root` that is not itself a project root.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
   `resolve_cli_path` decides whether a relative argument resolves against the working directory
   or the found root; `manifest_cli_path` adds the rewrite relative to the manifest's folder for a
   path `add` or `override` stores.
-- The predicates repeat the command list in `dispatch_with_root`; a new command must be placed
-  in them (lookup or write, allowed under `--user` or not).
+- `Shape::of` matches every command exhaustively, so a new command must be placed there;
+  `dispatch_with_root` and `dispatch_without_root` panic on a command the shape put on the other
+  side.
 
 ## Target claim
 

@@ -59,8 +59,8 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 "item-missing",
                 format!(
                     "{dest_path_str} missing from disk. Run `{}` to reinstall or `{}` to rebuild",
-                    crate::layout::root_cmd("sync"),
-                    crate::layout::root_cmd("repair"),
+                    ctx.layout.cmd("sync"),
+                    ctx.layout.cmd("repair"),
                 ),
             );
             continue;
@@ -98,7 +98,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                             "dependency-not-locked",
                             format!(
                                 "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
-                                cmd = crate::layout::root_cmd("sync"),
+                                cmd = ctx.layout.cmd("sync"),
                             ),
                         );
                     }
@@ -136,7 +136,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     format!(
                         "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
                         item.name,
-                        cmd = crate::layout::root_cmd("sync"),
+                        cmd = ctx.layout.cmd("sync"),
                     ),
                 );
             }

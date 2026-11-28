@@ -107,10 +107,7 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
     if !user.lock().is_file() {
         skipped(
             diag,
-            format!(
-                "it has not been synced; run `{}`",
-                crate::types::managed_cmd("mars --user sync")
-            ),
+            format!("it has not been synced; run `{}`", user.cmd("sync")),
         );
         return Ok(());
     }
@@ -142,7 +139,7 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
                     "user-level-unsynced",
                     format!(
                         "user dependency `{name}` is not installed here: the user level's mars.toml changed it since its last sync; run `{}`",
-                        crate::types::managed_cmd("mars --user sync")
+                        user.cmd("sync")
                     ),
                 );
                 continue;

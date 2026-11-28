@@ -521,7 +521,7 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
             message: format!(
                 "legacy {} is missing `dependency_model_aliases` for dependency alias authority; run `{}` to update it",
                 LOCK_FILE,
-                crate::layout::root_cmd("sync")
+                layout.cmd("sync")
             ),
         }
         .into());
@@ -534,11 +534,11 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
 /// so every reader sees one lock. A record both files hold takes the machine-local value; see
 /// [`write`] for how that happens.
 pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let (committed, mut diagnostics) = read_lock_file(&layout.lock(), false)?;
+    let (committed, mut diagnostics) = read_lock_file(layout, &layout.lock(), false)?;
     let Some(local_path) = layout.machine_lock().filter(|path| path.exists()) else {
         return Ok((committed, diagnostics));
     };
-    let (local, local_diagnostics) = read_lock_file(&local_path, true)?;
+    let (local, local_diagnostics) = read_lock_file(layout, &local_path, true)?;
     diagnostics.extend(local_diagnostics);
     Ok((
         {
@@ -550,7 +550,11 @@ pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnosti
     ))
 }
 
-fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+fn read_lock_file(
+    layout: &Layout,
+    path: &Path,
+    machine: bool,
+) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -586,13 +590,13 @@ fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnosti
             let mut lock = LockFile::empty();
             lock.dependencies = wire.dependencies;
             lock.dependency_model_aliases = wire.dependency_model_aliases;
-            Ok((lock, vec![v2_lock_dropped_warning()]))
+            Ok((lock, vec![v2_lock_dropped_warning(layout)]))
         }
         older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
             message: format!(
                 "{} uses unsupported lock version {older}; remove it and run `{}`",
                 path.display(),
-                crate::layout::root_cmd("sync")
+                layout.cmd("sync")
             ),
         }
         .into()),
@@ -664,7 +668,7 @@ fn orphaned_entries_warning(orphaned: &[(String, String)]) -> Option<Diagnostic>
     ))
 }
 
-fn v2_lock_dropped_warning() -> Diagnostic {
+fn v2_lock_dropped_warning(layout: &Layout) -> Diagnostic {
     lock_warning(
         "lock-v2-dropped",
         format!(
@@ -674,7 +678,7 @@ fn v2_lock_dropped_warning() -> Diagnostic {
              overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
              entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
              from 0.12 to 0.24 first would have migrated the lock",
-            crate::layout::root_cmd("sync --force")
+            layout.cmd("sync --force")
         ),
     )
 }
@@ -745,7 +749,7 @@ pub fn write(
         }
         return write_lock_file(&layout.lock(), &committed, false);
     };
-    let (old_local, _) = read_lock_file(&local_path, true)?;
+    let (old_local, _) = read_lock_file(layout, &local_path, true)?;
     let mut widened = old_local;
     widened.join(local.clone());
     if !widened.is_empty() {
@@ -1898,11 +1902,11 @@ installed_checksum = "sha256:bbb"
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
 
-        let err =
-            load_for_runtime_aliases(&crate::layout::Layout::project(dir.path())).unwrap_err();
+        let layout = crate::layout::Layout::project(dir.path());
+        let err = load_for_runtime_aliases(&layout).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
-        assert!(message.contains(&format!("run `{}`", crate::layout::root_cmd("sync"))));
+        assert!(message.contains(&format!("run `{}`", layout.cmd("sync"))));
     }
 
     #[test]

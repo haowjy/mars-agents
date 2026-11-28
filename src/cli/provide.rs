@@ -22,11 +22,16 @@ pub struct ProvideArgs {
     pub spec: String,
 }
 
-/// `root` is the global `--root`. The walk-up that finds the project must not escape it: a host
-/// names the root it wants filled, and silently filling a parent's `.mars/` instead would leave
-/// the host reading a copy it did not ask for.
-pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
-    let layout = super::find_agents_root(root)?.layout;
+/// `root` is the global `--root`. The walk-up that found `ctx` must not escape it: a host names
+/// the root it wants filled, and silently filling a parent's `.mars/` instead would leave the
+/// host reading a copy it did not ask for.
+pub fn run(
+    args: &ProvideArgs,
+    ctx: &super::MarsContext,
+    root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
+    let layout = &ctx.layout;
     if let Some(given) = root {
         let given = dunce::canonicalize(given).unwrap_or_else(|_| given.to_path_buf());
         if given != layout.root() {
@@ -45,7 +50,7 @@ pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, M
         "provide-deprecated",
         "`mars provide` is deprecated and goes in the next minor release: give the bundle to `mars sync --provided-root <host>@<version>=<dir>`, and to lookups (`build launch-bundle`, `agents`, `skills`) as `--provided-root <dir>`, which read it in place",
     );
-    let report = crate::provided::reconcile(&layout, &args.spec)?;
+    let report = crate::provided::reconcile(layout, &args.spec)?;
     if json {
         output::print_json(&report);
     } else {

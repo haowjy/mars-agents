@@ -31,14 +31,16 @@ warns to move it; when both exist, `~/.mars` wins and the warning says the old o
 This holds only for the default folder: with `MARS_HOME` or `MARS_CONFIG_DIR` set, Mars reads
 the files from that folder alone. The next minor release reads neither old name.
 
-No `init` step exists. With no `mars.toml` the user level is empty, and `mars --user add`
-creates the file. A `targets` or `managed_root` key in the user `mars.toml` or `mars.local.toml`
+No `init` step exists. With neither `mars.toml` nor `.mars-src/` the user level is empty. A
+`.mars-src/` alone is enough: `mars --user sync` installs its items and writes `mars.lock`, and
+`mars --user add` creates `mars.toml` when a dependency is added. A `targets` or `managed_root` key in the user `mars.toml` or `mars.local.toml`
 is an error.
 
 ## Choosing the root
 
 - `--user` uses the user level. It cannot be combined with `--root`.
-- Inside `~/.mars` (or below it), every command uses the user level, as if `--user` were given.
+- Inside `~/.mars` (or below it), every command uses the user level, as if `--user` were given;
+  a command `--user` refuses is refused there too.
 - Commands that only read installed items (`build launch-bundle`, `agents`, `skills`,
   `models` other than `models alias`, `list`, `why`) use the nearest project, and the user level when no project
   encloses the working directory.

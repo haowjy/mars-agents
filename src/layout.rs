@@ -42,22 +42,26 @@ pub(crate) fn run_root() -> Option<&'static Layout> {
     RUN_ROOT.get()
 }
 
-/// The command `mars <args>` for the root this run acts on, as a message names it: `mars --user
-/// <args>` at the user level, through `types::managed_cmd`. A command for a fixed root (`mars
-/// --user sync` from a project, `mars --root ~ unlink`) is written out with `managed_cmd`.
+/// [`Layout::cmd`] for the root this run acts on: for a message formatter that has no layout to
+/// ask. A call site that has the layout its message is about asks it, since a run can read a
+/// second root (a project sync reads the user level's lock).
 pub(crate) fn root_cmd(args: &str) -> String {
-    let user = run_root().is_some_and(|root| root.kind == RootKind::User);
-    let flag = if user { " --user" } else { "" };
-    crate::types::managed_cmd(&format!("mars{flag} {args}")).into_owned()
+    match run_root() {
+        Some(root) => root.cmd(args),
+        None => project_cmd(args),
+    }
 }
 
-/// The store of the root this run acts on, as a message names it: `.mars/` in a project, its
-/// path at the user level, whose store is its folder.
+/// [`Layout::store_label`] for the root this run acts on, as [`root_cmd`] is.
 pub(crate) fn store_label() -> String {
     match run_root() {
-        Some(root) if root.kind == RootKind::User => format!("{}/", root.store.display()),
-        _ => format!("{CANONICAL_TARGET_ROOT}/"),
+        Some(root) => root.store_label(),
+        None => format!("{CANONICAL_TARGET_ROOT}/"),
     }
+}
+
+fn project_cmd(args: &str) -> String {
+    crate::types::managed_cmd(&format!("mars {args}")).into_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +104,27 @@ impl Layout {
 
     pub fn kind(&self) -> RootKind {
         self.kind
+    }
+
+    /// The command `mars <args>` for this root, as a message names it: `mars --user <args>` at
+    /// the user level, through `types::managed_cmd`. A command for a fixed root (`mars --root ~
+    /// unlink`) is written out with `managed_cmd`.
+    pub(crate) fn cmd(&self, args: &str) -> String {
+        match self.kind {
+            RootKind::User => {
+                crate::types::managed_cmd(&format!("mars --user {args}")).into_owned()
+            }
+            RootKind::Project => project_cmd(args),
+        }
+    }
+
+    /// This root's store, as a message names it: `.mars/` in a project, its path at the user
+    /// level, whose store is its folder.
+    pub(crate) fn store_label(&self) -> String {
+        match self.kind {
+            RootKind::User => format!("{}/", self.store.display()),
+            RootKind::Project => format!("{CANONICAL_TARGET_ROOT}/"),
+        }
     }
 
     /// The `root` object every `--json` output carries: which root the command used. Hosts

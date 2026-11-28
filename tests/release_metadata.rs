@@ -231,7 +231,7 @@ fn release_publish_uses_single_tag_workflow_identity() {
 
     assert!(
         !release_on_main.contains("uses: ./.github/workflows/release.yml"),
-        "auto-release should create the release tag only; publishing must be triggered by release.yml on tag push"
+        "auto-release should create the release tag and dispatch release.yml, not call it as a reusable workflow"
     );
     assert!(
         release.contains("tags: [\"v*\"]"),
@@ -242,12 +242,17 @@ fn release_publish_uses_single_tag_workflow_identity() {
         "release.yml should not also be reusable; npm trusted publishing allows one workflow identity per package"
     );
     assert!(
-        !release.contains("inputs.tag"),
-        "release.yml should derive release identity only from the pushed tag"
+        release.contains("RELEASE_TAG: ${{ inputs.tag || github.ref_name }}"),
+        "release.yml must publish the dispatched tag, or the pushed one"
     );
     assert!(
-        release_on_main.contains("TAG_PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}"),
-        "auto-release tag push should prefer RELEASE_TOKEN so the tag workflow can run"
+        release_on_main
+            .contains("gh workflow run release.yml --ref main -f \"tag=${RELEASE_TAG}\""),
+        "a tag pushed with the workflow token starts no workflow, so auto-release must dispatch release.yml"
+    );
+    assert!(
+        !release_on_main.contains("RELEASE_TOKEN"),
+        "auto-release must use the workflow token: a stored personal token expires and fails the release"
     );
 }
 

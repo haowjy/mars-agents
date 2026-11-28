@@ -27,7 +27,9 @@ mkdir -p "$SCRATCH/home" "$SCRATCH/config" "$SCRATCH/data"
 export HOME="$SCRATCH/home" USERPROFILE="$SCRATCH/home"
 export XDG_CONFIG_HOME="$SCRATCH/config" APPDATA="$SCRATCH/config"
 export XDG_DATA_HOME="$SCRATCH/data" LOCALAPPDATA="$SCRATCH/data"
-export MARS_CACHE_DIR="$SCRATCH/.cache/mars"
+# The user level (~/.mars) and the source cache, under the scratch folder.
+export MARS_HOME="$SCRATCH/home/.mars" MARS_CACHE_DIR="$SCRATCH/.cache/mars"
+unset MARS_CONFIG_DIR
 # Local-only smoke: no network or installed harness discovery.
 export MARS_OFFLINE=1
 export PATH=""

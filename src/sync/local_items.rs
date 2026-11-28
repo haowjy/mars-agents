@@ -17,7 +17,7 @@ use crate::hash;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
 use crate::lock::ItemId;
 use crate::sync::target::{self, RenamableKind, TargetItem, TargetState, default_dest_path};
-use crate::types::{ContentHash, MarsContext, SourceName, SourceOrigin, managed_cmd};
+use crate::types::{ContentHash, MarsContext, SourceName, SourceOrigin};
 
 /// Fold every discovered local item into `target_state`.
 pub(super) fn merge_local_items(
@@ -94,8 +94,9 @@ impl LocalMerge<'_> {
                     "unmanaged-collision",
                     format!(
                         "local hook `{}` collides with unmanaged path `{dest_path}` — leaving existing content untouched. \
-                         Move it out of `.mars/` and sync again to install the local hook (`--force` does not replace it)",
+                         Move it out of `{}` and sync again to install the local hook (`--force` does not replace it)",
                         hook.def.name,
+                        self.ctx.layout.store_label(),
                     ),
                 );
                 continue;
@@ -192,7 +193,7 @@ impl LocalMerge<'_> {
             let guidance = if adoptable {
                 format!(
                     "use `{}` to replace and adopt this regular destination",
-                    managed_cmd("mars sync --force")
+                    self.ctx.layout.cmd("sync --force")
                 )
             } else {
                 "relocate the destination and retry sync (force cannot adopt symlinks or wrong-shaped paths)".to_string()

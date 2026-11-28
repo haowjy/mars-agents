@@ -419,14 +419,18 @@ fn report_files(
                     let mut for_consumer = diagnostic.clone();
                     let resolved = version
                         .map_or_else(String::new, |version| format!(", resolved to {version},"));
+                    let upgrade = crate::layout::root_cmd("upgrade");
                     let way_out = if *upgrading {
-                        "`mars upgrade` cannot move it past its `version` constraint: widen that constraint in mars.toml"
+                        format!(
+                            "`{upgrade}` cannot move it past its `version` constraint: widen that constraint in mars.toml"
+                        )
                     } else {
-                        "run `mars upgrade {name}` for a newer version (widen its `version` constraint if `mars upgrade` keeps this version)"
+                        format!(
+                            "run `{upgrade} {name}` for a newer version (widen its `version` constraint if `{upgrade}` keeps this version)"
+                        )
                     };
                     for_consumer.message = format!(
-                        "this dependency{resolved} was published before schema 1. Mars 0.34.0 and later do not read it: {}, or stay on a Mars before 0.34.0",
-                        way_out.replace("{name}", name)
+                        "this dependency{resolved} was published before schema 1. Mars 0.34.0 and later do not read it: {way_out}, or stay on a Mars before 0.34.0"
                     );
                     diag.schema(&for_consumer, &context, owner);
                 }

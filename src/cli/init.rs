@@ -63,26 +63,26 @@ fn ensure_consumer_config(layout: &Layout) -> Result<bool, MarsError> {
 }
 
 /// Why no project can be started at `dir`, or `None` when one can. The walk-up never opens a
-/// home project, so one made there would be invisible; the user config folder's `mars.toml` is
-/// the user level's.
+/// home project, so one made there would be invisible, and its store would be the user level's
+/// folder; the user folder's `mars.toml` is the user level's.
 pub(super) fn no_project_at(dir: &Path) -> Option<String> {
-    let user = Layout::user_level().ok();
+    let user = Layout::user_level();
     no_project_in(
         &dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
-        crate::platform::config::canonical_home().as_deref(),
+        crate::platform::home::canonical_home().as_deref(),
         user.as_ref().map(Layout::root),
     )
 }
 
-/// [`no_project_at`] for a canonical `dir`, with the home and user config folders given.
+/// [`no_project_at`] for a canonical `dir`, with the home and user folders given.
 pub(super) fn no_project_in(
     dir: &Path,
     home: Option<&Path>,
-    user_config: Option<&Path>,
+    user_root: Option<&Path>,
 ) -> Option<String> {
-    if Some(dir) == user_config {
+    if Some(dir) == user_root {
         Some(format!(
-            "{} is your user level's config folder: {}",
+            "{} is your user level's folder: {}",
             dir.display(),
             user_level_needs_no_init()
         ))

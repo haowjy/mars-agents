@@ -342,7 +342,7 @@ pub(crate) fn compile_config_entries(
                     format!(
                         "target `{target_root}` has stale config entries: {} — run `{}` to remove them",
                         stale.join(", "),
-                        crate::types::managed_cmd("mars sync"),
+                        ctx.layout.cmd("sync"),
                     ),
                 );
             }

@@ -53,12 +53,9 @@ pub(crate) fn load(
     diag: &mut DiagnosticCollector,
 ) -> Result<Layers, MarsError> {
     let mut layers = Layers::default();
-    // The user level is the layer, not something it pulls in; and the home project (opened by
-    // `--root ~` for one minor, to clean up) is where the user level used to be, so pulling the
-    // user level into it would write it to the harness user folders again.
-    if layout.kind() == crate::layout::RootKind::Project
-        && Some(layout.root()) != crate::platform::config::canonical_home().as_deref()
-    {
+    // The user level is the layer, not something it pulls in. The home project, where the user
+    // level used to be, never syncs: `--root ~` opens it only to unlink (`crate::home_project`).
+    if layout.kind() == crate::layout::RootKind::Project {
         user_layer(&mut layers, diag)?;
     }
     if crate::provided::takes_provided_any(managed_targets) {
@@ -87,12 +84,9 @@ fn path_dependency(dir: &Path, base: &Path) -> EffectiveDependency {
 
 fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(), MarsError> {
     // A user level that cannot be located is reported once, by the user config's load.
-    let Ok(user) = Layout::user_level() else {
+    let Some(user) = Layout::user_level() else {
         return Ok(());
     };
-    if !user.manifest().is_file() && !user.local_source().is_dir() {
-        return Ok(());
-    }
     // Advisory: the user level is a separate root, so these repeat on every sync until it is
     // fixed there, and the project itself reached the state it asked for.
     let skipped = |diag: &mut DiagnosticCollector, why: String| {
@@ -101,13 +95,19 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
             format!("the user level's agents, skills, hooks and MCP servers are not installed here: {why}"),
         );
     };
+    // Its folder's files are the home project's, whatever user files sit beside them; the run
+    // ends with the steps to move it.
+    if crate::home_project::HomeProject::in_user_folder().is_some() {
+        crate::home_project::raise_notice();
+        return Ok(());
+    }
+    if !user.manifest().is_file() && !user.local_source().is_dir() {
+        return Ok(());
+    }
     if !user.lock().is_file() {
         skipped(
             diag,
-            format!(
-                "it has not been synced; run `{}`",
-                crate::types::managed_cmd("mars --user sync")
-            ),
+            format!("it has not been synced; run `{}`", user.cmd("sync")),
         );
         return Ok(());
     }
@@ -139,7 +139,7 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
                     "user-level-unsynced",
                     format!(
                         "user dependency `{name}` is not installed here: the user level's mars.toml changed it since its last sync; run `{}`",
-                        crate::types::managed_cmd("mars --user sync")
+                        user.cmd("sync")
                     ),
                 );
                 continue;

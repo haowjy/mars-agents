@@ -521,7 +521,7 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
             message: format!(
                 "legacy {} is missing `dependency_model_aliases` for dependency alias authority; run `{}` to update it",
                 LOCK_FILE,
-                crate::types::managed_cmd("mars sync")
+                layout.cmd("sync")
             ),
         }
         .into());
@@ -534,12 +534,11 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
 /// so every reader sees one lock. A record both files hold takes the machine-local value; see
 /// [`write`] for how that happens.
 pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let (committed, mut diagnostics) = read_lock_file(&layout.lock(), false)?;
-    let local_path = layout.machine_lock();
-    if !local_path.exists() {
+    let (committed, mut diagnostics) = read_lock_file(layout, &layout.lock(), false)?;
+    let Some(local_path) = layout.machine_lock().filter(|path| path.exists()) else {
         return Ok((committed, diagnostics));
-    }
-    let (local, local_diagnostics) = read_lock_file(&local_path, true)?;
+    };
+    let (local, local_diagnostics) = read_lock_file(layout, &local_path, true)?;
     diagnostics.extend(local_diagnostics);
     Ok((
         {
@@ -551,7 +550,11 @@ pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnosti
     ))
 }
 
-fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+fn read_lock_file(
+    layout: &Layout,
+    path: &Path,
+    machine: bool,
+) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -587,13 +590,13 @@ fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnosti
             let mut lock = LockFile::empty();
             lock.dependencies = wire.dependencies;
             lock.dependency_model_aliases = wire.dependency_model_aliases;
-            Ok((lock, vec![v2_lock_dropped_warning()]))
+            Ok((lock, vec![v2_lock_dropped_warning(layout)]))
         }
         older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
             message: format!(
                 "{} uses unsupported lock version {older}; remove it and run `{}`",
                 path.display(),
-                crate::types::managed_cmd("mars sync")
+                layout.cmd("sync")
             ),
         }
         .into()),
@@ -665,7 +668,7 @@ fn orphaned_entries_warning(orphaned: &[(String, String)]) -> Option<Diagnostic>
     ))
 }
 
-fn v2_lock_dropped_warning() -> Diagnostic {
+fn v2_lock_dropped_warning(layout: &Layout) -> Diagnostic {
     lock_warning(
         "lock-v2-dropped",
         format!(
@@ -675,7 +678,7 @@ fn v2_lock_dropped_warning() -> Diagnostic {
              overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
              entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
              from 0.12 to 0.24 first would have migrated the lock",
-            crate::types::managed_cmd("mars sync --force")
+            layout.cmd("sync --force")
         ),
     )
 }
@@ -738,8 +741,15 @@ pub fn write(
     project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<(), MarsError> {
     let (committed, local) = machine::split(lock.clone(), project_targets);
-    let local_path = layout.machine_lock();
-    let (old_local, _) = read_lock_file(&local_path, true)?;
+    let Some(local_path) = layout.machine_lock() else {
+        if !local.is_empty() {
+            return Err(MarsError::Internal(
+                "the user level has a machine-local record, which it has no file for".to_string(),
+            ));
+        }
+        return write_lock_file(&layout.lock(), &committed, false);
+    };
+    let (old_local, _) = read_lock_file(layout, &local_path, true)?;
     let mut widened = old_local;
     widened.join(local.clone());
     if !widened.is_empty() {
@@ -1733,7 +1743,9 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
         let old = "version = 3\n[config_entries.\".agy\".\"mcp:srv\"]\nemitted_json = '{}'\n";
         std::fs::write(
-            crate::layout::Layout::project(dir.path()).machine_lock(),
+            crate::layout::Layout::project(dir.path())
+                .machine_lock()
+                .unwrap(),
             old,
         )
         .unwrap();
@@ -1890,11 +1902,11 @@ installed_checksum = "sha256:bbb"
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
 
-        let err =
-            load_for_runtime_aliases(&crate::layout::Layout::project(dir.path())).unwrap_err();
+        let layout = crate::layout::Layout::project(dir.path());
+        let err = load_for_runtime_aliases(&layout).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
-        assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));
+        assert!(message.contains(&format!("run `{}`", layout.cmd("sync"))));
     }
 
     #[test]

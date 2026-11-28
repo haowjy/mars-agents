@@ -5,7 +5,7 @@
 //!
 //! Boundary rule: use `crate::platform` for
 //! - Filesystem-safe name generation from external identifiers
-//! - Global cache root resolution
+//! - Global cache root and user folder resolution
 //! - Cross-process file locks
 //! - Durable file writes (atomic writes)
 //! - Generated directory replacement and cache publication
@@ -15,7 +15,7 @@
 //! config reads, content hashing, domain validation in SourceSubpath.
 
 pub mod cache;
-pub mod config;
 pub mod fs;
+pub mod home;
 pub mod path_syntax;
 pub mod process;

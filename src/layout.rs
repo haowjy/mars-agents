@@ -12,8 +12,8 @@ pub(crate) const LOCAL_CONFIG_FILE: &str = "mars.local.toml";
 pub(crate) const LOCK_FILE: &str = "mars.lock";
 
 /// What a root is. A project is a directory with `mars.toml`; the user level is the person's
-/// own root, whose manifest sits in the Mars config folder and whose store is the Mars data
-/// folder. The user level has no targets: a user sync writes only its store and lock.
+/// own root, one folder (`platform::home`) that holds its manifest, lock, own items and store.
+/// The user level has no targets: a user sync writes only its store and lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootKind {
     Project,
@@ -27,6 +27,41 @@ impl RootKind {
             Self::User => "user",
         }
     }
+}
+
+/// The root this run acts on: one per CLI run, set once its root is known.
+static RUN_ROOT: std::sync::OnceLock<Layout> = std::sync::OnceLock::new();
+
+/// Called once by the CLI, when the run's root is known.
+pub fn set_run_root(layout: &Layout) {
+    let _ = RUN_ROOT.set(layout.clone());
+}
+
+/// The root this run acts on, once known.
+pub(crate) fn run_root() -> Option<&'static Layout> {
+    RUN_ROOT.get()
+}
+
+/// [`Layout::cmd`] for the root this run acts on: for a message formatter that has no layout to
+/// ask. A call site that has the layout its message is about asks it, since a run can read a
+/// second root (a project sync reads the user level's lock).
+pub(crate) fn root_cmd(args: &str) -> String {
+    match run_root() {
+        Some(root) => root.cmd(args),
+        None => project_cmd(args),
+    }
+}
+
+/// [`Layout::store_label`] for the root this run acts on, as [`root_cmd`] is.
+pub(crate) fn store_label() -> String {
+    match run_root() {
+        Some(root) => root.store_label(),
+        None => format!("{CANONICAL_TARGET_ROOT}/"),
+    }
+}
+
+fn project_cmd(args: &str) -> String {
+    crate::types::managed_cmd(&format!("mars {args}")).into_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,48 +83,57 @@ impl Layout {
         }
     }
 
-    /// The user level: manifest, lock and own items in `config_dir`, the store in `data_dir`.
-    pub fn user(config_dir: impl Into<PathBuf>, data_dir: impl Into<PathBuf>) -> Self {
+    /// The user level: the store is the folder itself, beside the manifest. No store file is
+    /// named like a root file (`mars.toml`, `mars.lock`, `mars.local.toml`, `.mars-src`, the
+    /// curation files, `config.toml`, `curated.toml`), so the two share the folder.
+    pub fn user(dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
         Self {
             kind: RootKind::User,
-            root: config_dir.into(),
-            store: data_dir.into(),
+            root: dir.clone(),
+            store: dir,
         }
     }
 
-    /// The user level at the folders `platform::config` resolves, canonical when they exist.
-    /// Nothing is created. `Err` names the variable to set when a folder cannot be located
-    /// (`platform::config::UNLOCATED_REASON`).
-    pub fn user_level() -> Result<Self, &'static str> {
-        let folder = |dir: Option<PathBuf>, variable: &'static str| {
-            dir.map(|dir| dunce::canonicalize(&dir).unwrap_or(dir))
-                .ok_or(variable)
-        };
-        Ok(Self::user(
-            folder(
-                crate::platform::config::mars_config_dir(),
-                "MARS_CONFIG_DIR",
-            )?,
-            folder(crate::platform::config::mars_data_dir(), "MARS_DATA_DIR")?,
-        ))
+    /// The user level at the folder `platform::home` resolves, canonical when it exists, or
+    /// `None` when it cannot be located. Nothing is created.
+    pub fn user_level() -> Option<Self> {
+        crate::platform::home::mars_home()
+            .map(|dir| Self::user(dunce::canonicalize(&dir).unwrap_or(dir)))
     }
 
     pub fn kind(&self) -> RootKind {
         self.kind
     }
 
-    /// The `root` object every `--json` output carries: which root the command used and, for
-    /// the user level, its config and store folders. Hosts parse it; keep one shape.
+    /// The command `mars <args>` for this root, as a message names it: `mars --user <args>` at
+    /// the user level, through `types::managed_cmd`. A command for a fixed root (`mars --root ~
+    /// unlink`) is written out with `managed_cmd`.
+    pub(crate) fn cmd(&self, args: &str) -> String {
+        match self.kind {
+            RootKind::User => {
+                crate::types::managed_cmd(&format!("mars --user {args}")).into_owned()
+            }
+            RootKind::Project => project_cmd(args),
+        }
+    }
+
+    /// This root's store, as a message names it: `.mars/` in a project, its path at the user
+    /// level, whose store is its folder.
+    pub(crate) fn store_label(&self) -> String {
+        match self.kind {
+            RootKind::User => format!("{}/", self.store.display()),
+            RootKind::Project => format!("{CANONICAL_TARGET_ROOT}/"),
+        }
+    }
+
+    /// The `root` object every `--json` output carries: which root the command used. Hosts
+    /// parse it; keep one shape.
     pub fn root_json(&self) -> serde_json::Value {
-        let mut value = serde_json::json!({
+        serde_json::json!({
             "kind": self.kind.as_str(),
             "path": self.root.to_string_lossy(),
-        });
-        if self.kind == RootKind::User {
-            value["config_dir"] = self.root.to_string_lossy().into();
-            value["store_dir"] = self.store.to_string_lossy().into();
-        }
-        value
+        })
     }
 
     /// The directory the manifest sits in, against which its relative paths (path dependencies,
@@ -124,9 +168,17 @@ impl Layout {
     }
 
     /// The records only this machine has: provided content (`mars provide`) and the targets
-    /// `mars.toml` does not name (`lock::machine`).
-    pub fn machine_lock(&self) -> PathBuf {
-        self.store.join("machine.lock")
+    /// `mars.toml` does not name (`lock::machine`). The user level has neither, so it has no
+    /// such file, and never reads one an old home project left in its folder.
+    pub fn machine_lock(&self) -> Option<PathBuf> {
+        (self.kind == RootKind::Project).then(|| self.store.join("machine.lock"))
+    }
+
+    /// `mars provide`'s record of the skills it copied into the store. A host provides to
+    /// projects, so the user level has none, and never reads one an old home project left in its
+    /// folder.
+    pub fn provided_lock(&self) -> Option<PathBuf> {
+        (self.kind == RootKind::Project).then(|| self.store.join("provided.lock"))
     }
 
     /// The canonical store, the `.mars` target.

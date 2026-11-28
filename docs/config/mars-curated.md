@@ -3,8 +3,9 @@
 Mars can load display-only model curation from three TOML files, in increasing
 precedence:
 
-1. `$MARS_CONFIG_DIR/curated.toml`, or the platform config directory's
-   `mars/curated.toml` when the variable is unset;
+1. `~/.mars/curated.toml` in the [user level](../cli/user-level.md#where-its-files-are)'s
+   folder (`MARS_HOME` moves it; the Mars 0.40 copy in the platform config folder is read, with
+   a warning, while this one is absent);
 2. `<project>/mars.curated.toml` (shareable);
 3. `<project>/mars.curated.local.toml` (gitignored, machine-local).
 

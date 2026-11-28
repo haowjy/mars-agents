@@ -12,6 +12,7 @@ pub mod error;
 pub mod fs;
 pub mod harness;
 pub mod hash;
+pub(crate) mod home_project;
 pub mod hook_run;
 pub(crate) mod layer;
 pub mod layout;

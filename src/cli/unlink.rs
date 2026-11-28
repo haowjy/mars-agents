@@ -26,7 +26,16 @@ pub fn run(args: &UnlinkArgs, ctx: &super::MarsContext, json: bool) -> Result<i3
     let lock_path = mars_dir.join("sync.lock");
     let _sync_lock = crate::fs::FileLock::acquire(&lock_path)?;
 
-    let mut config = crate::config::load(&ctx.layout)?;
+    // What unlink removes is what the lock records, so a root whose manifest is gone (the home
+    // project, moved out of order: `crate::home_project`) is unlinked from its lock alone.
+    let mut config = match crate::config::load(&ctx.layout) {
+        Err(MarsError::Config(crate::error::ConfigError::NotFound { .. }))
+            if ctx.layout.lock().exists() =>
+        {
+            crate::config::Config::default()
+        }
+        loaded => loaded?,
+    };
     let mut local = crate::config::load_local(&ctx.layout)?;
     let mut lock = crate::sync::recovery::load_lock(&ctx.layout)?;
     let mut settings_updated = false;

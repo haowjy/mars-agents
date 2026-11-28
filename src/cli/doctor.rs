@@ -3,7 +3,6 @@
 use crate::diagnostic::{DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::hash;
-use crate::types::managed_cmd;
 
 use super::output;
 
@@ -13,6 +12,13 @@ pub struct DoctorArgs {}
 
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut diag = DiagnosticCollector::new();
+    if ctx.layout.kind() == crate::layout::RootKind::User {
+        check_user_folder(&ctx.layout, &mut diag);
+    }
+    // Read the curation files as `mars models` does, so their problems are reported here too.
+    if let Err(err) = crate::curation::CuratedRules::load(&ctx.layout) {
+        diag.error("curated-error", format!("curation error: {err}"));
+    }
 
     let project_config = match crate::config::load_project_config_layers(&ctx.layout) {
         Ok(loaded) => Some(loaded),
@@ -52,7 +58,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             diag.error(
                 "item-missing",
                 format!(
-                    "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
+                    "{dest_path_str} missing from disk. Run `{}` to reinstall or `{}` to rebuild",
+                    ctx.layout.cmd("sync"),
+                    ctx.layout.cmd("repair"),
                 ),
             );
             continue;
@@ -90,7 +98,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                             "dependency-not-locked",
                             format!(
                                 "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
-                                cmd = managed_cmd("mars sync"),
+                                cmd = ctx.layout.cmd("sync"),
                             ),
                         );
                     }
@@ -128,7 +136,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     format!(
                         "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
                         item.name,
-                        cmd = managed_cmd("mars sync"),
+                        cmd = ctx.layout.cmd("sync"),
                     ),
                 );
             }
@@ -196,7 +204,13 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    let diagnostics = diag.drain();
+    // What this run read outside the root (a home project, a 0.40 config file, a renamed
+    // variable) is part of the diagnosis, not a note after it.
+    let diagnostics: Vec<_> = diag
+        .drain()
+        .into_iter()
+        .chain(crate::diagnostic::take_notices())
+        .collect();
     output::print_doctor(&diagnostics, json);
 
     if diagnostics
@@ -246,9 +260,32 @@ fn check_legacy_agents_directory(
     }
 }
 
+/// The user level's folder: a home project still sharing it, and what an old project store
+/// left in it, which nothing serves or deletes.
+fn check_user_folder(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
+    if crate::home_project::HomeProject::in_user_folder().is_some() {
+        crate::home_project::raise_notice();
+        return;
+    }
+    let leftovers = crate::home_project::store_leftovers(layout);
+    if !leftovers.is_empty() {
+        diag.warn(
+            "old-store-left",
+            format!(
+                "{} holds files the user level did not install, and does not serve or remove: {}. A Mars 0.40 home project's store left them unless they are your own copies: delete them, or move what you want to keep into {}/",
+                layout.root().display(),
+                leftovers.join(", "),
+                layout.local_source().display(),
+            ),
+        );
+    }
+}
+
 fn check_mars_gitignore(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
-    // The user level's store sits in the data folder, beside no repo.
-    if !layout.store().starts_with(layout.root()) || layout.store().symlink_metadata().is_err() {
+    // The user level's store is its own folder, in no repo.
+    if layout.kind() != crate::layout::RootKind::Project
+        || layout.store().symlink_metadata().is_err()
+    {
         return;
     }
 
@@ -296,31 +333,31 @@ impl TargetDivergence {
         if self.overwritten > 0 {
             steps.push(format!(
                 "`{}` overwrites edited agents and skills, so copy any edit you want to keep into its source first",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.kept > 0 {
             steps.push(format!(
                 "run `{}` to reset edited hooks (it resets every diverged item in the project)",
-                managed_cmd("mars sync --force")
+                crate::layout::root_cmd("sync --force")
             ));
         }
         if self.missing > 0 {
             steps.push(format!(
                 "run `{}` to restore missing files",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.wrong_kind > 0 {
             steps.push(format!(
                 "move or delete the items of the wrong kind, then run `{}`",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.unchecked > 0 {
             steps.push(format!(
                 "fix the cause reported above for the items Mars could not check, then run `{}` again",
-                managed_cmd("mars doctor")
+                crate::layout::root_cmd("doctor")
             ));
         }
         (!steps.is_empty()).then(|| format!("target divergence detected; {}", steps.join("; ")))
@@ -438,7 +475,7 @@ fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsErr
                 std::io::ErrorKind::NotFound,
                 format!(
                     "no compiled store yet — run `{}` to create it",
-                    managed_cmd("mars sync")
+                    crate::layout::root_cmd("sync")
                 ),
             ),
         });

@@ -35,7 +35,6 @@ mod unknown;
 mod user;
 
 pub use user::UserConfig;
-pub(crate) use user::moved_warning;
 
 use layering::{ComposedLayers, compose_layers};
 pub use layering::{overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays};
@@ -313,7 +312,7 @@ fn parse_root_config(layout: &Layout, content: &str, path: &Path) -> Result<Conf
     Ok(config)
 }
 
-/// A target at the user level would write harness folders under the Mars config folder, which
+/// A target at the user level would write harness folders under `~/.mars`, which
 /// no harness reads: the user level's items reach harnesses through each project's sync.
 fn refuse_user_targets(
     layout: &Layout,
@@ -588,16 +587,7 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    let moved = user
-        .moved_to
-        .as_ref()
-        .map(|moved_to| user::moved_warning(&user.path, moved_to));
-    let unlocated = user.unlocated.then(user::unlocated_info);
-    unknown_keys
-        .chain(floors)
-        .chain(moved)
-        .chain(unlocated)
-        .collect()
+    unknown_keys.chain(floors).collect()
 }
 
 pub fn load_effective_project_config(layout: &Layout) -> Result<EffectiveProjectConfig, MarsError> {

@@ -23,7 +23,7 @@ pub(crate) enum Layer {
 }
 
 pub(crate) use mars_schema::dependency::{HOST_PREFIX, USER_PREFIX};
-/// The user level's own items (`.mars-src` in the Mars config folder) in a project.
+/// The user level's own items (`~/.mars/.mars-src`) in a project.
 pub(crate) const USER_SELF: &str = "_user-self";
 
 struct Row {

@@ -14,11 +14,12 @@ Mars uses three project files plus an optional user file:
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
-| `<config>/config.toml` | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every root, in the `mars.local.toml` schema | User-owned |
+| `~/.mars/config.toml` | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every root, in the `mars.local.toml` schema | User-owned |
 
-`<config>` is `MARS_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mars`, else `~/.config/mars`. The same
-folder holds the [user level](../cli/user-level.md)'s own `mars.toml` and `mars.lock`: a
-`mars.toml` like a project's, with no `targets`.
+`~/.mars` is the [user level](../cli/user-level.md)'s folder (`MARS_HOME` moves it), which also
+holds its own `mars.toml` and `mars.lock`: a `mars.toml` like a project's, with no `targets`.
+Mars 0.40 kept `config.toml` in the platform config folder; for one minor release Mars still
+reads it there, with a warning to move it ([From Mars 0.40](../cli/user-level.md#where-its-files-are)).
 
 ## Layering and precedence
 
@@ -542,7 +543,7 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 
 ### User config
 
-`<config>/config.toml` (the folder above) takes the sections of `mars.local.toml`
+`~/.mars/config.toml` (the folder above) takes the sections of `mars.local.toml`
 (`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read by every project and by the user
 level. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
 
@@ -674,7 +675,7 @@ Skills carry no tool policy in schema 1, so a skill overlay has no `tools` table
 ## Curated model display
 
 Configure the human `mars models list` view in `mars.curated.toml`,
-`mars.curated.local.toml`, or the user XDG `mars/curated.toml` file. See
+`mars.curated.local.toml`, or the user level's `~/.mars/curated.toml`. See
 [mars-curated.md](mars-curated.md) for the strict schema and merge semantics.
 Curation never affects routing, launch bundles, or alias resolution. Use
 `mars models list --all` to inspect hidden rows; use `mars models aliases`

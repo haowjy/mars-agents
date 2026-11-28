@@ -16,7 +16,7 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **`--root`** sets where Mars starts looking for the project root, the nearest directory holding `mars.toml`. Your home directory is never one.
 
-**The user level** is your own root for what you install for yourself: a manifest and lock in `~/.config/mars/`, a store in `~/.local/share/mars/`, and no targets. `--user` selects it, and commands that only read use it when no project is around. See [cli/user-level.md](cli/user-level.md).
+**The user level** is your own root for what you install for yourself: a manifest, lock and store in `~/.mars/`, and no targets. `--user` selects it, and commands that only read use it when no project is around. See [cli/user-level.md](cli/user-level.md).
 
 **Lock file** (`mars.lock`) records every managed item with its source, version,
 and per-output lifecycle. Lock v3 tracks installed and pending-deletion outputs

@@ -4,7 +4,6 @@
 //! Colors only a terminal, and never when `NO_COLOR` is set.
 
 use std::io::{IsTerminal, Write};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
@@ -461,21 +460,19 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
 
-    if installed == 0
-        && updated == 0
-        && removed == 0
-        && kept == 0
-        && report.dropped_targets.is_empty()
-        && report.pending_targets.is_empty()
-        && native_emitted == 0
-        && native_removed == 0
-        && hook_files == 0
-        && config_files == 0
-        && target_written == 0
-        && target_removed == 0
-        && report.dependency_moves.is_empty()
-        && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
-    {
+    let changed = installed > 0
+        || updated > 0
+        || removed > 0
+        || !report.dropped_targets.is_empty()
+        || !report.pending_targets.is_empty()
+        || native_emitted > 0
+        || native_removed > 0
+        || hook_files > 0
+        || config_files > 0
+        || target_written > 0
+        || target_removed > 0
+        || !report.dependency_moves.is_empty();
+    if !changed && kept == 0 && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date) {
         // `--diff` compares the items and the config entries it previews, not every file a
         // real sync rewrites, so it cannot promise the project is up to date.
         let line = if dry {
@@ -486,7 +483,7 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
-    } else if report.user_level && !dry {
+    } else if report.user_level && changed && !dry {
         let _ = writeln!(
             stdout,
             "  projects install the change on their next `{}`",
@@ -674,19 +671,37 @@ pub fn print_json_pretty<T: Serialize>(value: &T) {
     );
 }
 
+/// An object also gets the run's notices (`diagnostic::take_notices`), appended to its
+/// `diagnostics`; an array has no place for them, so they go to stderr.
 fn with_root<T: Serialize>(value: &T) -> serde_json::Value {
     let mut value = serde_json::to_value(value).unwrap_or_default();
-    if let (serde_json::Value::Object(map), Some(root)) = (&mut value, JSON_ROOT.get()) {
-        map.insert("root".into(), root.clone());
+    let serde_json::Value::Object(map) = &mut value else {
+        return value;
+    };
+    if let Some(root) = crate::layout::run_root() {
+        map.insert("root".into(), root.root_json());
+    }
+    if !matches!(
+        map.get("diagnostics"),
+        None | Some(serde_json::Value::Array(_))
+    ) {
+        return value;
+    }
+    let notices = crate::diagnostic::take_notices();
+    if !notices.is_empty()
+        && let serde_json::Value::Array(diagnostics) = map
+            .entry("diagnostics")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+    {
+        diagnostics.extend(notices.iter().map(|notice| serde_json::json!(notice)));
     }
     value
 }
 
-static JSON_ROOT: OnceLock<serde_json::Value> = OnceLock::new();
-
-/// Called once from dispatch, when the command's root is known.
-pub fn set_json_root(root: serde_json::Value) {
-    let _ = JSON_ROOT.set(root);
+/// Show the notices the run raised and nothing has shown yet (`diagnostic::take_notices`):
+/// called by dispatch when the command is done, and before its error.
+pub fn print_notices() {
+    print_diagnostics(&crate::diagnostic::take_notices(), false);
 }
 
 pub fn print_success(msg: &str) {

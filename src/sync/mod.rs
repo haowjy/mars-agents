@@ -32,7 +32,6 @@ use crate::source::GlobalCache;
 use crate::sync::apply::ApplyResult;
 pub use crate::sync::apply::SyncOptions;
 use crate::sync::target::TargetState;
-use crate::types::managed_cmd;
 use crate::types::{MarsContext, SourceName};
 
 pub(crate) use crate::sync::finalize::finalize;
@@ -701,10 +700,11 @@ pub(crate) fn build_target(
 fn describe_disk_divergence(_: &str, count: usize, names: &str) -> String {
     let plural = if count == 1 { "item" } else { "items" };
     format!(
-        "{count} installed {plural} in `.mars/` diverged from the mars.lock checksum: {names}. \
+        "{count} installed {plural} in `{}` diverged from the mars.lock checksum: {names}. \
          Local content is preserved; run `{}` or `{}` to reset",
-        managed_cmd("mars sync --force"),
-        managed_cmd("mars repair"),
+        crate::layout::store_label(),
+        crate::layout::root_cmd("sync --force"),
+        crate::layout::root_cmd("repair"),
     )
 }
 
@@ -713,14 +713,15 @@ fn describe_disk_divergence(_: &str, count: usize, names: &str) -> String {
 /// reset), and `--force` adopts the second kind.
 fn describe_unmanaged_collisions(source: &str, count: usize, names: &str) -> String {
     let plural = if count == 1 { "path" } else { "paths" };
+    let store = crate::layout::store_label();
     format!(
-        "source `{source}` collides with {count} unmanaged {plural} in `.mars/`: {names}. Existing \
-         content is left untouched. If it is your own copy, move it out of `.mars/` (what you want \
-         to keep belongs in `.mars-src/`). If Mars wrote it and lost track of it, `{}` adopts it, \
-         replacing every colliding path in the project and discarding local edits to managed \
-         items; preview with `{}`",
-        managed_cmd("mars sync --force"),
-        managed_cmd("mars sync --force --diff"),
+        "source `{source}` collides with {count} unmanaged {plural} in `{store}`: {names}. Existing \
+         content is left untouched. If it is your own copy, move it out of `{store}` (what you \
+         want to keep belongs in `.mars-src/`). If Mars wrote it and lost track of it, `{}` adopts \
+         it, replacing every colliding path and discarding local edits to managed items; preview \
+         with `{}`",
+        crate::layout::root_cmd("sync --force"),
+        crate::layout::root_cmd("sync --force --diff"),
     )
 }
 

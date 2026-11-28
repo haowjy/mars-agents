@@ -186,11 +186,6 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     }
     let scope = &routing_settings.harness_scope;
     let rules = CuratedRules::load(&ctx.layout)?;
-    if let Some(warning) = &rules.old_copy
-        && !json
-    {
-        output::print_diagnostics(std::slice::from_ref(warning), false);
-    }
     let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = match catalog(
         ctx,

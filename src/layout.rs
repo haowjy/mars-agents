@@ -29,6 +29,37 @@ impl RootKind {
     }
 }
 
+/// The root this run acts on: one per CLI run, set once its root is known.
+static RUN_ROOT: std::sync::OnceLock<Layout> = std::sync::OnceLock::new();
+
+/// Called once by the CLI, when the run's root is known.
+pub fn set_run_root(layout: &Layout) {
+    let _ = RUN_ROOT.set(layout.clone());
+}
+
+/// The root this run acts on, once known.
+pub(crate) fn run_root() -> Option<&'static Layout> {
+    RUN_ROOT.get()
+}
+
+/// The command `mars <args>` for the root this run acts on, as a message names it: `mars --user
+/// <args>` at the user level, through `types::managed_cmd`. A command for a fixed root (`mars
+/// --user sync` from a project, `mars --root ~ unlink`) is written out with `managed_cmd`.
+pub(crate) fn root_cmd(args: &str) -> String {
+    let user = run_root().is_some_and(|root| root.kind == RootKind::User);
+    let flag = if user { " --user" } else { "" };
+    crate::types::managed_cmd(&format!("mars{flag} {args}")).into_owned()
+}
+
+/// The store of the root this run acts on, as a message names it: `.mars/` in a project, its
+/// path at the user level, whose store is its folder.
+pub(crate) fn store_label() -> String {
+    match run_root() {
+        Some(root) if root.kind == RootKind::User => format!("{}/", root.store.display()),
+        _ => format!("{CANONICAL_TARGET_ROOT}/"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     kind: RootKind,

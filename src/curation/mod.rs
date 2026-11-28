@@ -80,8 +80,6 @@ impl CuratedView {
 #[derive(Debug, Clone, Default)]
 pub struct CuratedRules {
     tiers: Vec<Tier>,
-    /// The warning about the user tier's copy where Mars 0.40 kept it, when there is one.
-    pub old_copy: Option<crate::diagnostic::Diagnostic>,
 }
 
 /// Reusable literal/full-launch context for deciding many rows in one pass.
@@ -269,13 +267,7 @@ impl CuratedRules {
     pub fn load(layout: &crate::layout::Layout) -> Result<Self, MarsError> {
         // No user tier when the user folder cannot be located; the user config's load says so.
         let user = crate::platform::home::user_file("curated.toml");
-        let mut rules = Self::load_paths(
-            user.as_ref().map(|file| file.path.as_path()),
-            &layout.curated(),
-            &layout.curated_local(),
-        )?;
-        rules.old_copy = user.as_ref().and_then(crate::config::old_copy_warning);
-        Ok(rules)
+        Self::load_paths(user.as_deref(), &layout.curated(), &layout.curated_local())
     }
 
     fn load_paths(user: Option<&Path>, project: &Path, local: &Path) -> Result<Self, MarsError> {
@@ -291,10 +283,7 @@ impl CuratedRules {
             Err(error) => Some(Err(error)),
         })
         .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            tiers,
-            old_copy: None,
-        })
+        Ok(Self { tiers })
     }
 
     fn reachable(&self) -> &[Tier] {

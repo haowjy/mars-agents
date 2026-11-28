@@ -79,6 +79,54 @@ impl Diagnostic {
     }
 }
 
+/// A notice about state outside the root a run acts on (a renamed variable, a file at a path
+/// Mars 0.40 used, the home project): raised where that state is read, whichever command reads
+/// it, and shown once per run by the CLI (`cli::output`), in `--json` output as a diagnostic.
+enum Notice {
+    Ready(Diagnostic),
+    /// Built when shown, so it describes the state the run leaves, not the state it found.
+    Deferred {
+        code: &'static str,
+        build: fn() -> Option<Diagnostic>,
+    },
+}
+
+static NOTICES: std::sync::Mutex<Vec<Notice>> = std::sync::Mutex::new(Vec::new());
+
+/// Raise `notice` for this run; a second identical one is dropped.
+pub(crate) fn raise_notice(notice: Diagnostic) {
+    let mut notices = NOTICES.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !notices
+        .iter()
+        .any(|seen| matches!(seen, Notice::Ready(seen) if *seen == notice))
+    {
+        notices.push(Notice::Ready(notice));
+    }
+}
+
+/// Raise the notice `build` makes when the run's notices are shown; one per `code`.
+pub(crate) fn raise_deferred_notice(code: &'static str, build: fn() -> Option<Diagnostic>) {
+    let mut notices = NOTICES.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !notices
+        .iter()
+        .any(|seen| matches!(seen, Notice::Deferred { code: seen, .. } if *seen == code))
+    {
+        notices.push(Notice::Deferred { code, build });
+    }
+}
+
+/// The notices raised so far, each returned once.
+pub fn take_notices() -> Vec<Diagnostic> {
+    let notices = std::mem::take(&mut *NOTICES.lock().unwrap_or_else(|poison| poison.into_inner()));
+    notices
+        .into_iter()
+        .filter_map(|notice| match notice {
+            Notice::Ready(diagnostic) => Some(diagnostic),
+            Notice::Deferred { build, .. } => build(),
+        })
+        .collect()
+}
+
 /// Who wrote what a problem is about, and so who can fix it: the project's own file is the
 /// user's to change; a dependency's is its author's. When nothing the package declares is lost,
 /// a finding in a dependency's file is `Info` to the installer and a `Warning` to its author.

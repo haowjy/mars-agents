@@ -213,7 +213,7 @@ pub enum Command {
 pub fn dispatch(cli: Cli) -> i32 {
     let json = cli.json;
     output::set_json_mode(json);
-    match dispatch_result(cli) {
+    let code = match dispatch_result(cli) {
         Ok(code) => code,
         Err(err) => {
             let cause = err.root_cause();
@@ -241,23 +241,27 @@ pub fn dispatch(cli: Cli) -> i32 {
                 }
                 output::print_json(&payload);
             } else {
+                output::print_notices();
                 output::print_diagnostics(err.diagnostics(), false);
                 eprintln!("error: {cause}");
             }
             if !json && matches!(cause, MarsError::Lock(LockError::Corrupt { .. })) {
                 eprintln!(
                     "hint: run `{}` to rebuild from mars.toml + dependencies",
-                    managed_cmd("mars repair")
+                    crate::layout::root_cmd("repair")
                 );
             }
             err.exit_code()
         }
-    }
+    };
+    output::print_notices();
+    code
 }
 
 fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
+    let shape = Shape::of(&cli.command);
     if cli.user
-        && let Some(reason) = refused_at_user_level(&cli.command)
+        && let Some(reason) = shape.not_at_user_level
     {
         return Err(MarsError::Config(ConfigError::Invalid {
             message: format!("`--user` cannot be used here: {reason}"),
@@ -265,7 +269,6 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     }
     let user = cli.user.then(MarsContext::user).transpose()?;
     match &cli.command {
-        // Root-free commands resolve their own root, because it is theirs to check.
         Command::Init(args) => init::run(args, cli.root.as_deref(), cli.json),
         Command::Check(args) => check::run(args, cli.root.as_deref(), cli.json),
         Command::Cache(args) => cache::run(args, cli.json),
@@ -282,39 +285,32 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
             } else {
                 match find_agents_root(cli.root.as_deref()) {
                     Ok(ctx) => ctx,
-                    Err(err) if is_project_not_found(&err) && is_lookup(cmd) => {
-                        match MarsContext::user() {
+                    Err(err) if is_project_not_found(&err) => match shape.without_project {
+                        WithoutProject::UserLevel => match MarsContext::user() {
                             Ok(user) => user,
                             // No user level can be located: the lookup runs in place, where no
                             // project is, as an ad-hoc launch bundle did before the user level.
                             Err(_) => in_place()?,
+                        },
+                        WithoutProject::InitsProject => {
+                            let initialized = init::initialize_project(cli.root.as_deref(), None)?;
+                            if !cli.json {
+                                output::print_info(&format!(
+                                    "auto-initialized {} with mars.toml",
+                                    initialized.project_root.display()
+                                ));
+                            }
+                            MarsContext::new(initialized.project_root.clone())?
                         }
-                    }
-                    Err(err) if is_project_not_found(&err) && auto_inits_project(cmd) => {
-                        let initialized = init::initialize_project(cli.root.as_deref(), None)?;
-                        if !cli.json {
-                            output::print_info(&format!(
-                                "auto-initialized {} with mars.toml",
-                                initialized.project_root.display()
-                            ));
-                        }
-                        MarsContext::new(initialized.project_root.clone())?
-                    }
-                    Err(err) if is_project_not_found(&err) && runs_in_place(cmd) => in_place()?,
+                        WithoutProject::InPlace => in_place()?,
+                        WithoutProject::Fails | WithoutProject::OwnRoot => return Err(err),
+                    },
                     Err(err) => return Err(err),
                 }
             };
-            output::set_json_root(ctx.layout.root_json());
-            if ctx.layout.kind() == crate::layout::RootKind::User
-                && writes_root(cmd)
-                && let Some(home) = crate::home_project::HomeProject::in_user_folder()
-            {
-                return Err(MarsError::Config(ConfigError::Invalid {
-                    message: format!(
-                        "the user level cannot be written: {}",
-                        home.blocks_user_level()
-                    ),
-                }));
+            crate::layout::set_run_root(&ctx.layout);
+            if shape.effect == Effect::Writes {
+                refuse_shared_folder_write(&ctx.layout)?;
             }
             if fallback_root(cmd).is_some() {
                 output::warn(
@@ -335,6 +331,24 @@ fn dispatch_result(cli: Cli) -> Result<i32, MarsError> {
     }
 }
 
+/// The user level and the home project share `~/.mars` until the home project is moved: a write
+/// to either could take the other's files as its own. The user level is refused every write
+/// while the home project is there, and the home project every write but `unlink`.
+fn refuse_shared_folder_write(layout: &crate::layout::Layout) -> Result<(), MarsError> {
+    use crate::home_project::HomeProject;
+    let refusal = if layout.kind() == crate::layout::RootKind::User {
+        HomeProject::in_user_folder().map(|home| home.blocks_user_level())
+    } else if crate::home_project::is_home_project(layout) {
+        HomeProject::find().map(|home| home.refuses_writes())
+    } else {
+        None
+    };
+    match refusal {
+        Some(message) => Err(MarsError::Config(ConfigError::Invalid { message })),
+        None => Ok(()),
+    }
+}
+
 fn is_project_not_found(err: &MarsError) -> bool {
     matches!(
         err,
@@ -342,55 +356,106 @@ fn is_project_not_found(err: &MarsError) -> bool {
     )
 }
 
-/// Commands that only read installed items: with no project, they read the user level. A command
-/// that writes needs a project, or `--user` to say the user level is meant; `models alias`
-/// writes `mars.toml`. The model catalog is a shared cache, not a root's, so a refresh counts
-/// as a lookup.
-fn is_lookup(cmd: &Command) -> bool {
-    matches!(
-        cmd,
-        Command::Build(build::BuildArgs {
-            command: build::BuildCommand::LaunchBundle(_)
-        }) | Command::Agents(_)
-            | Command::Skills(_)
-            | Command::List(_)
-            | Command::Why(_)
-    ) || matches!(cmd, Command::Models(args) if !matches!(args.command, models::ModelsCommand::Alias(_)))
+/// What a command does with a root: the one place each command is placed, so a new one must be.
+struct Shape {
+    effect: Effect,
+    without_project: WithoutProject,
+    /// Why the command has no meaning at the user level, refusing `--user`.
+    not_at_user_level: Option<String>,
 }
 
-/// Commands that write the root's manifest, lock, own items or store. Every command is placed,
-/// so a new one must be: the user level refuses these while an old home project holds its
-/// folder (`crate::home_project`).
-fn writes_root(cmd: &Command) -> bool {
-    match cmd {
-        Command::Add(_)
-        | Command::Adopt(_)
-        | Command::Remove(_)
-        | Command::Sync(_)
-        | Command::Upgrade(_)
-        | Command::Rename(_)
-        | Command::Resolve(_)
-        | Command::Override(_)
-        | Command::Repair(_)
-        | Command::Init(_)
-        | Command::Link(_)
-        | Command::Unlink(_)
-        | Command::Provide(_)
-        | Command::Version(_) => true,
-        Command::Models(args) => matches!(args.command, models::ModelsCommand::Alias(_)),
-        Command::Build(args) => matches!(args.command, build::BuildCommand::Plugin(_)),
-        Command::Outdated(_)
-        | Command::List(_)
-        | Command::Why(_)
-        | Command::Validate(_)
-        | Command::Export(_)
-        | Command::Check(_)
-        | Command::Doctor(_)
-        | Command::Cache(_)
-        | Command::Agents(_)
-        | Command::Skills(_)
-        | Command::Hook(_) => false,
+/// What a command does to the root it runs against.
+#[derive(PartialEq, Eq)]
+enum Effect {
+    /// Writes no root file. A model catalog refresh writes a shared cache, not a root's.
+    Reads,
+    /// Removes a target's outputs and records, and nothing its lock does not record: what the
+    /// home project is opened for.
+    Unlinks,
+    /// Writes the root's manifest, lock, own items or store.
+    Writes,
+}
+
+/// Where a command runs when no project is found.
+enum WithoutProject {
+    /// It resolves its own root, or needs none: dispatched before a root is looked for.
+    OwnRoot,
+    /// It needs a project, or `--user` to say the user level is meant.
+    Fails,
+    /// It reads the user level: a lookup of installed items.
+    UserLevel,
+    /// It initializes a project where it runs.
+    InitsProject,
+    /// It runs in place: a plugin build of an explicit package path needs no project around it.
+    InPlace,
+}
+
+impl Shape {
+    fn of(cmd: &Command) -> Self {
+        use Effect::{Reads, Unlinks, Writes};
+        use WithoutProject::{Fails, InPlace, InitsProject, OwnRoot, UserLevel};
+        let authors = || Some("it authors a package, which the user level is not".to_string());
+        let (effect, without_project, not_at_user_level) = match cmd {
+            Command::Init(_) => (Writes, OwnRoot, Some(init::user_level_needs_no_init())),
+            Command::Check(_) => (
+                Reads,
+                OwnRoot,
+                Some("it checks a package you are authoring, which the user level is not".into()),
+            ),
+            Command::Provide(_) => (
+                Writes,
+                OwnRoot,
+                Some("a host's content is provided to projects, not the user level".into()),
+            ),
+            Command::Cache(_) | Command::Hook(_) => (Reads, OwnRoot, None),
+            Command::Link(_) => (Writes, InitsProject, no_targets()),
+            Command::Unlink(_) => (Unlinks, Fails, no_targets()),
+            Command::Add(_) => (Writes, InitsProject, None),
+            Command::Version(_) => (Writes, Fails, authors()),
+            Command::Adopt(_)
+            | Command::Remove(_)
+            | Command::Sync(_)
+            | Command::Upgrade(_)
+            | Command::Rename(_)
+            | Command::Resolve(_)
+            | Command::Override(_)
+            | Command::Repair(_) => (Writes, Fails, None),
+            Command::Outdated(_)
+            | Command::Validate(_)
+            | Command::Export(_)
+            | Command::Doctor(_) => (Reads, Fails, None),
+            Command::List(_) | Command::Why(_) | Command::Agents(_) | Command::Skills(_) => {
+                (Reads, UserLevel, None)
+            }
+            Command::Models(args) => match args.command {
+                models::ModelsCommand::RefreshCatalog(_) => (Reads, OwnRoot, None),
+                // It writes `mars.toml`.
+                models::ModelsCommand::Alias(_) => (Writes, Fails, None),
+                _ => (Reads, UserLevel, None),
+            },
+            Command::Build(args) => match &args.command {
+                build::BuildCommand::LaunchBundle(_) => (Reads, UserLevel, None),
+                build::BuildCommand::Plugin(plugin) => (
+                    Writes,
+                    if plugin.path.is_some() {
+                        InPlace
+                    } else {
+                        Fails
+                    },
+                    authors(),
+                ),
+            },
+        };
+        Self {
+            effect,
+            without_project,
+            not_at_user_level,
+        }
     }
+}
+
+fn no_targets() -> Option<String> {
+    Some("the user level has no targets; its items are installed by each project's sync".into())
 }
 
 fn fallback_root(cmd: &Command) -> Option<&Path> {
@@ -402,38 +467,6 @@ fn fallback_root(cmd: &Command) -> Option<&Path> {
         }) => args.fallback_root.as_deref(),
         _ => None,
     }
-}
-
-fn auto_inits_project(cmd: &Command) -> bool {
-    matches!(cmd, Command::Add(_) | Command::Link(_))
-}
-
-/// A plugin build of an explicit package path needs no project around it.
-fn runs_in_place(cmd: &Command) -> bool {
-    matches!(
-        cmd,
-        Command::Build(build::BuildArgs {
-            command: build::BuildCommand::Plugin(build::PluginArgs { path: Some(_), .. })
-        })
-    )
-}
-
-/// Why a command has no meaning at the user level, or `None` when `--user` applies to it.
-fn refused_at_user_level(cmd: &Command) -> Option<String> {
-    let reason = match cmd {
-        Command::Init(_) => return Some(init::user_level_needs_no_init()),
-        Command::Link(_) | Command::Unlink(_) => {
-            "the user level has no targets; its items are installed by each project's sync"
-        }
-        Command::Provide(_) => "a host's content is provided to projects, not the user level",
-        Command::Check(_) => "it checks a package you are authoring, which the user level is not",
-        Command::Version(_)
-        | Command::Build(build::BuildArgs {
-            command: build::BuildCommand::Plugin(_),
-        }) => "it authors a package, which the user level is not",
-        _ => return None,
-    };
-    Some(reason.to_string())
 }
 
 fn dispatch_with_root(
@@ -552,8 +585,8 @@ pub fn is_symlink(path: &Path) -> bool {
 ///
 /// The home directory is never a project by walk-up: its `mars.toml` was the user level before
 /// Mars had one. For one minor release (`.context/TODO`) a `--root` naming home exactly still
-/// opens it, so an older host keeps working and the user can `unlink` its targets; each time
-/// the walk-up meets one, it warns how to move it.
+/// opens it (its `mars.toml` or, once that is gone, its `mars.lock`: `crate::home_project`) to
+/// read it and to `unlink` its targets; each run that meets one ends with how to move it.
 pub fn find_agents_root(explicit: Option<&Path>) -> Result<MarsContext, MarsError> {
     let start = if let Some(root) = explicit {
         if let Some(basename) = root.file_name().and_then(|f| f.to_str())
@@ -598,14 +631,15 @@ fn find_agents_root_from(
         if Some(dir) == user_root {
             return MarsContext::user();
         }
-        if crate::layout::Layout::project(dir).manifest().exists() {
-            if Some(dir) != home {
-                return MarsContext::new(dir.to_path_buf());
+        if Some(dir) == home {
+            if crate::home_project::holds_project(dir) {
+                crate::home_project::raise_notice();
+                if explicit && dir == start_canon {
+                    return MarsContext::new(dir.to_path_buf());
+                }
             }
-            warn_home_project();
-            if explicit && dir == start_canon {
-                return MarsContext::new(dir.to_path_buf());
-            }
+        } else if crate::layout::Layout::project(dir).manifest().exists() {
+            return MarsContext::new(dir.to_path_buf());
         }
 
         match dir.parent() {
@@ -618,22 +652,6 @@ fn find_agents_root_from(
         start: start.to_path_buf(),
         refusal: init::no_project_in(&start_canon, home, user_root),
     }))
-}
-
-/// The walk-up passed the home project's manifest: say how to move it.
-fn warn_home_project() {
-    let Some(home) = crate::home_project::HomeProject::find() else {
-        return;
-    };
-    output::warn(
-        "home-project",
-        format!(
-            "your home directory is a project ({}), which Mars no longer uses: {} \
-             (a later Mars stops reading it; see https://github.com/haowjy/mars-agents/blob/main/docs/cli/user-level.md)",
-            home.files(),
-            home.steps(),
-        ),
-    );
 }
 
 #[cfg(test)]

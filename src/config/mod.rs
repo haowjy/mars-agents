@@ -35,7 +35,6 @@ mod unknown;
 mod user;
 
 pub use user::UserConfig;
-pub(crate) use user::old_copy_warning;
 
 use layering::{ComposedLayers, compose_layers};
 pub use layering::{overlay_agent_overlays, overlay_models_replace_by_key, overlay_skill_overlays};
@@ -588,10 +587,7 @@ fn project_config_diagnostics(
     ]
     .into_iter()
     .filter_map(|(file, floor, stated)| floor_warning(file, floor, stated));
-    unknown_keys
-        .chain(floors)
-        .chain(user.notices.iter().cloned())
-        .collect()
+    unknown_keys.chain(floors).collect()
 }
 
 pub fn load_effective_project_config(layout: &Layout) -> Result<EffectiveProjectConfig, MarsError> {

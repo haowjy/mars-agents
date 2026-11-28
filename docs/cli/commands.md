@@ -693,6 +693,9 @@ Checks:
 - Agent skill references: every declared skill dependency exists on disk
 - Targets the sync does not manage (a retired one the config still names): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
+- Curation files: `mars.curated.toml`, `mars.curated.local.toml` and the user `curated.toml` parse
+- What the run read outside the root: a user `config.toml` or `curated.toml` still at the Mars 0.40 location, a set `MARS_CONFIG_DIR`, a home project (with the steps left to move it)
+- At the user level (`--user`): files in `~/.mars` that the user `mars.lock` does not record (an old home project's store), named so you can delete them
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
 Exit code 0 = healthy, 2 = an error was found. A skill an Agent names that is not installed is the same warning (`missing-skill`) here as in `mars sync` and `mars validate`; it does not fail the check. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).

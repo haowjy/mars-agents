@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 
+use crate::diagnostic::Diagnostic;
+
 /// The variable that names the user folder.
 pub const HOME_VARIABLE: &str = "MARS_HOME";
 
@@ -14,33 +16,37 @@ pub const HOME_VARIABLE: &str = "MARS_HOME";
 /// `MARS_HOME` when that is unset (`src/config/.context/CONTEXT.md`).
 pub const RENAMED_VARIABLE: &str = "MARS_CONFIG_DIR";
 
-/// The user folder, absolute, or `None` with no absolute home and no variable set.
+/// The user folder, absolute, or `None` with no absolute home and no variable set. A set
+/// `MARS_CONFIG_DIR` raises its rename notice here, where it is read.
 pub fn mars_home() -> Option<PathBuf> {
-    if let Some(dir) = env_dir(HOME_VARIABLE).or_else(|| env_dir(RENAMED_VARIABLE)) {
+    let own = env_dir(HOME_VARIABLE);
+    if env_dir(RENAMED_VARIABLE).is_some() {
+        let message = if own.is_some() {
+            format!("{RENAMED_VARIABLE} is ignored because {HOME_VARIABLE} is set; unset it")
+        } else {
+            format!(
+                "{RENAMED_VARIABLE} is deprecated: rename it {HOME_VARIABLE} (a later Mars stops reading it)"
+            )
+        };
+        crate::diagnostic::raise_notice(Diagnostic::warning("mars-config-dir-renamed", message));
+    }
+    if let Some(dir) = own.or_else(|| env_dir(RENAMED_VARIABLE)) {
         return Some(std::path::absolute(&dir).unwrap_or(dir));
     }
     canonical_home().map(|home| home.join(".mars"))
 }
 
-/// What the user should hear about `MARS_CONFIG_DIR`: `Some(true)` when it names the user folder
-/// (`MARS_HOME` is unset), `Some(false)` when `MARS_HOME` overrides it, `None` when it is unset.
-pub fn renamed_variable_in_use() -> Option<bool> {
-    env_dir(RENAMED_VARIABLE).map(|_| env_dir(HOME_VARIABLE).is_none())
-}
-
 /// A user file (`config.toml`, `curated.toml`) in the user folder.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserFile {
+struct UserFile {
     /// The file to read.
-    pub path: PathBuf,
+    path: PathBuf,
     /// A copy where Mars 0.40 read it, when there is one.
-    pub old: Option<OldCopy>,
+    old: Option<OldCopy>,
 }
 
 /// The copy of a user file at the Mars 0.40 location (`dirs::config_dir()/mars`). It is read for
 /// one minor release while the user folder has none (`src/config/.context/CONTEXT.md`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OldCopy {
+enum OldCopy {
     /// `UserFile::path` is the old copy; it belongs at `to`.
     Read { to: PathBuf },
     /// The user folder's copy is read; this one, at the old location, is not.
@@ -49,8 +55,17 @@ pub enum OldCopy {
 
 /// The user file `name`, or `None` when the user folder cannot be located. Only the default
 /// folder has an old copy: a variable names the whole folder, and `MARS_CONFIG_DIR` is still read
-/// as the folder where 0.40 found the file.
-pub fn user_file(name: &str) -> Option<UserFile> {
+/// as the folder where 0.40 found the file. An old copy raises its notice here, where the file
+/// to read is chosen.
+pub fn user_file(name: &str) -> Option<PathBuf> {
+    let file = locate_user_file(name)?;
+    if let Some(notice) = file.old_copy_notice() {
+        crate::diagnostic::raise_notice(notice);
+    }
+    Some(file.path)
+}
+
+fn locate_user_file(name: &str) -> Option<UserFile> {
     let path = mars_home()?.join(name);
     let old = (env_dir(HOME_VARIABLE).is_none() && env_dir(RENAMED_VARIABLE).is_none())
         .then(|| dirs::config_dir().map(|dir| dir.join("mars").join(name)))
@@ -67,6 +82,25 @@ pub fn user_file(name: &str) -> Option<UserFile> {
             old: Some(OldCopy::Read { to: path }),
         },
     })
+}
+
+impl UserFile {
+    /// What the user should do about the copy at the Mars 0.40 location, if there is one.
+    fn old_copy_notice(&self) -> Option<Diagnostic> {
+        let message = match self.old.as_ref()? {
+            OldCopy::Read { to } => format!(
+                "read {}, where Mars 0.40 kept it: move it to {} (a later Mars stops reading the old path)",
+                self.path.display(),
+                to.display()
+            ),
+            OldCopy::Ignored { old } => format!(
+                "{} is ignored: Mars reads {} instead; delete the old one",
+                old.display(),
+                self.path.display()
+            ),
+        };
+        Some(Diagnostic::warning("user-config-moved", message))
+    }
 }
 
 /// The home directory, canonical so a symlinked `/home` still compares equal.

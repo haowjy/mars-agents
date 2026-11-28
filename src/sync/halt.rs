@@ -124,7 +124,7 @@ pub(super) fn build_recovery_halt(
     RecoveryHalt {
         persisted,
         blockers,
-        next_step: format!("then run `{}`", managed_cmd("mars sync")),
+        next_step: format!("then run `{}`", crate::layout::root_cmd("sync")),
     }
 }
 

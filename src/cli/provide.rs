@@ -71,8 +71,8 @@ fn print_report(report: &ProvideReport) {
             "provide-sync-pending",
             format!(
                 "an interrupted `{}` left `.mars/pending-canonical.json`; run `{}` to recover before refreshing {}@{}",
-                crate::types::managed_cmd("mars sync"),
-                crate::types::managed_cmd("mars repair"),
+                crate::layout::root_cmd("sync"),
+                crate::layout::root_cmd("repair"),
                 report.provider,
                 report.version
             ),

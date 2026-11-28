@@ -11,18 +11,20 @@ and surface ownership (`resolve_copy`; see
 
 ## Project resolution
 
-How `mars` decides the root for a command. `--user` forces the user level
-(`MarsContext::user`, `Layout::user`); a command with no meaning there is refused first
-(`refused_at_user_level`). Otherwise `find_agents_root` and `find_agents_root_from` walk up from
-the working directory or `--root` looking for `mars.toml`, with no git boundary, and skip the
-home directory. `dispatch_result` then applies its `Err` arms (`is_lookup`,
-`auto_inits_project`, `runs_in_place`), and the root it chose goes to
-`output::set_json_root`, so every JSON object names it.
+How `mars` decides the root for a command. Each command is placed once, in `Shape::of`: what it
+does to a root (`Effect`: reads, unlinks, writes), where it runs with no project
+(`WithoutProject`), and why `--user` has no meaning for it. `--user` forces the user level
+(`MarsContext::user`, `Layout::user`) unless the shape refuses it. Otherwise `find_agents_root`
+and `find_agents_root_from` walk up from the working directory or `--root` looking for
+`mars.toml`, with no git boundary, and skip the home directory. `dispatch_result` then applies
+the shape's `WithoutProject`, and the root it chose goes to `layout::set_run_root`: every JSON
+object names it, and `layout::root_cmd` writes "the command for this root" (`mars --user sync`
+at the user level) in every message.
 
 ```mermaid
 stateDiagram-v2
   [*] --> UserLevel: --user, command allowed there
-  [*] --> Refused: --user with init, link, unlink, provide, version, build plugin
+  [*] --> Refused: --user with init, check, link, unlink, provide, version, build plugin
   [*] --> Searching: walk up from cwd or --root looking for mars.toml
   Searching --> Searching: dir is home: warn, skip (unless it is exactly --root)
   Searching --> Found: mars.toml exists, a MarsContext is built
@@ -49,12 +51,17 @@ stateDiagram-v2
   shares; `init::no_project_in` is the one rule, and `ProjectRootNotFound` carries its refusal
   so the error names `mars init` only where a project can start. A home project's store is
   `~/.mars`, the user level's folder unless `MARS_HOME` moves it, so while home holds
-  `mars.toml` or `mars.lock` the folder is that project's (`crate::home_project`): `dispatch_result`
-  refuses every command `writes_root` places as a write at the user level, a project sync skips
-  the user layer (`sync::layers`), and `mars --user doctor` warns. All of them, and the walk-up's
-  warning, give `HomeProject::steps`, built from what exists and in the order a shared folder
-  needs: the unlinks (one per target the manifest names), deleting `~/mars.lock` and the old store
-  files, moving the manifest in, moving `~/.mars-src/`, `mars --user sync`. A user who wrote the
+  `mars.toml` or `mars.lock` (either one: `home_project::holds_project`, used by the walk-up
+  and every guard) the folder is that project's (`crate::home_project`). The guard is both
+  ways (`refuse_shared_folder_write`): a `Writes` command is refused at the user level, and at
+  the home project, which `--root ~` opens only for `Reads` and `Unlinks` (another write could
+  adopt the user level's files and later delete them as orphans). A project sync skips the user
+  layer (`sync::layers`). Each of them raises the one deferred `home-project` notice, built when
+  the run ends (an `unlink` drops its own step), from what exists and in the order a shared folder
+  needs: the unlinks (one per target the lock records; `unlink` runs from the lock alone once the
+  manifest is gone), deleting `~/mars.lock` and the old store files (`store_leftovers`, which
+  `mars --user doctor` also lists), moving the manifest in, moving `~/.mars-src/`, `mars --user
+  sync`. A user who wrote the
   user `mars.toml` first must still be told to move `~/.mars-src/`, or their own items never
   reach the user level.
 - A lookup in a project-less directory must create nothing: the user level's folder appears

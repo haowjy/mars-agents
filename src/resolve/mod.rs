@@ -84,7 +84,9 @@ pub fn resolve(
                 {
                     MarsError::FrozenViolation {
                         message: format!(
-                            "locked commit {commit} is no longer reachable in {url} (the tag may have been force-pushed); run `mars sync` without --frozen to re-resolve it, or `mars upgrade` to move to the newest version"
+                            "locked commit {commit} is no longer reachable in {url} (the tag may have been force-pushed); run `{}` without --frozen to re-resolve it, or `{}` to move to the newest version",
+                            crate::layout::root_cmd("sync"),
+                            crate::layout::root_cmd("upgrade"),
                         ),
                     }
                 }

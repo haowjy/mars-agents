@@ -149,18 +149,20 @@ command run from home that finds no project names only `--user`.
 ### Moving a home project
 
 Before the user level, a `~/mars.toml` was how people installed for themselves. Its store is
-`~/.mars/`, the folder the user level now uses. Mars no longer opens it by walk-up, and warns
-whenever the walk-up passes one.
+`~/.mars/`, the folder the user level now uses. Mars no longer opens it by walk-up.
 
-While `~/mars.toml` or `~/mars.lock` exists, `~/.mars` holds that project's files, so the user
-level is not written there: every write with `--user` (`sync`, `add`, `remove`, `upgrade`, …)
-fails, a project's sync installs no user level (with a warning), and `mars --user doctor` warns.
-Each names the steps still left. To move it:
+While `~/mars.toml` or `~/mars.lock` exists, home holds that project and `~/.mars` holds its
+files, so the user level is not written there: every write with `--user` (`sync`, `add`,
+`remove`, `upgrade`, …) fails, and a project's sync installs no user level. Any command that
+meets the home project (a walk-up that passes home, `--root ~`, a project sync, `--user doctor`,
+a refused write) ends with one `home-project` warning listing the steps still left, after the
+command has run; under `--json` it is in `diagnostics`. To move it:
 
-1. Run `mars --root ~ unlink <target>` for each target `~/mars.toml` names, which removes what
-   Mars installed there.
-2. Delete `~/mars.lock` and the old store's files in `~/.mars/` (all generated; keep any
-   `config.toml`, `curated.toml`, `mars.toml` and `.mars-src/` you already moved in).
+1. Run `mars --root ~ unlink <target>` for each target `~/mars.lock` records, which removes what
+   Mars installed there. This works from the lock alone if `~/mars.toml` is already gone.
+2. Delete `~/mars.lock` and the old store's files in `~/.mars/` (all generated; the warning names
+   them, and keeps any `config.toml`, `curated.toml`, `mars.toml` and `.mars-src/` you already
+   moved in).
 3. Move `~/mars.toml` to `~/.mars/mars.toml` and delete its `targets` line (or merge it into the
    `~/.mars/mars.toml` you have). A path dependency written relative to `~` must be rewritten
    relative to `~/.mars`, or as an absolute path.
@@ -168,13 +170,14 @@ Each names the steps still left. To move it:
 5. Run `mars --user sync`.
 
 A file in `~/.mars` that the user `mars.lock` does not record is not the user level's: a user
-sync does not delete it, and replaces it only with `--force` (without, it warns that the path is
-taken, as in a project); lookups do not serve it. The user level reads no `machine.lock` or `provided.lock` there. A home project
-opened with `--root ~` deletes only what its own lock records.
+sync does not delete it, and replaces it only with `mars --user sync --force` (without, it warns
+that the path is taken, as in a project); lookups do not serve it, and `mars --user doctor` lists
+it. The user level reads no `machine.lock` or `provided.lock` there.
 
-For this minor release, `--root` naming the home directory exactly still opens it as a project,
-with the same warning, so step 1 works and an older Meridian that passes `--root ~` keeps
-working. The next minor release refuses it.
+For this minor release, `--root` naming the home directory exactly still opens it, but only to
+read it and to `unlink` its targets: any other write (`sync`, `add`, `link`, `repair`, …) is
+refused, since it could adopt the user level's files in `~/.mars` and later delete them as its
+own. The next minor release refuses `--root ~` entirely.
 
 ## `--fallback-root`
 `mars agents`, `mars skills` and `mars build launch-bundle` still accept `--fallback-root`, a

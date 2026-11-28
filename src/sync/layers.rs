@@ -53,12 +53,9 @@ pub(crate) fn load(
     diag: &mut DiagnosticCollector,
 ) -> Result<Layers, MarsError> {
     let mut layers = Layers::default();
-    // The user level is the layer, not something it pulls in; and the home project (opened by
-    // `--root ~` for one minor, to clean up) is where the user level used to be, so pulling the
-    // user level into it would write it to the harness user folders again.
-    if layout.kind() == crate::layout::RootKind::Project
-        && Some(layout.root()) != crate::platform::home::canonical_home().as_deref()
-    {
+    // The user level is the layer, not something it pulls in. The home project, where the user
+    // level used to be, never syncs: `--root ~` opens it only to unlink (`crate::home_project`).
+    if layout.kind() == crate::layout::RootKind::Project {
         user_layer(&mut layers, diag)?;
     }
     if crate::provided::takes_provided_any(managed_targets) {
@@ -98,12 +95,13 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
             format!("the user level's agents, skills, hooks and MCP servers are not installed here: {why}"),
         );
     };
-    if !user.manifest().is_file() && !user.local_source().is_dir() {
+    // Its folder's files are the home project's, whatever user files sit beside them; the run
+    // ends with the steps to move it.
+    if crate::home_project::HomeProject::in_user_folder().is_some() {
+        crate::home_project::raise_notice();
         return Ok(());
     }
-    // Its folder's files are the home project's, whatever user files sit beside them.
-    if let Some(home) = crate::home_project::HomeProject::in_user_folder() {
-        skipped(diag, home.blocks_user_level());
+    if !user.manifest().is_file() && !user.local_source().is_dir() {
         return Ok(());
     }
     if !user.lock().is_file() {

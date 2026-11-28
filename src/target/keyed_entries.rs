@@ -261,7 +261,7 @@ fn try_reconcile(
                         format!(
                             "target `{target}` {noun} `{name}` in `{}` was edited after mars wrote it (preserved; run `{}` to take it over)",
                             section.path,
-                            crate::types::managed_cmd("mars sync --force")
+                            crate::layout::root_cmd("sync --force")
                         ),
                     );
                     false
@@ -282,7 +282,7 @@ fn try_reconcile(
                         format!(
                             "target `{target}` {noun} `{name}` in `{}` exists but mars does not own it (preserved; run `{}` to take it over)",
                             section.path,
-                            crate::types::managed_cmd("mars sync --force")
+                            crate::layout::root_cmd("sync --force")
                         ),
                     );
                     false

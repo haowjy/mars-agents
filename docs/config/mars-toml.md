@@ -675,7 +675,7 @@ Skills carry no tool policy in schema 1, so a skill overlay has no `tools` table
 ## Curated model display
 
 Configure the human `mars models list` view in `mars.curated.toml`,
-`mars.curated.local.toml`, or the user XDG `mars/curated.toml` file. See
+`mars.curated.local.toml`, or the user level's `~/.mars/curated.toml`. See
 [mars-curated.md](mars-curated.md) for the strict schema and merge semantics.
 Curation never affects routing, launch bundles, or alias resolution. Use
 `mars models list --all` to inspect hidden rows; use `mars models aliases`

@@ -521,7 +521,7 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
             message: format!(
                 "legacy {} is missing `dependency_model_aliases` for dependency alias authority; run `{}` to update it",
                 LOCK_FILE,
-                crate::types::managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ),
         }
         .into());
@@ -592,7 +592,7 @@ fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnosti
             message: format!(
                 "{} uses unsupported lock version {older}; remove it and run `{}`",
                 path.display(),
-                crate::types::managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ),
         }
         .into()),
@@ -674,7 +674,7 @@ fn v2_lock_dropped_warning() -> Diagnostic {
              overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
              entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
              from 0.12 to 0.24 first would have migrated the lock",
-            crate::types::managed_cmd("mars sync --force")
+            crate::layout::root_cmd("sync --force")
         ),
     )
 }
@@ -1902,7 +1902,7 @@ installed_checksum = "sha256:bbb"
             load_for_runtime_aliases(&crate::layout::Layout::project(dir.path())).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
-        assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));
+        assert!(message.contains(&format!("run `{}`", crate::layout::root_cmd("sync"))));
     }
 
     #[test]

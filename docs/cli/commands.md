@@ -714,7 +714,7 @@ mars validate [--strict] [--provided-root HOST@VERSION=DIR]
 | `--strict` | Treat warnings as errors |
 | `--provided-root HOST@VERSION=DIR` | The host bundle `mars sync` would get (see [`mars sync`](#mars-sync)), so a ref to one of its skills is judged as the sync judges it |
 
-It reports what `mars sync` would, from the same inputs: an Agent's skill references among them (`missing-skill`, `provided-skill-unavailable`, `provided-skill-undeclared`), plus the tool-rule notes only validate prints. Exit code 0 = no errors, 1 = an error, or with `--strict` a warning. `--json` prints `clean`, `diagnostics`, `error_count` and `warning_count`. `--user` validates the user level.
+It reports what `mars sync` would, from the same inputs: an Agent's skill references among them (`missing-skill`, `provided-skill-unavailable`, `provided-skill-undeclared`), plus the tool-rule notes only validate prints. Exit code 0 = no errors, 1 = an error, or with `--strict` a warning; 2 = it could not run (a config error, such as a `--provided-root` that is not a directory). `--json` prints `clean`, `diagnostics`, `error_count` and `warning_count`. `--user` validates the user level.
 
 ---
 

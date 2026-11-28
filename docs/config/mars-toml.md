@@ -140,13 +140,16 @@ requires-mars = ">=0.20.0"
 uses-providers = ["meridian"]
 ```
 
-A dependency's agent that lists `x__meridian`:
+A dependency's agent that lists `x__meridian`, when no package ships it:
 
-| `uses-providers` lists `meridian` | Provider has provided `x__meridian` here | Result |
+| `uses-providers` lists `meridian` | `x__meridian` is provided here | Result at sync |
 |---|---|---|
 | yes | yes | Satisfied, silently |
-| yes | no | Sync continues with a `provided-skill-unavailable` warning; `mars validate --strict` fails |
-| no | either | Sync continues with a `missing-skill` warning, on every machine; `mars check` fails naming `uses-providers` |
+| yes | no | A `provided-skill-unavailable` warning; `mars validate --strict` fails |
+| no | yes | `provided-skill-undeclared`: a warning for a path dependency, which you can edit, and `info` for a git one (shown with `--verbose`); the agent gets the skill here |
+| no | no | A `missing-skill` warning: for a path dependency it says to declare `meridian` in `uses-providers`, for a git one to take a release that fixes it |
+
+Sync never fails on a skill ref. `mars check` ignores what is provided here, so it fails an undeclared ref on every machine, naming `uses-providers`.
 
 A skill is provided here when a host's bundle the sync knows ships it (`mars sync --provided-root`, or the bundle an earlier sync recorded in `.mars/machine.lock`), whatever the managed targets take, or when `mars provide` installed it. Whether a ref is deferred to a provider reads only the requesting package's own list, never what the machine has provided, so a package means the same everywhere and a typo such as `x__meridain` stays a missing skill. A package skill named `x__meridian` is always found first, and wins its destination from a provided copy: the next `mars sync` replaces it and the next `mars provide` drops its record. `mars.lock` is the same with or without the provider.
 

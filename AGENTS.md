@@ -127,9 +127,9 @@ changing that area.
 ## Merging and Releasing
 
 A fix restores intended behavior; changing what users are meant to see is a feature.
-Docs-only changes and tiny, obvious bug fixes go straight to `main`. Everything else goes through a PR, and
-merging one into `main` takes Jimmy's approval in this conversation, per PR, unless your
-global instructions grant your model more. A change that crosses a boundary others
+Docs-only changes and tiny, obvious bug fixes go straight to `main`. Everything else goes
+through a PR, which you merge yourself once it meets the checks in
+[docs/dev/releasing.md](docs/dev/releasing.md). A change that crosses a boundary others
 depend on (CLI commands, flags or output, `mars.toml` or `mars.lock`, the package format,
 what a sync writes into a target) needs his approval before it starts.
 

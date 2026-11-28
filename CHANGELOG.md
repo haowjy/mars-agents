@@ -7,6 +7,26 @@ file in a PR; `## [Unreleased]` is an empty anchor.
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-11-28
+
+### Fixed
+- An agent that names a skill no installed package ships no longer fails the sync, wherever the
+  agent comes from: the user level's `.mars-src`, a dependency, a host's bundle or a plugin
+  build. The sync installs the agent and warns once, and the warning says who can fix it: the
+  folder to edit for your own items or a path dependency, `mars --user upgrade <dep>` for a
+  user-level dependency, `mars upgrade <dep>` for a project dependency, or updating the host.
+  In 0.41.0, a user-level agent that named a Meridian skill failed every project sync.
+- A host's skills given with `--provided-root` count as available to every agent's `skills`,
+  whatever the targets. A `.claude`-only project synced by Meridian no longer warns about
+  `work__meridian`, and nothing is written for it. A `--provided-root` that is not a directory
+  now fails every command that takes it, `validate` included. Before, it failed only when a
+  target takes host content.
+- `mars validate` takes `--provided-root` too, so it judges an agent's skills with the inputs
+  `mars sync` uses: with Meridian's bundle it no longer warns about `work__meridian`.
+- `mars doctor` (and `doctor --json`) no longer reports `missing-skill`,
+  `provided-skill-unavailable` or `provided-skill-undeclared`. It checks what is on disk against
+  the lock. `mars validate` reports missing skills by the same rule `mars sync` uses.
+
 ## [0.41.0] - 2026-11-28
 
 ### Upgrade notes

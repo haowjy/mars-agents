@@ -9,9 +9,9 @@ use std::path::Path;
 use crate::diagnostic::DiagnosticCollector;
 use crate::diagnostic::Owner;
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
-use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
+use crate::sync::layers::HostSkills;
 use crate::sync::target::{
     CollisionRename, ExplicitRename, RenamableKind, TargetState, default_dest_path,
 };
@@ -40,13 +40,14 @@ impl<'a> OwnSource<'a> {
 
 /// The one judge of an Agent's skill refs in a sync and a plugin build, against what is
 /// installed, and the only place that combines a package's declaration with this machine:
-/// selection places refs and never judges them, and `provided` (`None` where provided skills must
-/// not count, as in plugin builds) is read only here. A ref's declaration is its source's
+/// selection places refs and never judges them, and `provided` (the skills a host makes available
+/// here, whatever the targets; `None` where they must not count, as in plugin builds) is read only
+/// here. A ref's declaration is its source's
 /// `[package] uses-providers`, `None` for a source without a `[package]` table.
 pub(crate) fn validate_skill_refs(
     target: &TargetState,
     graph: &ResolvedGraph,
-    provided: Option<&ProvidedNames>,
+    provided: Option<&HostSkills>,
     own: &OwnSource<'_>,
     held_back_skills: &HashSet<String>,
     diag: &mut DiagnosticCollector,
@@ -82,7 +83,7 @@ pub(crate) fn validate_skill_refs(
                 skill_name,
                 owner,
                 declared,
-                provided_here: provided.is_some_and(|names| names.provides(skill_name)),
+                provided_here: provided.is_some_and(|names| names.contains(skill_name)),
             };
             if let Some(found) = classify_skill_ref(&reference, &available_skills) {
                 diag.hold_until_written(owner, found);

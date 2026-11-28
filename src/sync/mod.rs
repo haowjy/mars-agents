@@ -137,6 +137,8 @@ pub(crate) struct LoadedConfig {
     pub dropped: LockFile,
     /// What `mars provide` installed here, read under the sync lock. Never written by sync.
     pub provided: crate::provided::ProvidedNames,
+    /// The skills a host makes available here, which the skill-ref judge counts.
+    pub host_skills: layers::HostSkills,
     /// The user level's roots and lock rows, the only pins its `_user-*` sources replay.
     pub user_layer: crate::resolve::UserLayer,
     pub dependency_changes: Vec<DependencyUpsertChange>,
@@ -374,6 +376,8 @@ pub(crate) fn load_config(
     let (carried, dropped) = unmanaged.split_targets(|target| named.contains(target));
     let mut provided = crate::provided::ProvidedNames::load(layout, diag)?;
     provided.record_host_versions(layers.host_versions);
+    let host_skills =
+        layers::HostSkills::new(layout, &old_lock, request.options.host.as_ref(), &provided);
 
     Ok(LoadedConfig {
         config,
@@ -384,6 +388,7 @@ pub(crate) fn load_config(
         carried,
         dropped,
         provided,
+        host_skills,
         user_layer: layers.user_layer,
         dependency_changes,
         sync_lock,
@@ -669,7 +674,7 @@ pub(crate) fn build_target(
     validate::validate_skill_refs(
         &target_state,
         &resolved.graph,
-        Some(&resolved.loaded.provided),
+        Some(&resolved.loaded.host_skills),
         &validate::OwnSource::new(
             &ctx.layout,
             resolved

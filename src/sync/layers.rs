@@ -15,7 +15,7 @@
 //! the lock row an earlier sync recorded while that directory exists, else from what
 //! `mars provide` staged (`.mars/provided/<host>/`, hooks and MCP servers only).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mars_schema::dependency::Entry;
@@ -45,6 +45,47 @@ pub(crate) struct Layers {
     pub host_versions: BTreeMap<String, String>,
 }
 
+/// The skills a host makes available here, whatever the managed targets take: what each bundle
+/// the sync knows ships, and, for one minor, what `mars provide` installed (`ProvidedNames`). A
+/// skill a target does not take is supplied by the host where it runs the agent. The skill-ref
+/// judge reads this as "provided here"; nothing is installed from it (`layer::offered_to`
+/// decides what is written).
+#[derive(Debug, Default)]
+pub(crate) struct HostSkills(HashSet<String>);
+
+impl HostSkills {
+    pub(crate) fn new(
+        layout: &Layout,
+        lock: &LockFile,
+        host: Option<&HostRoot>,
+        provided: &crate::provided::ProvidedNames,
+    ) -> Self {
+        let mut names: HashSet<String> = host_bundles(layout, lock, host)
+            .values()
+            .flat_map(|(dir, _)| bundle_skills(dir))
+            .collect();
+        names.extend(provided.installed().map(str::to_owned));
+        Self(names)
+    }
+
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        self.0.contains(name)
+    }
+}
+
+/// The names of the skills a bundle ships: each `skills/<name>/SKILL.md`. A bundle that cannot
+/// be read ships none here; reading it to install reports why.
+fn bundle_skills(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir.join("skills")) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("SKILL.md").is_file())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
 pub(crate) fn load(
     layout: &Layout,
     managed_targets: &[String],
@@ -59,7 +100,12 @@ pub(crate) fn load(
         user_layer(&mut layers, diag)?;
     }
     if crate::provided::takes_provided_any(managed_targets) {
-        host_layer(&mut layers, layout, old_lock, host)?;
+        host_layer(
+            &mut layers,
+            layout,
+            host_bundles(layout, old_lock, host),
+            host,
+        )?;
     }
     Ok(layers)
 }
@@ -174,12 +220,13 @@ fn user_layer(layers: &mut Layers, diag: &mut DiagnosticCollector) -> Result<(),
     Ok(())
 }
 
-fn host_layer(
-    layers: &mut Layers,
+/// The bundle of each host this sync knows, by provider: `--provided-root`, else the lock row an
+/// earlier sync recorded while that directory exists. `mars provide`'s staging is not a bundle.
+fn host_bundles(
     layout: &Layout,
     old_lock: &LockFile,
     host: Option<&HostRoot>,
-) -> Result<(), MarsError> {
+) -> BTreeMap<String, (PathBuf, String)> {
     let staging = layout.store().join("provided");
     let mut bundles: BTreeMap<String, (PathBuf, String)> = BTreeMap::new();
     for (name, row) in &old_lock.dependencies {
@@ -197,14 +244,25 @@ fn host_layer(
     }
     if let Some(host) = host {
         let dir = std::path::absolute(&host.dir).unwrap_or_else(|_| host.dir.clone());
-        if !dir.is_dir() {
-            return Err(crate::error::ConfigError::Invalid {
-                message: format!("--provided-root {} is not a directory", host.dir.display()),
-            }
-            .into());
-        }
         let dir = dunce::canonicalize(&dir).unwrap_or(dir);
         bundles.insert(host.provider.clone(), (dir, host.version.clone()));
+    }
+    bundles
+}
+
+fn host_layer(
+    layers: &mut Layers,
+    layout: &Layout,
+    bundles: BTreeMap<String, (PathBuf, String)>,
+    host: Option<&HostRoot>,
+) -> Result<(), MarsError> {
+    if let Some(host) = host
+        && !host.dir.is_dir()
+    {
+        return Err(crate::error::ConfigError::Invalid {
+            message: format!("--provided-root {} is not a directory", host.dir.display()),
+        }
+        .into());
     }
     for (provider, (dir, version)) in bundles {
         layers.dependencies.push((

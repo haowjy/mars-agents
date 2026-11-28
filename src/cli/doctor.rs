@@ -148,10 +148,15 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
         // resolved graph: the owner comes from the lock, and the only `[package]` it reads is the
         // project's, so a dependency's refs are judged as if it declared nothing.
-        let provided = crate::provided::ProvidedNames::load(
+        let provided = crate::sync::layers::HostSkills::new(
             &ctx.layout,
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )?;
+            &lock,
+            None,
+            &crate::provided::ProvidedNames::load(
+                &ctx.layout,
+                &mut crate::diagnostic::DiagnosticCollector::new(),
+            )?,
+        );
         let own_source = crate::sync::validate::OwnSource::new(
             &ctx.layout,
             project_config
@@ -190,7 +195,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     skill_name,
                     owner,
                     declared,
-                    provided_here: provided.provides(skill_name),
+                    provided_here: provided.contains(skill_name),
                 };
                 if let Some(found) =
                     crate::validate::classify_skill_ref(&reference, &available_skills)

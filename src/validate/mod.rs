@@ -17,8 +17,9 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
 
 /// What an Agent's skill ref needs checked: `declared` is the `uses-providers` of the Agent's
 /// source, `Some` exactly when that source has a `[package]` table; a source without one (a
-/// consumer project's own items, the user level's `.mars-src`) needs no declaration. `provided_here` is whether this machine's `.mars/provided.lock`
-/// supplies the name.
+/// consumer project's own items, the user level's `.mars-src`) needs no declaration.
+/// `provided_here` is whether a host makes the name available on this machine
+/// (`sync::layers::HostSkills`).
 pub(crate) struct SkillRef<'a> {
     pub agent: &'a str,
     pub skill_name: &'a str,

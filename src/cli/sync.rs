@@ -52,9 +52,10 @@ pub struct SyncArgs {
 /// one.
 #[derive(Debug, Default, clap::Args)]
 pub struct HostArg {
-    /// A host's bundle, `<host>@<version>=<dir>`: installs its skills, agents, hooks and MCP
-    /// servers into the targets no host launches (`.agy`), recorded in `.mars/machine.lock`.
-    /// Later syncs keep it while the directory exists.
+    /// A host's bundle, `<host>@<version>=<dir>`: its skills count as available to every agent,
+    /// and a sync installs its skills, agents, hooks and MCP servers into the targets no host
+    /// launches (`.agy`), recorded in `.mars/machine.lock`. Later syncs keep it while the
+    /// directory exists.
     #[arg(long, value_name = "HOST@VERSION=DIR")]
     pub provided_root: Option<String>,
 }

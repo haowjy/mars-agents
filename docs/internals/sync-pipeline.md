@@ -113,7 +113,7 @@ Fetches sources, resolves concrete versions, and prepares each package.
 2. Read `mars.toml` manifests in source trees to discover transitive dependencies (including transitive skill dependencies pulled in through agent declarations)
 3. Settle each package's constraints (`mars_schema::version::settle`: one pin, or a pin beside a range refuses)
 4. Select concrete versions (`mars_schema::version::keeps_lock`, then `select`, the rule below; `choose` is all the steps for a caller with no tags to avoid listing, such as the WASM package's `selectVersion`)
-5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph; it computes the registry order skill refs resolve in)
+5. Select the items the consumer installs (`mars_schema::selection::select`, one pass over the settled graph; it computes the registry order skill refs resolve in). Selection places the skills an Agent names; a ref it cannot place fails nothing here, because the graph lacks the project's own `.mars-src` items. The Validate step judges every ref against what was installed.
 
 **Version selection strategy:**
 
@@ -325,7 +325,7 @@ Writes lock and constructs the final `SyncReport`.
 
 - **Lock write**: constructs new `mars.lock` from resolved graph + apply outcomes (checksums). Keys sorted deterministically for clean git diffs. Lock is written **regardless of target sync outcome** — this ensures the lock always reflects what's in `.mars/`, even if a target sync failed.
 - **Model aliases**: persists dependency-only alias winners to committed `mars.lock` (`dependency_model_aliases`). Consumer aliases are not baked into lock state, so `mars models aliases` overlays current consumer config at read time.
-- **Validation warnings**: emits diagnostics for missing skill references in agents. A dependency's is held until a sync installs or updates that source's items: `finalize` compares the old lock with the new one (`DiagnosticCollector::settle`).
+- **Validation warnings**: emits diagnostics for missing skill references in agents, the one judgement of a ref in a sync: a `missing-skill` Warning whoever wrote the Agent (the project, a dependency, the user level), never a failed sync. A dependency's is held until a sync installs or updates that source's items: `finalize` compares the old lock with the new one (`DiagnosticCollector::settle`).
 - **Report**: assembles `SyncReport` with apply outcomes, target sync outcomes, diagnostics, and dry-run flag.
 
 ## Project-Local Items (`_self`)

@@ -15,18 +15,16 @@ use mars_schema::selection::{
 use crate::discover::DiscoveredItem;
 use crate::types::SourceName;
 
-/// Select from the registry the resolver settled and the consumer's own entries; `root` is the
-/// package being selected for, when it is not among the registry's.
+/// Select from the registry the resolver settled and the consumer's own entries.
 pub(super) fn select_registry(
     config: &crate::config::EffectiveConfig,
     registry: &IndexMap<SourceName, super::RegisteredPackage>,
-    root: Option<&Prepared>,
 ) -> SelectionResult {
     let packages = registry
         .iter()
         .map(|(name, package)| (name, &package.node, extra_items(package.items())))
         .collect();
-    select_packages(consumer_requests(config), root, packages)
+    select_packages(consumer_requests(config), packages)
 }
 
 /// Selection for a hand-built graph, whose bootstrap documents and hooks are found on disk.
@@ -49,12 +47,11 @@ pub(crate) fn select_for_test(
             (name, node, extra_items(items.iter()))
         })
         .collect();
-    select_packages(consumer_requests(config), None, packages)
+    select_packages(consumer_requests(config), packages)
 }
 
 fn select_packages(
     requests: Vec<Request>,
-    root: Option<&Prepared>,
     packages: Vec<(&SourceName, &super::ResolvedNode, Vec<Item>)>,
 ) -> SelectionResult {
     let packages: HashMap<_, _> = packages
@@ -63,7 +60,7 @@ fn select_packages(
         .collect();
     select(&GraphView {
         requests,
-        root: root.map(|prepared| package_view(prepared, Vec::new())),
+        root: None,
         packages,
     })
 }

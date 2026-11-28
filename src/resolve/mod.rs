@@ -38,7 +38,7 @@ pub(crate) use upgrade::upgrade_candidate;
 use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
-use crate::error::{MarsError, ResolutionError};
+use crate::error::MarsError;
 use crate::lock::{LockFile, RecordRef};
 use crate::types::{CommitHash, SourceId, SourceName, SourceUrl};
 use mars_schema::item::ItemKind;
@@ -259,24 +259,9 @@ fn finish(
         registry.insert(node.source_name.clone(), RegisteredPackage { node, items });
     }
 
-    let selection = select::select_registry(config, &registry, options.root.as_deref());
-    // With a root, the caller judges the refs the selection could not resolve (`mars check`,
-    // through `mars_schema::check`). A slug two packages install is not reported here: sync
-    // renames both and says so once (`auto-rename-collision`).
-    if options.root.is_none()
-        && let Some(missing) = selection.missing_skills.first()
-    {
-        return Err(ResolutionError::SkillNotFound {
-            skill: missing.skill.clone(),
-            required_by: match &missing.package {
-                Some(package) => format!("{package}/{}", missing.agent),
-                None => missing.agent.clone(),
-            },
-            searched: missing.searched.clone(),
-            hint: missing.hint.clone(),
-        }
-        .into());
-    }
+    // Selection places the skills an Agent names and never judges a ref: sync judges against
+    // what it installs (`sync::validate`), `mars check` against the package (`mars_schema::check`).
+    let selection = select::select_registry(config, &registry);
 
     let nodes: IndexMap<SourceName, ResolvedNode> = registry
         .into_iter()

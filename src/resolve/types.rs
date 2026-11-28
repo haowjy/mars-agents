@@ -194,8 +194,6 @@ pub struct ResolveOptions {
     pub(crate) source_overrides: indexmap::IndexMap<SourceName, std::path::PathBuf>,
     pub(crate) prepared_sources:
         indexmap::IndexMap<SourceName, std::sync::Arc<mars_schema::prepare::Prepared>>,
-    /// The package selected for, when it is not a node of the graph. See [`Self::with_root`].
-    pub(crate) root: Option<std::sync::Arc<mars_schema::prepare::Prepared>>,
     /// The user level's part of the graph. See [`Self::with_user_layer`].
     pub(crate) user_layer: UserLayer,
 }
@@ -221,7 +219,6 @@ impl Default for ResolveOptions {
             ignore_requires_meridian: false,
             source_overrides: indexmap::IndexMap::new(),
             prepared_sources: indexmap::IndexMap::new(),
-            root: None,
             user_layer: UserLayer::default(),
         }
     }
@@ -247,18 +244,6 @@ impl ResolveOptions {
             },
             ..Self::default()
         }
-    }
-
-    /// Select as the install of `root`, a package that is not itself in the graph (`mars check`
-    /// resolves a package's `[dependencies]` as its consumer would). Its items and its Agents'
-    /// skill refs take part in the one selection, so a ref only the root ships is found. The unresolved refs stay in `ResolvedGraph::selection`
-    /// for the caller to judge instead of failing resolution.
-    pub(crate) fn with_root(
-        mut self,
-        root: std::sync::Arc<mars_schema::prepare::Prepared>,
-    ) -> Self {
-        self.root = Some(root);
-        self
     }
 
     pub(crate) fn with_source_overrides(

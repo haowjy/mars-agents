@@ -2,7 +2,7 @@
 
 Which version of which source is decided in `mars_schema::resolve`, a pure function over answers (`crates/mars-schema/AGENTS.md`); this module builds its request, answers its lookups with git and the disk (`CliAnswers`), and does what the core leaves to the binary on the graph it returns: reports each package's files, finds hooks and items, and selects.
 
-Consumers use `mars_schema::selection`'s result rather than applying filters again. References deferred to a declared provider are judged without host state; sync reports whether the provider is actually available.
+Consumers use `mars_schema::selection`'s result rather than applying filters again. Selection places skill refs and resolution never judges them: its graph lacks the project's own `.mars-src` items and the host's skills, so a ref it cannot place is judged after install by `sync::validate` (a Warning, whoever wrote the Agent) and by `mars_schema::check` for `mars check`. References deferred to a declared provider are judged without host state; sync reports whether the provider is actually available.
 
 A later constraint can change an earlier version choice, so resolution restarts. Engine-incompatible versions stay excluded across restarts, and diagnostics must describe the final graph, not a discarded pass. Semver sources can fall back to a compatible version; sources without alternative versions fail.
 

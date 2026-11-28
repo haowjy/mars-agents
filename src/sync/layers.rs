@@ -100,12 +100,7 @@ pub(crate) fn load(
         user_layer(&mut layers, diag)?;
     }
     if crate::provided::takes_provided_any(managed_targets) {
-        host_layer(
-            &mut layers,
-            layout,
-            host_bundles(layout, old_lock, host),
-            host,
-        )?;
+        host_layer(&mut layers, layout, host_bundles(layout, old_lock, host))?;
     }
     Ok(layers)
 }
@@ -254,16 +249,7 @@ fn host_layer(
     layers: &mut Layers,
     layout: &Layout,
     bundles: BTreeMap<String, (PathBuf, String)>,
-    host: Option<&HostRoot>,
 ) -> Result<(), MarsError> {
-    if let Some(host) = host
-        && !host.dir.is_dir()
-    {
-        return Err(crate::error::ConfigError::Invalid {
-            message: format!("--provided-root {} is not a directory", host.dir.display()),
-        }
-        .into());
-    }
     for (provider, (dir, version)) in bundles {
         layers.dependencies.push((
             SourceName::from(crate::provided::source_name(&provider)),

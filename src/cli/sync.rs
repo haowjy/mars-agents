@@ -64,7 +64,18 @@ impl HostArg {
         self.provided_root
             .as_deref()
             .map(|raw| {
-                crate::provided::ProvideSpec::parse(raw).map(|spec| crate::sync::layers::HostRoot {
+                let spec = crate::provided::ProvideSpec::parse(raw)?;
+                // Checked here, where every reader of the bundle gets it, not where one installs it.
+                if !spec.package_dir.is_dir() {
+                    return Err(crate::error::ConfigError::Invalid {
+                        message: format!(
+                            "--provided-root {} is not a directory",
+                            spec.package_dir.display()
+                        ),
+                    }
+                    .into());
+                }
+                Ok(crate::sync::layers::HostRoot {
                     provider: spec.provider,
                     version: spec.version,
                     dir: spec.package_dir,

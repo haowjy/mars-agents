@@ -65,18 +65,22 @@ When release is enabled, the workflow:
    under it fails the render.
 6. Commits `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`.
 7. Creates and pushes `vX.Y.Z` or `vX.Y.Z-rc.N`.
-8. Lets the tag push trigger `release.yml`.
+8. Starts `release.yml` for that tag (`gh workflow run release.yml -f tag=…`).
+   Every push uses the workflow token, and a tag it pushes starts no workflow,
+   so the job dispatches the publish itself. No personal token is needed.
 
-`release-on-main.yml` only creates release commits/tags. `release.yml` is the
-only publish workflow identity, for both auto-release tags and manual backfill
-tags. npm trusted publishing allows one trusted workflow per package, so all
+`release-on-main.yml` only creates release commits/tags and starts `release.yml`.
+`release.yml` is the only publish workflow identity, for both auto-release tags
+(dispatched with the tag) and manual backfill tags (started by the tag push). npm trusted publishing allows one trusted workflow per package, so all
 publish paths converge on `.github/workflows/release.yml`. Its GitHub Release
 job extracts the tag's `## [X.Y.Z]` section as the release body, so the notes a
 contributor writes in the PR body are the release notes.
 
 Reruns are idempotent by trigger marker:
 - If the release tag already exists for the trigger, rerun does not recreate it.
-- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag so `release.yml` can publish it.
+- If the release commit exists but the expected tag is missing (partial success), rerun recreates/pushes the tag and starts `release.yml` for it.
+- If the tag exists but `release.yml` never ran for it, start it by hand:
+  `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
 
 If a merged PR's `## Changelog` section is missing or malformed, the collect
 step fails before the preflight and names the PR: edit that merged PR body and
@@ -101,7 +105,8 @@ not a re-run.
 
 ## Manual Backfill
 
-`release.yml` also runs on manual `v*` tag pushes.
+`release.yml` also runs on manual `v*` tag pushes, and on a manual dispatch
+with a `tag` input naming an existing tag.
 
 Manual tags must point at a valid release commit (stable or RC):
 

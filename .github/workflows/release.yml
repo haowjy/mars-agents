@@ -1,11 +1,26 @@
 name: Release
 
+# A tag pushed with the workflow token starts no workflow, so release-on-main.yml
+# dispatches this one with the tag; a tag pushed by hand starts it directly.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z or vX.Y.Z-rc.N)"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+# One run per tag: a dispatch and a tag push for the same tag queue instead of
+# publishing side by side.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   verify-provenance:
@@ -14,14 +29,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Verify tag provenance
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}^{commit}" >/dev/null; then
+            echo "::error::${RELEASE_TAG} is not a tag in this repository"
+            exit 1
+          fi
+
           TAG_VERSION="${RELEASE_TAG#v}"
           CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           PYPROJECT_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -135,7 +154,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -233,7 +252,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -258,7 +277,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Build sdist
         uses: PyO3/maturin-action@v1
@@ -310,12 +329,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Derive release metadata
         id: release_meta
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
           if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
@@ -333,8 +350,6 @@ jobs:
           merge-multiple: true
 
       - name: Extract release notes
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
           python3 scripts/changelog-notes.py extract \
@@ -343,7 +358,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
           prerelease: ${{ steps.release_meta.outputs.prerelease }}
           body_path: ${{ runner.temp }}/release-notes.md
           files: artifacts/mars-*
@@ -357,7 +372,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v7
         with:
@@ -380,8 +395,6 @@ jobs:
 
       - name: Derive release metadata
         id: release_meta
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
           echo "version=${TAG_VERSION}" >> "$GITHUB_OUTPUT"
@@ -491,7 +504,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
 

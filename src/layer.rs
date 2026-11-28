@@ -89,6 +89,11 @@ pub(crate) fn is_machine_local(source_name: &str) -> bool {
     Layer::of(source_name).machine_local()
 }
 
+/// Whether `source_name` is a host's bundle (`_provided-<host>`).
+pub(crate) fn is_host(source_name: &str) -> bool {
+    Layer::of(source_name) == Layer::Host
+}
+
 /// Whether content of `source_name` is offered to `target`.
 pub(crate) fn offered_to(source_name: &str, target: &str) -> bool {
     Layer::of(source_name).row().every_target || crate::harness::registry::takes_provided(target)

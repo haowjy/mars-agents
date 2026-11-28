@@ -223,7 +223,7 @@ fn finish(
         }
         // The user can neither upgrade nor remove a host's staged hooks, so one in a retired
         // schema is kept as the last sync installed it and never halts (`kept_hooks::settle`).
-        if !crate::provided::is_provided_source(node.source_name.as_ref())
+        if !crate::layer::is_host(node.source_name.as_ref())
             && let crate::staging::HookSurfaceState::Unreadable { hook_names } =
                 crate::staging::detect_unreadable_hook_surface(
                     &node.rooted_ref.authored_root,

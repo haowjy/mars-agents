@@ -875,7 +875,7 @@ pub(crate) fn build(
 
     for (name, node) in &graph.nodes {
         let mut locked = to_locked_source(node);
-        if crate::provided::is_provided_source(name.as_ref()) {
+        if crate::layer::is_host(name.as_ref()) {
             // A host's path dependency has no version of its own: the lock records the host's,
             // or the digest of what `mars provide` staged.
             locked.version = provided

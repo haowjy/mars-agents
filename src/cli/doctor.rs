@@ -152,10 +152,13 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             &ctx.layout,
             &mut crate::diagnostic::DiagnosticCollector::new(),
         )?;
-        let own_declared = project_config
-            .as_ref()
-            .and_then(|layers| layers.config.package.as_ref())
-            .map(|package| package.uses_providers.as_slice());
+        let own_source = crate::sync::validate::OwnSource::new(
+            &ctx.layout,
+            project_config
+                .as_ref()
+                .and_then(|layers| layers.config.package.as_ref())
+                .map(|package| package.uses_providers.as_slice()),
+        );
         let own = crate::types::SourceOrigin::LocalPackage.to_string();
         let path_dirs: std::collections::HashMap<&str, std::path::PathBuf> = lock
             .dependencies
@@ -170,11 +173,17 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                 .items
                 .get(&format!("agent/{}", agent.name))
                 .map_or(own.as_str(), |locked| locked.source.as_str());
-            let owner = crate::diagnostic::Owner::of(
-                source,
-                path_dirs.get(source).map(std::path::PathBuf::as_path),
-            );
-            let declared = (source == own).then_some(own_declared).flatten();
+            let (owner, declared) = if source == own {
+                (
+                    crate::diagnostic::Owner::Own {
+                        dir: &own_source.dir,
+                    },
+                    own_source.declared,
+                )
+            } else {
+                let dir = path_dirs.get(source).map(std::path::PathBuf::as_path);
+                (crate::diagnostic::Owner::of(source, dir), None)
+            };
             for skill_name in &skills {
                 let reference = crate::validate::SkillRef {
                     agent: &agent.name,

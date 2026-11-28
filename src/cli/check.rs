@@ -532,7 +532,11 @@ fn file_findings(
         }
         // One note per unknown key, across the files that carry it.
         let line = if diagnostic.code == "field.unknown" {
-            diag.schema(diagnostic, &label, crate::diagnostic::Owner::Own);
+            diag.schema(
+                diagnostic,
+                &label,
+                crate::diagnostic::Owner::Own { dir: base },
+            );
             None
         } else {
             Some(format!("[{}] {label}: {message}", diagnostic.code))

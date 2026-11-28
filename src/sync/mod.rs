@@ -670,12 +670,15 @@ pub(crate) fn build_target(
         &target_state,
         &resolved.graph,
         Some(&resolved.loaded.provided),
-        resolved
-            .loaded
-            .config
-            .package
-            .as_ref()
-            .map(|package| package.uses_providers.as_slice()),
+        &validate::OwnSource::new(
+            &ctx.layout,
+            resolved
+                .loaded
+                .config
+                .package
+                .as_ref()
+                .map(|package| package.uses_providers.as_slice()),
+        ),
         &held_back_skills,
         diag,
     );

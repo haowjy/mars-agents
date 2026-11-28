@@ -131,13 +131,13 @@ pub(super) fn settle(
             "no installed copy of it was found, so nothing is installed"
         };
         let owner = graph.owner(&invalid.source_name);
-        let remedy = match (owner.newer_release(), owner) {
-            (Some(newer), _) => format!(
-                "{newer} takes a newer release of `{}` if it has fixed this",
-                crate::layer::source_label(invalid.source_name.as_ref())
+        let remedy = match owner {
+            Owner::Dependency(source) => format!(
+                "{} takes a newer release of `{}` if it has fixed this",
+                crate::diagnostic::newer_release(source),
+                crate::layer::source_label(source)
             ),
-            (None, Owner::Path { dir, .. }) => format!("fix it in {}", dir.display()),
-            (None, _) => "fix its `hook.toml`".to_string(),
+            Owner::Own { dir } | Owner::Path { dir, .. } => format!("fix it in {}", dir.display()),
         };
         diag.warn(
             "hook-invalid-kept",

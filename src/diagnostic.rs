@@ -135,7 +135,8 @@ pub fn take_notices() -> Vec<Diagnostic> {
 /// to both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Owner<'a> {
-    Own,
+    /// The project's own items, authored in `dir`.
+    Own { dir: &'a std::path::Path },
     /// A source the user edits in `dir`; its items are recorded in the lock under `source`.
     Path {
         source: &'a str,
@@ -146,14 +147,12 @@ pub(crate) enum Owner<'a> {
 }
 
 impl<'a> Owner<'a> {
-    /// The owner of an item from `source`; `dir` is the folder it is read from when it is not
-    /// fetched.
+    /// The owner of a graph node's items, from `source`; `dir` is the folder it is read from
+    /// when it is not fetched. The project's own items are not a node: they are [`Self::Own`].
     pub(crate) fn of(source: &'a str, dir: Option<&'a std::path::Path>) -> Self {
-        use crate::layer::Layer;
         match dir {
-            _ if source == crate::types::SourceOrigin::LocalPackage.to_string() => Self::Own,
             // A host's bundle is a folder too, but the host writes it.
-            Some(dir) if Layer::of(source) != Layer::Host => Self::Path { source, dir },
+            Some(dir) if !crate::layer::is_host(source) => Self::Path { source, dir },
             _ => Self::Dependency(source),
         }
     }
@@ -161,26 +160,17 @@ impl<'a> Owner<'a> {
     /// ` (from <source>)` for a message about one of this owner's items; empty for the project's.
     pub(crate) fn whose(self) -> String {
         match self {
-            Self::Own => String::new(),
+            Self::Own { .. } => String::new(),
             Self::Path { source, .. } | Self::Dependency(source) => {
                 format!(" (from `{}`)", crate::layer::source_label(source))
             }
         }
     }
 
-    /// How the user takes a newer release of what this owner wrote: `None` for what the user
-    /// edits.
-    pub(crate) fn newer_release(self) -> Option<String> {
-        match self {
-            Self::Dependency(source) => Some(newer_release(source)),
-            Self::Own | Self::Path { .. } => None,
-        }
-    }
-
     /// The lock record a loss in this owner's items concerns.
     fn record(self) -> RecordRef {
         RecordRef::Source(match self {
-            Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
+            Self::Own { .. } => crate::types::SourceOrigin::LocalPackage.to_string(),
             Self::Path { source, .. } | Self::Dependency(source) => source.to_owned(),
         })
     }

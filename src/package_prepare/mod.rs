@@ -299,8 +299,8 @@ fn reported(
         .is_some()
         .then(|| authored_package_name(&prepared, root));
     let subject = match &package_name {
-        Some(name) => Subject::Package(name, Owner::Own),
-        None => Subject::AuthoredSource,
+        Some(name) => Subject::Package(name, Owner::Own { dir: root }),
+        None => Subject::AuthoredSource(root),
     };
     match findings {
         FileFindings::Print => {
@@ -357,7 +357,8 @@ pub(crate) enum Subject<'a> {
     /// source the lock records its items under), and the version the sync resolved. The flag is set when the command is `mars
     /// upgrade` for this package, which has already tried to move it.
     Dependency(&'a str, Owner<'a>, Option<&'a semver::Version>, bool),
-    AuthoredSource,
+    /// The project's own `.mars-src`, at this folder.
+    AuthoredSource(&'a Path),
 }
 
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its
@@ -391,7 +392,7 @@ fn report_files(
     let owner = match subject {
         Subject::Dependency(_, owner, ..) => *owner,
         Subject::Package(_, owner) => *owner,
-        Subject::AuthoredSource => Owner::Own,
+        Subject::AuthoredSource(dir) => Owner::Own { dir },
     };
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
@@ -450,7 +451,7 @@ fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut Dia
             Subject::Package(name, _) | Subject::Dependency(name, ..) => {
                 format!("package `{name}`")
             }
-            Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
+            Subject::AuthoredSource(_) => "authored `.mars-src` content".to_string(),
         };
         let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
         diag.info(

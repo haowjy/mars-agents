@@ -20,17 +20,34 @@ use crate::validate::{SkillRef, classify_skill_ref};
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::PreparedDefinition;
 
+/// The project's own source, whose items are not a graph node: its `[package] uses-providers`
+/// (`None` without a `[package]` table) and the folder its items are authored in, the package
+/// root for a package and `.mars-src` otherwise.
+pub(crate) struct OwnSource<'a> {
+    pub dir: std::path::PathBuf,
+    pub declared: Option<&'a [String]>,
+}
+
+impl<'a> OwnSource<'a> {
+    pub(crate) fn new(layout: &crate::layout::Layout, declared: Option<&'a [String]>) -> Self {
+        let dir = match declared {
+            Some(_) => layout.root().to_path_buf(),
+            None => layout.local_source(),
+        };
+        Self { dir, declared }
+    }
+}
+
 /// The one judge of an Agent's skill refs in a sync and a plugin build, against what is
 /// installed, and the only place that combines a package's declaration with this machine:
 /// selection places refs and never judges them, and `provided` (`None` where provided skills must
 /// not count, as in plugin builds) is read only here. A ref's declaration is its source's
-/// `[package] uses-providers`, `None` for a source without a `[package]` table;
-/// `local_declared` is the project's own, whose items are not a graph node.
+/// `[package] uses-providers`, `None` for a source without a `[package]` table.
 pub(crate) fn validate_skill_refs(
     target: &TargetState,
     graph: &ResolvedGraph,
     provided: Option<&ProvidedNames>,
-    local_declared: Option<&[String]>,
+    own: &OwnSource<'_>,
     held_back_skills: &HashSet<String>,
     diag: &mut DiagnosticCollector,
 ) {
@@ -47,15 +64,14 @@ pub(crate) fn validate_skill_refs(
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
-        // The project's own items are not a graph node: their `[package]` is the project's.
-        let node = graph.nodes.get(&item.source_name);
-        let owner = graph.owner(&item.source_name);
-        let declared = match node {
-            Some(node) => node
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.package.uses_providers.as_slice()),
-            None => local_declared,
+        let (owner, declared) = match graph.nodes.get(&item.source_name) {
+            Some(node) => (
+                node.owner(),
+                node.manifest
+                    .as_ref()
+                    .map(|manifest| manifest.package.uses_providers.as_slice()),
+            ),
+            None => (Owner::Own { dir: &own.dir }, own.declared),
         };
         let content = match &item.rewritten_content {
             Some(content) => content.clone(),
@@ -225,7 +241,7 @@ pub(crate) fn report_skill_links(
             diag.schema(
                 &diagnostic,
                 &crate::package_prepare::source_label(root)(&definition.source_path),
-                Owner::Own,
+                Owner::Own { dir: root },
             );
         }
     }

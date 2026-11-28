@@ -44,7 +44,7 @@ pub(crate) fn classify_skill_ref(
         return None;
     }
     let own_level = match owner {
-        Owner::Own | Owner::Path { .. } => DiagnosticLevel::Warning,
+        Owner::Own { .. } | Owner::Path { .. } => DiagnosticLevel::Warning,
         Owner::Dependency(_) => DiagnosticLevel::Info,
     };
     let whose = owner.whose();
@@ -84,23 +84,28 @@ pub(crate) fn classify_skill_ref(
         _ => {
             let suggestion = find_suggestion(skill_name, available_skills)
                 .map_or(String::new(), |name| format!(" (did you mean `{name}`?)"));
-            let provider = mars_schema::provider::provider_of(skill_name);
-            let fix = if let Some(newer) = owner.newer_release() {
-                format!("; its author has to ship the skill, and {newer} takes a newer release")
-            } else if !suggestion.is_empty() {
-                String::new()
-            } else {
-                match (owner, provider) {
-                    (_, Some(provider)) => {
-                        format!("; no package ships it, and `{provider}` has not provided it here")
+            let fix = match owner {
+                Owner::Dependency(source) => format!(
+                    "; its author has to ship the skill, and {} takes a newer release",
+                    crate::diagnostic::newer_release(source)
+                ),
+                _ if !suggestion.is_empty() => String::new(),
+                Owner::Own { dir } | Owner::Path { dir, .. } => {
+                    match mars_schema::provider::provider_of(skill_name) {
+                        // A package's consumers resolve the ref only if it is declared, as
+                        // `mars check` says.
+                        Some(provider) if declared.is_some() => format!(
+                            "; {}",
+                            mars_schema::provider::undeclared_provider_hint(provider)
+                        ),
+                        Some(provider) => format!(
+                            "; no package ships it, and `{provider}` has not provided it here"
+                        ),
+                        None => format!(
+                            "; create it in {}, or remove it from the agent's `skills`",
+                            dir.join("skills").join(skill_name).display()
+                        ),
                     }
-                    (Owner::Path { dir, .. }, None) => format!(
-                        "; create it in {}, or remove it from the agent's `skills`",
-                        dir.join("skills").join(skill_name).display()
-                    ),
-                    _ => format!(
-                        "; add a source that provides it, or create it locally in skills/{skill_name}/"
-                    ),
                 }
             };
             // The agent runs without a skill it declares, so this is a warning whoever shipped it.

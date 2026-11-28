@@ -133,6 +133,19 @@ pub struct ResolvedNode {
     pub manifest: Option<Manifest>,
 }
 
+impl ResolvedGraph {
+    /// Who can change the items of `source` (`diagnostic::Owner`): a source read from a folder is
+    /// the user's to edit there, unless a host wrote it.
+    pub(crate) fn owner<'a>(&'a self, source: &'a SourceName) -> crate::diagnostic::Owner<'a> {
+        let dir = self
+            .nodes
+            .get(source)
+            .filter(|node| node.fetch_url.is_none())
+            .map(|node| node.rooted_ref.authored_root.as_path());
+        crate::diagnostic::Owner::of(source.as_str(), dir)
+    }
+}
+
 impl ResolvedNode {
     /// Source names this depends on: the `[dependencies]` its prepared manifest reads, in
     /// declaration order.

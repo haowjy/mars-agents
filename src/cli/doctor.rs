@@ -146,30 +146,40 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             installed.skills.iter().map(|s| s.name.clone()).collect();
 
         // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
-        // resolved graph, so a package's declaration is the project's own `[package]`.
+        // resolved graph: the owner comes from the lock, and the only `[package]` it reads is the
+        // project's, so a dependency's refs are judged as if it declared nothing.
         let provided = crate::provided::ProvidedNames::load(
             &ctx.layout,
             &mut crate::diagnostic::DiagnosticCollector::new(),
         )?;
-        let declared = project_config
+        let own_declared = project_config
             .as_ref()
             .and_then(|layers| layers.config.package.as_ref())
             .map(|package| package.uses_providers.as_slice());
+        let own = crate::types::SourceOrigin::LocalPackage.to_string();
+        let path_dirs: std::collections::HashMap<&str, std::path::PathBuf> = lock
+            .dependencies
+            .iter()
+            .filter_map(|(name, row)| {
+                Some((name.as_str(), ctx.layout.root().join(row.path.as_deref()?)))
+            })
+            .collect();
         for agent in &installed.agents {
             let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
-            let owner = lock
+            let source = lock
                 .items
                 .get(&format!("agent/{}", agent.name))
-                .map(|locked| locked.source.as_str())
-                .filter(|source| *source != crate::types::SourceOrigin::LocalPackage.to_string());
+                .map_or(own.as_str(), |locked| locked.source.as_str());
+            let owner = crate::diagnostic::Owner::of(
+                source,
+                path_dirs.get(source).map(std::path::PathBuf::as_path),
+            );
+            let declared = (source == own).then_some(own_declared).flatten();
             for skill_name in &skills {
                 let reference = crate::validate::SkillRef {
                     agent: &agent.name,
                     skill_name,
-                    owner: owner.map_or(
-                        crate::diagnostic::Owner::Own,
-                        crate::diagnostic::Owner::Dependency,
-                    ),
+                    owner,
                     declared,
                     provided_here: provided.provides(skill_name),
                 };

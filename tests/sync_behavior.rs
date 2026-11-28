@@ -2259,3 +2259,22 @@ fn resolve_updates_the_mars_output_and_outputs_stay_sorted() {
         );
     }
 }
+
+#[test]
+fn a_user_level_agent_naming_a_skill_nothing_ships_warns_once_and_syncs() {
+    let dir = TempDir::new().unwrap();
+    let project = project_with_skills(&dir, "['.claude']");
+    // `offline_mars` points `MARS_HOME` here.
+    let user = dir.child(".mars/test-env/mars-home");
+    user.child(".mars-src/agents/helper.md")
+        .write_str("---\nname: helper\ndescription: d\nskills: [work__meridian]\n---\nBody\n")
+        .unwrap();
+    offline_mars(dir.path())
+        .args(["--user", "sync"])
+        .assert()
+        .success();
+    sync_project(&dir, &project).stderr(predicate::str::contains(
+        "agent `helper` (from `user level`) references missing skill `work__meridian`",
+    ));
+    sync_project(&dir, &project).stderr(predicate::str::contains("work__meridian").not());
+}

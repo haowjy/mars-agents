@@ -15,9 +15,9 @@ pub fn parse_agent_skills(agent_path: &Path) -> Result<Vec<String>, MarsError> {
         .unwrap_or_default())
 }
 
-/// What an Agent's skill ref needs checked: `declared` is the Agent's package's
-/// `uses-providers`, `Some` for a package and `None` for a consumer project's own items, which
-/// need no declaration. `provided_here` is whether this machine's `.mars/provided.lock`
+/// What an Agent's skill ref needs checked: `declared` is the `uses-providers` of the Agent's
+/// source, `Some` exactly when that source has a `[package]` table; a source without one (a
+/// consumer project's own items, the user level's `.mars-src`) needs no declaration. `provided_here` is whether this machine's `.mars/provided.lock`
 /// supplies the name.
 pub(crate) struct SkillRef<'a> {
     pub agent: &'a str,
@@ -43,11 +43,11 @@ pub(crate) fn classify_skill_ref(
     if available_skills.contains(skill_name) {
         return None;
     }
-    let (own_level, dependency) = match owner {
-        Owner::Own | Owner::Path(_) => (DiagnosticLevel::Warning, None),
-        Owner::Dependency(source) => (DiagnosticLevel::Info, Some(source)),
+    let own_level = match owner {
+        Owner::Own | Owner::Path { .. } => DiagnosticLevel::Warning,
+        Owner::Dependency(_) => DiagnosticLevel::Info,
     };
-    let whose = dependency.map_or(String::new(), |source| format!(" (from `{source}`)"));
+    let whose = owner.whose();
     Some(match mars_schema::provider::provider_of(skill_name) {
         // The package declares the provider: the ref is valid wherever it supplies the skill, and
         // says so where it does not.
@@ -66,8 +66,8 @@ pub(crate) fn classify_skill_ref(
                 ),
             )
         }
-        // Provided here. A consumer project's own items have no `[package]` table, so nothing
-        // needs declaring and the ref is satisfied; a package that does not declare the provider
+        // Provided here. An item whose source has no `[package]` table (a consumer project's own,
+        // the user level's) needs nothing declared, so the ref is satisfied; a package that does not declare the provider
         // would not resolve it for consumers.
         Some(provider) if provided_here => {
             declared?;
@@ -84,19 +84,24 @@ pub(crate) fn classify_skill_ref(
         _ => {
             let suggestion = find_suggestion(skill_name, available_skills)
                 .map_or(String::new(), |name| format!(" (did you mean `{name}`?)"));
-            let fix = match dependency {
-                Some(source) => format!(
-                    "; its author has to ship the skill, and `{} {source}` takes a newer release",
-                    crate::layout::root_cmd("upgrade")
-                ),
-                None if suggestion.is_empty()
-                    && mars_schema::provider::provider_of(skill_name).is_none() =>
-                {
-                    format!(
+            let provider = mars_schema::provider::provider_of(skill_name);
+            let fix = if let Some(newer) = owner.newer_release() {
+                format!("; its author has to ship the skill, and {newer} takes a newer release")
+            } else if !suggestion.is_empty() {
+                String::new()
+            } else {
+                match (owner, provider) {
+                    (_, Some(provider)) => {
+                        format!("; no package ships it, and `{provider}` has not provided it here")
+                    }
+                    (Owner::Path { dir, .. }, None) => format!(
+                        "; create it in {}, or remove it from the agent's `skills`",
+                        dir.join("skills").join(skill_name).display()
+                    ),
+                    _ => format!(
                         "; add a source that provides it, or create it locally in skills/{skill_name}/"
-                    )
+                    ),
                 }
-                None => String::new(),
             };
             // The agent runs without a skill it declares, so this is a warning whoever shipped it.
             Diagnostic::new(

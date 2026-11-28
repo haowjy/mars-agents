@@ -243,9 +243,12 @@ fn finish(
         .map(|item| ((item.id.kind, item.id.name.clone()), item))
         .collect::<IndexMap<_, _>>();
         // A package that only names other packages or ships `[models]` has no items by design.
+        // Only the project's `mars.toml` names a source with a `subpath` to fix: a host's bundle
+        // and the user level's sources (its `.mars-src`, or a package its own sync reports)
+        // are not this project's to change.
         if items.is_empty()
             && !node.contributes_beyond_items()
-            && !crate::provided::is_provided_source(node.source_name.as_ref())
+            && crate::layer::Layer::of(node.source_name.as_ref()) == crate::layer::Layer::Project
         {
             diag.hold_warning(
                 RecordRef::Dependency(node.source_name.to_string()),

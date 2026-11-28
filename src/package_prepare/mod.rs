@@ -252,13 +252,15 @@ pub(crate) fn report_dependency(
         }
     }
     let package_name = dependency_name(prepared, source_name);
-    // Only a git source is a tree the consumer cannot edit; a path source or an override is
-    // theirs, and `mars upgrade` would leave it unchanged. A source the consumer's own config
-    // does not name came in through another package, which is git.
-    let subject = match dependency.map(|entry| &entry.spec) {
-        Some(crate::config::SourceSpec::Path(_)) => {
-            Subject::Package(package_name, Some(source_name.as_str()))
-        }
+    // A path source or an override is the consumer's to edit, and `mars upgrade` would leave it
+    // unchanged (`Owner::of`). A source the consumer's own config does not name came in through
+    // another package, which is git.
+    let dir = match dependency.map(|entry| &entry.spec) {
+        Some(crate::config::SourceSpec::Path(dir)) => Some(dir.as_path()),
+        _ => None,
+    };
+    let subject = match Owner::of(source_name.as_str(), dir) {
+        owner @ Owner::Path { .. } => Subject::Package(package_name, owner),
         _ => Subject::Dependency(package_name, source_name.as_str(), version, upgrading),
     };
     report_diagnostics(
@@ -313,7 +315,7 @@ fn reported(
         .is_some()
         .then(|| authored_package_name(&prepared, root));
     let subject = match &package_name {
-        Some(name) => Subject::Package(name, None),
+        Some(name) => Subject::Package(name, Owner::Own),
         None => Subject::AuthoredSource,
     };
     match findings {
@@ -364,9 +366,9 @@ pub(crate) fn prepare_project(
 }
 
 pub(crate) enum Subject<'a> {
-    /// A package whose files the user can edit: its name, and the source name the lock records
-    /// its items under when a path dependency holds it (none for the project's own).
-    Package(&'a str, Option<&'a str>),
+    /// A package whose files the user can edit: its name, and who holds it (the project, or a
+    /// path dependency the lock records its items under).
+    Package(&'a str, Owner<'a>),
     /// A git package a consumer depends on: its name, the source name the lock records its items
     /// under, and the version the sync resolved. The flag is set when the command is `mars
     /// upgrade` for this package, which has already tried to move it.
@@ -404,8 +406,8 @@ fn report_files(
 ) {
     let owner = match subject {
         Subject::Dependency(_, source, ..) => Owner::Dependency(source),
-        Subject::Package(_, Some(source)) => Owner::Path(source),
-        Subject::Package(_, None) | Subject::AuthoredSource => Owner::Own,
+        Subject::Package(_, owner) => *owner,
+        Subject::AuthoredSource => Owner::Own,
     };
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);

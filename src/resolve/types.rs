@@ -137,16 +137,23 @@ impl ResolvedGraph {
     /// Who can change the items of `source` (`diagnostic::Owner`): a source read from a folder is
     /// the user's to edit there, unless a host wrote it.
     pub(crate) fn owner<'a>(&'a self, source: &'a SourceName) -> crate::diagnostic::Owner<'a> {
-        let dir = self
-            .nodes
-            .get(source)
-            .filter(|node| node.fetch_url.is_none())
-            .map(|node| node.rooted_ref.authored_root.as_path());
-        crate::diagnostic::Owner::of(source.as_str(), dir)
+        self.nodes.get(source).map_or_else(
+            || crate::diagnostic::Owner::of(source.as_str(), None),
+            ResolvedNode::owner,
+        )
     }
 }
 
 impl ResolvedNode {
+    /// Who can change this package's files: the one rule, for every report about them.
+    pub(crate) fn owner(&self) -> crate::diagnostic::Owner<'_> {
+        let dir = self
+            .fetch_url
+            .is_none()
+            .then_some(self.rooted_ref.authored_root.as_path());
+        crate::diagnostic::Owner::of(self.source_name.as_str(), dir)
+    }
+
     /// Source names this depends on: the `[dependencies]` its prepared manifest reads, in
     /// declaration order.
     pub fn deps(&self) -> impl Iterator<Item = SourceName> + '_ {

@@ -212,7 +212,7 @@ fn finish(
         let node = node(core, answers)?;
         if !options.prepared_sources.contains_key(&node.source_name) {
             crate::package_prepare::report_dependency(
-                config,
+                node.owner(),
                 &node.source_name,
                 node.resolved_ref.version.as_ref(),
                 options.is_upgrade_target(&node.source_name),

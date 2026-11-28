@@ -168,25 +168,13 @@ impl<'a> Owner<'a> {
         }
     }
 
-    /// How the user takes a newer release of what this owner wrote, from the layer it came in
-    /// by: `None` for what the user edits.
+    /// How the user takes a newer release of what this owner wrote: `None` for what the user
+    /// edits.
     pub(crate) fn newer_release(self) -> Option<String> {
-        use crate::layer::{HOST_PREFIX, Layer, USER_PREFIX};
-        let Self::Dependency(source) = self else {
-            return None;
-        };
-        Some(match Layer::of(source) {
-            Layer::Project => format!(
-                "`{}`",
-                crate::layout::root_cmd(&format!("upgrade {source}"))
-            ),
-            Layer::User => format!(
-                "`{}`",
-                crate::layout::RootKind::User
-                    .cmd(&format!("upgrade {}", &source[USER_PREFIX.len()..]))
-            ),
-            Layer::Host => format!("updating `{}`", &source[HOST_PREFIX.len()..]),
-        })
+        match self {
+            Self::Dependency(source) => Some(newer_release(source)),
+            Self::Own | Self::Path { .. } => None,
+        }
     }
 
     /// The lock record a loss in this owner's items concerns.
@@ -195,6 +183,22 @@ impl<'a> Owner<'a> {
             Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
             Self::Path { source, .. } | Self::Dependency(source) => source.to_owned(),
         })
+    }
+}
+
+/// How the user takes a newer release of the source `source`, from the layer it came in by.
+pub(crate) fn newer_release(source: &str) -> String {
+    use crate::layer::{HOST_PREFIX, Layer, USER_PREFIX};
+    match Layer::of(source) {
+        Layer::Project => format!(
+            "`{}`",
+            crate::layout::root_cmd(&format!("upgrade {source}"))
+        ),
+        Layer::User => format!(
+            "`{}`",
+            crate::layout::RootKind::User.cmd(&format!("upgrade {}", &source[USER_PREFIX.len()..]))
+        ),
+        Layer::Host => format!("updating `{}`", &source[HOST_PREFIX.len()..]),
     }
 }
 

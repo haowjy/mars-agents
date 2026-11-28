@@ -246,7 +246,8 @@ fn release_publish_uses_single_tag_workflow_identity() {
         "release.yml must publish the dispatched tag, or the pushed one"
     );
     assert!(
-        release_on_main.contains("gh workflow run release.yml --ref main -f \"tag=${RELEASE_TAG}\""),
+        release_on_main
+            .contains("gh workflow run release.yml --ref main -f \"tag=${RELEASE_TAG}\""),
         "a tag pushed with the workflow token starts no workflow, so auto-release must dispatch release.yml"
     );
     assert!(

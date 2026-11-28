@@ -59,8 +59,9 @@ nothing there; its record is the lock item `hook/<name>@<target>` with no output
 `LockFile::finish` keeps because the sync resolved it. A loss therefore concerns one (hook,
 target) record, and a target linked later is news for itself only. A sync that fails before it writes the lock has changed no
 record, so the next sync reports the losses it held. A text meant for an installer names the installer's own fix, from who can change the
-item (`Owner::of`, by the source's layer and whether it is read from a folder): edit the folder
-a path source or the user level's `.mars-src` is read from, `Owner::newer_release` for a release
+item (`ResolvedNode::owner`, by the source's layer and whether it is read from a folder; the
+project's own items are `Owner::Own`): edit the folder the project's items, a path source or the
+user level's `.mars-src` is read from, `diagnostic::newer_release` for a release
 (`mars upgrade <source>`, `mars --user upgrade <name>` for the user level's, updating the host for
 a host's), or set the variable. One cause is one line: findings that arise once per item share a
 `warn_each` group, and what follows from an item that was not installed is not reported again.

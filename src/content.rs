@@ -6,7 +6,9 @@
 //!
 //! The layers are looked up in rank order and the first that claims a name answers. A layer
 //! claims a name when its store has the file, or when its lock records collision renames of it:
-//! a renamed name never falls through to a later layer's copy. This is `crate::layer`'s claim
+//! a renamed name never falls through to a later layer's copy. The user level claims only what its
+//! lock records: its folder can hold files it did not write (an old home project's store, which
+//! shares `~/.mars`), while a project's `.mars/` is Mars's alone. This is `crate::layer`'s claim
 //! rule, which sync applies as `layer::yielded`. A layer whose lock does not load is skipped
 //! whole, with a warning ([`ContentRoots::warnings`]): its files without its renames would let a
 //! renamed name fall through.
@@ -95,6 +97,14 @@ struct Claims {
     skills: BTreeMap<String, Vec<String>>,
     /// An agent's `.md` or a skill's directory.
     hidden: HashSet<PathBuf>,
+    /// For the user level, the only paths it serves: what its lock records.
+    only: Option<HashSet<PathBuf>>,
+}
+
+impl Claims {
+    fn serves(&self, item: &Path) -> bool {
+        !self.hidden.contains(item) && self.only.as_ref().is_none_or(|only| only.contains(item))
+    }
 }
 
 /// What a by-name lookup found: an agent's `.md` or a skill's `SKILL.md`.
@@ -253,7 +263,7 @@ impl ContentRoots {
                 ItemKind::Agent => Some(path.as_path()),
                 _ => path.parent(),
             };
-            if path.is_file() && !item.is_some_and(|item| layer.claims.hidden.contains(item)) {
+            if path.is_file() && item.is_some_and(|item| layer.claims.serves(item)) {
                 return Lookup::Found(path);
             }
             let renames = match kind {
@@ -387,6 +397,9 @@ impl Claims {
                 names.dedup();
                 into.insert(original, names);
             }
+        }
+        if root.layout.kind() == crate::layout::RootKind::User {
+            claims.only = Some(owned);
         }
         claims
     }

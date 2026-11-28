@@ -459,7 +459,7 @@ pub(crate) fn decide<'s>(
         .filter(|source| crate::layer::is_machine_local(source))
         .map(|source| layout.store().join("staging").join(source))
         .collect();
-    store.push(layout.machine_lock());
+    store.extend(layout.machine_lock());
 
     let candidates: Vec<&PathBuf> = files
         .keys()
@@ -676,9 +676,7 @@ pub(crate) fn settled(
             .filter(|source| crate::layer::is_machine_local(source))
             .map(|source| layout.store().join("staging").join(source.as_str())),
     );
-    if layout.machine_lock().exists() {
-        files.insert(layout.machine_lock());
-    }
+    files.extend(layout.machine_lock().filter(|path| path.exists()));
     crate::sync::exclude::Settled {
         machine: paths(&local),
         files,

@@ -535,10 +535,9 @@ pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> 
 /// [`write`] for how that happens.
 pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let (committed, mut diagnostics) = read_lock_file(&layout.lock(), false)?;
-    let local_path = layout.machine_lock();
-    if !local_path.exists() {
+    let Some(local_path) = layout.machine_lock().filter(|path| path.exists()) else {
         return Ok((committed, diagnostics));
-    }
+    };
     let (local, local_diagnostics) = read_lock_file(&local_path, true)?;
     diagnostics.extend(local_diagnostics);
     Ok((
@@ -738,7 +737,14 @@ pub fn write(
     project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<(), MarsError> {
     let (committed, local) = machine::split(lock.clone(), project_targets);
-    let local_path = layout.machine_lock();
+    let Some(local_path) = layout.machine_lock() else {
+        if !local.is_empty() {
+            return Err(MarsError::Internal(
+                "the user level has a machine-local record, which it has no file for".to_string(),
+            ));
+        }
+        return write_lock_file(&layout.lock(), &committed, false);
+    };
     let (old_local, _) = read_lock_file(&local_path, true)?;
     let mut widened = old_local;
     widened.join(local.clone());
@@ -1733,7 +1739,9 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
         let old = "version = 3\n[config_entries.\".agy\".\"mcp:srv\"]\nemitted_json = '{}'\n";
         std::fs::write(
-            crate::layout::Layout::project(dir.path()).machine_lock(),
+            crate::layout::Layout::project(dir.path())
+                .machine_lock()
+                .unwrap(),
             old,
         )
         .unwrap();

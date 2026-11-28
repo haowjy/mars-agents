@@ -124,10 +124,19 @@ impl Layout {
     }
 
     /// The records only this machine has: provided content (`mars provide`) and the targets
-    /// `mars.toml` does not name (`lock::machine`).
-    pub fn machine_lock(&self) -> PathBuf {
-        self.store.join("machine.lock")
+    /// `mars.toml` does not name (`lock::machine`). The user level has neither, so it has no
+    /// such file, and never reads one an old home project left in its folder.
+    pub fn machine_lock(&self) -> Option<PathBuf> {
+        (self.kind == RootKind::Project).then(|| self.store.join("machine.lock"))
     }
+
+    /// `mars provide`'s record of the skills it copied into the store. A host provides to
+    /// projects, so the user level has none, and never reads one an old home project left in its
+    /// folder.
+    pub fn provided_lock(&self) -> Option<PathBuf> {
+        (self.kind == RootKind::Project).then(|| self.store.join("provided.lock"))
+    }
+
 
     /// The canonical store, the `.mars` target.
     pub fn store(&self) -> &Path {

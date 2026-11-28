@@ -190,7 +190,7 @@ pub(crate) fn discover_resolved_hook_items(
                 error,
                 removed_schema: true,
                 ..
-            }) if !crate::provided::is_provided_source(source_name.as_str()) => return Err(error),
+            }) if !crate::layer::is_host(source_name.as_str()) => return Err(error),
             // The one place a dependency's hook is judged invalid: it must also render on
             // every managed target it is installed for.
             Ok(item) => match render_check(&item, managed_targets) {
@@ -304,7 +304,7 @@ fn diagnostic_code(code: &str) -> String {
 fn located(toml_path: &Path, hook_name: &str, source_name: &str, source: HookSource<'_>) -> String {
     match source {
         HookSource::Project => toml_path.display().to_string(),
-        HookSource::Dependency { .. } if crate::provided::is_provided_source(source_name) => {
+        HookSource::Dependency { .. } if crate::layer::is_host(source_name) => {
             format!(
                 "hook `{hook_name}` from {}",
                 crate::layer::source_label(source_name)
@@ -334,8 +334,7 @@ fn invalid_manifest(
     let message = match source {
         HookSource::Project => format!("{}: {message}", toml_path.display()),
         HookSource::Dependency { .. }
-            if code == hooks::REMOVED_SCHEMA_CODE
-                && crate::provided::is_provided_source(source_name) =>
+            if code == hooks::REMOVED_SCHEMA_CODE && crate::layer::is_host(source_name) =>
         {
             format!(
                 "{} uses a retired hook schema",

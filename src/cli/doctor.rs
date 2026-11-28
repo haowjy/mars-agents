@@ -109,8 +109,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     'installed: {
-        use std::collections::HashSet;
-
         let installed = match installed_items(mars_dir) {
             Ok(installed) => installed,
             Err(e) => {
@@ -139,45 +137,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                         cmd = ctx.layout.cmd("sync"),
                     ),
                 );
-            }
-        }
-
-        let available_skills: HashSet<String> =
-            installed.skills.iter().map(|s| s.name.clone()).collect();
-
-        // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
-        // resolved graph, so a package's declaration is the project's own `[package]`.
-        let provided = crate::provided::ProvidedNames::load(
-            &ctx.layout,
-            &mut crate::diagnostic::DiagnosticCollector::new(),
-        )?;
-        let declared = project_config
-            .as_ref()
-            .and_then(|layers| layers.config.package.as_ref())
-            .map(|package| package.uses_providers.as_slice());
-        for agent in &installed.agents {
-            let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
-            let owner = lock
-                .items
-                .get(&format!("agent/{}", agent.name))
-                .map(|locked| locked.source.as_str())
-                .filter(|source| *source != crate::types::SourceOrigin::LocalPackage.to_string());
-            for skill_name in &skills {
-                let reference = crate::validate::SkillRef {
-                    agent: &agent.name,
-                    skill_name,
-                    owner: owner.map_or(
-                        crate::diagnostic::Owner::Own,
-                        crate::diagnostic::Owner::Dependency,
-                    ),
-                    declared,
-                    provided_here: provided.provides(skill_name),
-                };
-                if let Some(found) =
-                    crate::validate::classify_skill_ref(&reference, &available_skills)
-                {
-                    diag.push(found);
-                }
             }
         }
     }

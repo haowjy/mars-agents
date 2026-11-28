@@ -35,9 +35,7 @@ use serde::Serialize;
 pub(crate) use entries::is_entry_name;
 pub(crate) use names::{ProvidedNames, recorded_skills, retire_claimed, skill_outcomes};
 pub(crate) use reconcile::reconcile;
-pub(crate) use source::{
-    display_path, is_provided_source, source_name, staged_dependencies, takes_provided_any,
-};
+pub(crate) use source::{display_path, source_name, staged_dependencies, takes_provided_any};
 pub(crate) use spec::ProvideSpec;
 
 /// What one `mars provide` run did, or why it wrote nothing.

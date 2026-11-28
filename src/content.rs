@@ -364,7 +364,7 @@ impl Claims {
         let (mut agents, mut skills) = (BTreeMap::new(), BTreeMap::new());
         for (dest_path, item) in lock.canonical_flat_items() {
             let disk_path = dest_path.resolve(root.mars_dir());
-            if crate::provided::is_provided_source(&item.source) {
+            if crate::layer::is_host(&item.source) {
                 claims.hidden.insert(disk_path);
                 continue;
             }

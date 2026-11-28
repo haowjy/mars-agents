@@ -96,18 +96,6 @@ pub enum ResolutionError {
     VersionConflict { name: String, message: String },
 
     #[error(
-        "skill `{skill}` not found (required by {required_by}; searched packages: {searched:?}){}",
-        hint.as_ref().map(|hint| format!("\n  hint: {hint}")).unwrap_or_default()
-    )]
-    SkillNotFound {
-        skill: String,
-        required_by: String,
-        searched: Vec<String>,
-        /// A conditional next step, for a name that no package declares a provider for.
-        hint: Option<String>,
-    },
-
-    #[error(
         "duplicate source identity: `{existing_name}` and `{duplicate_name}` both resolve to `{source_id}`"
     )]
     DuplicateSourceIdentity {

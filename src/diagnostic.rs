@@ -127,36 +127,68 @@ pub fn take_notices() -> Vec<Diagnostic> {
         .collect()
 }
 
-/// Who wrote what a problem is about, and so who can fix it: the project's own file is the
-/// user's to change; a dependency's is its author's. When nothing the package declares is lost,
-/// a finding in a dependency's file is `Info` to the installer and a `Warning` to its author.
-/// A loss is a `Warning` to both.
+/// Who can change what a problem is about, and so how the user fixes it. The project's own
+/// files and a source read from a folder on this machine (a path dependency at either level, the
+/// user level's `.mars-src`) are the user's to edit; a fetched release, at either level, and a
+/// host's bundle are their authors'. When nothing the package declares is lost, a finding in an
+/// author's file is `Info` to the installer and a `Warning` to its author. A loss is a `Warning`
+/// to both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Owner<'a> {
-    Own,
-    /// A path dependency: the user can edit it, so a finding is a `Warning` as in their own
-    /// files, but its items are recorded in the lock under this source.
-    Path(&'a str),
-    /// Installed from this source.
+    /// The project's own items, authored in `dir`.
+    Own { dir: &'a std::path::Path },
+    /// A source the user edits in `dir`; its items are recorded in the lock under `source`.
+    Path {
+        source: &'a str,
+        dir: &'a std::path::Path,
+    },
+    /// A release of this source, which only its author changes.
     Dependency(&'a str),
 }
 
 impl<'a> Owner<'a> {
-    /// The owner of an item that came from `source`.
-    pub(crate) fn of(source: &'a str) -> Self {
-        if source == crate::types::SourceOrigin::LocalPackage.to_string() {
-            Self::Own
-        } else {
-            Self::Dependency(source)
+    /// The owner of a graph node's items, from `source`; `dir` is the folder it is read from
+    /// when it is not fetched. The project's own items are not a node: they are [`Self::Own`].
+    pub(crate) fn of(source: &'a str, dir: Option<&'a std::path::Path>) -> Self {
+        match dir {
+            // A host's bundle is a folder too, but the host writes it.
+            Some(dir) if !crate::layer::is_host(source) => Self::Path { source, dir },
+            _ => Self::Dependency(source),
+        }
+    }
+
+    /// ` (from <source>)` for a message about one of this owner's items; empty for the project's.
+    pub(crate) fn whose(self) -> String {
+        match self {
+            Self::Own { .. } => String::new(),
+            Self::Path { source, .. } | Self::Dependency(source) => {
+                format!(" (from `{}`)", crate::layer::source_label(source))
+            }
         }
     }
 
     /// The lock record a loss in this owner's items concerns.
     fn record(self) -> RecordRef {
         RecordRef::Source(match self {
-            Self::Own => crate::types::SourceOrigin::LocalPackage.to_string(),
-            Self::Path(source) | Self::Dependency(source) => source.to_owned(),
+            Self::Own { .. } => crate::types::SourceOrigin::LocalPackage.to_string(),
+            Self::Path { source, .. } | Self::Dependency(source) => source.to_owned(),
         })
+    }
+}
+
+/// How the user takes a newer release of the source `source`, from the layer it came in by.
+pub(crate) fn newer_release(source: &str) -> String {
+    use crate::layer::{HOST_PREFIX, Layer, USER_PREFIX};
+    match Layer::of(source) {
+        Layer::Project => format!(
+            "`{}`",
+            crate::layout::root_cmd(&format!("upgrade {source}"))
+        ),
+        Layer::User => format!(
+            "`{}`",
+            crate::layout::RootKind::User.cmd(&format!("upgrade {}", &source[USER_PREFIX.len()..]))
+        ),
+        Layer::Host => format!("updating `{}`", &source[HOST_PREFIX.len()..]),
     }
 }
 
@@ -651,10 +683,6 @@ impl DiagnosticCollector {
             context: Some(context.into()),
             category: None,
         });
-    }
-
-    pub(crate) fn push(&mut self, diagnostic: Diagnostic) {
-        self.diagnostics.push(diagnostic);
     }
 
     pub fn extend(&mut self, diagnostics: Vec<Diagnostic>) {

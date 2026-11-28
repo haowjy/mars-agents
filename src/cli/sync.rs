@@ -52,9 +52,10 @@ pub struct SyncArgs {
 /// one.
 #[derive(Debug, Default, clap::Args)]
 pub struct HostArg {
-    /// A host's bundle, `<host>@<version>=<dir>`: installs its skills, agents, hooks and MCP
-    /// servers into the targets no host launches (`.agy`), recorded in `.mars/machine.lock`.
-    /// Later syncs keep it while the directory exists.
+    /// A host's bundle, `<host>@<version>=<dir>`: its skills count as available to every agent,
+    /// and a sync installs its skills, agents, hooks and MCP servers into the targets no host
+    /// launches (`.agy`), recorded in `.mars/machine.lock`. Later syncs keep it while the
+    /// directory exists.
     #[arg(long, value_name = "HOST@VERSION=DIR")]
     pub provided_root: Option<String>,
 }
@@ -64,7 +65,18 @@ impl HostArg {
         self.provided_root
             .as_deref()
             .map(|raw| {
-                crate::provided::ProvideSpec::parse(raw).map(|spec| crate::sync::layers::HostRoot {
+                let spec = crate::provided::ProvideSpec::parse(raw)?;
+                // Checked here, where every reader of the bundle gets it, not where one installs it.
+                if !spec.package_dir.is_dir() {
+                    return Err(crate::error::ConfigError::Invalid {
+                        message: format!(
+                            "--provided-root {} is not a directory",
+                            spec.package_dir.display()
+                        ),
+                    }
+                    .into());
+                }
+                Ok(crate::sync::layers::HostRoot {
                     provider: spec.provider,
                     version: spec.version,
                     dir: spec.package_dir,

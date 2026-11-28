@@ -6,30 +6,47 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::diagnostic::DiagnosticCollector;
-use crate::diagnostic::Owner;
+use crate::diagnostic::{Diagnostic, DiagnosticCollector, DiagnosticLevel, Owner};
 use crate::local_source::{LocalDiscoveredItem, LocalItemContent};
-use crate::provided::ProvidedNames;
 use crate::resolve::ResolvedGraph;
 use crate::sync::LoadedConfig;
+use crate::sync::layers::HostSkills;
 use crate::sync::target::{
     CollisionRename, ExplicitRename, RenamableKind, TargetState, default_dest_path,
 };
 use crate::types::{DestPath, SourceName};
-use crate::validate::{SkillRef, classify_skill_ref};
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::PreparedDefinition;
 
-/// The one reporter of refs against what is installed, and the only place that combines a
-/// package's declaration with this machine: the resolver never reports a ref it defers to a
-/// declared provider, and `provided` (`None` where provided skills must not count, as in plugin
-/// builds) is read only here. `local_declared` is the `[package] uses-providers` of the project's
-/// own items, `None` for a consumer project without a `[package]` table.
+/// The project's own source, whose items are not a graph node: its `[package] uses-providers`
+/// (`None` without a `[package]` table) and the folder its items are authored in, the package
+/// root for a package and `.mars-src` otherwise.
+pub(crate) struct OwnSource<'a> {
+    pub dir: std::path::PathBuf,
+    pub declared: Option<&'a [String]>,
+}
+
+impl<'a> OwnSource<'a> {
+    pub(crate) fn new(layout: &crate::layout::Layout, declared: Option<&'a [String]>) -> Self {
+        let dir = match declared {
+            Some(_) => layout.root().to_path_buf(),
+            None => layout.local_source(),
+        };
+        Self { dir, declared }
+    }
+}
+
+/// The one judge of an Agent's skill refs in a sync and a plugin build, against what is
+/// installed, and the only place that combines a package's declaration with this machine:
+/// selection places refs and never judges them, and `provided` (the skills a host makes available
+/// here, whatever the targets; `None` where they must not count, as in plugin builds) is read only
+/// here. A ref's declaration is its source's
+/// `[package] uses-providers`, `None` for a source without a `[package]` table.
 pub(crate) fn validate_skill_refs(
     target: &TargetState,
     graph: &ResolvedGraph,
-    provided: Option<&ProvidedNames>,
-    local_declared: Option<&[String]>,
+    provided: Option<&HostSkills>,
+    own: &OwnSource<'_>,
     held_back_skills: &HashSet<String>,
     diag: &mut DiagnosticCollector,
 ) {
@@ -46,19 +63,9 @@ pub(crate) fn validate_skill_refs(
         .values()
         .filter(|item| item.id.kind == ItemKind::Agent)
     {
-        let owner = Owner::of(item.source_name.as_str());
-        let declared = if owner == Owner::Own {
-            local_declared
-        } else {
-            Some(
-                graph
-                    .nodes
-                    .get(&item.source_name)
-                    .and_then(|node| node.manifest.as_ref())
-                    .map_or(&[][..], |manifest| {
-                        manifest.package.uses_providers.as_slice()
-                    }),
-            )
+        let (owner, declared) = match graph.nodes.get(&item.source_name) {
+            Some(node) => (node.owner(), node.declared()),
+            None => (Owner::Own { dir: &own.dir }, own.declared),
         };
         let content = match &item.rewritten_content {
             Some(content) => content.clone(),
@@ -74,7 +81,7 @@ pub(crate) fn validate_skill_refs(
                 skill_name,
                 owner,
                 declared,
-                provided_here: provided.is_some_and(|names| names.provides(skill_name)),
+                provided_here: provided.is_some_and(|names| names.contains(skill_name)),
             };
             if let Some(found) = classify_skill_ref(&reference, &available_skills) {
                 diag.hold_until_written(owner, found);
@@ -199,7 +206,7 @@ pub(crate) fn report_skill_links(
             diag.schema(
                 &diagnostic,
                 &format!("{package}: {}", definition.source_path),
-                Owner::of(source_name.as_str()),
+                graph.owner(source_name),
             );
         }
     }
@@ -228,8 +235,168 @@ pub(crate) fn report_skill_links(
             diag.schema(
                 &diagnostic,
                 &crate::package_prepare::source_label(root)(&definition.source_path),
-                Owner::Own,
+                Owner::Own { dir: root },
             );
         }
+    }
+}
+
+/// What an Agent's skill ref needs checked: `declared` is the `uses-providers` of the Agent's
+/// source, `Some` exactly when that source has a `[package]` table; a source without one (a
+/// consumer project's own items, the user level's `.mars-src`) needs no declaration.
+/// `provided_here` is whether a host makes the name available on this machine
+/// (`sync::layers::HostSkills`).
+pub(crate) struct SkillRef<'a> {
+    pub agent: &'a str,
+    pub skill_name: &'a str,
+    pub owner: Owner<'a>,
+    pub declared: Option<&'a [String]>,
+    pub provided_here: bool,
+}
+
+/// The report for one skill ref the installed skills do not satisfy, or `None` when they do.
+/// The one place a ref is judged, so sync, validate and plugin builds word it alike.
+pub(crate) fn classify_skill_ref(
+    reference: &SkillRef<'_>,
+    available_skills: &HashSet<String>,
+) -> Option<Diagnostic> {
+    let SkillRef {
+        agent,
+        skill_name,
+        owner,
+        declared,
+        provided_here,
+    } = *reference;
+    if available_skills.contains(skill_name) {
+        return None;
+    }
+    let own_level = match owner {
+        Owner::Own { .. } | Owner::Path { .. } => DiagnosticLevel::Warning,
+        Owner::Dependency(_) => DiagnosticLevel::Info,
+    };
+    let whose = owner.whose();
+    Some(match mars_schema::provider::provider_of(skill_name) {
+        // The package declares the provider: the ref is valid wherever it supplies the skill, and
+        // says so where it does not.
+        Some(provider)
+            if mars_schema::provider::deferred_provider(skill_name, declared).is_some() =>
+        {
+            if provided_here {
+                return None;
+            }
+            Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "provided-skill-unavailable",
+                format!(
+                    "agent `{agent}`{whose} references skill `{skill_name}`, which provider \
+                     `{provider}` supplies; it is not provided here, so the agent runs without it"
+                ),
+            )
+        }
+        // Provided here. An item whose source has no `[package]` table (a consumer project's own,
+        // the user level's) needs nothing declared, so the ref is satisfied; a package that does not declare the provider
+        // would not resolve it for consumers.
+        Some(provider) if provided_here => {
+            declared?;
+            Diagnostic::new(
+                own_level,
+                "provided-skill-undeclared",
+                format!(
+                    "agent `{agent}`{whose} references skill `{skill_name}`, provided here by \
+                     `{provider}`, but this package's `[package] uses-providers` does not list \
+                     `{provider}`; consumers will not resolve it"
+                ),
+            )
+        }
+        _ => {
+            let suggestion = find_suggestion(skill_name, available_skills)
+                .map_or(String::new(), |name| format!(" (did you mean `{name}`?)"));
+            let fix = match owner {
+                Owner::Dependency(source) => format!(
+                    "; its author has to ship the skill, and {} takes a newer release",
+                    crate::diagnostic::newer_release(source)
+                ),
+                _ if !suggestion.is_empty() => String::new(),
+                Owner::Own { dir } | Owner::Path { dir, .. } => {
+                    match mars_schema::provider::provider_of(skill_name) {
+                        // A package's consumers resolve the ref only if it is declared, as
+                        // `mars check` says.
+                        Some(provider) if declared.is_some() => format!(
+                            "; {}",
+                            mars_schema::provider::undeclared_provider_hint(provider)
+                        ),
+                        Some(provider) => format!(
+                            "; no package ships it, and `{provider}` has not provided it here"
+                        ),
+                        None => format!(
+                            "; create it in {}, or remove it from the agent's `skills`",
+                            dir.join("skills").join(skill_name).display()
+                        ),
+                    }
+                }
+            };
+            // The agent runs without a skill it declares, so this is a warning whoever shipped it.
+            Diagnostic::new(
+                DiagnosticLevel::Warning,
+                "missing-skill",
+                format!(
+                    "agent `{agent}`{whose} references missing skill `{skill_name}`{suggestion}{fix}"
+                ),
+            )
+        }
+    })
+}
+
+pub(crate) fn find_suggestion(missing: &str, available: &HashSet<String>) -> Option<String> {
+    let missing_lower = missing.to_lowercase();
+
+    let mut candidates: Vec<&String> = available.iter().collect();
+    candidates.sort();
+
+    for name in candidates {
+        let name_lower = name.to_lowercase();
+        if name_lower.contains(&missing_lower) || missing_lower.contains(&name_lower) {
+            return Some(name.clone());
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggestion_reverse_substring() {
+        let available: HashSet<String> = ["planning"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            find_suggestion("plan", &available),
+            Some("planning".to_string())
+        );
+    }
+
+    #[test]
+    fn suggestion_forward_substring() {
+        let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            find_suggestion("review-pr", &available),
+            Some("review".to_string())
+        );
+    }
+
+    #[test]
+    fn suggestion_case_insensitive() {
+        let available: HashSet<String> = ["Planning"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            find_suggestion("plan", &available),
+            Some("Planning".to_string())
+        );
+    }
+
+    #[test]
+    fn no_suggestion_when_no_match() {
+        let available: HashSet<String> = ["review"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(find_suggestion("completely-different", &available), None);
     }
 }

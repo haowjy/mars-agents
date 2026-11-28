@@ -215,9 +215,9 @@ fn valid_relative(path: &str) -> bool {
 }
 
 /// What preparing a resolved dependency's files found, framed for its consumer: who can edit the
-/// files (a git source cannot) decides how a finding is worded.
+/// files (`ResolvedNode::owner`) decides how a finding is worded.
 pub(crate) fn report_dependency(
-    effective_config: &crate::config::EffectiveConfig,
+    owner: Owner<'_>,
     source_name: &crate::types::SourceName,
     version: Option<&semver::Version>,
     upgrading: bool,
@@ -225,14 +225,9 @@ pub(crate) fn report_dependency(
     normalized: &std::collections::BTreeMap<String, Vec<mars_schema::diagnostic::SchemaDiagnostic>>,
     diag: &mut DiagnosticCollector,
 ) {
-    let dependency = effective_config.dependencies.get(source_name);
     for (path, diagnostics) in normalized {
         for diagnostic in diagnostics {
-            diag.schema(
-                diagnostic,
-                &format!("{source_name}: {path}"),
-                Owner::Dependency(source_name.as_str()),
-            );
+            diag.schema(diagnostic, &format!("{source_name}: {path}"), owner);
         }
     }
     // The installer reads a dependency's `[models]` and nothing else of its `mars.toml`, so the
@@ -244,22 +239,13 @@ pub(crate) fn report_dependency(
         .and_then(|text| text.parse::<toml::Table>().ok())
     {
         for diagnostic in mars_schema::retired::model_harness_diagnostics(&table) {
-            diag.schema(
-                &diagnostic,
-                &format!("{source_name}: mars.toml"),
-                Owner::Dependency(source_name.as_str()),
-            );
+            diag.schema(&diagnostic, &format!("{source_name}: mars.toml"), owner);
         }
     }
     let package_name = dependency_name(prepared, source_name);
-    // Only a git source is a tree the consumer cannot edit; a path source or an override is
-    // theirs, and `mars upgrade` would leave it unchanged. A source the consumer's own config
-    // does not name came in through another package, which is git.
-    let subject = match dependency.map(|entry| &entry.spec) {
-        Some(crate::config::SourceSpec::Path(_)) => {
-            Subject::Package(package_name, Some(source_name.as_str()))
-        }
-        _ => Subject::Dependency(package_name, source_name.as_str(), version, upgrading),
+    let subject = match owner {
+        Owner::Dependency(_) => Subject::Dependency(package_name, owner, version, upgrading),
+        _ => Subject::Package(package_name, owner),
     };
     report_diagnostics(
         prepared,
@@ -313,8 +299,8 @@ fn reported(
         .is_some()
         .then(|| authored_package_name(&prepared, root));
     let subject = match &package_name {
-        Some(name) => Subject::Package(name, None),
-        None => Subject::AuthoredSource,
+        Some(name) => Subject::Package(name, Owner::Own { dir: root }),
+        None => Subject::AuthoredSource(root),
     };
     match findings {
         FileFindings::Print => {
@@ -364,14 +350,15 @@ pub(crate) fn prepare_project(
 }
 
 pub(crate) enum Subject<'a> {
-    /// A package whose files the user can edit: its name, and the source name the lock records
-    /// its items under when a path dependency holds it (none for the project's own).
-    Package(&'a str, Option<&'a str>),
-    /// A git package a consumer depends on: its name, the source name the lock records its items
-    /// under, and the version the sync resolved. The flag is set when the command is `mars
+    /// A package whose files the user can edit: its name, and who holds it (the project, or a
+    /// path dependency the lock records its items under).
+    Package(&'a str, Owner<'a>),
+    /// A released package a consumer depends on: its name, its owner (`Owner::Dependency`, the
+    /// source the lock records its items under), and the version the sync resolved. The flag is set when the command is `mars
     /// upgrade` for this package, which has already tried to move it.
-    Dependency(&'a str, &'a str, Option<&'a semver::Version>, bool),
-    AuthoredSource,
+    Dependency(&'a str, Owner<'a>, Option<&'a semver::Version>, bool),
+    /// The project's own `.mars-src`, at this folder.
+    AuthoredSource(&'a Path),
 }
 
 /// `label` names a package-relative path in a diagnostic. A dependency is named by its
@@ -403,9 +390,9 @@ fn report_files(
     diag: &mut DiagnosticCollector,
 ) {
     let owner = match subject {
-        Subject::Dependency(_, source, ..) => Owner::Dependency(source),
-        Subject::Package(_, Some(source)) => Owner::Path(source),
-        Subject::Package(_, None) | Subject::AuthoredSource => Owner::Own,
+        Subject::Dependency(_, owner, ..) => *owner,
+        Subject::Package(_, owner) => *owner,
+        Subject::AuthoredSource(dir) => Owner::Own { dir },
     };
     for (relative, diagnostics) in prepared.all_diagnostics() {
         let context = label(relative);
@@ -413,20 +400,22 @@ fn report_files(
             match subject {
                 // The consumer cannot edit the package, so the schema's wording for its author
                 // is no use to them.
-                Subject::Dependency(name, _, version, upgrading)
+                Subject::Dependency(_, Owner::Dependency(source), version, upgrading)
                     if diagnostic.code == "manifest.schema-missing" =>
                 {
                     let mut for_consumer = diagnostic.clone();
                     let resolved = version
                         .map_or_else(String::new, |version| format!(", resolved to {version},"));
-                    let upgrade = crate::layout::root_cmd("upgrade");
+                    // `upgrading` is set only by `mars upgrade` for this package.
                     let way_out = if *upgrading {
                         format!(
-                            "`{upgrade}` cannot move it past its `version` constraint: widen that constraint in mars.toml"
+                            "`{}` cannot move it past its `version` constraint: widen that constraint in mars.toml",
+                            crate::layout::root_cmd("upgrade")
                         )
                     } else {
                         format!(
-                            "run `{upgrade} {name}` for a newer version (widen its `version` constraint if `{upgrade}` keeps this version)"
+                            "{} takes a newer version (widen its `version` constraint if it keeps this one)",
+                            crate::diagnostic::newer_release(source)
                         )
                     };
                     for_consumer.message = format!(
@@ -462,7 +451,7 @@ fn report_translation(prepared: &Prepared, subject: &Subject<'_>, diag: &mut Dia
             Subject::Package(name, _) | Subject::Dependency(name, ..) => {
                 format!("package `{name}`")
             }
-            Subject::AuthoredSource => "authored `.mars-src` content".to_string(),
+            Subject::AuthoredSource(_) => "authored `.mars-src` content".to_string(),
         };
         let count = format!("{files} file{}", if files == 1 { "" } else { "s" });
         diag.info(

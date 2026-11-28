@@ -27,6 +27,14 @@ impl RootKind {
             Self::User => "user",
         }
     }
+
+    /// The command `mars <args>` for a root of this kind: see [`Layout::cmd`].
+    pub(crate) fn cmd(self, args: &str) -> String {
+        match self {
+            Self::User => crate::types::managed_cmd(&format!("mars --user {args}")).into_owned(),
+            Self::Project => project_cmd(args),
+        }
+    }
 }
 
 /// The root this run acts on: one per CLI run, set once its root is known.
@@ -110,12 +118,7 @@ impl Layout {
     /// the user level, through `types::managed_cmd`. A command for a fixed root (`mars --root ~
     /// unlink`) is written out with `managed_cmd`.
     pub(crate) fn cmd(&self, args: &str) -> String {
-        match self.kind {
-            RootKind::User => {
-                crate::types::managed_cmd(&format!("mars --user {args}")).into_owned()
-            }
-            RootKind::Project => project_cmd(args),
-        }
+        self.kind.cmd(args)
     }
 
     /// This root's store, as a message names it: `.mars/` in a project, its path at the user

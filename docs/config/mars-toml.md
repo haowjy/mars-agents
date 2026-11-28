@@ -140,17 +140,20 @@ requires-mars = ">=0.20.0"
 uses-providers = ["meridian"]
 ```
 
-A dependency's agent that lists `x__meridian`:
+A dependency's agent that lists `x__meridian`, when no package ships it:
 
-| `uses-providers` lists `meridian` | Provider has provided `x__meridian` here | Result |
+| `uses-providers` lists `meridian` | `x__meridian` is provided here | Result at sync |
 |---|---|---|
 | yes | yes | Satisfied, silently |
-| yes | no | Sync continues with a `provided-skill-unavailable` warning; `mars validate --strict` fails |
-| no | either | Resolution fails with `skill not found`, on every machine |
+| yes | no | A `provided-skill-unavailable` warning; `mars validate --strict` fails |
+| no | yes | `provided-skill-undeclared`: a warning for a path dependency, which you can edit, and `info` for a git one (shown with `--verbose`); the agent gets the skill here |
+| no | no | A `missing-skill` warning: for a path dependency it says to declare `meridian` in `uses-providers`, for a git one to take a release that fixes it |
 
-The resolver reads only the requesting package's own list, never what the machine has provided, so a package resolves the same everywhere and a typo such as `x__meridain` stays an error. A package skill named `x__meridian` is always found first, and wins its destination from a provided copy: the next `mars sync` replaces it and the next `mars provide` drops its record. `mars.lock` is the same with or without the provider.
+Sync never fails on a skill ref. `mars check` ignores what is provided here, so it fails an undeclared ref on every machine, naming `uses-providers`.
 
-Project-local agents (`.mars-src/`, or a package repository's own items) are checked by sync against what is provided here. A consumer project needs no `[package]` table and no declaration. In a package repository, a ref to a skill that is provided here but whose provider is not listed warns `provided-skill-undeclared`, so the author sees what consumers will hit, and `mars check` (the publish gate, which ignores `.mars/provided.lock`) fails naming `uses-providers`. A package that sets `uses-providers` also sets `requires-mars` to a Mars that understands it; an older Mars fails on the requirement instead of `skill not found`. `mars build plugin` never ships a provided skill and reports `provided-skill-unavailable` for an agent that lists a declared provider's skill.
+A skill is provided here when a host's bundle the sync knows ships it (`mars sync --provided-root`, or the bundle an earlier sync recorded in `.mars/machine.lock`), whatever the managed targets take. A sync records a bundle only when a managed target takes a host's content (`.agy`), so a project whose targets are all launched by the host needs `--provided-root` on every sync, as Meridian passes it. A skill `mars provide` installed is provided here too. Whether a ref is deferred to a provider reads only the requesting package's own list, never what the machine has provided, so a package means the same everywhere and a typo such as `x__meridain` stays a missing skill. A package skill named `x__meridian` is always found first, and wins its destination from a provided copy: the next `mars sync` replaces it and the next `mars provide` drops its record. `mars.lock` is the same with or without the provider.
+
+Project-local agents (`.mars-src/`, or a package repository's own items) are checked by sync against what is provided here. A consumer project needs no `[package]` table and no declaration. In a package repository, a ref to a skill that is provided here but whose provider is not listed warns `provided-skill-undeclared`, so the author sees what consumers will hit, and `mars check` (the publish gate, which ignores `.mars/provided.lock`) fails naming `uses-providers`. A package that sets `uses-providers` also sets `requires-mars` to a Mars that understands it; an older Mars fails on the requirement instead of not finding the skill. `mars build plugin` never ships a provided skill and reports `provided-skill-unavailable` for an agent that lists a declared provider's skill.
 
 Bare engine versions such as `"0.11"` mean a minimum (`">=0.11.0"`).
 Full semver ranges are also accepted. During dependency resolution Mars skips

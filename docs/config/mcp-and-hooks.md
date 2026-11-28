@@ -950,7 +950,7 @@ reorder its file-mode artifact.
 | `hook.native-hook-required` | error | a file target, or any target of a hook with `[hooks]`, does not name its `native-hook` |
 | `hook.native-hook-path` | error | a `native-hook` path is not a plain relative path inside the hook directory |
 | `hook.handler` | error | your own hook has a handler `timeout` outside 0 to 2147483 seconds, or an `onFailure` other than `block` or `continue`. For a dependency's hook the same fault is reported as `hook-invalid-kept` |
-| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists. The line names `mars upgrade <source>` as the installer's way out |
+| `hook-invalid-kept` | warning | a dependency's hook failed validation; its last good install stays, or nothing installs if none exists. The line names the installer's way out: `mars upgrade <source>` for a release (`mars --user upgrade <name>` for a user-level one, updating the host for a host's), or the folder a path source is fixed in |
 | `codex-hooks-need-trust` | warning | `.codex/hooks.json` has new or moved handlers Codex will want reviewed |
 | `plugin-native-hook-dropped` | warning | `mars build plugin`: a hook's entries do not reach a tree |
 

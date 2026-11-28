@@ -24,6 +24,9 @@ pub struct ValidateArgs {
     /// Escalate warnings to errors (e.g., missing env vars become errors).
     #[arg(long)]
     pub strict: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 /// JSON output envelope for `mars validate --json`.
@@ -71,6 +74,7 @@ pub fn run(args: &ValidateArgs, ctx: &MarsContext, json: bool) -> Result<i32, Ma
         mutation: None,
         options: SyncOptions {
             dry_run: true,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: Default::default(),

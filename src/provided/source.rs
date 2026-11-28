@@ -17,10 +17,6 @@ pub(crate) fn source_name(provider: &str) -> String {
     format!("{SOURCE_PREFIX}{provider}")
 }
 
-pub(crate) fn is_provided_source(name: &str) -> bool {
-    crate::layer::Layer::of(name) == crate::layer::Layer::Host
-}
-
 /// The staged hooks and MCP servers of each provider (`.mars/provided/<provider>/`), as the
 /// path dependencies sync resolves them through. A host's content takes the same reader, filter
 /// and lock paths as a package's, so nothing downstream knows a provider from a dependency.
@@ -74,7 +70,7 @@ pub(crate) fn takes_provided_any(managed_targets: &[String]) -> bool {
 /// `path` for a message. A provided source's files sit in a staging directory the user never
 /// sees, so they read as `<host>/<path under the bundle>`.
 pub(crate) fn display_path(source_name: &str, root: &Path, path: &Path) -> String {
-    if is_provided_source(source_name) {
+    if crate::layer::is_host(source_name) {
         let relative = path.strip_prefix(root).unwrap_or(path);
         Path::new(&crate::layer::source_label(source_name))
             .join(relative)

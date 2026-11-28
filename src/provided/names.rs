@@ -87,10 +87,10 @@ impl ProvidedNames {
         self.versions.extend(versions);
     }
 
-    /// Whether a provider installed `name` here. A recorded name whose directory is gone — a
-    /// package replaced it and was removed, or a crash interrupted the apply — is not available.
-    pub(crate) fn provides(&self, name: &str) -> bool {
-        self.installed.contains(name)
+    /// The names a provider installed here. A recorded name whose directory is gone — a package
+    /// replaced it and was removed, or a crash interrupted the apply — is not available.
+    pub(crate) fn installed(&self) -> impl Iterator<Item = &str> {
+        self.installed.iter().map(String::as_str)
     }
 
     /// Whether a provider installed the skill directory at `dest` (`skills/<name>`).

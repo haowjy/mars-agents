@@ -17,7 +17,6 @@ mars doctor
 | File integrity | Every locked item exists on disk |
 | Conflict markers | Agent files don't contain `<<<<<<<` / `>>>>>>>` |
 | Config-lock consistency | Every dependency in config has a lock entry |
-| Skill references | Every agent's declared skill deps exist on disk |
 | Legacy item symlinks | Symlinked agents and skills in `.mars/` are reported for normalization |
 | Repository hygiene | `.mars/` gitignore coverage and an unconfigured legacy `.agents/` tree that has content (an empty one is not reported) |
 | Target divergence | Each locked item's target copy matches lock checksum |
@@ -34,7 +33,6 @@ mars doctor
 ```
   agents/coder.md has unresolved conflict markers
   dependency `dev` is in config but not in lock — run `mars sync`
-  agent `coder` references missing skill `planning` — add a source that provides it
   legacy symlinked agent `coder` detected in managed dir — run `mars sync` to normalize to copied content
 ```
 

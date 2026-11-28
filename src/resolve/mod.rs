@@ -38,7 +38,7 @@ pub(crate) use upgrade::upgrade_candidate;
 use crate::config::{EffectiveConfig, SourceSpec};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover;
-use crate::error::{MarsError, ResolutionError};
+use crate::error::MarsError;
 use crate::lock::{LockFile, RecordRef};
 use crate::types::{CommitHash, SourceId, SourceName, SourceUrl};
 use mars_schema::item::ItemKind;
@@ -212,7 +212,7 @@ fn finish(
         let node = node(core, answers)?;
         if !options.prepared_sources.contains_key(&node.source_name) {
             crate::package_prepare::report_dependency(
-                config,
+                node.owner(),
                 &node.source_name,
                 node.resolved_ref.version.as_ref(),
                 options.is_upgrade_target(&node.source_name),
@@ -223,7 +223,7 @@ fn finish(
         }
         // The user can neither upgrade nor remove a host's staged hooks, so one in a retired
         // schema is kept as the last sync installed it and never halts (`kept_hooks::settle`).
-        if !crate::provided::is_provided_source(node.source_name.as_ref())
+        if !crate::layer::is_host(node.source_name.as_ref())
             && let crate::staging::HookSurfaceState::Unreadable { hook_names } =
                 crate::staging::detect_unreadable_hook_surface(
                     &node.rooted_ref.authored_root,
@@ -243,9 +243,12 @@ fn finish(
         .map(|item| ((item.id.kind, item.id.name.clone()), item))
         .collect::<IndexMap<_, _>>();
         // A package that only names other packages or ships `[models]` has no items by design.
+        // Only the project's `mars.toml` names a source with a `subpath` to fix: a host's bundle
+        // and the user level's sources (its `.mars-src`, or a package its own sync reports)
+        // are not this project's to change.
         if items.is_empty()
             && !node.contributes_beyond_items()
-            && !crate::provided::is_provided_source(node.source_name.as_ref())
+            && crate::layer::Layer::of(node.source_name.as_ref()) == crate::layer::Layer::Project
         {
             diag.hold_warning(
                 RecordRef::Dependency(node.source_name.to_string()),
@@ -259,24 +262,9 @@ fn finish(
         registry.insert(node.source_name.clone(), RegisteredPackage { node, items });
     }
 
-    let selection = select::select_registry(config, &registry, options.root.as_deref());
-    // With a root, the caller judges the refs the selection could not resolve (`mars check`,
-    // through `mars_schema::check`). A slug two packages install is not reported here: sync
-    // renames both and says so once (`auto-rename-collision`).
-    if options.root.is_none()
-        && let Some(missing) = selection.missing_skills.first()
-    {
-        return Err(ResolutionError::SkillNotFound {
-            skill: missing.skill.clone(),
-            required_by: match &missing.package {
-                Some(package) => format!("{package}/{}", missing.agent),
-                None => missing.agent.clone(),
-            },
-            searched: missing.searched.clone(),
-            hint: missing.hint.clone(),
-        }
-        .into());
-    }
+    // Selection places the skills an Agent names and never judges a ref: sync judges against
+    // what it installs (`sync::validate`), `mars check` against the package (`mars_schema::check`).
+    let selection = select::select_registry(config, &registry);
 
     let nodes: IndexMap<SourceName, ResolvedNode> = registry
         .into_iter()

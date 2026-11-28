@@ -11,7 +11,7 @@ use crate::error::{LockError, MarsError};
 use crate::models::ModelAlias;
 use crate::types::{ContentHash, DestPath, SourceName, SourceOrigin};
 
-mod machine;
+pub(crate) mod machine;
 mod targets;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,11 +22,30 @@ pub struct LockFile {
     pub config_entries: BTreeMap<String, BTreeMap<String, ConfigEntryRecord>>,
     /// Dependency model alias winners (declaration-order merged, dependency-only).
     pub dependency_model_aliases: IndexMap<String, ModelAlias>,
-    /// `(target, record key)` of the config entries a host's provided content wrote. Only
+    /// `(target, record key)` of the config entries a layer other than the project's wrote (the
+    /// user level's, a host's; the wire name predates the user level). Only
     /// `machine.lock` holds the field: a provided entry stays there when its target joins
     /// `mars.toml`, and a local-only target's own entries are not in it. Only a hook or MCP key
     /// can be provided ([`can_be_provided`]).
     pub provided_entries: std::collections::BTreeSet<(String, String)>,
+    /// What of a layer other than the project's, or of a local-only target, this project does
+    /// not install, with why (`sync::machine_local`): an item the project claims, an entry kept
+    /// out of a file that can be committed. What `mars list` and `mars why` show of them, and the
+    /// record whose change makes the warning news. Always machine-local.
+    pub yielded: Vec<YieldedRecord>,
+}
+
+/// One thing a sync left out for the project's sake, as `machine.lock` records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct YieldedRecord {
+    pub kind: ItemKind,
+    /// `.mars` for an agent, skill or bootstrap doc, which yields on every target; the target
+    /// for a hook or MCP server.
+    pub target: String,
+    pub name: String,
+    pub source: SourceName,
+    /// Why, as the sync's warning says it.
+    pub why: String,
 }
 
 /// Custom `Deserialize` for `LockFile`, delegated to the current wire type.
@@ -63,6 +82,7 @@ impl LockFile {
             items: wire.items,
             config_entries,
             provided_entries,
+            yielded: wire.yielded,
             dependency_model_aliases: wire.dependency_model_aliases,
         };
         (lock, orphaned)
@@ -75,6 +95,7 @@ impl LockFile {
             items: IndexMap::new(),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -425,10 +446,7 @@ pub(crate) fn can_be_provided(key: &str) -> bool {
         || crate::target::HookEntry::parse_key(key).is_some()
 }
 
-const LOCK_FILE: &str = "mars.lock";
-/// The records only this machine has: provided content (`mars provide`) and the targets
-/// `mars.toml` does not name. See `machine.rs`.
-const MACHINE_LOCK_FILE: &str = ".mars/machine.lock";
+use crate::layout::{LOCK_FILE, Layout};
 const LOCK_VERSION: u32 = 3;
 pub const CANONICAL_TARGET_ROOT: &str = ".mars";
 
@@ -444,6 +462,8 @@ struct LockFileWire {
     #[serde(default)]
     dependency_model_aliases: IndexMap<String, ModelAlias>,
     provided_entries: Option<std::collections::BTreeSet<(String, String)>>,
+    #[serde(default)]
+    yielded: Vec<YieldedRecord>,
 }
 
 /// The parts of a v2 lock (mars 0.11 and earlier) that still mean something: the
@@ -466,8 +486,8 @@ struct ConfigEntryRecordWire {
 
 /// A version 2 lock keeps only its dependencies and aliases; other older schemas
 /// fail with actionable re-sync guidance.
-pub fn load(root: &Path) -> Result<LockFile, MarsError> {
-    let (lock, _) = load_with_diagnostics(root)?;
+pub fn load(layout: &Layout) -> Result<LockFile, MarsError> {
+    let (lock, _) = load_with_diagnostics(layout)?;
     Ok(lock)
 }
 
@@ -477,8 +497,8 @@ pub fn load(root: &Path) -> Result<LockFile, MarsError> {
 /// may omit `dependency_model_aliases` entirely. When dependency entries exist, runtime
 /// alias consumers must fail closed so dependency alias authority is not silently treated
 /// as empty.
-pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
-    let path = root.join(LOCK_FILE);
+pub fn load_for_runtime_aliases(layout: &Layout) -> Result<LockFile, MarsError> {
+    let path = layout.lock();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LockFile::empty()),
@@ -494,14 +514,14 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
         .map(|table| table.contains_key("dependency_model_aliases"))
         .unwrap_or(false);
 
-    let (lock, _) = load_with_diagnostics(root)?;
+    let (lock, _) = load_with_diagnostics(layout)?;
 
     if !has_dependency_alias_field && !lock.dependencies.is_empty() {
         return Err(LockError::Corrupt {
             message: format!(
                 "legacy {} is missing `dependency_model_aliases` for dependency alias authority; run `{}` to update it",
                 LOCK_FILE,
-                crate::types::managed_cmd("mars sync")
+                layout.cmd("sync")
             ),
         }
         .into());
@@ -513,13 +533,12 @@ pub fn load_for_runtime_aliases(root: &Path) -> Result<LockFile, MarsError> {
 /// The lock of a project: `mars.lock` with the machine-local `machine.lock` merged in,
 /// so every reader sees one lock. A record both files hold takes the machine-local value; see
 /// [`write`] for how that happens.
-pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
-    let (committed, mut diagnostics) = read_lock_file(&root.join(LOCK_FILE), false)?;
-    let local_path = root.join(MACHINE_LOCK_FILE);
-    if !local_path.exists() {
+pub fn load_with_diagnostics(layout: &Layout) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+    let (committed, mut diagnostics) = read_lock_file(layout, &layout.lock(), false)?;
+    let Some(local_path) = layout.machine_lock().filter(|path| path.exists()) else {
         return Ok((committed, diagnostics));
-    }
-    let (local, local_diagnostics) = read_lock_file(&local_path, true)?;
+    };
+    let (local, local_diagnostics) = read_lock_file(layout, &local_path, true)?;
     diagnostics.extend(local_diagnostics);
     Ok((
         {
@@ -531,7 +550,11 @@ pub fn load_with_diagnostics(root: &Path) -> Result<(LockFile, Vec<Diagnostic>),
     ))
 }
 
-fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
+fn read_lock_file(
+    layout: &Layout,
+    path: &Path,
+    machine: bool,
+) -> Result<(LockFile, Vec<Diagnostic>), MarsError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -567,13 +590,13 @@ fn read_lock_file(path: &Path, machine: bool) -> Result<(LockFile, Vec<Diagnosti
             let mut lock = LockFile::empty();
             lock.dependencies = wire.dependencies;
             lock.dependency_model_aliases = wire.dependency_model_aliases;
-            Ok((lock, vec![v2_lock_dropped_warning()]))
+            Ok((lock, vec![v2_lock_dropped_warning(layout)]))
         }
         older if older < i64::from(LOCK_VERSION) => Err(LockError::Corrupt {
             message: format!(
                 "{} uses unsupported lock version {older}; remove it and run `{}`",
                 path.display(),
-                crate::types::managed_cmd("mars sync")
+                layout.cmd("sync")
             ),
         }
         .into()),
@@ -645,7 +668,7 @@ fn orphaned_entries_warning(orphaned: &[(String, String)]) -> Option<Diagnostic>
     ))
 }
 
-fn v2_lock_dropped_warning() -> Diagnostic {
+fn v2_lock_dropped_warning(layout: &Layout) -> Diagnostic {
     lock_warning(
         "lock-v2-dropped",
         format!(
@@ -655,7 +678,7 @@ fn v2_lock_dropped_warning() -> Diagnostic {
              overwriting any local edits at those paths. Files of items no longer wanted, and MCP or hook \
              entries in target config files, stay behind; delete them by hand. Syncing once with any mars \
              from 0.12 to 0.24 first would have migrated the lock",
-            crate::types::managed_cmd("mars sync --force")
+            layout.cmd("sync --force")
         ),
     )
 }
@@ -713,19 +736,26 @@ fn has_only_regular_file_entries(dir: &Path) -> bool {
 /// `mars.lock`, then the machine file as it should be: a record moving either way is in both
 /// files for a while, and loading takes the machine-local copy.
 pub fn write(
-    root: &Path,
+    layout: &Layout,
     lock: &LockFile,
     project_targets: &std::collections::BTreeSet<String>,
 ) -> Result<(), MarsError> {
     let (committed, local) = machine::split(lock.clone(), project_targets);
-    let local_path = root.join(MACHINE_LOCK_FILE);
-    let (old_local, _) = read_lock_file(&local_path, true)?;
+    let Some(local_path) = layout.machine_lock() else {
+        if !local.is_empty() {
+            return Err(MarsError::Internal(
+                "the user level has a machine-local record, which it has no file for".to_string(),
+            ));
+        }
+        return write_lock_file(&layout.lock(), &committed, false);
+    };
+    let (old_local, _) = read_lock_file(layout, &local_path, true)?;
     let mut widened = old_local;
     widened.join(local.clone());
     if !widened.is_empty() {
         write_lock_file(&local_path, &widened, true)?;
     }
-    write_lock_file(&root.join(LOCK_FILE), &committed, false)?;
+    write_lock_file(&layout.lock(), &committed, false)?;
     if local.is_empty() {
         crate::platform::fs::safe_remove(&local_path)?;
     } else if widened != local {
@@ -746,6 +776,8 @@ struct LockFileOut<'a> {
     dependency_model_aliases: &'a IndexMap<String, ModelAlias>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provided_entries: Option<&'a std::collections::BTreeSet<(String, String)>>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    yielded: &'a [YieldedRecord],
 }
 
 fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), MarsError> {
@@ -754,6 +786,15 @@ fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), Ma
     normalized.dependencies.sort_keys();
     normalized.items.sort_keys();
     normalized.dependency_model_aliases.sort_keys();
+    normalized.yielded.sort_by(|a, b| {
+        (a.kind.to_string(), &a.target, &a.name, &a.source).cmp(&(
+            b.kind.to_string(),
+            &b.target,
+            &b.name,
+            &b.source,
+        ))
+    });
+    normalized.yielded.dedup();
     for item in normalized.items.values_mut() {
         item.outputs.sort_by(|a, b| {
             a.target_root
@@ -769,6 +810,7 @@ fn write_lock_file(path: &Path, lock: &LockFile, machine: bool) -> Result<(), Ma
         config_entries: &normalized.config_entries,
         dependency_model_aliases: &normalized.dependency_model_aliases,
         provided_entries: machine.then_some(&normalized.provided_entries),
+        yielded: &normalized.yielded,
     })
     .map_err(|e| LockError::Corrupt {
         message: format!("failed to serialize lock file: {e}"),
@@ -834,10 +876,10 @@ pub(crate) fn build(
     for (name, node) in &graph.nodes {
         let mut locked = to_locked_source(node);
         if crate::provided::is_provided_source(name.as_ref()) {
-            // A staged path dependency has no version of its own; its hooks and MCP servers are
-            // what moves.
+            // A host's path dependency has no version of its own: the lock records the host's,
+            // or the digest of what `mars provide` staged.
             locked.version = provided
-                .staged_digest(crate::provided::provider_label(name.as_ref()))
+                .host_version(&crate::layer::source_label(name.as_ref()))
                 .map(str::to_owned);
         }
         dependencies.insert(name.clone(), locked);
@@ -971,6 +1013,7 @@ pub(crate) fn build(
         items,
         config_entries,
         provided_entries,
+        yielded: Vec::new(),
         dependency_model_aliases: IndexMap::new(),
     })
 }
@@ -1537,6 +1580,14 @@ pub(crate) enum RecordRef {
     Entry { target_root: String, key: String },
     /// A dependency's own record, by name.
     Dependency(String),
+    /// What a sync left out for the project's sake, by kind, target, name and source: news when
+    /// it is newly left out or for a new reason.
+    Yielded {
+        kind: ItemKind,
+        target: String,
+        name: String,
+        source: String,
+    },
     /// News when any of them is.
     Any(Vec<RecordRef>),
 }
@@ -1587,6 +1638,26 @@ impl RecordRef {
                 .dependencies
                 .get(name.as_str())
                 .is_some_and(|now| old.dependencies.get(name.as_str()) != Some(now)),
+            Self::Yielded {
+                kind,
+                target,
+                name,
+                source,
+            } => {
+                let find = |lock: &'_ LockFile| {
+                    lock.yielded
+                        .iter()
+                        .find(|record| {
+                            record.kind == *kind
+                                && record.target == *target
+                                && record.name == *name
+                                && record.source.as_str() == source
+                        })
+                        .cloned()
+                };
+                let now = find(new);
+                now.is_some() && now != find(old)
+            }
             Self::Any(records) => records.iter().any(|record| record.is_news(old, new)),
         }
     }
@@ -1661,6 +1732,7 @@ mod tests {
             items,
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }
@@ -1670,8 +1742,14 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join(".mars")).unwrap();
         let old = "version = 3\n[config_entries.\".agy\".\"mcp:srv\"]\nemitted_json = '{}'\n";
-        std::fs::write(dir.path().join(MACHINE_LOCK_FILE), old).unwrap();
-        let lock = load(dir.path()).unwrap();
+        std::fs::write(
+            crate::layout::Layout::project(dir.path())
+                .machine_lock()
+                .unwrap(),
+            old,
+        )
+        .unwrap();
+        let lock = load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(
             lock.provided_entries
                 .contains(&(".agy".into(), "mcp:srv".into()))
@@ -1681,8 +1759,18 @@ mod tests {
         // take a local-only target's entries for provided ones.
         let mut lock = lock;
         lock.provided_entries.clear();
-        write(dir.path(), &lock, &Default::default()).unwrap();
-        assert!(load(dir.path()).unwrap().provided_entries.is_empty());
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &Default::default(),
+        )
+        .unwrap();
+        assert!(
+            load(&crate::layout::Layout::project(dir.path()))
+                .unwrap()
+                .provided_entries
+                .is_empty()
+        );
         let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
         assert!(!committed.contains("provided_entries") && !committed.contains(".agy"));
     }
@@ -1708,18 +1796,33 @@ mod tests {
         );
         // `mars.lock` cannot be written: the machine-local file, saved first, already is.
         std::fs::create_dir(dir.path().join(LOCK_FILE)).unwrap();
-        write(dir.path(), &lock, &lock.recorded_targets()).unwrap_err();
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &lock.recorded_targets(),
+        )
+        .unwrap_err();
         std::fs::remove_dir(dir.path().join(LOCK_FILE)).unwrap();
 
-        let recovered = load(dir.path()).unwrap();
+        let recovered = load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(recovered.items.contains_key("skill/probe__meridian"));
         assert!(!recovered.items.contains_key("agent/coder"));
 
         // The next write puts each record in its own file.
-        write(dir.path(), &lock, &lock.recorded_targets()).unwrap();
+        write(
+            &crate::layout::Layout::project(dir.path()),
+            &lock,
+            &lock.recorded_targets(),
+        )
+        .unwrap();
         let committed = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
         assert!(committed.contains("agent/coder") && !committed.contains("probe__meridian"));
-        assert_eq!(load(dir.path()).unwrap().items, lock.items);
+        assert_eq!(
+            load(&crate::layout::Layout::project(dir.path()))
+                .unwrap()
+                .items,
+            lock.items
+        );
     }
 
     #[cfg(unix)]
@@ -1799,10 +1902,11 @@ installed_checksum = "sha256:bbb"
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("mars.lock"), toml_str).unwrap();
 
-        let err = load_for_runtime_aliases(dir.path()).unwrap_err();
+        let layout = crate::layout::Layout::project(dir.path());
+        let err = load_for_runtime_aliases(&layout).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("missing `dependency_model_aliases`"));
-        assert!(message.contains(&format!("run `{}`", crate::types::managed_cmd("mars sync"))));
+        assert!(message.contains(&format!("run `{}`", layout.cmd("sync"))));
     }
 
     #[test]
@@ -2051,6 +2155,7 @@ installed_checksum = "sha256:bbb"
             ]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -2135,6 +2240,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let graph = ResolvedGraph {
@@ -2213,6 +2319,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let mut lock = old_lock.clone();
@@ -2505,6 +2612,7 @@ installed_checksum = "sha256:bbb"
             items: IndexMap::new(),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
 
@@ -2636,6 +2744,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {
@@ -2746,6 +2855,7 @@ installed_checksum = "sha256:bbb"
             )]),
             config_entries: std::collections::BTreeMap::new(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         };
         let applied = ApplyResult {

@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use indexmap::IndexMap;
 
 use crate::build::policy::{PolicyInput, PolicySource};
@@ -118,12 +116,4 @@ pub(super) fn resolve_literal_model(
         provider_constraint,
         warnings: Vec::new(),
     }
-}
-
-pub(super) fn load_models_cache(
-    project_root: &Path,
-    providers: &[String],
-) -> Result<ModelsCache, MarsError> {
-    let mars_dir = project_root.join(".mars");
-    models::read_cache(&mars_dir, providers)
 }

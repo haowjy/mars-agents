@@ -14,7 +14,12 @@ Mars uses three project files plus an optional user file:
 | `mars.toml` | Dependencies, filters, settings | Yes |
 | `mars.lock` | Resolved versions, checksums, ownership | Yes |
 | `mars.local.toml` | Developer-local overrides | No (gitignored) |
-| `$MARS_CONFIG_DIR/config.toml` (otherwise the platform `mars/config.toml`) | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every project, in the `mars.local.toml` schema | User-owned |
+| `~/.mars/config.toml` | Your own `[settings]`, `[models]`, `[agents]` and `[skills]` for every root, in the `mars.local.toml` schema | User-owned |
+
+`~/.mars` is the [user level](../cli/user-level.md)'s folder (`MARS_HOME` moves it), which also
+holds its own `mars.toml` and `mars.lock`: a `mars.toml` like a project's, with no `targets`.
+Mars 0.40 kept `config.toml` in the platform config folder; for one minor release Mars still
+reads it there, with a warning to move it ([From Mars 0.40](../cli/user-level.md#where-its-files-are)).
 
 ## Layering and precedence
 
@@ -538,9 +543,9 @@ project, and for a launch with no agent. It takes the keys of a profile's `tools
 
 ### User config
 
-`$MARS_CONFIG_DIR/config.toml`, or `mars/config.toml` under the platform config directory, takes
-the sections of `mars.local.toml` (`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read
-by every project. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
+`~/.mars/config.toml` (the folder above) takes the sections of `mars.local.toml`
+(`[settings]`, `[models]`, `[agents]`, `[skills]`) and is read by every project and by the user
+level. It is the lowest layer: `mars.toml` beats it and `mars.local.toml` beats both.
 
 ```toml
 [settings]
@@ -592,7 +597,7 @@ The earlier per-agent `fanout:` frontmatter key is gone from schema 1; this list
 
 Overlays are **your project's** policy for an installed agent or skill, layered over the package's text without forking it. They are consumer configuration: they are not part of [schema v1](schema-v1.md), the package files never see them, and a dependency's own `[agents.*]` and `[skills.*]` tables are inert in your project. Available in both `mars.toml` and `mars.local.toml`; a matching local block replaces the project block except for the composing network and `tools` permission sets.
 
-An agent overlay is read when Mars builds a launch bundle and when it writes native agent files. `.mars/agents/<name>.md` keeps the package's text.
+An agent overlay is read when Mars builds a launch bundle and when it writes native agent files. `.mars/agents/<name>.md` keeps the package's text. A launch bundle applies the overlay to an agent from `--provided-root` too, by its name.
 
 ```toml
 [agents.reviewer]
@@ -670,7 +675,7 @@ Skills carry no tool policy in schema 1, so a skill overlay has no `tools` table
 ## Curated model display
 
 Configure the human `mars models list` view in `mars.curated.toml`,
-`mars.curated.local.toml`, or the user XDG `mars/curated.toml` file. See
+`mars.curated.local.toml`, or the user level's `~/.mars/curated.toml`. See
 [mars-curated.md](mars-curated.md) for the strict schema and merge semantics.
 Curation never affects routing, launch bundles, or alias resolution. Use
 `mars models list --all` to inspect hidden rows; use `mars models aliases`

@@ -131,6 +131,7 @@ impl LockFile {
                 .extend(records);
         }
         self.provided_entries.extend(rest.provided_entries);
+        self.yielded.extend(rest.yielded);
         record_local_dependency(&self.items, &mut self.dependencies);
         self.dependencies.sort_keys();
     }

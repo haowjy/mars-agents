@@ -4,10 +4,12 @@
 //! If TARGET is provided, also creates `<project-root>/TARGET` as a managed output dir.
 //! Use `--root` to select an explicit project root.
 //!
-//! Init does NOT walk up — it creates a project at cwd or the `--root` target.
+//! Init does NOT walk up — it creates a project at cwd or the `--root` target, never in the
+//! home directory (the user level is `mars --user`).
 //! Idempotent: re-running is a no-op for initialization but still processes
 //! `--link` flags.
 
+use crate::layout::Layout;
 use std::path::{Path, PathBuf};
 
 use crate::error::{ConfigError, MarsError};
@@ -50,14 +52,56 @@ fn validate_target(target: &str) -> Result<(), MarsError> {
     Ok(())
 }
 
-fn ensure_consumer_config(project_root: &Path) -> Result<bool, MarsError> {
-    let config_path = project_root.join("mars.toml");
+fn ensure_consumer_config(layout: &Layout) -> Result<bool, MarsError> {
+    let config_path = layout.manifest();
     if config_path.exists() {
         return Ok(true);
     }
 
     crate::fs::atomic_write(&config_path, b"[dependencies]\n")?;
     Ok(false)
+}
+
+/// Why no project can be started at `dir`, or `None` when one can. The walk-up never opens a
+/// home project, so one made there would be invisible, and its store would be the user level's
+/// folder; the user folder's `mars.toml` is the user level's.
+pub(super) fn no_project_at(dir: &Path) -> Option<String> {
+    let user = Layout::user_level();
+    no_project_in(
+        &dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()),
+        crate::platform::home::canonical_home().as_deref(),
+        user.as_ref().map(Layout::root),
+    )
+}
+
+/// [`no_project_at`] for a canonical `dir`, with the home and user folders given.
+pub(super) fn no_project_in(
+    dir: &Path,
+    home: Option<&Path>,
+    user_root: Option<&Path>,
+) -> Option<String> {
+    if Some(dir) == user_root {
+        Some(format!(
+            "{} is your user level's folder: {}",
+            dir.display(),
+            user_level_needs_no_init()
+        ))
+    } else if Some(dir) == home {
+        Some(format!(
+            "{} is your home directory, which is never a Mars project; use `{}` for your user level, or start a project in a folder of its own",
+            dir.display(),
+            crate::types::managed_cmd("mars --user <command>"),
+        ))
+    } else {
+        None
+    }
+}
+
+pub(super) fn user_level_needs_no_init() -> String {
+    format!(
+        "the user level needs no init; `{}` creates its mars.toml",
+        crate::types::managed_cmd("mars --user add <source>")
+    )
 }
 
 pub(super) fn initialize_project(
@@ -67,15 +111,19 @@ pub(super) fn initialize_project(
     let project_root = explicit_root
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"));
+    if let Some(message) = no_project_at(&project_root) {
+        return Err(MarsError::Config(ConfigError::Invalid { message }));
+    }
 
-    std::fs::create_dir_all(project_root.join(".mars"))?;
+    let layout = Layout::project(&project_root);
+    std::fs::create_dir_all(layout.store())?;
 
-    let already_initialized = ensure_consumer_config(&project_root)?;
+    let already_initialized = ensure_consumer_config(&layout)?;
 
     if let Some(target) = target_override {
         validate_target(target)?;
-        std::fs::create_dir_all(project_root.join(target))?;
-        persist_target(&project_root, target)?;
+        std::fs::create_dir_all(layout.target(target))?;
+        persist_target(&layout, target)?;
     }
 
     Ok(InitializedProject {
@@ -108,6 +156,7 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
                 target: link_target.clone(),
                 force: false,
                 local: false,
+                host: Default::default(),
             };
             super::link::run(&link_args, &ctx, json)?;
         }
@@ -115,7 +164,10 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 
     // Only a project that declares `[package]` publishes anything to check; a consumer
     // has no package to read through the publish lens.
-    if crate::config::load(&project_root)?.package.is_some() {
+    if crate::config::load(&Layout::project(&project_root))?
+        .package
+        .is_some()
+    {
         let mut publish_diag = crate::diagnostic::DiagnosticCollector::new();
         let (lens, prepared) = crate::resolve::PublishLens::load(
             &project_root,
@@ -150,16 +202,16 @@ pub fn run(args: &InitArgs, explicit_root: Option<&Path>, json: bool) -> Result<
 }
 
 /// Add `target` to `settings.targets`, as `mars link` records it.
-fn persist_target(project_root: &Path, target: &str) -> Result<(), MarsError> {
+fn persist_target(layout: &Layout, target: &str) -> Result<(), MarsError> {
     let target = crate::config::migrations::link::normalize_link(target).target;
-    let mut config = crate::config::load(project_root)?;
+    let mut config = crate::config::load(layout)?;
     let settings = &mut config.settings;
     // The key is retired; leaving it beside the `targets` just written would only warn.
     settings.managed_root = None;
     let targets = settings.targets.get_or_insert_with(Vec::new);
     if !targets.contains(&target) {
         targets.push(target);
-        crate::config::save(project_root, &config)?;
+        crate::config::save(layout, &config)?;
     }
     Ok(())
 }
@@ -209,7 +261,7 @@ mod tests {
     fn ensure_consumer_config_creates_root_mars_toml() {
         let dir = TempDir::new().unwrap();
 
-        let already = ensure_consumer_config(dir.path()).unwrap();
+        let already = ensure_consumer_config(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(!already);
 
         let content = std::fs::read_to_string(dir.path().join("mars.toml")).unwrap();
@@ -225,7 +277,7 @@ mod tests {
         )
         .unwrap();
 
-        let already = ensure_consumer_config(dir.path()).unwrap();
+        let already = ensure_consumer_config(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(already);
     }
 
@@ -238,7 +290,7 @@ mod tests {
         assert!(dir.path().join(".mars").exists());
         assert!(!dir.path().join(".agents").exists());
 
-        let config = crate::config::load(dir.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert!(config.settings.targets.is_none());
     }
 
@@ -250,7 +302,7 @@ mod tests {
         initialize_project(Some(dir.path()), Some(".claude")).unwrap();
 
         assert!(dir.path().join(".claude").exists());
-        let config = crate::config::load(dir.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert_eq!(config.settings.targets, Some(vec![".claude".to_string()]));
     }
 
@@ -261,7 +313,7 @@ mod tests {
         initialize_project(Some(dir.path()), Some(".agents")).unwrap();
 
         assert!(dir.path().join(".agents").exists());
-        let config = crate::config::load(dir.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(dir.path())).unwrap();
         assert_eq!(config.settings.targets, Some(vec![".agents".to_string()]));
     }
 }

@@ -1,6 +1,5 @@
 use mars_schema::model_policy::{ModelPolicyMatchType, ModelPolicyRule};
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
 
 use indexmap::IndexMap;
 
@@ -21,7 +20,7 @@ mod runnable;
 use crate::models::reasoning;
 
 pub struct PolicyInput<'a> {
-    pub project_root: &'a Path,
+    pub layout: &'a crate::layout::Layout,
     pub runtime_aliases: &'a IndexMap<String, ModelAlias>,
     pub agent: Option<&'a str>,
     pub profile: &'a AgentProfile,
@@ -187,7 +186,7 @@ pub fn resolve_policy(
         .harness_order
         .as_deref()
         .unwrap_or(default_harness_order.as_slice());
-    let mars_dir = input.project_root.join(".mars");
+    let mars_dir = input.layout.store();
     let ttl_hours = effective_config.settings.models_cache_ttl_hours();
     let providers = effective_config
         .settings
@@ -195,7 +194,7 @@ pub fn resolve_policy(
         .clone()
         .unwrap_or_else(models::default_catalog_providers);
     let (cache, catalog_outcome) = match models::ensure_fresh_with_catalog_providers(
-        &mars_dir,
+        mars_dir,
         ttl_hours,
         input.models_refresh.catalog_mode,
         &providers,
@@ -204,7 +203,7 @@ pub fn resolve_policy(
         Err(err) => {
             warnings.push(err.to_string());
             (
-                model::load_models_cache(input.project_root, &providers).unwrap_or_default(),
+                models::read_cache(input.layout.store(), &providers).unwrap_or_default(),
                 models::RefreshOutcome::Offline,
             )
         }

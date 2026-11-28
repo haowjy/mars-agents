@@ -509,7 +509,7 @@ fn dry_run_recovery_halt_persists_nothing() {
     let lock_before = fs::read(project.child("mars.lock").path()).unwrap();
     let target_before = fs::read(project.child(".claude/hooks/audit-b/run.sh").path()).unwrap();
     let context = mars_agents::types::MarsContext {
-        project_root: project.to_path_buf(),
+        layout: mars_agents::layout::Layout::project(project.to_path_buf()),
         meridian_managed: false,
     };
     let request = mars_agents::sync::SyncRequest {

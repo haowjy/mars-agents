@@ -1,5 +1,6 @@
 //! Native harness agent surfaces: scan, reconcile, compile, and link materialization.
 
+use crate::layout::Layout;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -38,7 +39,7 @@ pub use crate::lock::CompiledNativeOutput;
 
 /// Inputs for native harness agent reconcile (removals outside target sync).
 pub(crate) struct NativeAgentReconcileCtx<'a> {
-    pub project_root: &'a Path,
+    pub layout: &'a Layout,
     pub old_lock: &'a crate::lock::LockFile,
     pub dry_run: bool,
 }
@@ -53,7 +54,7 @@ pub(crate) struct NativeAgentSurfaceCompileOptions {
 
 /// Shared inputs for native agent compilation.
 pub(crate) struct NativeAgentCompileCtx<'a> {
-    pub project_root: &'a Path,
+    pub layout: &'a Layout,
     pub old_lock: &'a crate::lock::LockFile,
     pub configured_emit_harnesses: &'a [mars_schema::HarnessId],
     pub options: NativeAgentSurfaceCompileOptions,
@@ -73,7 +74,7 @@ struct NativeAgentEmit<'a> {
 }
 
 struct NativeAgentEmitCtx<'a> {
-    project_root: &'a Path,
+    layout: &'a Layout,
     old_lock: &'a crate::lock::LockFile,
     options: &'a NativeAgentSurfaceCompileOptions,
 }
@@ -567,7 +568,7 @@ pub(crate) fn reconcile_native_agent_surfaces(
                 continue;
             }
             let dest_rel = output.dest_path.as_str().to_string();
-            let native_path = ctx.project_root.join(&output.target_root).join(&dest_rel);
+            let native_path = ctx.layout.in_target(&output.target_root, &dest_rel);
             if ctx.dry_run && native_path.symlink_metadata().is_ok() {
                 continue;
             }
@@ -669,7 +670,7 @@ pub(crate) fn compile_native_agents<'a>(
     diag: &mut DiagnosticCollector,
 ) -> Vec<CompiledNativeOutput> {
     let emit_ctx = NativeAgentEmitCtx {
-        project_root: ctx.project_root,
+        layout: ctx.layout,
         old_lock: ctx.old_lock,
         options: &ctx.options,
     };
@@ -755,7 +756,7 @@ pub(crate) fn compile_native_agents<'a>(
             );
         }
     }
-    project_losses.record(ctx.project_root, diag);
+    project_losses.record(ctx.layout, diag);
     if !undescribed.is_empty() {
         let names = undescribed.into_iter().collect::<Vec<_>>().join(", ");
         diag.warn(
@@ -987,10 +988,10 @@ impl ProjectLosses {
         }
     }
 
-    fn record(self, project_root: &Path, diag: &mut DiagnosticCollector) {
+    fn record(self, layout: &Layout, diag: &mut DiagnosticCollector) {
         // Only a project whose `opencode.json` sets `permission` has something the agents' rules
         // take over.
-        let outside = opencode_permission::project_sets_permission(project_root);
+        let outside = opencode_permission::project_sets_permission(layout);
         for ((_, key), (field, concerns)) in self.0 {
             if key == opencode_permission::OUTSIDE_RULES_KEY && !outside {
                 continue;
@@ -1014,7 +1015,7 @@ fn emit_lowered_native_agent(
     let lowered =
         lower_for_harness_with_model(*agent.harness, agent.profile, agent.body, agent.model);
 
-    let harness_dir = ctx.project_root.join(agent.harness.target_dir());
+    let harness_dir = ctx.layout.target(&agent.harness.target_dir());
     let native_agents_dir = harness_dir.join("agents");
     let extension = crate::compiler::lowering::lowering(*agent.harness)
         .agent

@@ -22,4 +22,6 @@ pub struct SyncOptions {
     /// `sync --diff`: a dry run that also reports what a real sync would overwrite or repair
     /// (a hand-edited config entry or native agent). Every other dry run leaves those to `--diff`.
     pub preview_warnings: bool,
+    /// `sync --provided-root`: a host's bundle, read as the host layer.
+    pub host: Option<crate::sync::layers::HostRoot>,
 }

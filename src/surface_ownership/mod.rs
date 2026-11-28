@@ -42,7 +42,6 @@ use std::path::Path;
 
 use crate::diagnostic::{DiagnosticCollector, ItemGroup};
 use crate::lock::LockFile;
-use crate::types::managed_cmd;
 
 pub fn target_dest_exists(dest: &Path) -> bool {
     dest.exists() || dest.symlink_metadata().is_ok()
@@ -121,7 +120,12 @@ fn describe_unclaimed(target: &str, count: usize, names: &str, adopt_cmd: &str) 
 }
 
 fn describe_unclaimed_by_sync(target: &str, count: usize, names: &str) -> String {
-    describe_unclaimed(target, count, names, &managed_cmd("mars sync --force"))
+    describe_unclaimed(
+        target,
+        count,
+        names,
+        &crate::layout::root_cmd("sync --force"),
+    )
 }
 
 /// Whether `warn_no_installed_claim_collision` or `warn_diverged` already told the user that
@@ -152,8 +156,8 @@ fn describe_diverged(target: &str, count: usize, names: &str) -> String {
     format!(
         "target `{target}` has {count} {plural} edited after Mars installed {them}: {names}. \
          Local content is preserved; run `{}` or `{}` to reset",
-        managed_cmd("mars sync --force"),
-        managed_cmd("mars repair"),
+        crate::layout::root_cmd("sync --force"),
+        crate::layout::root_cmd("repair"),
         them = if count == 1 { "it" } else { "them" },
     )
 }
@@ -199,6 +203,7 @@ mod tests {
             )]),
             config_entries: Default::default(),
             provided_entries: Default::default(),
+            yielded: Vec::new(),
             dependency_model_aliases: IndexMap::new(),
         }
     }

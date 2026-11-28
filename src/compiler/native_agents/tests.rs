@@ -100,7 +100,7 @@ fn pending_deletion_does_not_authorize_native_agent_overwrite() {
     let mut diag = DiagnosticCollector::new();
     let records = compile_native_agents(
         &NativeAgentCompileCtx {
-            project_root: dir.path(),
+            layout: &crate::layout::Layout::project(dir.path()),
             old_lock: &lock,
             configured_emit_harnesses: &[HarnessId::Claude],
             options: NativeAgentSurfaceCompileOptions {
@@ -187,8 +187,9 @@ fn compile_with_policy(
 ) -> Vec<CompiledNativeOutput> {
     let mut diag = DiagnosticCollector::new();
     let models_cache = empty_models_cache();
+    let layout = crate::layout::Layout::project(dir);
     let ctx = NativeAgentCompileCtx {
-        project_root: dir,
+        layout: &layout,
         old_lock: &LockFile::empty(),
         configured_emit_harnesses: configured_harnesses,
         options: NativeAgentSurfaceCompileOptions {

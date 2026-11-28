@@ -5,6 +5,7 @@
 //! path) read it without the sync lock; every write is therefore tmp + rename, which leaves a
 //! reader either the old file or the new one.
 
+use crate::layout::Layout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,6 @@ use mars_schema::provider::provider_of;
 
 use crate::error::{ConfigError, MarsError};
 
-const PROVIDED_LOCK_FILE: &str = "provided.lock";
 const PROVIDED_LOCK_VERSION: u32 = 1;
 
 /// The digest recorded between the pre-record and the final record of an apply.
@@ -105,8 +105,10 @@ struct OutgoingProvidedLock<'a> {
 impl ProvidedLock {
     /// The outer error is I/O. The inner one says why the file cannot be read as this build's:
     /// a corrupt file can be rebuilt from the files on disk, a newer one must not be touched.
-    pub(crate) fn load(root: &Path) -> Result<Result<ProvidedLock, Unusable>, MarsError> {
-        let path = root.join(".mars").join(PROVIDED_LOCK_FILE);
+    pub(crate) fn load(layout: &Layout) -> Result<Result<ProvidedLock, Unusable>, MarsError> {
+        let Some(path) = layout.provided_lock() else {
+            return Ok(Ok(ProvidedLock::default()));
+        };
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -175,8 +177,10 @@ impl ProvidedLock {
         self.providers.insert(provider.to_string(), record);
     }
 
-    pub(crate) fn save(&self, root: &Path) -> Result<(), MarsError> {
-        let path = root.join(".mars").join(PROVIDED_LOCK_FILE);
+    pub(crate) fn save(&self, layout: &Layout) -> Result<(), MarsError> {
+        let path = layout.provided_lock().ok_or_else(|| {
+            MarsError::Internal("the user level has no provided lock".to_string())
+        })?;
         let content = toml::to_string_pretty(&OutgoingProvidedLock {
             version: PROVIDED_LOCK_VERSION,
             providers: &self.providers,

@@ -3,7 +3,6 @@
 use crate::diagnostic::{DiagnosticCollector, DiagnosticLevel};
 use crate::error::MarsError;
 use crate::hash;
-use crate::types::managed_cmd;
 
 use super::output;
 
@@ -13,8 +12,15 @@ pub struct DoctorArgs {}
 
 pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
     let mut diag = DiagnosticCollector::new();
+    if ctx.layout.kind() == crate::layout::RootKind::User {
+        check_user_folder(&ctx.layout, &mut diag);
+    }
+    // Read the curation files as `mars models` does, so their problems are reported here too.
+    if let Err(err) = crate::curation::CuratedRules::load(&ctx.layout) {
+        diag.error("curated-error", format!("curation error: {err}"));
+    }
 
-    let project_config = match crate::config::load_project_config_layers(&ctx.project_root) {
+    let project_config = match crate::config::load_project_config_layers(&ctx.layout) {
         Ok(loaded) => Some(loaded),
         Err(e) => {
             diag.error("config-error", format!("config error: {e}"));
@@ -22,7 +28,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     };
 
-    let lock = match crate::lock::load(&ctx.project_root) {
+    let lock = match crate::lock::load(&ctx.layout) {
         Ok(l) => l,
         Err(e) => {
             diag.error("lock-error", format!("lock file error: {e}"));
@@ -44,15 +50,17 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         None => lock,
     };
 
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     for (dest_path_str, item) in lock.canonical_flat_items() {
-        let disk_path = dest_path_str.resolve(&mars_dir);
+        let disk_path = dest_path_str.resolve(mars_dir);
 
         if !disk_path.exists() {
             diag.error(
                 "item-missing",
                 format!(
-                    "{dest_path_str} missing from disk. Run `mars sync` to reinstall or `mars repair` to rebuild"
+                    "{dest_path_str} missing from disk. Run `{}` to reinstall or `{}` to rebuild",
+                    ctx.layout.cmd("sync"),
+                    ctx.layout.cmd("repair"),
                 ),
             );
             continue;
@@ -81,7 +89,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             project_config.config.clone(),
             project_config.local.clone(),
             &project_config.user,
-            &ctx.project_root,
+            ctx.layout.root(),
         ) {
             Ok((effective, _diagnostics)) => {
                 for source_name in effective.dependencies.keys() {
@@ -90,7 +98,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                             "dependency-not-locked",
                             format!(
                                 "dependency `{source_name}` is in config but not in lock — run `{cmd}`",
-                                cmd = managed_cmd("mars sync"),
+                                cmd = ctx.layout.cmd("sync"),
                             ),
                         );
                     }
@@ -103,7 +111,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     'installed: {
         use std::collections::HashSet;
 
-        let installed = match installed_items(&mars_dir) {
+        let installed = match installed_items(mars_dir) {
             Ok(installed) => installed,
             Err(e) => {
                 diag.error("installed-items", e.to_string());
@@ -128,7 +136,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                     format!(
                         "legacy symlinked {kind} `{}` detected in managed dir — run `{cmd}` to normalize to copied content",
                         item.name,
-                        cmd = managed_cmd("mars sync"),
+                        cmd = ctx.layout.cmd("sync"),
                     ),
                 );
             }
@@ -140,7 +148,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
         // resolved graph, so a package's declaration is the project's own `[package]`.
         let provided = crate::provided::ProvidedNames::load(
-            &ctx.project_root,
+            &ctx.layout,
             &mut crate::diagnostic::DiagnosticCollector::new(),
         )?;
         let declared = project_config
@@ -174,9 +182,9 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    check_mars_gitignore(&ctx.project_root, &mut diag);
+    check_mars_gitignore(&ctx.layout, &mut diag);
     check_legacy_agents_directory(
-        &ctx.project_root,
+        &ctx.layout,
         project_config
             .as_ref()
             .map(|loaded| &loaded.effective.settings),
@@ -186,7 +194,7 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     if let Some(project_config) = &project_config {
         let divergence = check_target_divergence(
-            &ctx.project_root,
+            &ctx.layout,
             &lock,
             &crate::config::targets::managed_targets(&project_config.effective.settings),
             &mut diag,
@@ -196,7 +204,13 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
     }
 
-    let diagnostics = diag.drain();
+    // What this run read outside the root (a home project, a 0.40 config file, a renamed
+    // variable) is part of the diagnosis, not a note after it.
+    let diagnostics: Vec<_> = diag
+        .drain()
+        .into_iter()
+        .chain(crate::diagnostic::take_notices())
+        .collect();
     output::print_doctor(&diagnostics, json);
 
     if diagnostics
@@ -210,12 +224,12 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 }
 
 fn check_legacy_agents_directory(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
     settings: Option<&crate::config::Settings>,
     lock: &crate::lock::LockFile,
     diag: &mut DiagnosticCollector,
 ) {
-    let agents_dir = project_root.join(".agents");
+    let agents_dir = layout.target(".agents");
     if agents_dir.symlink_metadata().is_err() {
         return;
     }
@@ -232,7 +246,7 @@ fn check_legacy_agents_directory(
         .map(|entries| {
             entries.flatten().any(|entry| {
                 let rel = format!(".agents/{}", entry.file_name().to_string_lossy());
-                !crate::target::keyed_entries::holds_only_owned(project_root, &rel, lock)
+                !crate::target::keyed_entries::holds_only_owned(layout, &rel, lock)
             })
         })
         // A directory we cannot read may hold content; a file or dangling link holds none.
@@ -246,13 +260,36 @@ fn check_legacy_agents_directory(
     }
 }
 
-fn check_mars_gitignore(project_root: &std::path::Path, diag: &mut DiagnosticCollector) {
-    let mars_dir = project_root.join(".mars");
-    if mars_dir.symlink_metadata().is_err() {
+/// The user level's folder: a home project still sharing it, and what an old project store
+/// left in it, which nothing serves or deletes.
+fn check_user_folder(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
+    if crate::home_project::HomeProject::in_user_folder().is_some() {
+        crate::home_project::raise_notice();
+        return;
+    }
+    let leftovers = crate::home_project::store_leftovers(layout);
+    if !leftovers.is_empty() {
+        diag.warn(
+            "old-store-left",
+            format!(
+                "{} holds files the user level did not install, and does not serve or remove: {}. A Mars 0.40 home project's store left them unless they are your own copies: delete them, or move what you want to keep into {}/",
+                layout.root().display(),
+                leftovers.join(", "),
+                layout.local_source().display(),
+            ),
+        );
+    }
+}
+
+fn check_mars_gitignore(layout: &crate::layout::Layout, diag: &mut DiagnosticCollector) {
+    // The user level's store is its own folder, in no repo.
+    if layout.kind() != crate::layout::RootKind::Project
+        || layout.store().symlink_metadata().is_err()
+    {
         return;
     }
 
-    let gitignore_path = project_root.join(".gitignore");
+    let gitignore_path = layout.root().join(".gitignore");
     let is_ignored = match std::fs::read_to_string(&gitignore_path) {
         Ok(content) => content.lines().any(|line| {
             let trimmed = line.trim();
@@ -296,31 +333,31 @@ impl TargetDivergence {
         if self.overwritten > 0 {
             steps.push(format!(
                 "`{}` overwrites edited agents and skills, so copy any edit you want to keep into its source first",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.kept > 0 {
             steps.push(format!(
                 "run `{}` to reset edited hooks (it resets every diverged item in the project)",
-                managed_cmd("mars sync --force")
+                crate::layout::root_cmd("sync --force")
             ));
         }
         if self.missing > 0 {
             steps.push(format!(
                 "run `{}` to restore missing files",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.wrong_kind > 0 {
             steps.push(format!(
                 "move or delete the items of the wrong kind, then run `{}`",
-                managed_cmd("mars sync")
+                crate::layout::root_cmd("sync")
             ));
         }
         if self.unchecked > 0 {
             steps.push(format!(
                 "fix the cause reported above for the items Mars could not check, then run `{}` again",
-                managed_cmd("mars doctor")
+                crate::layout::root_cmd("doctor")
             ));
         }
         (!steps.is_empty()).then(|| format!("target divergence detected; {}", steps.join("; ")))
@@ -329,7 +366,7 @@ impl TargetDivergence {
 
 /// Check managed target directories against lockfile-installed checksums.
 fn check_target_divergence(
-    project_root: &std::path::Path,
+    layout: &crate::layout::Layout,
     lock: &crate::lock::LockFile,
     targets: &[String],
     diag: &mut DiagnosticCollector,
@@ -338,7 +375,7 @@ fn check_target_divergence(
 
     for target_name in targets {
         for (dest_path, item) in lock.flat_items_for_target(target_name) {
-            let target_path = project_root.join(target_name).join(dest_path.as_str());
+            let target_path = layout.in_target(target_name, dest_path.as_str());
             let shown = format!("{target_name}/{}", dest_path.as_str());
 
             match hash::compute_output_hash(&target_path, item.kind, dest_path.as_str()) {
@@ -438,7 +475,7 @@ fn installed_items(mars_dir: &std::path::Path) -> Result<InstalledItems, MarsErr
                 std::io::ErrorKind::NotFound,
                 format!(
                     "no compiled store yet — run `{}` to create it",
-                    managed_cmd("mars sync")
+                    crate::layout::root_cmd("sync")
                 ),
             ),
         });
@@ -539,7 +576,12 @@ mod tests {
             .expect("write modified file");
 
         let mut diag = DiagnosticCollector::new();
-        let divergence = check_target_divergence(root, &lock, &[".agents".to_string()], &mut diag);
+        let divergence = check_target_divergence(
+            &crate::layout::Layout::project(root),
+            &lock,
+            &[".agents".to_string()],
+            &mut diag,
+        );
 
         let warnings = messages(&mut diag);
         assert_eq!((divergence.overwritten, divergence.missing), (1, 1));
@@ -576,7 +618,7 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         let divergence = check_target_divergence(
-            root,
+            &crate::layout::Layout::project(root),
             &lock,
             &[".agents".to_string(), ".claude".to_string()],
             &mut diag,
@@ -598,7 +640,7 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         check_legacy_agents_directory(
-            temp.path(),
+            &crate::layout::Layout::project(temp.path()),
             Some(&crate::config::Settings::default()),
             &crate::lock::LockFile::empty(),
             &mut diag,
@@ -610,7 +652,7 @@ mod tests {
 
         fs::write(temp.path().join(".agents/notes.md"), "mine").expect("write content");
         check_legacy_agents_directory(
-            temp.path(),
+            &crate::layout::Layout::project(temp.path()),
             Some(&crate::config::Settings::default()),
             &crate::lock::LockFile::empty(),
             &mut diag,
@@ -634,7 +676,7 @@ mod tests {
         };
         let mut diag = DiagnosticCollector::new();
         check_legacy_agents_directory(
-            temp.path(),
+            &crate::layout::Layout::project(temp.path()),
             Some(&settings),
             &crate::lock::LockFile::empty(),
             &mut diag,
@@ -691,8 +733,18 @@ mod tests {
         let settings = crate::config::Settings::default();
 
         let mut diag = DiagnosticCollector::new();
-        check_legacy_agents_directory(root, Some(&settings), &lock, &mut diag);
-        check_target_divergence(root, &lock, &targets, &mut diag);
+        check_legacy_agents_directory(
+            &crate::layout::Layout::project(root),
+            Some(&settings),
+            &lock,
+            &mut diag,
+        );
+        check_target_divergence(
+            &crate::layout::Layout::project(root),
+            &lock,
+            &targets,
+            &mut diag,
+        );
         let warnings = messages(&mut diag);
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -702,7 +754,12 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join(".agy/hooks/stray.txt"), "mine").unwrap();
-        check_legacy_agents_directory(root, Some(&settings), &lock, &mut diag);
+        check_legacy_agents_directory(
+            &crate::layout::Layout::project(root),
+            Some(&settings),
+            &lock,
+            &mut diag,
+        );
         assert!(
             messages(&mut diag)
                 .iter()

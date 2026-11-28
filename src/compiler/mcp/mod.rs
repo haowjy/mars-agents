@@ -121,7 +121,7 @@ pub(crate) fn discover_mcp_items(
                 NAME_INVALID,
                 format!(
                     "MCP server `{resolved_name}` in `{}` at `{}` uses {MCP_DIR_TOKEN}, so its directory name may use only {NAME_RULE}; skipping this server",
-                    crate::provided::provider_label(source_name),
+                    crate::layer::source_label(source_name),
                     relative.display()
                 ),
             );
@@ -220,7 +220,7 @@ pub fn check_env_refs(
                     "MCP server `{}` (from `{}`): env var `{var_name}` (referenced by `{key}`) \
                      is not set — the server may fail at runtime",
                     item.name,
-                    crate::provided::provider_label(&item.source_name)
+                    crate::layer::source_label(&item.source_name)
                 );
                 if strict {
                     return Err(MarsError::Config(ConfigError::Invalid { message: msg }));

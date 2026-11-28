@@ -16,6 +16,7 @@
 //! keeps the full record instead: owning an absent path is harmless, and the record must cover a
 //! directory a crash has not left behind yet.
 
+use crate::layout::Layout;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
@@ -36,21 +37,22 @@ pub(crate) struct ProvidedNames {
     recorded: HashSet<String>,
     /// Recorded names whose `.mars/skills/<name>` is a directory: what an agent can use here.
     installed: HashSet<String>,
-    /// The digest of each provider's staged hooks and MCP servers, by provider. A provider with
-    /// none has no entry.
-    staged: BTreeMap<String, String>,
+    /// What the lock records as each host dependency's version, by provider: the digest of the
+    /// hooks and MCP servers `mars provide` staged, or the host's own version for a bundle read
+    /// in place (`sync --provided-root`). A provider with neither has no entry.
+    versions: BTreeMap<String, String>,
 }
 
 impl ProvidedNames {
-    pub(crate) fn load(root: &Path, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
-        let record = match ProvidedLock::load(root)? {
+    pub(crate) fn load(layout: &Layout, diag: &mut DiagnosticCollector) -> Result<Self, MarsError> {
+        let record = match ProvidedLock::load(layout)? {
             Ok(record) => record,
             Err(unusable) => {
                 diag.warn_advisory("provided-lock-unusable", unusable.reader_message());
                 return Ok(Self::default());
             }
         };
-        let skills_dir = root.join(".mars").join("skills");
+        let skills_dir = layout.store().join("skills");
         let recorded: HashSet<String> = record
             .providers()
             .flat_map(|(_, provider)| provider.skills.iter().cloned())
@@ -60,25 +62,29 @@ impl ProvidedNames {
             .filter(|name| skills_dir.join(name).is_dir())
             .cloned()
             .collect();
-        let mut staged = BTreeMap::new();
+        let mut versions = BTreeMap::new();
         for (provider, _) in record.providers() {
-            let dir = super::reconcile::staged_dir(root, provider);
+            let dir = super::reconcile::staged_dir(layout, provider);
             if dir.is_dir() {
-                staged.insert(provider.to_string(), super::entries::tree_digest(&dir)?);
+                versions.insert(provider.to_string(), super::entries::tree_digest(&dir)?);
             }
         }
         Ok(Self {
             recorded,
             installed,
-            staged,
+            versions,
         })
     }
 
-    /// What the lock records of a provider (the digest of its staged hooks and MCP servers), so
-    /// a sync that sees the host arrive or change them has a record that moved, and a host
-    /// upgrade that changes none leaves it alone.
-    pub(crate) fn staged_digest(&self, provider: &str) -> Option<&str> {
-        self.staged.get(provider).map(String::as_str)
+    /// What the lock records as a host dependency's version, so a sync that sees the host
+    /// arrive or change has a record that moved, and one that changes nothing leaves it alone.
+    pub(crate) fn host_version(&self, provider: &str) -> Option<&str> {
+        self.versions.get(provider).map(String::as_str)
+    }
+
+    /// The versions of the hosts read from a bundle directory, which replace a staged digest.
+    pub(crate) fn record_host_versions(&mut self, versions: BTreeMap<String, String>) {
+        self.versions.extend(versions);
     }
 
     /// Whether a provider installed `name` here. A recorded name whose directory is gone — a
@@ -92,6 +98,55 @@ impl ProvidedNames {
         dest.as_str()
             .strip_prefix("skills/")
             .is_some_and(|name| self.recorded.contains(name))
+    }
+}
+
+/// Drop from `.mars/provided.lock` every skill `lock` records an install of in `.mars/skills/`:
+/// a package's or a host's bundle (`sync --provided-root`) replaced `mars provide`'s copy, and a
+/// path has one owner. Called by sync under the sync lock, after it published `lock`. A record
+/// this Mars cannot read is left as it is: it is not this build's to rewrite.
+pub(crate) fn retire_claimed(
+    layout: &Layout,
+    lock: &crate::lock::LockFile,
+) -> Result<(), MarsError> {
+    let Ok(mut record) = ProvidedLock::load(layout)? else {
+        return Ok(());
+    };
+    let claims = crate::lock::LockIndex::new(lock);
+    let claimed = |name: &String| {
+        claims.contains_installed_output(
+            crate::lock::CANONICAL_TARGET_ROOT,
+            &DestPath::from(format!("skills/{name}")),
+        )
+    };
+    let mut changed = false;
+    let providers: Vec<(String, super::lock::ProviderRecord)> = record
+        .providers()
+        .map(|(name, provider)| (name.to_string(), provider.clone()))
+        .collect();
+    for (name, mut provider) in providers {
+        let before = provider.skills.len();
+        provider.skills.retain(|skill| !claimed(skill));
+        if provider.skills.len() != before {
+            changed = true;
+            record.set_provider(&name, provider);
+        }
+    }
+    if changed {
+        record.save(layout)?;
+    }
+    Ok(())
+}
+
+/// Every skill name `mars provide` recorded at `layout`, for launch lookup, which never serves
+/// those copies. A record this Mars cannot read hides nothing: lookup then reads the lock alone.
+pub(crate) fn recorded_skills(layout: &Layout) -> Vec<String> {
+    match ProvidedLock::load(layout) {
+        Ok(Ok(record)) => record
+            .providers()
+            .flat_map(|(_, provider)| provider.skills.iter().cloned())
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -111,16 +166,23 @@ pub(crate) fn skill_outcomes(
     if !super::takes_provided_any(managed_targets) {
         return Vec::new();
     }
-    let yielded = super::yielded(
+    use crate::layer::Layer;
+    // Every name in `taken` comes from a layer ranked before the host's.
+    let yielded = crate::layer::yielded(
         taken
             .iter()
-            .map(|name| (name.as_str(), false))
-            .chain(names.installed.iter().map(|name| (name.as_str(), true))),
+            .map(|name| (name.as_str(), Layer::Project))
+            .chain(
+                names
+                    .installed
+                    .iter()
+                    .map(|name| (name.as_str(), Layer::Host)),
+            ),
     );
     let mut installed: Vec<&String> = names
         .installed
         .iter()
-        .filter(|name| !yielded.contains(name.as_str()))
+        .filter(|name| !yielded.contains(&(name.as_str(), Layer::Host)))
         .collect();
     installed.sort();
     let mut outcomes = Vec::new();

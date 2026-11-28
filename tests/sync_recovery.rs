@@ -58,7 +58,7 @@ fn retry_recovers_canonical_writes_after_a_later_apply_error() {
 
         // No force, lock edits, or manual relocation of the completed output.
         sync(dir.path()).assert().success();
-        let recovered = lock::load(dir.path()).unwrap();
+        let recovered = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
         assert!(recovered.contains_output(".mars", "agents/muse.md"));
         assert!(recovered.contains_output(".mars", "skills/craft"));
         assert!(recovered.contains_output(".codex", "skills/craft"));
@@ -181,7 +181,12 @@ fn stale_or_corrupt_intent_does_not_claim_unowned_outputs() {
             dir.child(INTENT).write_str("{broken").unwrap();
         } else {
             // Replacing the ownership registry invalidates the old intent.
-            lock::write(dir.path(), &lock::LockFile::empty(), &Default::default()).unwrap();
+            lock::write(
+                &mars_agents::layout::Layout::project(dir.path()),
+                &lock::LockFile::empty(),
+                &Default::default(),
+            )
+            .unwrap();
         }
         let lock_before = fs::read(dir.path().join("mars.lock")).ok();
         let intent_before = fs::read(dir.path().join(INTENT)).unwrap();
@@ -287,7 +292,7 @@ fn failed_repair_keeps_corrupt_lock_evidence_across_recovery_attempts() {
         "---\n---\n# Revised again\n"
     );
     assert!(
-        lock::load(dir.path())
+        lock::load(&mars_agents::layout::Layout::project(dir.path()))
             .unwrap()
             .contains_output(".mars", "agents/muse.md")
     );
@@ -350,9 +355,14 @@ fn recovered_install_replaces_pending_deletion_for_the_same_path() {
         .write_str("---\n---\n# Muse\n")
         .unwrap();
     sync(dir.path()).assert().success();
-    let mut previous = lock::load(dir.path()).unwrap();
+    let mut previous = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
     previous.items.get_mut("agent/muse").unwrap().outputs[0].mark_pending_deletion();
-    lock::write(dir.path(), &previous, &previous.recorded_targets()).unwrap();
+    lock::write(
+        &mars_agents::layout::Layout::project(dir.path()),
+        &previous,
+        &previous.recorded_targets(),
+    )
+    .unwrap();
     fs::remove_file(dir.path().join(".mars/agents/muse.md")).unwrap();
     dir.child("skills/craft/SKILL.md")
         .write_str("# Craft\n")
@@ -363,7 +373,7 @@ fn recovered_install_replaces_pending_deletion_for_the_same_path() {
     sync(dir.path()).assert().failure();
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     sync(dir.path()).assert().success();
-    let recovered = lock::load(dir.path()).unwrap();
+    let recovered = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
     let outputs = &recovered.items["agent/muse"].outputs;
     assert_eq!(outputs.len(), 1);
     assert!(outputs[0].installed_checksum().is_some());
@@ -469,7 +479,7 @@ fn recovery_survives_multiple_failures_and_source_changes() {
         fs::read_to_string(dir.path().join(".mars/agents/muse.md")).unwrap(),
         "---\n---\n# Revised\n"
     );
-    let lock = lock::load(dir.path()).unwrap();
+    let lock = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
     assert!(lock.contains_output(".mars", "agents/new.md"));
     assert!(lock.contains_output(".mars", "agents/muse.md"));
 }
@@ -482,7 +492,7 @@ fn recovered_output_is_pruned_when_source_was_removed() {
     sync(dir.path()).assert().success();
     assert!(!dir.path().join(".mars/agents/muse.md").exists());
     assert!(
-        !lock::load(dir.path())
+        !lock::load(&mars_agents::layout::Layout::project(dir.path()))
             .unwrap()
             .contains_output(".mars", "agents/muse.md")
     );
@@ -509,7 +519,7 @@ fn dependency_rename_to_custom_canonical_path_survives_interrupted_apply() {
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     sync(dir.path()).assert().success();
     assert!(
-        lock::load(dir.path())
+        lock::load(&mars_agents::layout::Layout::project(dir.path()))
             .unwrap()
             .contains_output(".mars", "custom/muse.md")
     );
@@ -546,7 +556,7 @@ fn interrupted_destination_move_preserves_old_claim_until_removal() {
     fs::remove_file(dir.path().join(".mars/skills")).unwrap();
     sync(dir.path()).assert().success();
     assert!(!dir.path().join(".mars/old/muse.md").exists());
-    let recovered = lock::load(dir.path()).unwrap();
+    let recovered = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
     assert!(recovered.contains_output(".mars", "new/muse.md"));
     assert!(!recovered.contains_output(".mars", "old/muse.md"));
     let bytes = fs::read(dir.path().join("mars.lock")).unwrap();
@@ -593,7 +603,7 @@ fn repeated_interrupted_destination_moves_keep_every_uncommitted_path_owned() {
         }
         fs::remove_file(dir.path().join(".mars/skills")).unwrap();
         sync(dir.path()).assert().success();
-        let recovered = lock::load(dir.path()).unwrap();
+        let recovered = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
         for dest in ["committed", "z-first", "a-second"] {
             assert!(!dir.path().join(format!(".mars/{dest}/muse.md")).exists());
             assert!(!recovered.contains_output(".mars", &format!("{dest}/muse.md")));
@@ -658,7 +668,7 @@ fn interrupted_move_keeps_native_agent_on_the_first_successful_retry() {
         );
         assert!(fs::read_to_string(&native).unwrap().contains(expected));
         assert!(!dir.path().join(".mars/old/muse.md").exists());
-        let recovered = lock::load(dir.path()).unwrap();
+        let recovered = lock::load(&mars_agents::layout::Layout::project(dir.path())).unwrap();
         assert!(recovered.contains_output(".mars", "agents/muse.md"));
         assert!(recovered.contains_output(".claude", "agents/muse.md"));
         assert!(!recovered.contains_output(".mars", "old/muse.md"));

@@ -261,6 +261,12 @@ pub struct Dependency {
     pub declared_in: Option<Rooted>,
     /// The inbound dialect the root's entry sets; read for the root's entries only.
     pub dialect: Option<Dialect>,
+    /// Set on a root entry that brings in another root's graph whole (the user level's
+    /// `_user-<name>`), never read from a manifest: every dependency its packages declare is
+    /// named with this prefix and inherits it, so the subgraph never merges with this root's own
+    /// packages, and each of its names replays its `locked` row exactly, as `--frozen` does,
+    /// whatever `mode` says.
+    pub namespace: Option<String>,
 }
 
 /// How a run treats the lock.

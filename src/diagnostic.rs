@@ -79,6 +79,54 @@ impl Diagnostic {
     }
 }
 
+/// A notice about state outside the root a run acts on (a renamed variable, a file at a path
+/// Mars 0.40 used, the home project): raised where that state is read, whichever command reads
+/// it, and shown once per run by the CLI (`cli::output`), in `--json` output as a diagnostic.
+enum Notice {
+    Ready(Diagnostic),
+    /// Built when shown, so it describes the state the run leaves, not the state it found.
+    Deferred {
+        code: &'static str,
+        build: fn() -> Option<Diagnostic>,
+    },
+}
+
+static NOTICES: std::sync::Mutex<Vec<Notice>> = std::sync::Mutex::new(Vec::new());
+
+/// Raise `notice` for this run; a second identical one is dropped.
+pub(crate) fn raise_notice(notice: Diagnostic) {
+    let mut notices = NOTICES.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !notices
+        .iter()
+        .any(|seen| matches!(seen, Notice::Ready(seen) if *seen == notice))
+    {
+        notices.push(Notice::Ready(notice));
+    }
+}
+
+/// Raise the notice `build` makes when the run's notices are shown; one per `code`.
+pub(crate) fn raise_deferred_notice(code: &'static str, build: fn() -> Option<Diagnostic>) {
+    let mut notices = NOTICES.lock().unwrap_or_else(|poison| poison.into_inner());
+    if !notices
+        .iter()
+        .any(|seen| matches!(seen, Notice::Deferred { code: seen, .. } if *seen == code))
+    {
+        notices.push(Notice::Deferred { code, build });
+    }
+}
+
+/// The notices raised so far, each returned once.
+pub fn take_notices() -> Vec<Diagnostic> {
+    let notices = std::mem::take(&mut *NOTICES.lock().unwrap_or_else(|poison| poison.into_inner()));
+    notices
+        .into_iter()
+        .filter_map(|notice| match notice {
+            Notice::Ready(diagnostic) => Some(diagnostic),
+            Notice::Deferred { build, .. } => build(),
+        })
+        .collect()
+}
+
 /// Who wrote what a problem is about, and so who can fix it: the project's own file is the
 /// user's to change; a dependency's is its author's. When nothing the package declares is lost,
 /// a finding in a dependency's file is `Info` to the installer and a `Warning` to its author.
@@ -202,6 +250,8 @@ pub struct DiagnosticCollector {
     /// A loss and the lock record it concerns, until `settle` finds the sync changed that
     /// record (`hold`).
     held: Vec<(Vec<RecordRef>, Diagnostic)>,
+    /// [`Self::hold_each`]'s items, joined into their group's line when `settle` finds them news.
+    held_groups: Vec<(RecordRef, GroupedItems)>,
     /// No sync will `settle` the held losses, so each prints at once, every run.
     lists_held: bool,
     engine_fallbacks: Vec<crate::resolve::EngineFallback>,
@@ -240,6 +290,7 @@ impl DiagnosticCollector {
             diagnostics: Vec::new(),
             grouped: Vec::new(),
             held: Vec::new(),
+            held_groups: Vec::new(),
             lists_held: matches!(
                 lossiness_mode,
                 LossinessMode::Surface | LossinessMode::Verbose
@@ -430,6 +481,24 @@ impl DiagnosticCollector {
         }
     }
 
+    /// [`Self::warn_each`] for a loss that is news only when the sync changes `record`
+    /// ([`Self::hold`]): the items that are news share one line.
+    pub(crate) fn hold_each(&mut self, record: RecordRef, group: ItemGroup<'_>, item: String) {
+        if self.lists_held {
+            self.warn_each(group, item);
+        } else {
+            self.held_groups.push((
+                record,
+                GroupedItems {
+                    code: group.code,
+                    subject: group.subject.to_owned(),
+                    describe: group.describe,
+                    items: vec![item],
+                },
+            ));
+        }
+    }
+
     pub(crate) fn has_item(&self, code: &str, subject: &str, item: &str) -> bool {
         self.grouped.iter().any(|group| {
             group.code == code && group.subject == subject && group.items.iter().any(|i| i == item)
@@ -484,6 +553,20 @@ impl DiagnosticCollector {
         self.held = held;
         self.diagnostics
             .extend(news.into_iter().map(|(_, diagnostic)| diagnostic));
+        for (record, group) in std::mem::take(&mut self.held_groups) {
+            if record.is_news(old, new) {
+                for item in group.items {
+                    self.warn_each(
+                        ItemGroup {
+                            code: group.code,
+                            subject: &group.subject,
+                            describe: group.describe,
+                        },
+                        item,
+                    );
+                }
+            }
+        }
         let changed = |concerns: &[RecordRef]| concerns.iter().any(|c| c.is_news(old, new));
         for record in &mut self.lossy_records {
             record.written |= changed(&record.concerns);
@@ -603,6 +686,7 @@ impl DiagnosticCollector {
             self.rerun_verbose,
         ));
         self.held.clear();
+        self.held_groups.clear();
         for group in std::mem::take(&mut self.grouped) {
             let shown = if self.lossiness_mode.verbose() {
                 group.items.len()

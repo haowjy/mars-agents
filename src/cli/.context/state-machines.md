@@ -11,20 +11,37 @@ and surface ownership (`resolve_copy`; see
 
 ## Project resolution
 
-How `mars` decides the project root for a command, including the two cases where it invents one.
-`find_agents_root` and `find_agents_root_from` walk up from the working directory or `--root`
-looking for `mars.toml`, with no git boundary. `dispatch_result` applies three `Err` arms, using
-`should_auto_init_project` and `can_run_without_project`.
+How `mars` decides the root for a command. Each command is placed once, in `Shape::of`: whether
+it opens a root (`opens: None` for `init`, `check`, `cache`, `hook` and `models refresh-catalog`,
+dispatched before any lookup by `dispatch_without_root`), what it does to the root it opens
+(`Effect`: reads, unlinks, writes), where it runs with no project (`WithoutProject`), and why
+the user level refuses it. `--user` forces the user level (`MarsContext::user`, `Layout::user`)
+unless the shape refuses it; a walk-up that lands in the user folder is refused the same way.
+Otherwise `find_agents_root` and `find_agents_root_from` walk up from the working directory or
+`--root` looking for `mars.toml`, with no git boundary, and skip the home directory.
+`open_root` is the one place a root is opened: it applies the shape's `WithoutProject`, hands
+the root to `layout::set_run_root`, and runs the shared-folder guard, so no command (`provide`
+included) writes a root without passing it. Every JSON object names the run's root. A message
+about a root names its command and store with `Layout::cmd` and `Layout::store_label` when the
+call site has that layout (a project sync reading the user level's lock says `mars --user
+sync`); `layout::root_cmd` and `layout::store_label` are the run root's, for formatters with no
+layout to ask.
 
 ```mermaid
 stateDiagram-v2
+  [*] --> UserLevel: --user, command allowed there
+  [*] --> Refused: --user with init, check, link, unlink, provide, version, build plugin
   [*] --> Searching: walk up from cwd or --root looking for mars.toml
+  Searching --> Searching: dir is home: warn, skip (unless it is exactly --root)
   Searching --> Found: mars.toml exists, a MarsContext is built
   Searching --> NoProject: reached the filesystem root
-  NoProject --> AutoInitialized: command is add or link, init then continue
-  NoProject --> Rootless: build launch-bundle without --agent, build plugin with --path, models __refresh-catalog
-  NoProject --> Error: anything else, ProjectRootNotFound
+  NoProject --> UserLevel: lookup (build launch-bundle, agents, skills, models but alias, list, why)
+  NoProject --> Rootless: lookup when the user level cannot be located
+  NoProject --> AutoInitialized: add or link, init then continue (refused at home)
+  NoProject --> Rootless: build plugin with --path
+  NoProject --> Error: anything else, ProjectRootNotFound naming --user
   Found --> [*]
+  UserLevel --> [*]: nothing created until a command writes
   AutoInitialized --> [*]
   Rootless --> [*]: a context whose .mars may not exist
 ```
@@ -32,14 +49,41 @@ stateDiagram-v2
 - **A wrong edit changes where files are written**, which is the one thing the CLI can get
   catastrophically wrong. `MarsContext::new` rejects a `.mars/` that resolves
   outside the project root, because Mars deletes and rewrites inside it. Targets are not checked:
-  one may be a symlink out of the project, and Mars writes there only what it recorded.
-- Commands that own their root bypass the search: `Init`, `Check`, `Cache` and `Provide`. `provide`
-  also refuses a `--root` that is not itself a project root.
+  one may be a symlink out of the project, and Mars writes there only what it recorded. The
+  user level's store is its root folder (`~/.mars`) and it has no targets.
+- **The home directory is never a project by walk-up**, compared canonically. A `--root` that
+  is exactly home still opens it, with the move warning, for one minor release (`TODO`). `init`
+  refuses home and the user folder in `init::initialize_project`, which the auto-init
+  shares; `init::no_project_in` is the one rule, and `ProjectRootNotFound` carries its refusal
+  so the error names `mars init` only where a project can start. A home project's store is
+  `~/.mars`, the user level's folder unless `MARS_HOME` moves it, so while home holds
+  `mars.toml` or `mars.lock` (either one: `home_project::holds_project`, used by the walk-up
+  and every guard) the folder is that project's (`crate::home_project`). The guard is both
+  ways (`refuse_shared_folder_write`): a `Writes` command is refused at the user level, and at
+  the home project, which `--root ~` opens only for `Reads` and `Unlinks` (another write could
+  adopt the user level's files and later delete them as orphans). A project sync skips the user
+  layer (`sync::layers`). Each of them raises the one deferred `home-project` notice, built when
+  the run ends (an `unlink` drops its own step), from what exists and in the order a shared folder
+  needs: the unlinks (one per target the lock records; `unlink` runs from the lock alone once the
+  manifest is gone), deleting `~/mars.lock` and the old store files (`store_leftovers`, which
+  `mars --user doctor` also lists), moving the manifest in, moving `~/.mars-src/`, `mars --user
+  sync`. A user who wrote the
+  user `mars.toml` first must still be told to move `~/.mars-src/`, or their own items never
+  reach the user level.
+- A lookup in a project-less directory must create nothing: the user level's folder appears
+  only when a command writes to it. When `Layout::user_level` cannot locate it (no absolute
+  home and no `MARS_HOME`), the lookup runs in place instead of failing: an ad-hoc
+  launch bundle there worked before the user level existed, and hosts still issue one.
+- Commands that open no root bypass the search: `init`, `check`, `cache`, `hook` and `models
+  refresh-catalog`. `provide` opens its root through `open_root` like any write, and also
+  refuses a `--root` that is not itself a project root.
 - `--root` is a walk-up start in most commands and a direct target in `init` and `check`;
   `resolve_cli_path` decides whether a relative argument resolves against the working directory
-  or the found root.
-- The two predicates repeat the command list in `dispatch_with_root`; a new command that needs
-  no project must be added to both.
+  or the found root; `manifest_cli_path` adds the rewrite relative to the manifest's folder for a
+  path `add` or `override` stores.
+- `Shape::of` matches every command exhaustively, so a new command must be placed there;
+  `dispatch_with_root` and `dispatch_without_root` panic on a command the shape put on the other
+  side.
 
 ## Target claim
 
@@ -119,7 +163,7 @@ stateDiagram-v2
   Managed --> [*]
 ```
 
-- **The move is not staged.** `move_item` is a bare `rename` into `preferred_local_source_root`.
+- **The move is not staged.** `move_item` is a bare `rename` into the local source (`Layout::local_source`).
   Killed between that rename and the sync, the user's file exists only under `.mars-src/` with no
   lock record and nothing at its original path. The rollback covers a sync error, not a kill.
 - **A cross-device rename is refused with a message, not copied**, because a copy would leave two

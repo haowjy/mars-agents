@@ -30,6 +30,8 @@ pub struct TargetState {
     // `(target, source name, hook name)` of a host's hook that gave way to a package's on that
     // target. The hook stays accepted for the targets it yields on nowhere else.
     yielded_hooks: HashSet<(String, String, String)>,
+    // What the yield pass left out of a layer other than the project's, for the lock.
+    yielded_items: Vec<crate::lock::YieldedRecord>,
     pub(super) kept_hooks: Vec<KeptHook>,
     // A dependency's MCP scan failed, so its servers are unknown: MCP records of the last
     // sync stay installed instead of being read as "wants no servers".
@@ -123,7 +125,7 @@ impl TargetState {
                     .iter()
                     .map(String::as_str)
                     .filter(move |target| {
-                        crate::provided::offered_to(&hook.source_name, target)
+                        crate::layer::offered_to(&hook.source_name, target)
                             && !self.hook_yielded(hook, target)
                             && self.placed_hook(hook, target).is_none()
                             && !hook.def.skips_for(target).is_empty()
@@ -145,73 +147,133 @@ impl TargetState {
             .map(|(dir, _)| dir)
     }
 
-    /// The one pass where a host's content yields: after collection, a provided hook or MCP
-    /// server that a package also provides on the same target is dropped, with one warning. The
-    /// warning is news when the host's record changes (it arrives, or its bundle changes) or when
-    /// the package's does, so it prints once whichever came first. Nothing of a dropped hook is
-    /// installed, so no loss is recorded for it.
-    fn select_hooks_and_yield(
+    /// The one pass where a layer's content yields to a better layer's (`layer::yielded`): after
+    /// collection, an agent, skill, hook or MCP server that a better-ranked layer also has on the
+    /// same target is dropped, with one warning. The project's rank-1 claims are its
+    /// dependencies' items, its own `.mars-src` items and, against a machine-local item, a path at
+    /// that item's location the project holds (`machine_local::ProjectClaims`). Agents and skills
+    /// are keyed by their name before collision renames, so a name the project renamed still
+    /// blocks the user level's copy. The warning is news when the yielding source's record
+    /// changes or the winner's does, so it prints once whichever came first. Nothing of a dropped
+    /// item is installed, so no loss is recorded for it; `yielded_items` keeps them for `mars
+    /// list` and `mars why`.
+    fn select_and_yield(
         &mut self,
         collected: &mut Vec<TargetItem>,
         claims: Vec<HookClaim>,
+        project: &crate::sync::machine_local::ProjectClaims<'_>,
         diag: &mut DiagnosticCollector,
     ) {
-        use crate::lock::RecordRef;
-        use crate::provided::{is_provided_source, provider_label, yielded};
+        use crate::layer::{Layer, yielded};
+        use crate::sync::machine_local::ClaimKey;
 
-        let dropped = yielded(
-            claims
-                .iter()
-                .map(|claim| {
-                    (
-                        (
-                            ItemKind::Hook,
-                            claim.target_name.clone(),
-                            claim.parsed.def.name.clone(),
-                        ),
-                        is_provided_source(&claim.parsed.source_name),
-                    )
-                })
-                .chain(self.selected_mcp.iter().map(|selected| {
-                    (
-                        (
-                            ItemKind::McpServer,
-                            selected.dir.target().to_string(),
-                            selected.item.name.clone(),
-                        ),
-                        is_provided_source(&selected.item.source_name),
-                    )
-                })),
-        );
-        let warn =
-            |diag: &mut DiagnosticCollector, concerns: RecordRef, source: &str, what: String| {
-                diag.hold_warning(
-                    RecordRef::Any(vec![concerns, RecordRef::Dependency(source.to_owned())]),
-                    "provided-shadowed",
-                    format!(
-                        "{what} from {} is not installed: a package also provides it",
-                        provider_label(source)
-                    ),
-                );
+        let item_key = |item: &TargetItem| -> ClaimKey {
+            (
+                item.id.kind,
+                crate::lock::CANONICAL_TARGET_ROOT.to_string(),
+                item.dest_path.item_name(item.id.kind),
+            )
+        };
+        // Every claim with its layer; a machine-local one whose path the project holds is also
+        // the project's claim, with the path for the warning.
+        let mut keyed: Vec<(ClaimKey, Layer)> = project
+            .names()
+            .map(|key| (key.clone(), Layer::Project))
+            .collect();
+        let mut held_paths: HashMap<ClaimKey, String> = HashMap::new();
+        let mut claim = |key: ClaimKey, source: &str, kind: ItemKind, dest: Option<DestPath>| {
+            let layer = Layer::of(source);
+            if layer.machine_local()
+                && let Some(path) = dest.and_then(|dest| project.path_claim(kind, &dest, source))
+            {
+                keyed.push((key.clone(), Layer::Project));
+                held_paths.entry(key.clone()).or_insert(path);
+            }
+            keyed.push((key, layer));
+        };
+        for item in collected.iter() {
+            claim(
+                item_key(item),
+                &item.source_name,
+                item.id.kind,
+                Some(item.dest_path.clone()),
+            );
+        }
+        for hook in &claims {
+            claim(
+                (
+                    ItemKind::Hook,
+                    hook.target_name.clone(),
+                    hook.parsed.def.name.clone(),
+                ),
+                &hook.parsed.source_name,
+                ItemKind::Hook,
+                Some(hook.item.dest_path.clone()),
+            );
+        }
+        for selected in &self.selected_mcp {
+            claim(
+                (
+                    ItemKind::McpServer,
+                    selected.dir.target().to_string(),
+                    selected.item.name.clone(),
+                ),
+                &selected.item.source_name,
+                ItemKind::McpServer,
+                selected
+                    .item
+                    .uses_dir_token()
+                    .then(|| selected.dir.canonical()),
+            );
+        }
+        let dropped = yielded(keyed);
+        let gives_way =
+            |key: &ClaimKey, source: &str| dropped.contains(&(key.clone(), Layer::of(source)));
+        let mut yielded_items = Vec::new();
+        let mut warn = |diag: &mut DiagnosticCollector,
+                        key: &ClaimKey,
+                        source: &str,
+                        what: String| {
+            let why = match (held_paths.get(key), Layer::of(source)) {
+                (Some(path), _) => format!("the project has its own `{path}`"),
+                (None, Layer::Host) => "a package or the user level also provides it".to_string(),
+                (None, _) => "the project also provides it".to_string(),
             };
+            crate::sync::machine_local::leave_out(
+                &mut yielded_items,
+                diag,
+                "provided-shadowed",
+                key.clone(),
+                source,
+                what,
+                why,
+            );
+        };
+        collected.retain(|item| {
+            let key = item_key(item);
+            if !gives_way(&key, &item.source_name) {
+                return true;
+            }
+            warn(
+                diag,
+                &key,
+                &item.source_name,
+                format!("{} `{}`", item.id.kind, item.id.name),
+            );
+            false
+        });
         for claim in claims {
             let name = &claim.parsed.def.name;
             let target = claim.target_name.trim_start_matches('.');
             let source = &claim.parsed.source_name;
-            if is_provided_source(source)
-                && dropped.contains(&(ItemKind::Hook, claim.target_name.clone(), name.clone()))
-            {
+            let key = (ItemKind::Hook, claim.target_name.clone(), name.clone());
+            if gives_way(&key, source) {
                 self.yielded_hooks.insert((
                     claim.target_name.clone(),
                     source.to_string(),
                     name.to_string(),
                 ));
-                warn(
-                    diag,
-                    RecordRef::Item(format!("hook/{name}@{target}")),
-                    source,
-                    format!("hook {name}@{target}"),
-                );
+                warn(diag, &key, source, format!("hook `{name}` on `.{target}`"));
                 continue;
             }
             self.select_hook(&claim.target_name, &claim.item, claim.parsed);
@@ -220,30 +282,59 @@ impl TargetState {
         let (yielded_mcp, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.selected_mcp)
             .into_iter()
             .partition(|selected| {
-                is_provided_source(&selected.item.source_name)
-                    && dropped.contains(&(
+                gives_way(
+                    &(
                         ItemKind::McpServer,
                         selected.dir.target().to_string(),
                         selected.item.name.clone(),
-                    ))
+                    ),
+                    &selected.item.source_name,
+                )
             });
         self.selected_mcp = kept;
         for selected in yielded_mcp {
             let target = selected.dir.target();
             warn(
                 diag,
-                RecordRef::Entry {
-                    target_root: target.to_string(),
-                    key: crate::target::mcp_file::MCP_KIND.key(&selected.item.name),
-                },
-                &selected.item.source_name,
-                format!(
-                    "MCP server {}@{}",
-                    selected.item.name,
-                    target.trim_start_matches('.')
+                &(
+                    ItemKind::McpServer,
+                    target.to_string(),
+                    selected.item.name.clone(),
                 ),
+                &selected.item.source_name,
+                format!("MCP server `{}` on `{target}`", selected.item.name),
             );
         }
+        self.yielded_items = yielded_items;
+    }
+
+    /// What the claim rule and `machine_local::decide` left out, with why, for the lock.
+    pub(crate) fn yielded_items(&self) -> &[crate::lock::YieldedRecord] {
+        &self.yielded_items
+    }
+
+    pub(crate) fn record_yielded(&mut self, records: Vec<crate::lock::YieldedRecord>) {
+        self.yielded_items.extend(records);
+    }
+
+    /// Drop the hooks and MCP servers of `dirs`, whose config entries are withheld
+    /// (`machine_local::decide`): nothing of them is installed, so no loss is recorded for them.
+    pub(crate) fn withhold(&mut self, dirs: &[PackageDir]) {
+        for dir in dirs {
+            self.items.shift_remove(&dir.canonical());
+            if let Some(hook) = self.selected_hooks.shift_remove(&dir.canonical()) {
+                self.yielded_hooks.insert((
+                    dir.target().to_string(),
+                    hook.item.source_name.to_string(),
+                    hook.item.def.name.to_string(),
+                ));
+            }
+        }
+        self.selected_mcp.retain(|selected| {
+            !dirs
+                .iter()
+                .any(|dir| dir.lock_key() == selected.dir.lock_key())
+        });
     }
 
     pub(crate) fn accept_hook(&mut self, hook: &crate::compiler::hooks::ParsedHookItem) {
@@ -391,6 +482,7 @@ impl TargetState {
             selected_mcp: Vec::new(),
             accepted_hooks: Vec::new(),
             yielded_hooks: HashSet::new(),
+            yielded_items: Vec::new(),
             kept_hooks: Vec::new(),
             mcp_scan_failed: false,
         }
@@ -460,6 +552,7 @@ pub(crate) fn build_with_collisions_and_diag(
     graph: &ResolvedGraph,
     config: &EffectiveConfig,
     local_source: &SourceName,
+    project: &crate::sync::machine_local::ProjectClaims<'_>,
     diag: &mut DiagnosticCollector,
 ) -> Result<CollectedTarget, MarsError> {
     let mut collected_items = Vec::new();
@@ -471,6 +564,7 @@ pub(crate) fn build_with_collisions_and_diag(
         selected_mcp: Vec::new(),
         accepted_hooks: Vec::new(),
         yielded_hooks: HashSet::new(),
+        yielded_items: Vec::new(),
         kept_hooks: Vec::new(),
         mcp_scan_failed: false,
     };
@@ -491,7 +585,7 @@ pub(crate) fn build_with_collisions_and_diag(
         let source_config = config.dependencies.get(source_name);
         let offered_targets: Vec<String> = managed_target_roots
             .iter()
-            .filter(|target| crate::provided::offered_to(source_name.as_str(), target))
+            .filter(|target| crate::layer::offered_to(source_name.as_str(), target))
             .cloned()
             .collect();
         let offered_mcp_targets = mcp_config_targets(&offered_targets);
@@ -587,7 +681,7 @@ pub(crate) fn build_with_collisions_and_diag(
                     format!(
                         "failed to scan MCP items in `{}`: {error}; \
                          MCP servers installed by the last sync stay as they are",
-                        crate::provided::provider_label(source_name)
+                        crate::layer::source_label(source_name)
                     ),
                 );
             }
@@ -678,7 +772,7 @@ pub(crate) fn build_with_collisions_and_diag(
         }
     }
 
-    target.select_hooks_and_yield(&mut collected_items, hook_claims, diag);
+    target.select_and_yield(&mut collected_items, hook_claims, project, diag);
 
     let collision_renames =
         rename_destination_collisions(&mut collected_items, local_source, diag)?;
@@ -806,7 +900,9 @@ fn rename_destination_collisions(
             let item = &mut items[index];
             // The consumer's own package keeps the destination it declares; every
             // dependency that landed on it takes the suffix instead.
-            if item.source_name == *local_source {
+            // So does the user level's (`_user-self`): a collision here is within its layer,
+            // since one across layers has yielded before this.
+            if item.source_name == *local_source || item.source_name == crate::layer::USER_SELF {
                 continue;
             }
             let original_name = item.id.name.clone();
@@ -984,14 +1080,20 @@ fn parse_rename_dest(
     })
 }
 
+/// The `__<source>` suffix sync gives a dependency's item renamed on a collision. Readers that
+/// recognise a rename from the lock (`content.rs`) use it too, so the two cannot drift.
+pub(crate) fn collision_suffix(source_name: &SourceName) -> String {
+    // A `--plugin` dependency is named `<repo>/<plugin>`; a `/` in the suffix would nest the
+    // skill one directory too deep for any harness to load it.
+    format!("__{}", source_name.as_str().replace(['/', '\\'], "-"))
+}
+
 fn suffixed_collision_dest_path(
     dest_path: &DestPath,
     kind: RenamableKind,
     source_name: &SourceName,
 ) -> Result<DestPath, MarsError> {
-    // A `--plugin` dependency is named `<repo>/<plugin>`; a `/` in the suffix would nest the
-    // skill one directory too deep for any harness to load it.
-    let suffix = format!("__{}", source_name.as_str().replace(['/', '\\'], "-"));
+    let suffix = collision_suffix(source_name);
     let path = dest_path.as_str();
     let renamed = match kind {
         RenamableKind::Agent => {

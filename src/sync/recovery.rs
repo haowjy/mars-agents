@@ -12,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::layout::Layout;
+
 use serde::{Deserialize, Serialize};
 
 use super::plan::{PlannedAction, SyncPlan};
@@ -27,13 +29,14 @@ use crate::{
     types::{ContentHash, DestPath, SourceName},
 };
 
-const INTENT_FILE: &str = ".mars/pending-canonical.json";
+/// In the store.
+const INTENT_FILE: &str = "pending-canonical.json";
 
 /// Where a sync keeps its write intent. While this file exists, a sync died between
 /// journaling and publishing `mars.lock`, so destinations it may have written are not
 /// recorded anywhere else yet.
-pub(crate) fn intent_path(root: &Path) -> PathBuf {
-    root.join(INTENT_FILE)
+pub(crate) fn intent_path(layout: &Layout) -> PathBuf {
+    layout.store().join(INTENT_FILE)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -107,20 +110,20 @@ impl From<PendingWrite> for LockedItemV2 {
 
 fn invalid(message: impl std::fmt::Display) -> MarsError {
     LockError::PendingWrite {
-        message: format!("{INTENT_FILE}: {message}; preserve recovery evidence and relocate any conflicting output before retrying"),
+        message: format!("{CANONICAL_TARGET_ROOT}/{INTENT_FILE}: {message}; preserve recovery evidence and relocate any conflicting output before retrying"),
     }.into()
 }
 
-fn lock_checksum(root: &Path) -> Result<Option<ContentHash>, MarsError> {
-    match fs::read(root.join("mars.lock")) {
+fn lock_checksum(layout: &Layout) -> Result<Option<ContentHash>, MarsError> {
+    match fs::read(layout.lock()) {
         Ok(bytes) => Ok(Some(hash::hash_bytes(&bytes).into())),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
 
-fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
-    let path = intent_path(root);
+fn read(layout: &Layout) -> Result<Option<WriteIntent>, MarsError> {
+    let path = intent_path(layout);
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -129,12 +132,7 @@ fn read(root: &Path) -> Result<Option<WriteIntent>, MarsError> {
         }
         Ok(_) => {}
     }
-    if root
-        .join(".mars")
-        .symlink_metadata()?
-        .file_type()
-        .is_symlink()
-    {
+    if layout.store().symlink_metadata()?.file_type().is_symlink() {
         return Err(invalid("canonical root is a symlink"));
     }
     let intent: WriteIntent = serde_json::from_slice(&fs::read(path)?)
@@ -189,9 +187,7 @@ fn validate_destination(dest: &DestPath, kind: ItemKind) -> Result<(), MarsError
     } else {
         path
     };
-    let journal = Path::new(INTENT_FILE)
-        .strip_prefix(CANONICAL_TARGET_ROOT)
-        .expect("journal is canonical metadata");
+    let journal = Path::new(INTENT_FILE);
     // Reserve case and trailing-dot/space aliases on every platform. A checkout
     // must not gain a metadata collision when moved to a case-insensitive or
     // Win32 filesystem, even if that spelling is distinct on the current host.
@@ -205,7 +201,7 @@ fn validate_destination(dest: &DestPath, kind: ItemKind) -> Result<(), MarsError
     if aliases_journal || journal.starts_with(output) {
         return Err(MarsError::InvalidRequest {
             message: format!(
-                "canonical destination {dest} overlaps reserved recovery state {INTENT_FILE}; choose a different destination"
+                "canonical destination {dest} overlaps reserved recovery state {CANONICAL_TARGET_ROOT}/{INTENT_FILE}; choose a different destination"
             ),
         });
     }
@@ -232,8 +228,10 @@ pub(super) fn validate_plan(plan: &SyncPlan) -> Result<(), MarsError> {
     Ok(())
 }
 
-fn output_path(root: &Path, item: &PendingWrite) -> PathBuf {
-    let path = item.dest_path.resolve(&root.join(CANONICAL_TARGET_ROOT));
+fn output_path(layout: &Layout, item: &PendingWrite) -> PathBuf {
+    let path = item
+        .dest_path
+        .resolve(&layout.target(CANONICAL_TARGET_ROOT));
     if item.kind == ItemKind::BootstrapDoc {
         path.parent()
             .expect("bootstrap path has a directory")
@@ -243,16 +241,16 @@ fn output_path(root: &Path, item: &PendingWrite) -> PathBuf {
     }
 }
 
-/// Inspect the entire output path without following ancestor symlinks. Missing
-/// parents (including a non-directory obstruction) mean no output was installed.
-fn output_exists(root: &Path, path: &Path) -> Result<bool, MarsError> {
-    let mut current = root.to_path_buf();
-    for component in path
-        .strip_prefix(root)
-        .expect("canonical output is under project root")
-        .components()
-    {
-        current.push(component);
+/// Inspect the entire output path, the store included, without following ancestor symlinks.
+/// Missing parents (including a non-directory obstruction) mean no output was installed.
+fn output_exists(layout: &Layout, path: &Path) -> Result<bool, MarsError> {
+    let store = layout.store();
+    let below = path
+        .strip_prefix(store)
+        .expect("canonical output is under the store");
+    let mut current = PathBuf::new();
+    for step in std::iter::once(store.as_os_str()).chain(below.iter()) {
+        current.push(step);
         match fs::symlink_metadata(&current) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(invalid(format!(
@@ -271,33 +269,46 @@ fn output_exists(root: &Path, path: &Path) -> Result<bool, MarsError> {
 
 /// The open step for commands that write `mars.lock` without a sync: the lock with
 /// any interrupted write's ownership folded in. Publish the result with [`publish`].
-pub(crate) fn load_lock(root: &Path) -> Result<LockFile, MarsError> {
-    let mut lock = lock::load(root)?;
-    recover(root, &mut lock)?;
+pub(crate) fn load_lock(layout: &Layout) -> Result<LockFile, MarsError> {
+    let mut lock = lock::load(layout)?;
+    recover(layout, &mut lock)?;
     Ok(lock)
 }
 
 /// The publish step for every writer of `mars.lock`, given the targets `mars.toml` names (they
-/// decide which lock file a record goes to): ownership first, then the journal
-/// goes. Returns the native-agent manifest warning, if any.
+/// decide which lock file a record goes to): ownership first, then the journal goes, then the
+/// work tree's exclude block is set to the machine-local paths the lock records
+/// (`sync::exclude`). Returns the warnings of the best-effort steps: the native-agent manifest
+/// and the exclude block.
 pub(crate) fn publish(
-    root: &Path,
+    layout: &Layout,
     lock: &LockFile,
     project_targets: &std::collections::BTreeSet<String>,
-) -> Result<Option<String>, MarsError> {
-    let warning =
-        crate::compiler::persist_lock_then_native_agent_manifest(root, lock, project_targets)?;
-    complete(root)?;
-    Ok(warning)
+) -> Result<Vec<String>, MarsError> {
+    let mut warnings: Vec<String> =
+        crate::compiler::persist_lock_then_native_agent_manifest(layout, lock, project_targets)?
+            .into_iter()
+            .collect();
+    complete(layout)?;
+    match super::exclude::settle(
+        layout,
+        super::machine_local::settled(layout, lock, project_targets),
+    ) {
+        Ok(hidden) => warnings.extend(hidden),
+        Err(error) => warnings.push(format!(
+            "could not list machine-local items in git's info/exclude, so `git status` may show them: {error}"
+        )),
+    }
+    Ok(warnings)
 }
 
 /// Recover only outputs whose pre-write intent still belongs to this lock and
 /// whose bytes match. The caller keeps all changes in memory until preflight.
-pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, MarsError> {
-    let Some(intent) = read(root)? else {
+pub(super) fn recover(layout: &Layout, old_lock: &mut LockFile) -> Result<usize, MarsError> {
+    let Some(intent) = read(layout)? else {
         return Ok(0);
     };
-    let same_lock = intent.lock_checksum == lock_checksum(root)?;
+    let same_lock = intent.lock_checksum == lock_checksum(layout)?;
     let index = LockIndex::new(old_lock);
     let mut recovered = Vec::new();
     for versions in intent.outputs.into_values() {
@@ -307,8 +318,8 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
         if index.contains_installed_output(CANONICAL_TARGET_ROOT, &item.dest_path) {
             continue;
         }
-        let path = output_path(root, item);
-        if !output_exists(root, &path)? {
+        let path = output_path(layout, item);
+        if !output_exists(layout, &path)? {
             continue;
         }
         if !same_lock {
@@ -363,18 +374,18 @@ pub(super) fn recover(root: &Path, old_lock: &mut LockFile) -> Result<usize, Mar
 /// Publish intent before apply, retaining the verified current version of any
 /// previously recovered write. The lock stays untouched until finalization.
 pub(super) fn prepare(
-    root: &Path,
+    layout: &Layout,
     plan: &SyncPlan,
     graph: &ResolvedGraph,
     old_lock: &LockFile,
 ) -> Result<(), MarsError> {
-    let previous = read(root)?;
-    let checksum = lock_checksum(root)?;
+    let previous = read(layout)?;
+    let checksum = lock_checksum(layout)?;
     let index = LockIndex::new(old_lock);
     let mut outputs = BTreeMap::new();
     if let Some(previous) = previous.filter(|intent| intent.lock_checksum == checksum) {
         for (dest, versions) in previous.outputs {
-            if output_exists(root, &output_path(root, &versions[0]))? {
+            if output_exists(layout, &output_path(layout, &versions[0]))? {
                 // Keep the exact provenance of this verified physical output,
                 // not another path's provenance from the merged logical item.
                 if let Some(installed) = index.find_output(CANONICAL_TARGET_ROOT, &dest)
@@ -411,13 +422,13 @@ pub(super) fn prepare(
             dest_path: target.dest_path.clone(),
             expected_checksum: expected,
         };
-        let path = output_path(root, &item);
+        let path = output_path(layout, &item);
         if path.symlink_metadata().is_ok() && !outputs.contains_key(dest) {
             // Do not turn a force-adopted dependency collision into crash-recovery
             // evidence. Its preexisting bytes were not written by this transaction.
             continue;
         }
-        output_exists(root, &path)?; // Reject ancestor symlinks before recording intent.
+        output_exists(layout, &path)?; // Reject ancestor symlinks before recording intent.
         let versions = outputs.entry(dest.clone()).or_default();
         if !versions.contains(&item) {
             versions.push(item);
@@ -431,17 +442,17 @@ pub(super) fn prepare(
         };
         validate(&intent)?;
         let bytes = serde_json::to_vec_pretty(&intent).map_err(invalid)?;
-        crate::fs::atomic_write_if_changed(&intent_path(root), &bytes)?;
+        crate::fs::atomic_write_if_changed(&intent_path(layout), &bytes)?;
     } else {
-        complete(root)?;
+        complete(layout)?;
     }
     Ok(())
 }
 
 /// Discard after lock publication, or when no uncommitted outputs remain.
 /// A crash after publication is harmless: the installed lock claims take precedence.
-fn complete(root: &Path) -> Result<(), MarsError> {
-    match fs::remove_file(intent_path(root)) {
+fn complete(layout: &Layout) -> Result<(), MarsError> {
+    match fs::remove_file(intent_path(layout)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),

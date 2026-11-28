@@ -14,7 +14,9 @@ Mars installs into a `.mars/` canonical store, tracks ownership in `mars.lock`, 
 
 **Targets** (`[settings] targets`) are the tool directories Mars copies managed content into from `.mars/`, such as `.claude/` or `.codex/`. `mars link` adds one, and Mars creates none by default. A target may contain non-mars content — Mars only mutates paths it tracks in the lock for that target. `.agents` is a deprecated one. `.cursor` is retired: a sync warns (`retired-target`) while it is a target and writes nothing there; `mars unlink .cursor`, or taking `.cursor` out of `targets`, removes what earlier syncs installed.
 
-**`--root`** points at the project root to override auto-detection. Mars resolves from the directory containing `mars.toml`.
+**`--root`** sets where Mars starts looking for the project root, the nearest directory holding `mars.toml`. Your home directory is never one.
+
+**The user level** is your own root for what you install for yourself: a manifest, lock and store in `~/.mars/`, and no targets. `--user` selects it, and commands that only read use it when no project is around. See [cli/user-level.md](cli/user-level.md).
 
 **Lock file** (`mars.lock`) records every managed item with its source, version,
 and per-output lifecycle. Lock v3 tracks installed and pending-deletion outputs

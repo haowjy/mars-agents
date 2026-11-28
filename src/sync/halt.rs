@@ -124,7 +124,7 @@ pub(super) fn build_recovery_halt(
     RecoveryHalt {
         persisted,
         blockers,
-        next_step: format!("then run `{}`", managed_cmd("mars sync")),
+        next_step: format!("then run `{}`", crate::layout::root_cmd("sync")),
     }
 }
 
@@ -149,11 +149,11 @@ pub(super) fn persist_pending_config_mutation(
     let bump_changed = has_bump_version_changes(loaded, request);
     match &request.mutation {
         Some(ConfigMutation::SetOverride { .. }) => {
-            crate::config::save_local(&ctx.project_root, &loaded.local)?;
+            crate::config::save_local(&ctx.layout, &loaded.local)?;
         }
         Some(ConfigMutation::LinkTarget { local: true, .. }) => {
             if loaded.local_changed {
-                crate::config::save_local(&ctx.project_root, &loaded.local)?;
+                crate::config::save_local(&ctx.layout, &loaded.local)?;
             }
         }
         Some(
@@ -162,16 +162,16 @@ pub(super) fn persist_pending_config_mutation(
             | ConfigMutation::RemoveDependency { .. }
             | ConfigMutation::SetRename { .. },
         ) => {
-            crate::config::save(&ctx.project_root, &loaded.config)?;
+            crate::config::save(&ctx.layout, &loaded.config)?;
         }
         Some(ConfigMutation::LinkTarget { local: false, .. }) => {
-            crate::config::save(&ctx.project_root, &loaded.config)?;
+            crate::config::save(&ctx.layout, &loaded.config)?;
             if loaded.local_changed {
-                crate::config::save_local(&ctx.project_root, &loaded.local)?;
+                crate::config::save_local(&ctx.layout, &loaded.local)?;
             }
         }
         None if bump_changed => {
-            crate::config::save(&ctx.project_root, &loaded.config)?;
+            crate::config::save(&ctx.layout, &loaded.config)?;
         }
         None => {}
     }

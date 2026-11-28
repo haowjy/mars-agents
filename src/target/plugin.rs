@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::keyed_entries::{KeyedKind, KeyedSection, Rendered};
+use crate::layout::Layout;
 
 /// The plugin's entry in the project's plugin list, keyed by its `path`.
 pub(crate) const POINTER_KIND: KeyedKind = KeyedKind {
@@ -49,7 +50,7 @@ impl PluginTarget {
     }
 
     /// What a managed plugin target always has: its pointer and the manifest keys Mars owns.
-    pub fn fixed_entries(&self, target: &str, project_root: &Path) -> Vec<(KeyedKind, Rendered)> {
+    pub fn fixed_entries(&self, target: &str, layout: &Layout) -> Vec<(KeyedKind, Rendered)> {
         let entry = |kind, name: &str, value| {
             (
                 kind,
@@ -61,7 +62,7 @@ impl PluginTarget {
         };
         vec![
             entry(POINTER_KIND, target, json!({ "path": target })),
-            entry(MANIFEST_KIND, "name", json!(plugin_name(project_root))),
+            entry(MANIFEST_KIND, "name", json!(plugin_name(layout.root()))),
             entry(MANIFEST_KIND, "version", json!(MANIFEST_VERSION)),
         ]
     }

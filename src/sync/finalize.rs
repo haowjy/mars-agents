@@ -1,7 +1,6 @@
 //! Write the lock and build the `SyncReport`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
@@ -19,7 +18,7 @@ pub(crate) fn finalize(
     request: &SyncRequest,
     diag: &mut DiagnosticCollector,
 ) -> Result<SyncReport, MarsError> {
-    let project_root = &ctx.project_root;
+    let layout = &ctx.layout;
     let old_lock = &state.applied.planned.targeted.resolved.loaded.old_lock;
     let graph = &state.applied.planned.targeted.resolved.graph;
     // Native-agent surface deltas for the summary: removals are unambiguous; emits
@@ -38,7 +37,7 @@ pub(crate) fn finalize(
     // A dry run names what a real run would delete; a real run, what it did.
     let mut dropped_outputs = Vec::new();
     if request.options.dry_run {
-        let preview = crate::target_sync::removal::preview_removal(project_root, dropped);
+        let preview = crate::target_sync::removal::preview_removal(layout, dropped);
         dropped_outputs = preview.removed;
         if request.options.preview_warnings {
             for (root, dest_path) in &preview.kept {
@@ -70,6 +69,13 @@ pub(crate) fn finalize(
             &state.applied.planned.targeted.resolved.loaded.provided,
         )?;
         new_lock.dependency_model_aliases = dep_model_aliases;
+        new_lock.yielded = state
+            .applied
+            .planned
+            .targeted
+            .target
+            .yielded_items()
+            .to_vec();
         record_hook_source_paths(&mut new_lock, &state.applied.planned.targeted.target, graph);
         let mut confirmed_output_removals: Vec<(String, String)> = state
             .target_outcomes
@@ -100,12 +106,8 @@ pub(crate) fn finalize(
             state.native_removals.dropped_records(),
         );
         crate::lock::apply_compiled_native_outputs(&mut new_lock, &state.compiled_native_outputs)?;
-        confirmed_output_removals.extend(retry_tombstone_removals(
-            project_root,
-            old_lock,
-            &new_lock,
-            diag,
-        ));
+        confirmed_output_removals
+            .extend(retry_tombstone_removals(layout, old_lock, &new_lock, diag));
         crate::lock::retain_unremoved_noncanonical_outputs(
             &mut new_lock,
             old_lock,
@@ -128,7 +130,7 @@ pub(crate) fn finalize(
         let loaded = &state.applied.planned.targeted.resolved.loaded;
         new_lock.join(loaded.carried.clone());
         let removed = crate::target_sync::removal::remove_served(
-            project_root,
+            layout,
             &mut new_lock,
             loaded.dropped.clone(),
         )?;
@@ -140,9 +142,11 @@ pub(crate) fn finalize(
             .into_iter()
             .partition(|target| remaining.contains(target));
         let project_targets = crate::config::targets::project_targets(&loaded.config);
-        if let Some(warning) = recovery::publish(project_root, &new_lock, &project_targets)? {
-            diag.warn("native-agent-manifest-write", warning);
+        for warning in recovery::publish(layout, &new_lock, &project_targets)? {
+            diag.warn("recovery-publish", warning);
         }
+        // A path has one owner: a provided copy this sync's lock now records is the sync's.
+        crate::provided::retire_claimed(layout, &new_lock)?;
     }
 
     dropped_outputs.retain(|(root, _)| root != crate::lock::CANONICAL_TARGET_ROOT);
@@ -189,6 +193,7 @@ pub(crate) fn finalize(
         config_files_changed: state.config_files_changed,
         recovery_halt: None,
         engine_fallbacks: diag.take_engine_fallbacks(),
+        user_level: ctx.layout.kind() == crate::layout::RootKind::User,
     })
 }
 
@@ -218,9 +223,10 @@ fn record_hook_source_paths(
     }
 }
 
-/// The config entries a host's provided content wrote, which the lock saves in
+/// The config entries the user level's or a host's content wrote, which the lock saves in
 /// `machine.lock`. A record carries no source, so this reads the selection: an entry is
-/// the host's when a selected hook or MCP server of a provided source has its key. One no
+/// machine-local when a selected hook or MCP server of such a source (`layer::is_machine_local`)
+/// has its key. One no
 /// selection names (a hook kept as the last sync installed it) stays where the last sync had it.
 fn provided_entries(
     target: &crate::sync::target::TargetState,
@@ -256,7 +262,7 @@ fn provided_entries(
     for (target_root, source, keys) in hooks.chain(servers) {
         for key in keys {
             let owner = (target_root.to_string(), key);
-            if crate::provided::is_provided_source(source) {
+            if crate::layer::is_machine_local(source) {
                 provided.insert(owner);
             } else {
                 claimed.insert(owner);
@@ -307,7 +313,7 @@ fn unplaced_hook_records(
 }
 
 fn retry_tombstone_removals(
-    project_root: &Path,
+    layout: &crate::layout::Layout,
     old_lock: &crate::lock::LockFile,
     current_lock: &crate::lock::LockFile,
     diag: &mut DiagnosticCollector,
@@ -339,9 +345,7 @@ fn retry_tombstone_removals(
                 continue;
             }
 
-            let path = project_root
-                .join(&output.target_root)
-                .join(output.dest_path.as_str());
+            let path = layout.in_target(&output.target_root, output.dest_path.as_str());
             let result = if matches!(item.kind, ItemKind::Agent)
                 || crate::lock::is_generated_hook_file(item.kind, output.dest_path.as_str())
             {

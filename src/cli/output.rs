@@ -184,7 +184,7 @@ fn is_dry_run(report: &SyncReport) -> bool {
 }
 
 fn print_sync_report_json(report: &SyncReport) {
-    println!("{}", sync_report_json(report));
+    print_json(&sync_report_json(report));
 }
 
 pub fn sync_report_json(report: &SyncReport) -> serde_json::Value {
@@ -460,21 +460,19 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = writeln!(stdout, "  kept        {kept} locally modified");
     }
 
-    if installed == 0
-        && updated == 0
-        && removed == 0
-        && kept == 0
-        && report.dropped_targets.is_empty()
-        && report.pending_targets.is_empty()
-        && native_emitted == 0
-        && native_removed == 0
-        && hook_files == 0
-        && config_files == 0
-        && target_written == 0
-        && target_removed == 0
-        && report.dependency_moves.is_empty()
-        && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date)
-    {
+    let changed = installed > 0
+        || updated > 0
+        || removed > 0
+        || !report.dropped_targets.is_empty()
+        || !report.pending_targets.is_empty()
+        || native_emitted > 0
+        || native_removed > 0
+        || hook_files > 0
+        || config_files > 0
+        || target_written > 0
+        || target_removed > 0
+        || !report.dependency_moves.is_empty();
+    if !changed && kept == 0 && !report.diagnostics.iter().any(Diagnostic::blocks_up_to_date) {
         // `--diff` compares the items and the config entries it previews, not every file a
         // real sync rewrites, so it cannot promise the project is up to date.
         let line = if dry {
@@ -485,6 +483,12 @@ fn print_sync_report_human(report: &SyncReport, no_upgrade_hint: bool, detail: b
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
         let _ = writeln!(stdout, "  {line}");
         let _ = stdout.reset();
+    } else if report.user_level && changed && !dry {
+        let _ = writeln!(
+            stdout,
+            "  projects install the change on their next `{}`",
+            crate::types::managed_cmd("mars sync")
+        );
     }
 
     let mut stderr = stderr_stream();
@@ -616,7 +620,7 @@ pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
             warnings: messages(DiagnosticLevel::Warning),
             diagnostics,
         };
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+        print_json(&report);
     } else if diagnostics.is_empty() {
         let mut stdout = stdout_stream();
         let _ = stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)));
@@ -652,8 +656,52 @@ pub fn print_doctor(diagnostics: &[Diagnostic], json: bool) {
     }
 }
 
+/// Print one JSON document. An object gets the `root` the command ran against
+/// (`Layout::root_json`), so every output names its root the same way; a top-level array
+/// (`mars list`, `mars outdated`) keeps the shape hosts already parse.
 pub fn print_json<T: Serialize>(value: &T) {
-    println!("{}", serde_json::to_string(value).unwrap_or_default());
+    println!("{}", with_root(value));
+}
+
+/// As [`print_json`], indented.
+pub fn print_json_pretty<T: Serialize>(value: &T) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&with_root(value)).unwrap_or_default()
+    );
+}
+
+/// An object also gets the run's notices (`diagnostic::take_notices`), appended to its
+/// `diagnostics`; an array has no place for them, so they go to stderr.
+fn with_root<T: Serialize>(value: &T) -> serde_json::Value {
+    let mut value = serde_json::to_value(value).unwrap_or_default();
+    let serde_json::Value::Object(map) = &mut value else {
+        return value;
+    };
+    if let Some(root) = crate::layout::run_root() {
+        map.insert("root".into(), root.root_json());
+    }
+    if !matches!(
+        map.get("diagnostics"),
+        None | Some(serde_json::Value::Array(_))
+    ) {
+        return value;
+    }
+    let notices = crate::diagnostic::take_notices();
+    if !notices.is_empty()
+        && let serde_json::Value::Array(diagnostics) = map
+            .entry("diagnostics")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+    {
+        diagnostics.extend(notices.iter().map(|notice| serde_json::json!(notice)));
+    }
+    value
+}
+
+/// Show the notices the run raised and nothing has shown yet (`diagnostic::take_notices`):
+/// called by dispatch when the command is done, and before its error.
+pub fn print_notices() {
+    print_diagnostics(&crate::diagnostic::take_notices(), false);
 }
 
 pub fn print_success(msg: &str) {
@@ -761,6 +809,7 @@ mod tests {
             config_files_changed: Vec::new(),
             recovery_halt: None,
             engine_fallbacks,
+            user_level: false,
         }
     }
 

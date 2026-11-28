@@ -16,9 +16,10 @@ use serde_json::Value;
 use super::config_doc::{Doc, SectionFormat};
 use crate::diagnostic::DiagnosticCollector;
 use crate::error::MarsError;
+use crate::layout::Layout;
 use crate::lock::ConfigEntryRecord;
 
-/// Where a kind's entries live: a project-relative file and the section in it.
+/// Where a kind's entries live: a root-relative file ([`Layout::file`]) and the section in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyedSection {
     pub path: &'static str,
@@ -91,7 +92,7 @@ pub(crate) fn validate(section: &KeyedSection, path: &Path) -> Result<(), MarsEr
 /// in `lock` and that still equal what it wrote. A user's entry, an edited one or an
 /// unreadable file make it the user's.
 pub(crate) fn holds_only_owned(
-    project_root: &Path,
+    layout: &Layout,
     rel_path: &str,
     lock: &crate::lock::LockFile,
 ) -> bool {
@@ -109,7 +110,7 @@ pub(crate) fn holds_only_owned(
     let Some((_, first, _)) = sections.first() else {
         return false;
     };
-    let Ok(Some(mut doc)) = Doc::load(&project_root.join(rel_path), first.format) else {
+    let Ok(Some(mut doc)) = Doc::load(&layout.file(rel_path), first.format) else {
         return false;
     };
     for (kind, _, records) in sections {
@@ -136,8 +137,8 @@ struct Open {
 }
 
 impl Open {
-    fn load(project_root: &Path, at: KeyedSection) -> Result<Self, MarsError> {
-        let path = project_root.join(at.path);
+    fn load(layout: &Layout, at: KeyedSection) -> Result<Self, MarsError> {
+        let path = layout.file(at.path);
         let loaded = Doc::load(&path, at.format)?;
         Ok(Self {
             path,
@@ -172,7 +173,7 @@ pub(crate) struct Reconciled {
 pub(crate) fn reconcile(
     kind: &KeyedKind,
     section: &KeyedSection,
-    project_root: &Path,
+    layout: &Layout,
     target: &str,
     previous: &BTreeMap<String, ConfigEntryRecord>,
     desired: &[Rendered],
@@ -185,15 +186,7 @@ pub(crate) fn reconcile(
         .filter_map(|(key, record)| Some((key.strip_prefix(kind.key_prefix)?, record)))
         .collect();
     match try_reconcile(
-        kind,
-        section,
-        project_root,
-        target,
-        &prior,
-        desired,
-        force,
-        dry_run,
-        diag,
+        kind, section, layout, target, &prior, desired, force, dry_run, diag,
     ) {
         Ok(reconciled) => reconciled,
         Err(error) => {
@@ -217,7 +210,7 @@ pub(crate) fn reconcile(
 fn try_reconcile(
     kind: &KeyedKind,
     section: &KeyedSection,
-    project_root: &Path,
+    layout: &Layout,
     target: &str,
     prior: &BTreeMap<&str, &ConfigEntryRecord>,
     desired: &[Rendered],
@@ -226,7 +219,7 @@ fn try_reconcile(
     diag: &mut DiagnosticCollector,
 ) -> Result<Reconciled, MarsError> {
     let noun = kind.noun;
-    let mut open = Open::load(project_root, *section)?;
+    let mut open = Open::load(layout, *section)?;
     let wanted: BTreeSet<&str> = desired.iter().map(|entry| entry.name.as_str()).collect();
     let mut kept = BTreeSet::new();
 
@@ -268,7 +261,7 @@ fn try_reconcile(
                         format!(
                             "target `{target}` {noun} `{name}` in `{}` was edited after mars wrote it (preserved; run `{}` to take it over)",
                             section.path,
-                            crate::types::managed_cmd("mars sync --force")
+                            crate::layout::root_cmd("sync --force")
                         ),
                     );
                     false
@@ -289,7 +282,7 @@ fn try_reconcile(
                         format!(
                             "target `{target}` {noun} `{name}` in `{}` exists but mars does not own it (preserved; run `{}` to take it over)",
                             section.path,
-                            crate::types::managed_cmd("mars sync --force")
+                            crate::layout::root_cmd("sync --force")
                         ),
                     );
                     false

@@ -80,7 +80,7 @@ A `DiagnosticCollector` is threaded through all phases. No `eprintln!` in librar
 
 ### 1. Load Config (`load_config`)
 
-Acquires `.mars/sync.lock` via advisory file locking, then loads `mars.toml`, `mars.local.toml` and the user `config.toml` (`$MARS_CONFIG_DIR/config.toml`, else the platform `mars/config.toml`). If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
+Acquires `.mars/sync.lock` via advisory file locking, then loads `mars.toml`, `mars.local.toml` and the user `config.toml` (`~/.mars/config.toml`, or under `MARS_HOME`). If the command includes a mutation and `mars.toml` doesn't exist, an empty config is created (auto-init for `mars add` on a fresh project).
 
 Under the sync lock, applies the command's mutation atomically:
 

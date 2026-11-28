@@ -6,7 +6,6 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::error::MarsError;
-use crate::local_source;
 use crate::sync::{ResolutionMode, SyncOptions, SyncRequest};
 use crate::types::{DestPath, MarsContext};
 use mars_schema::item::ItemKind;
@@ -21,6 +20,9 @@ pub struct AdoptArgs {
     /// Show what would happen without moving content or syncing.
     #[arg(long)]
     pub dry_run: bool,
+
+    #[command(flatten)]
+    pub host: super::sync::HostArg,
 }
 
 #[derive(Debug)]
@@ -50,11 +52,11 @@ pub fn run(
     explicit_root: Option<&Path>,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config = crate::config::load(&ctx.project_root)?;
+    let config = crate::config::load(&ctx.layout)?;
 
-    let lock = crate::lock::load(&ctx.project_root)?;
+    let lock = crate::lock::load(&ctx.layout)?;
     let source_abs = super::resolve_cli_path(&args.path, explicit_root)?;
-    let source_display = relative_display(&ctx.project_root, &source_abs);
+    let source_display = relative_display(ctx.layout.root(), &source_abs);
 
     if source_abs.symlink_metadata().is_err() {
         return Err(MarsError::InvalidRequest {
@@ -96,6 +98,7 @@ pub fn run(
         mutation: None,
         options: SyncOptions {
             dry_run: true,
+            host: args.host.host()?,
             ..SyncOptions::default()
         },
         recovery: Default::default(),
@@ -156,7 +159,7 @@ fn source_target_membership(
 ) -> Result<(String, PathBuf), MarsError> {
     let source_canon = dunce::canonicalize(source_abs)?;
     for target_name in crate::config::targets::managed_targets(&config.settings) {
-        let target_root = ctx.project_root.join(&target_name);
+        let target_root = ctx.layout.target(&target_name);
         let Ok(target_canon) = dunce::canonicalize(&target_root) else {
             continue;
         };
@@ -168,7 +171,7 @@ fn source_target_membership(
     Err(MarsError::InvalidRequest {
         message: format!(
             "{} is not inside a managed target directory",
-            relative_display(&ctx.project_root, source_abs)
+            relative_display(ctx.layout.root(), source_abs)
         ),
     })
 }
@@ -179,7 +182,7 @@ fn build_plan(
     source_display: &str,
 ) -> Result<AdoptPlan, MarsError> {
     let metadata = source_abs.symlink_metadata()?;
-    let preferred_root = local_source::preferred_local_source_root(&ctx.project_root);
+    let preferred_root = ctx.layout.local_source();
 
     let (kind, name, dest_abs) = if metadata.is_dir() {
         if !source_abs.join("SKILL.md").is_file() {
@@ -239,7 +242,7 @@ fn build_plan(
         return Err(MarsError::InvalidRequest {
             message: format!(
                 "{} already exists; refusing to overwrite local source content",
-                relative_display(&ctx.project_root, &dest_abs)
+                relative_display(ctx.layout.root(), &dest_abs)
             ),
         });
     }
@@ -249,7 +252,7 @@ fn build_plan(
         name,
         source_abs: source_abs.to_path_buf(),
         source_display: source_display.to_string(),
-        dest_display: relative_display(&ctx.project_root, &dest_abs),
+        dest_display: relative_display(ctx.layout.root(), &dest_abs),
         dest_abs,
     })
 }

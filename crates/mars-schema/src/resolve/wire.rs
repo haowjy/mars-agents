@@ -543,6 +543,7 @@ fn root_dependencies(manifest: &str) -> Result<Vec<Dependency>, InputError> {
                 required_by: ROOT_CORE.to_string(),
                 declared_in: None,
                 dialect: entry.dialect,
+                namespace: None,
             }
         })
         .collect())

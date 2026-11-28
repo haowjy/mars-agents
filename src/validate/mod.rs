@@ -86,7 +86,8 @@ pub(crate) fn classify_skill_ref(
                 .map_or(String::new(), |name| format!(" (did you mean `{name}`?)"));
             let fix = match dependency {
                 Some(source) => format!(
-                    "; its author has to ship the skill, and `mars upgrade {source}` takes a newer release"
+                    "; its author has to ship the skill, and `{} {source}` takes a newer release",
+                    crate::layout::root_cmd("upgrade")
                 ),
                 None if suggestion.is_empty()
                     && mars_schema::provider::provider_of(skill_name).is_none() =>

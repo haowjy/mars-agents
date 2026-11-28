@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::error::{ConfigError, MarsError};
+use crate::diagnostic::{Diagnostic, DiagnosticLevel};
+use crate::error::MarsError;
+use crate::platform::home;
 
 use super::LocalConfig;
 use mars_schema::diagnostic::{SchemaDiagnostic, Severity};
@@ -14,11 +16,20 @@ pub struct UserConfig {
 }
 
 pub(super) fn load() -> Result<UserConfig, MarsError> {
-    let directory =
-        crate::platform::config::mars_config_dir().ok_or_else(|| ConfigError::Invalid {
-            message: "cannot determine config directory; set MARS_CONFIG_DIR".to_string(),
-        })?;
-    let path = directory.join("config.toml");
+    // Only `--user` needs the folder (`MarsContext::user` fails without it); a project command
+    // runs with no user layer, and a lookup outside a project runs in place.
+    let Some(path) = home::user_file("config.toml") else {
+        // Nothing is lost that the user set, since nothing could be read.
+        crate::diagnostic::raise_notice(Diagnostic::new(
+            DiagnosticLevel::Info,
+            "user-config-unlocated",
+            format!(
+                "no user config and no user level: the home directory is not an absolute path; set {} to use them",
+                home::HOME_VARIABLE
+            ),
+        ));
+        return Ok(UserConfig::default());
+    };
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

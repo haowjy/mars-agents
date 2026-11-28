@@ -36,7 +36,7 @@ pub struct VersionArgs {
 }
 
 pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i32, MarsError> {
-    let config = crate::config::load(&ctx.project_root)?;
+    let config = crate::config::load(&ctx.layout)?;
     let plugin_metadata = config
         .plugin
         .as_ref()
@@ -45,9 +45,9 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     let plugin_recovery = if let Some(metadata) = &plugin_metadata {
         let output =
-            crate::build::plugin::configured_output_path(&ctx.project_root, &metadata.dir)?;
+            crate::build::plugin::configured_output_path(ctx.layout.root(), &metadata.dir)?;
         let staging = crate::build::plugin::output::recovery_staging_path(&output)?;
-        let staging_relative = staging.strip_prefix(&ctx.project_root).map_err(|_| {
+        let staging_relative = staging.strip_prefix(ctx.layout.root()).map_err(|_| {
             MarsError::Internal(format!(
                 "configured plugin staging path is outside the package: {}",
                 staging.display()
@@ -61,13 +61,13 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     // An untracked recovery directory is interrupted Mars state, not package
     // dirt. Check every other path before recovery mutates the filesystem.
     require_clean_working_tree(
-        &ctx.project_root,
+        ctx.layout.root(),
         plugin_recovery
             .as_ref()
             .map(|(_, staging)| staging.as_path()),
     )?;
     if let Some((output, staging_relative)) = &plugin_recovery {
-        if path_tracked_at(&ctx.project_root, "HEAD", staging_relative)? {
+        if path_tracked_at(ctx.layout.root(), "HEAD", staging_relative)? {
             return Err(ConfigError::Invalid {
                 message: format!(
                     "refusing release because reserved plugin staging path {} is tracked by git",
@@ -78,7 +78,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         }
         crate::build::plugin::output::recover(output)?;
     }
-    require_package_check(&ctx.project_root, args.force)?;
+    require_package_check(ctx.layout.root(), args.force)?;
 
     let package = config
         .package
@@ -94,7 +94,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         .into());
     }
 
-    require_validate_pass(&ctx.project_root, args.force)?;
+    require_validate_pass(&ctx.layout, args.force)?;
 
     let current = parse_release_version(&package.version, "[package].version")?;
     let next = resolve_next_version(&args.bump, &current)?;
@@ -111,20 +111,20 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
 
     let next_version = next.to_string();
     let tag = format!("v{next_version}");
-    let raised_floor = check::requires_mars_to_write(&ctx.project_root)?;
+    let raised_floor = check::requires_mars_to_write(ctx.layout.root())?;
     let requires_mars = raised_floor
         .as_ref()
         .map(|floor| raised_requirement(package.requires_mars.as_deref(), floor))
         .transpose()?;
 
-    ensure_tag_not_exists(&ctx.project_root, &tag)?;
+    ensure_tag_not_exists(ctx.layout.root(), &tag)?;
 
     let staged_plugin = if let Some(metadata) = &plugin_metadata
         && !args.no_plugins
     {
         Some(crate::build::plugin::stage_plugin(
             &crate::build::plugin::PluginBuildRequest {
-                package_root: ctx.project_root.clone(),
+                package_root: ctx.layout.root().to_path_buf(),
                 destination: crate::build::plugin::PluginBuildDestination::Configured,
                 metadata: metadata.clone(),
                 version: Some(next_version.clone()),
@@ -136,7 +136,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     };
 
     let mut touched_paths = vec![PathBuf::from("mars.toml")];
-    if ctx.project_root.join("CHANGELOG.md").is_file() {
+    if ctx.layout.root().join("CHANGELOG.md").is_file() {
         touched_paths.push(PathBuf::from("CHANGELOG.md"));
     }
     if let (Some(metadata), Some(staged)) = (&plugin_metadata, &staged_plugin) {
@@ -147,8 +147,8 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
             .collect::<BTreeSet<_>>();
         for path in staged.touched_root_files() {
             if !deleted.contains(&path)
-                || path_exists(&ctx.project_root.join(&path))?
-                || path_tracked_at(&ctx.project_root, "HEAD", &path)?
+                || path_exists(&ctx.layout.root().join(&path))?
+                || path_tracked_at(ctx.layout.root(), "HEAD", &path)?
             {
                 touched_paths.push(path);
             }
@@ -163,7 +163,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         .map(|staged| staged.created_root_directories())
         .unwrap_or_default();
     let snapshot = ReleaseSnapshot::capture(
-        &ctx.project_root,
+        ctx.layout.root(),
         touched_paths,
         plugin_dir,
         created_root_directories,
@@ -173,22 +173,26 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
         && std::io::stdout().is_terminal()
         && std::io::stderr().is_terminal();
     let release_result = (|| {
-        update_changelog_if_present(&ctx.project_root, &next_version, review_filled_changelog)?;
+        update_changelog_if_present(ctx.layout.root(), &next_version, review_filled_changelog)?;
 
-        update_package_manifest(&ctx.project_root, &next_version, requires_mars.as_deref())?;
+        update_package_manifest(
+            &ctx.layout.manifest(),
+            &next_version,
+            requires_mars.as_deref(),
+        )?;
 
         let plugin_report = staged_plugin.map(|staged| staged.publish()).transpose()?;
 
-        snapshot.git_add(&ctx.project_root)?;
+        snapshot.git_add(ctx.layout.root())?;
         crate::platform::process::run_git(
             &["commit", "-m", &tag],
-            &ctx.project_root,
+            ctx.layout.root(),
             &format!("git commit -m {tag}"),
         )?;
         if !args.no_tag {
             crate::platform::process::run_git(
                 &["tag", "-a", &tag, "-m", &tag],
-                &ctx.project_root,
+                ctx.layout.root(),
                 &format!("git tag -a {tag} -m {tag}"),
             )?;
         }
@@ -199,7 +203,7 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     let plugin_report = match release_result {
         Ok(report) => report,
         Err(error) => {
-            if let Err(rollback) = snapshot.rollback(&ctx.project_root) {
+            if let Err(rollback) = snapshot.rollback(ctx.layout.root()) {
                 return Err(MarsError::ReleaseRollback {
                     release: Box::new(error),
                     rollback,
@@ -210,16 +214,16 @@ pub fn run(args: &VersionArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     };
 
     if args.push {
-        let branch = current_branch(&ctx.project_root)?;
+        let branch = current_branch(ctx.layout.root())?;
         crate::platform::process::run_git(
             &["push", "origin", &branch],
-            &ctx.project_root,
+            ctx.layout.root(),
             &format!("git push origin {branch}"),
         )?;
         if !args.no_tag {
             crate::platform::process::run_git(
                 &["push", "origin", &tag],
-                &ctx.project_root,
+                ctx.layout.root(),
                 &format!("git push origin {tag}"),
             )?;
         }
@@ -291,12 +295,11 @@ fn raised_requirement(
 /// Write the new version into mars.toml, and `requires_mars` when the package needs a higher
 /// floor than it states. Every byte outside those two values stays as written.
 fn update_package_manifest(
-    project_root: &Path,
+    path: &Path,
     next_version: &str,
     requires_mars: Option<&str>,
 ) -> Result<(), MarsError> {
-    let path = project_root.join("mars.toml");
-    let mut content = std::fs::read_to_string(&path)?;
+    let mut content = std::fs::read_to_string(path)?;
     let invalid = |message: String| ConfigError::Invalid { message };
     // Splice the parsed value spans instead of rendering the document: rendering would normalize
     // CRLF, while versioning must leave every byte outside the values untouched. Each edit is
@@ -376,7 +379,7 @@ fn update_package_manifest(
         content.replace_range(span, &text);
     }
 
-    crate::fs::atomic_write(&path, content.as_bytes())
+    crate::fs::atomic_write(path, content.as_bytes())
 }
 
 fn require_clean_working_tree(
@@ -452,9 +455,9 @@ fn require_package_check(project_root: &Path, force: bool) -> Result<(), MarsErr
 /// This catches integration issues that `mars check` cannot see:
 /// dependency resolution failures, cross-package skill graph inconsistencies,
 /// and target generation errors.
-fn require_validate_pass(project_root: &Path, force: bool) -> Result<(), MarsError> {
+fn require_validate_pass(layout: &crate::layout::Layout, force: bool) -> Result<(), MarsError> {
     let ctx = MarsContext {
-        project_root: project_root.to_path_buf(),
+        layout: layout.clone(),
         meridian_managed: false,
     };
     let request = SyncRequest {
@@ -1202,7 +1205,7 @@ mod tests {
         assert_eq!(exit, 0);
         assert!(!repo.path().join("CHANGELOG.md").exists());
 
-        let config = crate::config::load(repo.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(repo.path())).unwrap();
         assert_eq!(config.package.unwrap().version, "0.1.1");
 
         let subject = run_git_test(repo.path(), ["log", "-1", "--pretty=%s"]);
@@ -1341,7 +1344,7 @@ mod tests {
         let err = run(&args, &ctx, true).unwrap_err();
         assert!(err.to_string().contains("working tree must be clean"));
 
-        let config = crate::config::load(repo.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(repo.path())).unwrap();
         assert_eq!(config.package.unwrap().version, "0.1.0");
     }
 
@@ -1433,7 +1436,7 @@ mod tests {
             "expected package check failure: {err}"
         );
 
-        let config = crate::config::load(repo.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(repo.path())).unwrap();
         assert_eq!(
             config.package.unwrap().version,
             "0.1.0",
@@ -1469,7 +1472,7 @@ mod tests {
             "expected model-policies package check failure: {message}"
         );
 
-        let config = crate::config::load(repo.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(repo.path())).unwrap();
         assert_eq!(
             config.package.unwrap().version,
             "0.1.0",
@@ -1494,7 +1497,7 @@ mod tests {
         let exit = run(&args, &ctx, true).unwrap();
         assert_eq!(exit, 0);
 
-        let config = crate::config::load(repo.path()).unwrap();
+        let config = crate::config::load(&crate::layout::Layout::project(repo.path())).unwrap();
         assert_eq!(
             config.package.unwrap().version,
             "0.1.1",

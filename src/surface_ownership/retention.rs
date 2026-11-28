@@ -9,7 +9,7 @@
 //! here (`target::keyed_entries::reconcile`).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::diagnostic::DiagnosticCollector;
 use crate::lock::ConfigEntryRecord;
@@ -112,8 +112,8 @@ impl<'a> RemovalOperation<'a> {
     pub(crate) fn target_root(&self) -> &str {
         self.target_root
     }
-    pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, &'a HookRemoval) {
-        (project_root.join(self.target_root), self.removal)
+    pub(crate) fn into_parts(self, layout: &crate::layout::Layout) -> (PathBuf, &'a HookRemoval) {
+        (layout.target(self.target_root), self.removal)
     }
 }
 
@@ -220,8 +220,8 @@ impl<'p> ConfigWrite<'p> {
     pub(crate) fn hooks(&self) -> &[HookEntry] {
         &self.hooks
     }
-    pub(crate) fn into_parts(self, project_root: &Path) -> (PathBuf, Vec<HookEntry>) {
-        (project_root.join(self.target_root), self.hooks)
+    pub(crate) fn into_parts(self, layout: &crate::layout::Layout) -> (PathBuf, Vec<HookEntry>) {
+        (layout.target(self.target_root), self.hooks)
     }
 }
 
@@ -235,9 +235,9 @@ impl<'p> FileHookWrite<'p> {
     }
     pub(crate) fn into_parts(
         self,
-        project_root: &Path,
+        layout: &crate::layout::Layout,
     ) -> (PathBuf, Vec<(String, String, String)>) {
-        (project_root.join(self.target_root), self.files)
+        (layout.target(self.target_root), self.files)
     }
 }
 
@@ -273,7 +273,7 @@ mod tests {
         let retention = plan.execute(
             |operation, _| {
                 if operation.target_root() == ".claude" {
-                    let (_, removal) = operation.into_parts(Path::new("."));
+                    let (_, removal) = operation.into_parts(&crate::layout::Layout::project("."));
                     RemovalReport::failed("hook failed", removal.prior_records.clone())
                 } else {
                     RemovalReport::confirmed()

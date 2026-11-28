@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::diagnostic::DiagnosticCollector;
 use crate::discover::DiscoveredItem;
 use crate::error::MarsError;
+use crate::layout::Layout;
 use mars_schema::item::{DefinitionKind, ItemKind};
 use mars_schema::prepare::{PrepareContext, PreparedDefinition};
 
@@ -37,16 +38,13 @@ impl LocalDiscoveredItem {
     }
 }
 
-pub fn preferred_local_source_root(project_root: &Path) -> PathBuf {
-    project_root.join(LOCAL_SOURCE_DIR)
-}
-
 pub fn discover_local_items(
-    project_root: &Path,
+    layout: &Layout,
     package_name: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) -> Result<Vec<LocalDiscoveredItem>, MarsError> {
-    let local_root = preferred_local_source_root(project_root);
+    let local_root = layout.local_source();
+    let project_root = layout.root();
     let mut selected = if local_root.is_dir() {
         let prepared = crate::package_prepare::prepare_authored(
             &local_root,
@@ -211,7 +209,7 @@ fn prepared_items(
 /// Resource exclusions for a flat self skill, relative to its source root.
 /// Existing outputs may use absolute paths, dot segments, or symlink aliases.
 pub(crate) fn flat_skill_excluded_paths(
-    project_root: &Path,
+    layout: &Layout,
     source_root: &Path,
     targets: &[String],
 ) -> Result<Vec<PathBuf>, MarsError> {
@@ -220,8 +218,7 @@ pub(crate) fn flat_skill_excluded_paths(
         .map(PathBuf::from)
         .collect();
     let source_root = dunce::canonicalize(source_root)?;
-    let project_root = dunce::canonicalize(project_root)?;
-    if source_root == project_root {
+    if source_root == dunce::canonicalize(layout.root())? {
         excluded.extend([PathBuf::from(LOCAL_SOURCE_DIR), PathBuf::from(".agents")]);
         excluded.extend(
             mars_schema::harness::ALL
@@ -230,7 +227,7 @@ pub(crate) fn flat_skill_excluded_paths(
         );
     }
     for target in targets {
-        let path = std::path::absolute(project_root.join(target))?;
+        let path = std::path::absolute(layout.target(target))?;
         if let Ok(relative) = path.strip_prefix(&source_root) {
             excluded.push(relative.to_path_buf());
         }
@@ -252,16 +249,15 @@ mod tests {
     #[test]
     fn discovers_nested_items_under_mars_src() {
         let dir = TempDir::new().unwrap();
-        let project_root = dir.path();
-        let agent_dir = preferred_local_source_root(project_root).join("nested/agents");
-        let skill_dir = preferred_local_source_root(project_root).join("nested/skills/review");
+        let layout = Layout::project(dir.path());
+        let agent_dir = layout.local_source().join("nested/agents");
+        let skill_dir = layout.local_source().join("nested/skills/review");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(agent_dir.join("local.md"), "# local").unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "# review").unwrap();
 
-        let items =
-            discover_local_items(project_root, None, &mut DiagnosticCollector::new()).unwrap();
+        let items = discover_local_items(&layout, None, &mut DiagnosticCollector::new()).unwrap();
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| {
@@ -289,18 +285,16 @@ mod tests {
         )
         .unwrap();
 
-        let preferred = preferred_local_source_root(project_root)
-            .join("skills")
-            .join("planning");
+        let layout = Layout::project(project_root);
+        let preferred = layout.local_source().join("skills").join("planning");
         std::fs::create_dir_all(&preferred).unwrap();
         std::fs::write(preferred.join("SKILL.md"), "# Preferred").unwrap();
 
-        let items =
-            discover_local_items(project_root, None, &mut DiagnosticCollector::new()).unwrap();
+        let items = discover_local_items(&layout, None, &mut DiagnosticCollector::new()).unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].discovered.id.kind, ItemKind::Skill);
         assert_eq!(items[0].discovered.id.name.as_str(), "planning");
-        assert_eq!(items[0].root, preferred_local_source_root(project_root));
+        assert_eq!(items[0].root, layout.local_source());
     }
 }

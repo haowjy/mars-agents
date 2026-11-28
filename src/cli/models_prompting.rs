@@ -31,8 +31,8 @@ pub struct PromptingArgs {
 }
 
 pub fn run(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, MarsError> {
-    let project_config = load_project_config_layers_optional(&ctx.project_root)?;
-    let merged = load_merged_aliases(&ctx.project_root, project_config.as_ref())?;
+    let project_config = load_project_config_layers_optional(&ctx.layout)?;
+    let merged = load_merged_aliases(&ctx.layout, project_config.as_ref())?;
     let refresh =
         models::resolve_models_refresh_control(args.refresh_models, args.no_refresh_models)?;
 
@@ -46,7 +46,7 @@ pub fn run(args: &PromptingArgs, ctx: &MarsContext, json: bool) -> Result<i32, M
 
     if json {
         let out = target.to_json(&args.reference);
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        super::output::print_json_pretty(&out);
     } else if target.found {
         print_prompt_target(&target);
     } else {
@@ -166,8 +166,8 @@ fn resolve_prompt_agent(
 }
 
 fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> {
-    let lock = crate::lock::load(&ctx.project_root)?;
-    let mars_dir = ctx.project_root.join(".mars");
+    let lock = crate::lock::load(&ctx.layout)?;
+    let mars_dir = ctx.layout.store();
     let mut agents = Vec::new();
 
     for (dest_path, item) in lock.canonical_flat_items() {
@@ -175,7 +175,7 @@ fn load_prompt_agents(ctx: &MarsContext) -> Result<Vec<PromptAgent>, MarsError> 
             continue;
         }
 
-        let disk_path = dest_path.resolve(&mars_dir);
+        let disk_path = dest_path.resolve(mars_dir);
         let content = match std::fs::read_to_string(&disk_path) {
             Ok(content) => content,
             Err(err) => {
@@ -245,7 +245,7 @@ fn prompt_target_for_agent(
     let policy = resolve_policy(
         &effective_config,
         PolicyInput {
-            project_root: &ctx.project_root,
+            layout: &ctx.layout,
             runtime_aliases: aliases,
             agent: Some(&agent.name),
             profile: &agent.profile,
@@ -352,12 +352,12 @@ fn prompt_model_cache(
     project_config: Option<&crate::config::LoadedProjectConfig>,
     refresh: models::ModelsRefreshControl,
 ) -> models::ModelsCache {
-    let mars_dir = ctx.project_root.join(".mars");
+    let mars_dir = ctx.layout.store();
     let ttl = models_cache_ttl_hours(project_config);
     let providers = catalog_providers(project_config);
-    models::ensure_fresh_with_catalog_providers(&mars_dir, ttl, refresh.catalog_mode, &providers)
+    models::ensure_fresh_with_catalog_providers(mars_dir, ttl, refresh.catalog_mode, &providers)
         .map(|(cache, _)| cache)
-        .or_else(|_| models::read_cache(&mars_dir, &providers))
+        .or_else(|_| models::read_cache(mars_dir, &providers))
         .unwrap_or_default()
 }
 

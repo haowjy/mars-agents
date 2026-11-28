@@ -22,25 +22,35 @@ pub struct ProvideArgs {
     pub spec: String,
 }
 
-/// `root` is the global `--root`. The walk-up that finds the project must not escape it: a host
-/// names the root it wants filled, and silently filling a parent's `.mars/` instead would leave
-/// the host reading a copy it did not ask for.
-pub fn run(args: &ProvideArgs, root: Option<&Path>, json: bool) -> Result<i32, MarsError> {
-    let project_root = super::find_agents_root(root)?.project_root;
+/// `root` is the global `--root`. The walk-up that found `ctx` must not escape it: a host names
+/// the root it wants filled, and silently filling a parent's `.mars/` instead would leave the
+/// host reading a copy it did not ask for.
+pub fn run(
+    args: &ProvideArgs,
+    ctx: &super::MarsContext,
+    root: Option<&Path>,
+    json: bool,
+) -> Result<i32, MarsError> {
+    let layout = &ctx.layout;
     if let Some(given) = root {
         let given = dunce::canonicalize(given).unwrap_or_else(|_| given.to_path_buf());
-        if given != project_root {
+        if given != layout.root() {
             return Err(MarsError::Config(ConfigError::Invalid {
                 message: format!(
                     "--root {} has no `mars.toml`; the nearest project root is {}. `mars provide` writes only into the root it is given",
                     given.display(),
-                    project_root.display()
+                    layout.root().display()
                 ),
             }));
         }
     }
 
-    let report = crate::provided::reconcile(&project_root, &args.spec)?;
+    // On stderr only: an older host runs this on every launch and parses the JSON.
+    output::warn(
+        "provide-deprecated",
+        "`mars provide` is deprecated and goes in the next minor release: give the bundle to `mars sync --provided-root <host>@<version>=<dir>`, and to lookups (`build launch-bundle`, `agents`, `skills`) as `--provided-root <dir>`, which read it in place",
+    );
+    let report = crate::provided::reconcile(layout, &args.spec)?;
     if json {
         output::print_json(&report);
     } else {
@@ -66,8 +76,8 @@ fn print_report(report: &ProvideReport) {
             "provide-sync-pending",
             format!(
                 "an interrupted `{}` left `.mars/pending-canonical.json`; run `{}` to recover before refreshing {}@{}",
-                crate::types::managed_cmd("mars sync"),
-                crate::types::managed_cmd("mars repair"),
+                crate::layout::root_cmd("sync"),
+                crate::layout::root_cmd("repair"),
                 report.provider,
                 report.version
             ),

@@ -30,7 +30,7 @@ fn catalog(
 ) -> Result<(ModelsCache, models::RefreshOutcome), MarsError> {
     let refresh = models::resolve_models_refresh_control(refresh_models, no_refresh_models)?;
     models::ensure_fresh_with_catalog_providers(
-        &ctx.project_root.join(".mars"),
+        ctx.layout.store(),
         models_cache_ttl_hours(config),
         refresh.catalog_mode,
         &catalog_providers(config),
@@ -42,7 +42,7 @@ pub(super) fn run_catalog(
     ctx: &MarsContext,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
     let (cache, outcome) = catalog(
         ctx,
         config.as_ref(),
@@ -71,17 +71,13 @@ pub(super) fn run_catalog(
                 })
             })
             .collect::<Vec<_>>();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "catalog": entries,
-                "fetched_at": cache.fetched_at,
-                "cache_available": cache.fetched_at.is_some(),
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "catalog": entries,
+            "fetched_at": cache.fetched_at,
+            "cache_available": cache.fetched_at.is_some(),
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         println!(
@@ -108,8 +104,8 @@ pub(super) fn run_aliases(
     ctx: &MarsContext,
     json: bool,
 ) -> Result<i32, MarsError> {
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
-    let aliases = load_merged_aliases(&ctx.project_root, config.as_ref())?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
+    let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = catalog(
         ctx,
         config.as_ref(),
@@ -132,16 +128,12 @@ pub(super) fn run_aliases(
                 value
             })
             .collect::<Vec<_>>();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "aliases": rows,
-                "cache_available": cache.fetched_at.is_some(),
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "aliases": rows,
+            "cache_available": cache.fetched_at.is_some(),
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         println!(
@@ -177,7 +169,7 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
             })
         })
         .transpose()?;
-    let config = load_project_config_layers_optional(&ctx.project_root)?;
+    let config = load_project_config_layers_optional(&ctx.layout)?;
     let defaults = crate::config::Settings::default();
     let settings = config
         .as_ref()
@@ -193,8 +185,8 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         print_warnings(&routing_diagnostics);
     }
     let scope = &routing_settings.harness_scope;
-    let rules = CuratedRules::load(&ctx.project_root)?;
-    let aliases = load_merged_aliases(&ctx.project_root, config.as_ref())?;
+    let rules = CuratedRules::load(&ctx.layout)?;
+    let aliases = load_merged_aliases(&ctx.layout, config.as_ref())?;
     let (cache, outcome) = match catalog(
         ctx,
         config.as_ref(),
@@ -203,14 +195,10 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
     ) {
         Ok(value) => value,
         Err(err @ MarsError::ModelCacheUnavailable { .. }) if json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "error": {"code": "model_cache_unavailable", "message": err.to_string()},
-                    "routing_diagnostics": routing_diagnostics,
-                }))
-                .unwrap()
-            );
+            super::output::print_json_pretty(&serde_json::json!({
+                "error": {"code": "model_cache_unavailable", "message": err.to_string()},
+                "routing_diagnostics": routing_diagnostics,
+            }));
             return Ok(1);
         }
         Err(err) => return Err(err),
@@ -349,17 +337,13 @@ pub(super) fn run_list(args: &ListArgs, ctx: &MarsContext, json: bool) -> Result
         rows.push(entry);
     }
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "models": rows,
-                "diagnostics": diagnostics,
-                "routing_diagnostics": routing_diagnostics,
-                "cache_warning": warning(&outcome),
-                "cache_refresh": outcome,
-            }))
-            .unwrap()
-        );
+        super::output::print_json_pretty(&serde_json::json!({
+            "models": rows,
+            "diagnostics": diagnostics,
+            "routing_diagnostics": routing_diagnostics,
+            "cache_warning": warning(&outcome),
+            "cache_refresh": outcome,
+        }));
     } else {
         print_cache_warning(&outcome);
         print_warnings(&diagnostics);

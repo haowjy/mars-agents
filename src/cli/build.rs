@@ -102,9 +102,14 @@ pub struct LaunchBundleArgs {
     #[arg(long)]
     pub agent: Option<String>,
 
-    /// Secondary Mars project used only for missing agents and skills.
+    /// Deprecated (removed in the next minor). Secondary Mars project used only for missing agents and skills.
     #[arg(long)]
     pub fallback_root: Option<PathBuf>,
+
+    /// A host's bundle directory (`agents/<name>.md`, `skills/<name>/SKILL.md`), read in place
+    /// for agents and skills no installed layer has.
+    #[arg(long, value_name = "DIR")]
+    pub provided_root: Option<PathBuf>,
 
     /// Override model token or canonical model id.
     #[arg(long)]
@@ -190,9 +195,9 @@ fn run_plugin(
 ) -> Result<i32, MarsError> {
     let package_root = match &args.path {
         Some(path) => super::resolve_cli_path(path, explicit_root)?,
-        None => ctx.project_root.clone(),
+        None => ctx.layout.root().to_path_buf(),
     };
-    let manifest = crate::config::load(&package_root)?;
+    let manifest = crate::config::load(&crate::layout::Layout::project(&package_root))?;
     let metadata = crate::build::plugin::validate_plugin_build(&manifest)?;
     let destination = args
         .out
@@ -244,6 +249,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         LaunchBundleRequest {
             agent: args.agent.clone(),
             fallback_root: args.fallback_root.clone(),
+            provided_root: args.provided_root.clone(),
             model: args.model.clone(),
             literal_model: args.literal_model,
             harness: args.harness.as_ref().map(|h| h.as_str().to_string()),
@@ -261,12 +267,7 @@ fn run_launch_bundle(args: &LaunchBundleArgs, ctx: &MarsContext) -> Result<i32, 
         },
     )?;
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&bundle).map_err(|err| MarsError::Internal(format!(
-            "failed to serialize launch bundle: {err}"
-        )))?
-    );
+    crate::cli::output::print_json_pretty(&bundle);
 
     Ok(0)
 }

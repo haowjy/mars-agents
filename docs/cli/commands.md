@@ -1,13 +1,17 @@
 # CLI Reference
 
-All commands support two global flags:
+All commands support three global flags:
 
 | Flag | Description |
 |---|---|
-| `--root <PATH>` | Explicit project root (default: auto-detect from cwd) |
-| `--json` | Machine-readable JSON output |
+| `--root <PATH>` | Where to start looking for the project root (default: the working directory) |
+| `--user` | Use your [user level](user-level.md) (`~/.mars`, or `MARS_HOME`) instead of a project; conflicts with `--root` |
+| `--json` | Machine-readable JSON output; an object output carries `root` (which root the command used) |
 
-The project root is the directory holding `mars.toml` and `mars.lock`.
+The project root is the nearest directory, walking up from the start, that holds `mars.toml`.
+Your home directory is never one. With no project, commands that only read (`build
+launch-bundle`, `agents`, `skills`, `models` other than `models alias`, `list`, `why`) use the user level, and commands
+that write fail and name `--user`. See [The user level](user-level.md).
 
 ## Exit Codes
 
@@ -37,8 +41,12 @@ mars init [TARGET] [--link DIR...]
 - Creates `<project-root>/mars.toml` with `[dependencies]` section
 - Creates `.mars/` internal state directory
 - Creates `TARGET`, when given, and adds it to `settings.targets`
-- Adds `mars.local.toml` and `.mars/` to `.gitignore`
+- Leaves `.gitignore` alone: add `.mars/` and `mars.local.toml` yourself (`mars doctor` warns
+  when `.mars/` is not ignored)
 - Idempotent: re-running is a no-op for init, but still processes `--link`
+- Refuses the home directory, which is never a project (install for yourself with
+  `mars --user add`); `mars add` and `mars link` with no project around them init one the
+  same way, and refuse home the same way
 - When the project's `mars.toml` declares `[package]`, runs a **field-loss preview**
   against configured managed targets, reporting what each target cannot express
   (lossiness diagnostics via `collect_prepared_source_lossiness_diagnostics`). A consumer
@@ -79,7 +87,7 @@ mars add <source...> [filter flags]
   - GitHub: `owner/repo`, `owner/repo/plugins/foo`, `github:owner/repo`, `https://github.com/owner/repo/tree/main/plugins/foo`
   - GitLab: `gitlab:group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo`, `https://gitlab.example.com/group/subgroup/repo/-/tree/main/plugins/foo`
   - Generic git: `git@example.com:org/repo.git`, `git://host/org/repo.git`
-  - Local paths
+  - Local paths. A relative path resolves against the working directory when it exists there; otherwise, with an explicit `--root`, against the project root it selects. `mars.toml` stores it relative to its own folder (the project root, or `~/.mars` under `--user`), as you would write it there; an absolute path is stored as typed.
 - A dependency whose definitions break schema v1 is rejected before any content is written: the command exits 2 and `mars.toml` does not gain the dependency (see [sync](#mars-sync)).
 - Archive-download and direct file-download URLs are rejected in v1.
 
@@ -132,6 +140,11 @@ mars sync [--force] [--diff] [--frozen]
 | `--diff` | Dry run: show what would change without applying |
 | `--frozen` | Error if lock file would change (CI mode). Installing what `mars.lock` already records, as on a fresh clone with no `.mars/` or target directories, is allowed |
 | `--verbose` | Also print `info` notes, such as a key in a dependency that Mars does not read, and every lossy field per item and target |
+| `--provided-root HOST@VERSION=DIR` | A host's bundle, installed as the host layer into the targets no host launches (`.agy`); see below |
+
+A project's sync also installs the [user level](user-level.md#in-a-project): its pinned dependencies as `_user-<name>`, its `.mars-src` as `_user-self`, recorded in `.mars/machine.lock` and kept out of commits. `mars --user sync` resolves the user level and says that projects install the change on their next sync.
+
+`--provided-root HOST@VERSION=DIR` installs a host's bundle (the directory it gives lookups as `--provided-root DIR`; skills, agents, hooks and MCP servers) as the dependency `_provided-<HOST>`, only into targets whose harness the host does not launch (`.agy` today). Its name, version and directory are recorded in `.mars/machine.lock`, and a later sync without the flag keeps it while that directory exists. Every command that syncs takes the flag: `sync`, `add`, `remove`, `upgrade`, `repair`, `rename`, `override`, `adopt` and `link`. A package's or the user level's item of the same name wins over the host's. Launch lookups never read a host's copies in a store; they read the bundle in place ([Provided content](#provided-content)).
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key or table Mars does not read in the project's own `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key it does read (`target` → `targets`, `[setting]` → `[settings]`), because a misspelt `targets` leaves no targets and the sync removes what Mars installed in them. In a dependency or the user config it is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
@@ -196,7 +209,9 @@ mars list [--source NAME] [--kind KIND] [--status]
 | `--kind KIND` | Filter by item kind (`agents` or `skills`) |
 | `--status` | Show detailed status (source, version, hash check) |
 
-Default view shows name + description from frontmatter (the YAML metadata block at the top of each Markdown profile). With `--status`, output includes the dependency source name, version, and integrity status (`ok`, `modified`, `missing`, `conflicted`).
+Default view shows name + description from frontmatter (the YAML metadata block at the top of each Markdown profile). With `--status`, output includes the dependency source name, version, and integrity status (`ok`, `modified`, `missing`, `conflicted`). Items from the [user level](user-level.md#in-a-project) or a host that the project's own copy or path kept out are listed under NOT INSTALLED HERE, with the reason.
+
+`--json` prints an object: `root`, `agents`, `skills`, `bootstrap` and `yielded` (each with `name`, `kind`, `target`, `source` and `why`). `--status --json` prints a top-level array of the status rows.
 
 ---
 
@@ -205,9 +220,9 @@ Default view shows name + description from frontmatter (the YAML metadata block 
 Inspect the installed agents or skills, after variants and overrides are applied.
 
 ```bash
-mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars agents [list] [--mode MODE] [--model-invocable] [--source NAME] [--fallback-root PATH] [--provided-root DIR]
 mars agents show NAME
-mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH]
+mars skills [list] [--type TYPE] [--model-invocable] [--source NAME] [--fallback-root PATH] [--provided-root DIR]
 mars skills show NAME
 ```
 
@@ -217,15 +232,20 @@ mars skills show NAME
 | `--type TYPE` | Skills only: match `metadata.type` exactly |
 | `--model-invocable` | Only items a model may pick for itself |
 | `--source NAME` | Filter by dependency name |
-| `--fallback-root PATH` | A secondary Mars project consulted only for items the project lacks |
+| `--fallback-root PATH` | Deprecated, removed in the next minor release: a secondary Mars project consulted only for items the project lacks |
+| `--provided-root DIR` | A host's bundle directory, read in place for items neither the project nor the fallback has; see [Provided content](#provided-content) |
 
-The table shows name, mode or type, `M-INV` (model-invocable), scope (`root` or `fallback`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
+The table shows name, mode or type, `M-INV` (model-invocable), scope (`root`, `fallback` or `provided`) and description. `--json` prints `{"agents": [...]}` or `{"skills": [...]}`; each entry has `name`, `description`, `mode` (agents; `subagent` when the profile omits it, and `--mode subagent` matches such agents) or `type` (skills), `model-invocable`, `scope` and `source_path`. Agent entries add three fields:
 
 - `native-harnesses`: the harnesses the last `mars sync` installed the agent into natively.
 - `fanout`: `true` when `[settings.meridian.fanout].agents` names it, so Meridian launches it even where it is native.
 - `subagents`: the profile's list of agents it may spawn.
 
-`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+`show` prints the same entry for one item, plus `user-invocable` and, for agents, the full launch profile. A name that matches nothing fails with exit 3 and, with `--json`, the error code `agent_not_found` or `skill_not_found`; a name sync renamed on a collision (`mars.lock` records only `<name>__<source>` copies of it) fails with `agent_renamed` or `skill_renamed` and lists the names to use. `--source` keeps only items from that dependency, so it leaves out provided items. Meridian's `meridian spawn subagents` reads `mars agents --json`.
+
+### Provided content
+
+`--provided-root DIR` names a host's bundle directory, the one it gives [`mars provide`](#mars-provide), and reads it in place: nothing is installed or recorded, so it needs no sync. The layout is `agents/<name>.md` and `skills/<name>/SKILL.md`; a name starting with `_` or `.` is not an entry, and neither is an agent file that is a symlink or a skill directory with a symlink anywhere in it, which `mars provide` would refuse. It is the last layer every by-name lookup of an agent or skill goes through, after the project root and `--fallback-root`, and it answers a name only when neither installed layer has it. A host's copies in an installed layer's store (`_provided-*` records, and the skills `mars provide` recorded in `provided.lock`) are not read, so an older host's copy never outranks the bundle. An installed layer whose `mars.lock` cannot be read is skipped whole, with a warning (in a launch bundle, in its `warnings`). A name sync renamed on a collision counts as installed: when an installed layer's `mars.lock` records two or more `<name>__<source>` copies of it, each from the source its suffix names, the lookup fails and lists them instead of falling through to the host's copy. A `__` name the lock does not record that way, such as a `<skill>__<provider>` skill `mars provide` installed, is not a rename. A `DIR` that is not a directory fails with exit 2.
 
 ---
 
@@ -237,7 +257,7 @@ Explain why an item is installed.
 mars why <name>
 ```
 
-Shows the item's source dependency name, version, install path, and which agents depend on it (for skills). Matches by name stem (agents) or directory name (skills).
+Shows the item's source dependency name, version, install path, and which agents depend on it (for skills). Matches by name stem (agents) or directory name (skills). An item from the user level or a host names the layer (`provided by: upkg (user level), v0.1.1`); one the project kept out is shown with the reason it was not installed.
 
 ```bash
 mars why frontend-design
@@ -332,7 +352,7 @@ Set a local development override for a source.
 mars override <name> --path <local-path>
 ```
 
-Writes to `mars.local.toml` and re-syncs. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](../dev/local-development.md).
+Writes to `mars.local.toml` and re-syncs. A relative `--path` resolves and is stored as `mars add` does with a local path. The local path replaces the git URL for resolution. `<name>` is the dependency name from `mars.toml`. See [local-development.md](../dev/local-development.md).
 
 ---
 
@@ -673,6 +693,9 @@ Checks:
 - Agent skill references: every declared skill dependency exists on disk
 - Targets the sync does not manage (a retired one the config still names): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
+- Curation files: `mars.curated.toml`, `mars.curated.local.toml` and the user `curated.toml` parse
+- What the run read outside the root: a user `config.toml` or `curated.toml` still at the Mars 0.40 location, a set `MARS_CONFIG_DIR`, a home project (with the steps left to move it)
+- At the user level (`--user`): files in `~/.mars` that the user `mars.lock` does not record (an old home project's store), named so you can delete them
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
 Exit code 0 = healthy, 2 = an error was found. A skill an Agent names that is not installed is the same warning (`missing-skill`) here as in `mars sync` and `mars validate`; it does not fail the check. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).
@@ -697,7 +720,7 @@ and leaves the corrupt lock untouched.
 
 ## `mars provide`
 
-Install a host program's own skills, hooks and MCP servers.
+Install a host program's own skills, hooks and MCP servers. Deprecated: it warns on stderr and goes in the next minor release. Give the bundle to [`mars sync --provided-root`](#mars-sync) and to lookups as `--provided-root DIR` instead.
 
 ```bash
 mars provide <provider>@<version>=<directory> [--root <dir>] [--json]
@@ -770,7 +793,7 @@ component ending in `__<that provider>`; anything else makes the file corrupt
 (one warning, an empty record) rather than letting a record point a removal at
 another provider's directory.
 
-`mars sync` reads it and never writes it. It counts a recorded name as available for refs from a
+`mars sync` reads it. It writes it only to drop a skill whose `.mars/skills/<name>` the sync now records as its own in the lock (a host that moved to `--provided-root`), so each directory has one owner. It counts a recorded name as available for refs from a
 package that declares the provider in `uses-providers` (see
 [mars.toml](../config/mars-toml.md#provided-skills-and-uses-providers)) only while
 `.mars/skills/<name>` is a directory, and treats a recorded destination as Mars-owned, so a
@@ -875,8 +898,9 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 - Uses no agent profile; routing is driven by `--model` and the installed harness environment
 
 **Agent/profile mode** (`--agent <name>`):
-- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project
-- Requires a project with `mars sync` already run
+- Reads `.mars/agents/<name>.md` from the nearest `mars.toml` project, then from `--fallback-root`, then `agents/<name>.md` from `--provided-root` ([Provided content](#provided-content))
+- Requires a `mars.toml` project; an agent from `.mars/agents/` needs `mars sync` to have run, and a provided agent does not
+- An agent no layer has fails with exit 3 and the JSON error code `agent_not_found`; a name sync renamed on a collision fails with `agent_renamed`, listing the renamed names
 - Inherits the profile's fields (model, harness, effort, approval, sandbox, network, skills, tools, model-policies)
 - Model precedence is `--model` > the `[agents.<name>]` overlay > profile model > `settings.default_model`.
 - Effort, approval, sandbox and network follow the [precedence chain](../config/schema-v1.md#model-policies): CLI flag, overlay field, the first matching `model-policies` rule, the profile's own value, then (`network` only) the `[settings]` and user-config `default-network`, or (`effort` only) the alias's `default_effort`.
@@ -884,6 +908,8 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 | Flag | Description |
 |---|---|
 | `--agent <name>` | Agent name from `.mars/agents/<name>.md`. Omit for ad-hoc mode. |
+| `--fallback-root <path>` | A secondary Mars project consulted for agents and skills the project lacks. |
+| `--provided-root <dir>` | A host's bundle directory, the last layer for agents and skills; see [Provided content](#provided-content). The `[agents.<name>]` overlay applies to a provided agent as to an installed one. |
 | `--model <token>` | Model token or canonical model ID. Required in ad-hoc mode; overrides profile in agent mode. |
 | `--harness <name>` | Override harness target (`claude`, `codex`, `opencode`, `pi`, `agy`). Only a pin reaches `agy`, which Meridian builds a command for and does not run; the bundle's `harness_model` is one `agy` slug that carries the effort too ([Antigravity slugs](../config/agent-compilation.md#agy-model-and-effort)). |
 | `--effort <level>` | Override effort: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `auto` sends no effort; `none` asks for reasoning off. The bundle carries the level the model and harness take, with a warning when it moved; see [Effort](../config/schema-v1.md#effort). |
@@ -970,7 +996,7 @@ A project whose `min_mars_version` the running Mars does not meet fails with `[c
 }
 ```
 
-- `agent_body` is the raw post-frontmatter markdown body from `.mars/agents/<name>.md` in agent/profile mode.
+- `agent_body` is the raw post-frontmatter markdown body of the agent's file in agent/profile mode, and `agent_source_path` is that file, wherever the lookup found it.
 - `agent_body` is omitted in ad-hoc mode (no `--agent`).
 - `skills.*.skill_type` is the skill's `metadata.type`, or `reference` when it sets none.
 - `execution_policy` holds `effort`, `approval`, `sandbox`, `network`, `autocompact`, `autocompact_pct` and `timeout`. Compaction comes only from the model alias; an Agent has no compaction setting. `effort` is the resolved level, or `null` when none is sent (`auto`, a model that does not reason, or Antigravity, which folds the level into `harness_model`); a request the model or harness does not take moves to the nearest level they share, with a `launch.warning`. `routing.catalog_row` is the models.dev row of the model the harness runs, `{provider_key, id, cost_input, cost_output, cost_cache_read, cost_cache_write}`, or `null` when there is none; read prices from it instead of joining the catalog yourself.
@@ -1059,6 +1085,9 @@ mars build launch-bundle --model gpt-5.4-mini --json
 
 # Agent mode: build bundle for a synced agent
 mars build launch-bundle --agent my-agent --json
+
+# Agent mode with a host's built-in agents; [agents.router] still applies
+mars build launch-bundle --agent router --provided-root /opt/tool/bundle --json
 
 # Override harness explicitly
 mars build launch-bundle --model gpt-5.4-mini --harness codex --json

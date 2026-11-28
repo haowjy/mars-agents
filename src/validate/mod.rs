@@ -29,7 +29,7 @@ pub(crate) struct SkillRef<'a> {
 }
 
 /// The report for one skill ref the installed skills do not satisfy, or `None` when they do.
-/// The one place a ref is judged, so sync, validate, doctor and plugin builds word it alike.
+/// The one place a ref is judged, so sync, validate and plugin builds word it alike.
 pub(crate) fn classify_skill_ref(
     reference: &SkillRef<'_>,
     available_skills: &HashSet<String>,

@@ -109,8 +109,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
     }
 
     'installed: {
-        use std::collections::HashSet;
-
         let installed = match installed_items(mars_dir) {
             Ok(installed) => installed,
             Err(e) => {
@@ -139,69 +137,6 @@ pub fn run(_args: &DoctorArgs, ctx: &super::MarsContext, json: bool) -> Result<i
                         cmd = ctx.layout.cmd("sync"),
                     ),
                 );
-            }
-        }
-
-        let available_skills: HashSet<String> =
-            installed.skills.iter().map(|s| s.name.clone()).collect();
-
-        // The rule `mars sync` applies to a ref, against what is installed. Doctor has no
-        // resolved graph: the owner comes from the lock, and the only `[package]` it reads is the
-        // project's, so a dependency's refs are judged as if it declared nothing.
-        let provided = crate::sync::layers::HostSkills::new(
-            &ctx.layout,
-            &lock,
-            None,
-            &crate::provided::ProvidedNames::load(
-                &ctx.layout,
-                &mut crate::diagnostic::DiagnosticCollector::new(),
-            )?,
-        );
-        let own_source = crate::sync::validate::OwnSource::new(
-            &ctx.layout,
-            project_config
-                .as_ref()
-                .and_then(|layers| layers.config.package.as_ref())
-                .map(|package| package.uses_providers.as_slice()),
-        );
-        let own = crate::types::SourceOrigin::LocalPackage.to_string();
-        let path_dirs: std::collections::HashMap<&str, std::path::PathBuf> = lock
-            .dependencies
-            .iter()
-            .filter_map(|(name, row)| {
-                Some((name.as_str(), ctx.layout.root().join(row.path.as_deref()?)))
-            })
-            .collect();
-        for agent in &installed.agents {
-            let skills = crate::validate::parse_agent_skills(&agent.path).unwrap_or_default();
-            let source = lock
-                .items
-                .get(&format!("agent/{}", agent.name))
-                .map_or(own.as_str(), |locked| locked.source.as_str());
-            let (owner, declared) = if source == own {
-                (
-                    crate::diagnostic::Owner::Own {
-                        dir: &own_source.dir,
-                    },
-                    own_source.declared,
-                )
-            } else {
-                let dir = path_dirs.get(source).map(std::path::PathBuf::as_path);
-                (crate::diagnostic::Owner::of(source, dir), None)
-            };
-            for skill_name in &skills {
-                let reference = crate::validate::SkillRef {
-                    agent: &agent.name,
-                    skill_name,
-                    owner,
-                    declared,
-                    provided_here: provided.contains(skill_name),
-                };
-                if let Some(found) =
-                    crate::validate::classify_skill_ref(&reference, &available_skills)
-                {
-                    diag.push(found);
-                }
             }
         }
     }

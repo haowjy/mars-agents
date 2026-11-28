@@ -144,7 +144,7 @@ mars sync [--force] [--diff] [--frozen]
 
 A project's sync also installs the [user level](user-level.md#in-a-project): its pinned dependencies as `_user-<name>`, its `.mars-src` as `_user-self`, recorded in `.mars/machine.lock` and kept out of commits. `mars --user sync` resolves the user level and says that projects install the change on their next sync.
 
-`--provided-root HOST@VERSION=DIR` installs a host's bundle (the directory it gives lookups as `--provided-root DIR`; skills, agents, hooks and MCP servers) as the dependency `_provided-<HOST>`, only into targets whose harness the host does not launch (`.agy` today). Its name, version and directory are recorded in `.mars/machine.lock`, and a later sync without the flag keeps it while that directory exists. Every command that syncs takes the flag: `sync`, `add`, `remove`, `upgrade`, `repair`, `rename`, `override`, `adopt` and `link`. A package's or the user level's item of the same name wins over the host's. The bundle's skills count as provided here for every agent's `skills` refs whatever the targets, since the host supplies them where it launches the agent: a `.claude`-only project given the flag is not warned about `work__meridian`, and nothing is written for it. Such a project records no bundle, so it needs the flag on every sync, as Meridian passes it. A `DIR` that is not a directory fails the command. Launch lookups never read a host's copies in a store; they read the bundle in place ([Provided content](#provided-content)).
+`--provided-root HOST@VERSION=DIR` installs a host's bundle (the directory it gives lookups as `--provided-root DIR`; skills, agents, hooks and MCP servers) as the dependency `_provided-<HOST>`, only into targets whose harness the host does not launch (`.agy` today). Its name, version and directory are recorded in `.mars/machine.lock`, and a later sync without the flag keeps it while that directory exists. Every command that syncs takes the flag: `sync`, `add`, `remove`, `upgrade`, `repair`, `rename`, `override`, `adopt` and `link`, and `validate`, which runs the sync without writing. A package's or the user level's item of the same name wins over the host's. The bundle's skills count as provided here for every agent's `skills` refs whatever the targets, since the host supplies them where it launches the agent: a `.claude`-only project given the flag is not warned about `work__meridian`, and nothing is written for it. Such a project records no bundle, so it needs the flag on every sync, as Meridian passes it. A `DIR` that is not a directory fails the command. Launch lookups never read a host's copies in a store; they read the bundle in place ([Provided content](#provided-content)).
 
 This is the core operation. It runs the full [sync pipeline](../internals/sync-pipeline.md): resolve → prepare → target → diff → apply. A project whose `min_mars_version` the running Mars does not meet fails with `[compat-version]` and exit 2 before anything is resolved or written. Mars reads every dependency's and the project's own definitions as [schema v1](../config/schema-v1.md) before it writes any installed content. An error (`field.value`, `field.type`, `field.required`, `tools.list-form`, `yaml.*` and `frontmatter.*`) fails the sync with exit 2 and changes no installed content, target file or `mars.lock` (a fresh project still gains `.mars/sync.lock`, created before the gate). A dependency's `hook.toml` that fails validation (a removed `fragment` key, say) does not fail the sync: Mars warns, naming the package, and keeps the hook as the last sync installed it. Warnings (a restriction a translation could not keep, the lossiness a target cannot express) are printed and the sync goes on. A key or table Mars does not read in the project's own `mars.toml` or `mars.local.toml` (`field.unknown`) is a warning that names the closest key it does read (`target` → `targets`, `[setting]` → `[settings]`), because a misspelt `targets` leaves no targets and the sync removes what Mars installed in them. In a dependency or the user config it is an `info` note: `--verbose` prints it, a default sync does not. A dependency whose `[package]` has no `schema` is refused (`manifest.schema-missing`). A key Mars no longer reads is a `field.retired` warning that links to [Retired keys](../config/retired-keys.md). Native agent materialization follows `settings.agent_emission`; `[settings.meridian.agent_copy]` can selectively emit qualifying harness-native agent copies even when emission is otherwise suppressed.
 
@@ -690,7 +690,6 @@ Checks:
 - Lock file integrity
 - Each locked item of a managed target and of `.mars`: file exists on disk, no conflict markers, checksum computability
 - Config-lock consistency: dependencies in config match lock entries
-- Agent skill references: every declared skill dependency exists on disk
 - Targets the sync does not manage (a retired one the config still names): their records and `.mars/<surface>/<target>/` copies are not checked
 - Target health: each managed target has the expected files with correct content
 - Curation files: `mars.curated.toml`, `mars.curated.local.toml` and the user `curated.toml` parse
@@ -698,7 +697,24 @@ Checks:
 - At the user level (`--user`): files in `~/.mars` that the user `mars.lock` does not record (an old home project's store), named so you can delete them
 - Target divergence: reports locally modified files (plain `mars sync` overwrites edited native agents and skills; edited hooks are kept until `mars sync --force`, which resets every diverged item in the project), missing files (`mars sync` restores them), items of the wrong kind (a file where a directory belongs, or the reverse) and items Mars could not read (fix the cause it names); see [troubleshooting.md](../dev/troubleshooting.md#target-divergence)
 
-Exit code 0 = healthy, 2 = an error was found. A skill an Agent names that is not installed is the same warning (`missing-skill`) here as in `mars sync` and `mars validate`; it does not fail the check. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).
+Exit code 0 = healthy, 2 = an error was found. Doctor checks what is on disk against the lock; it does not judge an Agent's skill references. [`mars validate`](#mars-validate) does. With `--json`, `diagnostics` lists every finding with its `level`, `code` and `message`; `errors` and `warnings` keep listing the messages as before and are deprecated and stay for one minor release. See [troubleshooting.md](../dev/troubleshooting.md).
+
+---
+
+## `mars validate`
+
+Run the sync without writing anything and report what it found.
+
+```bash
+mars validate [--strict] [--provided-root HOST@VERSION=DIR]
+```
+
+| Flag | Description |
+|---|---|
+| `--strict` | Treat warnings as errors |
+| `--provided-root HOST@VERSION=DIR` | The host bundle `mars sync` would get (see [`mars sync`](#mars-sync)), so a ref to one of its skills is judged as the sync judges it |
+
+It reports what `mars sync` would, from the same inputs: an Agent's skill references among them (`missing-skill`, `provided-skill-unavailable`, `provided-skill-undeclared`), plus the tool-rule notes only validate prints. Exit code 0 = no errors, 1 = an error, or with `--strict` a warning. `--json` prints `clean`, `diagnostics`, `error_count` and `warning_count`. `--user` validates the user level.
 
 ---
 

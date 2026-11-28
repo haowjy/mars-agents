@@ -685,10 +685,6 @@ impl DiagnosticCollector {
         });
     }
 
-    pub(crate) fn push(&mut self, diagnostic: Diagnostic) {
-        self.diagnostics.push(diagnostic);
-    }
-
     pub fn extend(&mut self, diagnostics: Vec<Diagnostic>) {
         self.diagnostics.extend(diagnostics);
     }

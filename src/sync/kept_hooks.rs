@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use mars_schema::item::ItemKind;
 
 use crate::compiler::hooks::HookRank;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, Owner};
 use crate::lock::{CANONICAL_TARGET_ROOT, LockFile, LockIndex};
 use crate::sync::package_dir::PackageDir;
 use crate::sync::target::TargetItem;
@@ -86,6 +86,7 @@ fn names_installed_from(
 /// build with no previous install) keeps nothing. `items` is the complete target state: a
 /// directory it already holds is not the kept hook's.
 pub(super) fn settle(
+    graph: &crate::resolve::ResolvedGraph,
     invalid_hooks: Vec<InvalidDependencyHook>,
     items: &IndexMap<DestPath, TargetItem>,
     old_lock: Option<&LockFile>,
@@ -129,19 +130,14 @@ pub(super) fn settle(
         } else {
             "no installed copy of it was found, so nothing is installed"
         };
-        // Only the dependency's author can repair its hook; the installer can take a release
-        // that has. A host's hook is the host's to repair, so the user is told to update the host.
-        let remedy = if crate::provided::is_provided_source(invalid.source_name.as_ref()) {
-            format!(
-                "update {}",
+        let owner = graph.owner(&invalid.source_name);
+        let remedy = match (owner.newer_release(), owner) {
+            (Some(newer), _) => format!(
+                "{newer} takes a newer release of `{}` if it has fixed this",
                 crate::layer::source_label(invalid.source_name.as_ref())
-            )
-        } else {
-            format!(
-                "`{}` takes a newer release of `{}` if it has fixed this",
-                crate::types::managed_cmd(&format!("mars upgrade {}", invalid.source_name)),
-                invalid.source_name,
-            )
+            ),
+            (None, Owner::Path { dir, .. }) => format!("fix it in {}", dir.display()),
+            (None, _) => "fix its `hook.toml`".to_string(),
         };
         diag.warn(
             "hook-invalid-kept",

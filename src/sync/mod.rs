@@ -511,6 +511,7 @@ pub(crate) fn build_target_state(
     extend(&mut target, diag)?;
     let managed_targets = crate::config::targets::managed_targets(&effective.settings);
     target.kept_hooks = kept_hooks::settle(
+        graph,
         invalid_hooks,
         &target.items,
         old_lock,
